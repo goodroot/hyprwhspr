@@ -555,6 +555,13 @@ setup_permissions() {
   # Add user to required groups (including tty group that was missing)
   sudo usermod -a -G input,audio,tty "$ACTUAL_USER" || true
 
+  # Ensure uinput module is loaded FIRST
+  if [ ! -e "/dev/uinput" ]; then
+    log_info "Loading uinput module..."
+    sudo modprobe uinput || true
+    sleep 1  # Give it a moment to create the device
+  fi
+
   if [ ! -f "/etc/udev/rules.d/99-uinput.rules" ]; then
     log_info "Creating /etc/udev/rules.d/99-uinput.rules"
     sudo tee /etc/udev/rules.d/99-uinput.rules > /dev/null <<'RULE'
@@ -566,15 +573,12 @@ RULE
     log_info "udev rule for uinput already present"
   fi
 
-  # Always reload udev rules and trigger uinput (like the fix script does)
+  # Now reload udev rules and trigger uinput (after module is loaded)
   log_info "Reloading udev rules..."
   sudo udevadm control --reload-rules
   sudo udevadm trigger --name-match=uinput
   log_success "udev rules reloaded"
 
-  # Ensure uinput module is loaded
-  [ -e "/dev/uinput" ] || { log_info "Loading uinput module"; sudo modprobe uinput || true; }
-  
   log_warning "You may need to log out/in for new group memberships to apply"
 }
 
