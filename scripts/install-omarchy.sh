@@ -104,6 +104,11 @@ ensure_user_bin_symlink() {
 install_system_dependencies() {
   log_info "Ensuring system dependencies..."
   local pkgs=(cmake make git base-devel python pipewire pipewire-alsa pipewire-pulse pipewire-jack ydotool curl)
+  
+  # Always install waybar when this script runs (it's designed for full setup)
+  pkgs+=(waybar)
+  log_info "Installing waybar as part of hyprwhspr setup"
+  
   local to_install=()
   for p in "${pkgs[@]}"; do pacman -Q "$p" &>/dev/null || to_install+=("$p"); done
   if ((${#to_install[@]})); then
