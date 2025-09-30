@@ -42,7 +42,7 @@ If stuck, create an issue or visit the thread in [Omarchy discord](https://disco
 ```bash
 # Clone the repository
 git clone https://github.com/goodroot/hyprwhspr.git
-cd hyprwhisper
+cd hyprwhspr
 
 # Run the automated installer
 ./scripts/install-omarchy.sh
