@@ -505,6 +505,17 @@ EOF
     return 1
   fi
 
+  # Try to reload waybar config if waybar is running
+  if pgrep -x waybar >/dev/null 2>&1; then
+    log_info "Reloading waybar configuration..."
+    # Send SIGUSR1 to waybar to reload config (standard waybar signal)
+    pkill -USR1 waybar 2>/dev/null || true
+    sleep 0.5
+    log_success "Waybar config reloaded"
+  else
+    log_info "Waybar not running - config will be loaded when waybar starts"
+  fi
+
   log_success "Waybar integration updated"
 }
 
@@ -538,20 +549,30 @@ CFG
 # ----------------------- Permissions & uinput ------------------
 setup_permissions() {
   log_info "Permissions & uinput…"
-  sudo usermod -a -G input,audio "$ACTUAL_USER" || true
+  
+  # Add user to required groups (including tty group that was missing)
+  sudo usermod -a -G input,audio,tty "$ACTUAL_USER" || true
 
   if [ ! -f "/etc/udev/rules.d/99-uinput.rules" ]; then
     log_info "Creating /etc/udev/rules.d/99-uinput.rules"
     sudo tee /etc/udev/rules.d/99-uinput.rules > /dev/null <<'RULE'
+# Allow members of the input group to access uinput device
 KERNEL=="uinput", GROUP="input", MODE="0660"
 RULE
-    sudo udevadm control --reload-rules
-    sudo udevadm trigger --name-match=uinput 2>/dev/null || log_info "uinput trigger completed (permissions will apply after logout/login)"
+    log_success "udev rule created"
   else
     log_info "udev rule for uinput already present"
   fi
 
+  # Always reload udev rules and trigger uinput (like the fix script does)
+  log_info "Reloading udev rules..."
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger --name-match=uinput
+  log_success "udev rules reloaded"
+
+  # Ensure uinput module is loaded
   [ -e "/dev/uinput" ] || { log_info "Loading uinput module"; sudo modprobe uinput || true; }
+  
   log_warning "You may need to log out/in for new group memberships to apply"
 }
 
