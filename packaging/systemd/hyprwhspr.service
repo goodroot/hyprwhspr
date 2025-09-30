@@ -1,7 +1,7 @@
 [Unit]
 Description=hyprwhspr Voice Dictation Service
 After=graphical-session.target pipewire.service
-Wants=ydotoold.service
+Wants=ydotool.service
 
 [Service]
 Type=simple

@@ -42,7 +42,7 @@ is_hyprwhspr_running() {
 # Function to check if ydotoold is running and working
 is_ydotoold_running() {
     # Check if service is active
-    if systemctl --user is-active --quiet ydotoold.service; then
+    if systemctl --user is-active --quiet ydotool.service; then
         # Test if ydotool actually works by using a simple command
         timeout 1s ydotool help > /dev/null 2>&1
         return $?
@@ -204,7 +204,7 @@ toggle_hyprwhspr() {
 start_ydotoold() {
     if ! is_ydotoold_running; then
         echo "Starting ydotoold..."
-        systemctl --user start ydotoold.service  # Fixed: was ydotool.service
+        systemctl --user start ydotool.service  # Using system service
         sleep 1
         if is_ydotoold_running; then
             show_notification "hyprwhspr" "ydotoold started" "low"

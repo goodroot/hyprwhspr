@@ -18,9 +18,9 @@ else
 fi
 
 echo "2. Ydotool service:"
-if systemctl --user is-active ydotoold.service &> /dev/null; then
+if systemctl --user is-active ydotool.service &> /dev/null; then
     echo "   ✅ Running"
-elif systemctl --user is-enabled ydotoold.service &> /dev/null; then
+elif systemctl --user is-enabled ydotool.service &> /dev/null; then
     echo "   ⚠️  Enabled but not running"
 else
     echo "   ❌ Not configured"
@@ -51,9 +51,9 @@ else
     echo "   ❌ hyprwhspr cannot be started"
 fi
 
-if systemctl --user start ydotoold.service 2>/dev/null; then
+if systemctl --user start ydotool.service 2>/dev/null; then
     echo "   ✅ Ydotool can be started"
-    systemctl --user stop ydotoold.service 2>/dev/null
+    systemctl --user stop ydotool.service 2>/dev/null
 else
     echo "   ❌ Ydotool cannot be started"
 fi

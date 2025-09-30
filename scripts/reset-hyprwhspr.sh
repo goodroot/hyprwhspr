@@ -15,7 +15,7 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $*"; }
 PACKAGE_NAME="hyprwhspr"
 INSTALL_DIR="/opt/hyprwhspr"
 SERVICE_NAME="hyprwhspr.service"
-YDOTOOL_UNIT="ydotoold.service"
+YDOTOOL_UNIT="ydotool.service"
 
 # Detect actual user
 if [ "$EUID" -eq 0 ]; then

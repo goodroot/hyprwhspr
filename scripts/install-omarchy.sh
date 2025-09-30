@@ -25,7 +25,7 @@ err()  { log_error "$@"; }
 PACKAGE_NAME="hyprwhspr"
 INSTALL_DIR="/opt/hyprwhspr"   # default for Omarchy/local
 SERVICE_NAME="hyprwhspr.service"
-YDOTOOL_UNIT="ydotoold.service"
+YDOTOOL_UNIT="ydotool.service"
 
 is_aur() { [[ "${HYPRWHSPR_AUR_INSTALL:-}" == "1" ]]; }
 if is_aur; then

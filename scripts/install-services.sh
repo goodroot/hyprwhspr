@@ -17,7 +17,6 @@ mkdir -p "$USER_SYSTEMD_DIR"
 # Copy service files
 echo "📋 Copying service files..."
 cp "$CONFIG_DIR/hyprwhspr.service" "$USER_SYSTEMD_DIR/"
-cp "$CONFIG_DIR/ydotoold.service" "$USER_SYSTEMD_DIR/"
 
 # Reload systemd configuration
 echo "🔄 Reloading systemd configuration..."
