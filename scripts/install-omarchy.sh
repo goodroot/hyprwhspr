@@ -559,7 +559,13 @@ setup_permissions() {
   if [ ! -e "/dev/uinput" ]; then
     log_info "Loading uinput module..."
     sudo modprobe uinput || true
-    sleep 1  # Give it a moment to create the device
+    sleep 2  # Give it more time to create the device
+  fi
+  
+  # Verify device exists and is accessible
+  if [ ! -e "/dev/uinput" ]; then
+    log_warning "uinput device not created, skipping udev trigger"
+    return 0
   fi
 
   if [ ! -f "/etc/udev/rules.d/99-uinput.rules" ]; then
@@ -576,8 +582,14 @@ RULE
   # Now reload udev rules and trigger uinput (after module is loaded)
   log_info "Reloading udev rules..."
   sudo udevadm control --reload-rules
-  sudo udevadm trigger --name-match=uinput
-  log_success "udev rules reloaded"
+  
+  # Try to trigger uinput, but don't fail if it doesn't work
+  if sudo udevadm trigger --name-match=uinput 2>/dev/null; then
+    log_success "udev rules reloaded and uinput triggered"
+  else
+    log_warning "udev rules reloaded, but uinput trigger failed (device may not be ready)"
+    log_info "This is normal on fresh systems - permissions will apply after reboot"
+  fi
 
   log_warning "You may need to log out/in for new group memberships to apply"
 }
