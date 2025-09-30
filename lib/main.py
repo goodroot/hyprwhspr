@@ -71,6 +71,9 @@ class hyprwhsprApp:
             print("🎤 Starting recording...")
             self.is_recording = True
             
+            # Write recording status to file for tray script
+            self._write_recording_status(True)
+            
             # Play start sound
             self.audio_manager.play_start_sound()
             
@@ -82,6 +85,7 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"❌ Failed to start recording: {e}")
             self.is_recording = False
+            self._write_recording_status(False)
 
     def _stop_recording(self):
         """Stop voice recording and process audio"""
@@ -91,6 +95,9 @@ class hyprwhsprApp:
         try:
             print("🛑 Stopping recording...")
             self.is_recording = False
+            
+            # Write recording status to file for tray script
+            self._write_recording_status(False)
             
             # Stop audio capture
             audio_data = self.audio_capture.stop_recording()
@@ -140,6 +147,22 @@ class hyprwhsprApp:
             print("✅ Text injection completed")
         except Exception as e:
             print(f"❌ Text injection failed: {e}")
+
+    def _write_recording_status(self, is_recording):
+        """Write recording status to file for tray script"""
+        try:
+            status_file = Path.home() / '.config' / 'hyprwhspr' / 'recording_status'
+            status_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            if is_recording:
+                with open(status_file, 'w') as f:
+                    f.write('true')
+            else:
+                # Remove the file when not recording to avoid stale state
+                if status_file.exists():
+                    status_file.unlink()
+        except Exception as e:
+            print(f"⚠️ Failed to write recording status: {e}")
 
     def run(self):
         """Start the application"""

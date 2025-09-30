@@ -95,7 +95,7 @@ mic_accessible() {
 }
 
 mic_recording_now() {
-    # Only consider it recording if hyprwhspr service is active AND mic is in use
+    # Only consider it recording if hyprwhspr service is active AND actually recording
     if ! is_hyprwhspr_running; then
         return 1
     fi
@@ -105,19 +105,31 @@ mic_recording_now() {
         return 1
     fi
     
-    # Check if mic is accessible first - if not, definitely not recording
-    if ! mic_accessible; then
-        return 1
+    # Check recording status file written by hyprwhspr
+    local status_file="$HOME/.config/hyprwhspr/recording_status"
+    if [[ -f "$status_file" ]]; then
+        local status
+        status=$(cat "$status_file" 2>/dev/null)
+        if [[ "$status" == "true" ]]; then
+            return 0
+        else
+            return 1
+        fi
+    else
+        # Fallback: check if mic is accessible and in use
+        if ! mic_accessible; then
+            return 1
+        fi
+        
+        # Check PipeWire state as fallback
+        local def state
+        def="$(try 'pactl get-default-source')"
+        [[ -n "$def" ]] || def='@DEFAULT_SOURCE@'
+        state="$(try "pactl list sources | grep -B 5 -A 5 \"Name: $def\" | grep 'State:' | awk '{print \$2}'")"
+        
+        # Only consider RUNNING as recording (not SUSPENDED) to avoid false positives
+        [[ "$state" == "RUNNING" ]]
     fi
-    
-    # Check PipeWire state - if mic is RUNNING and hyprwhspr is active, assume it's recording
-    local def state
-    def="$(try 'pactl get-default-source')"
-    [[ -n "$def" ]] || def='@DEFAULT_SOURCE@'
-    state="$(try "pactl list sources | grep -B 5 -A 5 \"Name: $def\" | grep 'State:' | awk '{print \$2}'")"
-    
-    # Only consider RUNNING as recording (not SUSPENDED) to avoid false positives
-    [[ "$state" == "RUNNING" ]]
 }
 
 mic_fidelity_label() {
