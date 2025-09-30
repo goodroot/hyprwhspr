@@ -505,18 +505,8 @@ EOF
     return 1
   fi
 
-  # Try to reload waybar config if waybar is running
-  if pgrep -x waybar >/dev/null 2>&1; then
-    log_info "Reloading waybar configuration..."
-    # Send SIGUSR1 to waybar to reload config (standard waybar signal)
-    pkill -USR1 waybar 2>/dev/null || true
-    sleep 0.5
-    log_success "Waybar config reloaded"
-  else
-    log_info "Waybar not running - config will be loaded when waybar starts"
-  fi
-
   log_success "Waybar integration updated"
+  log_info "Note: Log out and back in for waybar to pick up the new configuration"
 }
 
 # ----------------------- User config ---------------------------
