@@ -518,7 +518,6 @@ EOF
   fi
 
   log_success "Waybar integration updated"
-  log_info "Note: Log out and back in for waybar to pick up the new configuration"
 }
 
 # ----------------------- User config ---------------------------
@@ -723,10 +722,15 @@ main() {
   verify_permissions_and_functionality
   test_installation
 
-  log_success "hyprwhspr installation completed!"
-  log_info "Services active:"
+  log_success "🎉 hyprwhspr installation completed!"
+  log_info ""
+  log_info "📋 Next steps:"
+  log_info "  • Reboot your system to apply all changes"
+  log_info "  • After reboot, hyprwhspr will be ready to use"
+  log_info ""
+  log_info "🔧 Service status:"
   log_info "  systemctl --user status $YDOTOOL_UNIT $SERVICE_NAME"
-  log_info "Logs:"
+  log_info "📝 View logs:"
   log_info "  journalctl --user -u $SERVICE_NAME"
 }
 
