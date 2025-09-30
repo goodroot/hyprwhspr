@@ -419,38 +419,62 @@ WAYBAR_CONFIG
 }
 EOF
 
-  if ! grep -q "hyprwhspr-module.jsonc" "$waybar_config"; then
-    local line_num end_line
-    line_num=$(grep -n '"modules-right"' "$waybar_config" | head -1 | cut -d: -f1 || true)
-    if [ -n "$line_num" ]; then
-      end_line=$(awk -v start="$line_num" 'NR>=start && /\]/ {print NR; exit}' "$waybar_config")
-      if [ -n "$end_line" ]; then
-        awk -v end="$end_line" 'NR==end {print; print "  \"include\": [\"hyprwhspr-module.jsonc\"],"; next} {print}' "$waybar_config" > "$waybar_config.tmp" && mv "$waybar_config.tmp" "$waybar_config"
-      fi
-    fi
+  # Validate the generated JSON
+  if ! python3 -m json.tool "$USER_HOME/.config/waybar/hyprwhspr-module.jsonc" >/dev/null 2>&1; then
+    log_error "Generated waybar module JSON is invalid"
+    return 1
   fi
 
-  # Add the module to modules-right array if not already present
-  if ! grep -q '"custom/hyprwhspr"' "$waybar_config"; then
-    log_info "Adding hyprwhspr module as first entry in modules-right array..."
-    local modules_right_line
-    modules_right_line=$(grep -n '"modules-right"' "$waybar_config" | head -1 | cut -d: -f1 || true)
-    if [ -n "$modules_right_line" ]; then
-      # Find the opening bracket of modules-right array
-      local open_line
-      open_line=$(awk -v start="$modules_right_line" 'NR>=start && /\[/ {print NR; exit}' "$waybar_config")
-      if [ -n "$open_line" ]; then
-        # Add the module right after the opening bracket
-        awk -v open="$open_line" 'NR==open {print; print "    \"custom/hyprwhspr\","; next} {print}' "$waybar_config" > "$waybar_config.tmp" && mv "$waybar_config.tmp" "$waybar_config"
-        log_success "✓ Added hyprwhspr module as first entry in modules-right array"
-      else
-        log_warning "Could not find opening bracket of modules-right array"
-      fi
-    else
-      log_warning "Could not find modules-right array in waybar config"
-    fi
-  else
-    log_info "hyprwhspr module already present in modules-right array"
+  # Use Python to safely modify the waybar config JSON
+  python3 <<EOF
+import json
+import sys
+import os
+
+config_path = "$waybar_config"
+module_path = "$USER_HOME/.config/waybar/hyprwhspr-module.jsonc"
+
+try:
+    # Read existing config
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    
+    # Add include if not present
+    if 'include' not in config:
+        config['include'] = []
+    
+    if 'hyprwhspr-module.jsonc' not in config['include']:
+        config['include'].append('hyprwhspr-module.jsonc')
+        print("Added hyprwhspr-module.jsonc to include list")
+    
+    # Add module to modules-right if not present
+    if 'modules-right' not in config:
+        config['modules-right'] = []
+    
+    if 'custom/hyprwhspr' not in config['modules-right']:
+        config['modules-right'].insert(0, 'custom/hyprwhspr')
+        print("Added custom/hyprwhspr to modules-right array")
+    
+    # Write back the config
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    print("Waybar config updated successfully")
+    
+except Exception as e:
+    print(f"Error updating waybar config: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+
+  if [ $? -ne 0 ]; then
+    log_error "Failed to update waybar config"
+    return 1
+  fi
+
+  # Validate the updated config
+  if ! python3 -m json.tool "$waybar_config" >/dev/null 2>&1; then
+    log_error "Updated waybar config is invalid JSON"
+    return 1
   fi
 
   if [ -f "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" ]; then
@@ -522,7 +546,7 @@ setup_permissions() {
 KERNEL=="uinput", GROUP="input", MODE="0660"
 RULE
     sudo udevadm control --reload-rules
-    sudo udevadm trigger --name-match=uinput
+    sudo udevadm trigger --name-match=uinput 2>/dev/null || log_info "uinput trigger completed (permissions will apply after logout/login)"
   else
     log_info "udev rule for uinput already present"
   fi
@@ -652,13 +676,13 @@ main() {
   download_models
   setup_systemd_service   # <— auto-enable & start (all modes)
   setup_hyprland_integration
+  setup_waybar_integration
   setup_user_config
   setup_permissions
   setup_audio_devices
   validate_installation
   verify_permissions_and_functionality
   test_installation
-  setup_waybar_integration
 
   log_success "hyprwhspr installation completed!"
   log_info "Services active:"
