@@ -321,18 +321,19 @@ exec "\$APP_DIR/bin/hyprwhspr" "\$@"
 EOF
   chmod +x "$LAUNCHER"
 
+  # Always create user services (both AUR and Omarchy modes)
+  log_info "Creating user systemd services..."
   mkdir -p "$USER_HOME/.config/systemd/user"
-
-  # Copy packaged (opinionated) units
+  
+  # Copy service templates from package
   if [ -f "$INSTALL_DIR/config/systemd/$SERVICE_NAME" ]; then
     cp "$INSTALL_DIR/config/systemd/$SERVICE_NAME" "$USER_HOME/.config/systemd/user/" || true
   fi
   if [ -f "$INSTALL_DIR/config/systemd/$YDOTOOL_UNIT" ]; then
     cp "$INSTALL_DIR/config/systemd/$YDOTOOL_UNIT" "$USER_HOME/.config/systemd/user/" || true
   fi
-
-  # Always ensure the user unit ExecStart points at our launcher (AUR & Omarchy)
-  # and rewrite /opt path if coming from AUR payload.
+  
+  # Configure services for current installation
   if [ -f "$USER_HOME/.config/systemd/user/$SERVICE_NAME" ]; then
     # Replace any ExecStart line with our launcher
     sed -i 's|^ExecStart=.*|ExecStart='"$LAUNCHER"'|g' "$USER_HOME/.config/systemd/user/$SERVICE_NAME"
@@ -346,13 +347,10 @@ EOF
     sed -i '/^\[Service\]/,$!b;/^\[Service\]/,/\[/{/StandardOutput=/d;/StandardError=/d}' "$USER_HOME/.config/systemd/user/$SERVICE_NAME"
     sed -i '/^\[Service\]/a StandardOutput=journal\nStandardError=journal' "$USER_HOME/.config/systemd/user/$SERVICE_NAME"
   fi
+  
+  log_success "User services created and configured"
 
-  # Rewrite any remaining hardcoded /opt paths (e.g., in ydotoold unit)
-  if [ "$INSTALL_DIR" != "/opt/hyprwhspr" ]; then
-    sed -i "s|/opt/hyprwhspr|$INSTALL_DIR|g" "$USER_HOME/.config/systemd/user/$SERVICE_NAME" 2>/dev/null || true
-    sed -i "s|/opt/hyprwhspr|$INSTALL_DIR|g" "$USER_HOME/.config/systemd/user/$YDOTOOL_UNIT" 2>/dev/null || true
-  fi
-
+  # Only reload systemd daemon for our services, not all user services
   systemctl --user daemon-reload
   # As requested: same behavior as before → enable & start automatically in all modes
   systemctl --user enable --now "$YDOTOOL_UNIT" 2>/dev/null || true
@@ -384,6 +382,12 @@ setup_waybar_integration() {
     log_error "Waybar not found - this should be installed as a dependency"
     log_info "Please install waybar: yay -S waybar"
     return 1
+  fi
+
+  # Check if waybar is currently running and warn user
+  if pgrep -x waybar >/dev/null 2>&1; then
+    log_warning "Waybar is currently running - it may disappear if config changes cause errors"
+    log_info "If waybar disappears, run 'waybar' from CLI to see error details"
   fi
 
   local waybar_config="$USER_HOME/.config/waybar/config.jsonc"
@@ -476,9 +480,12 @@ EOF
     return 1
   fi
 
-  # Validate the updated config
+  # Validate the updated config and show errors if invalid
   if ! python3 -m json.tool "$waybar_config" >/dev/null 2>&1; then
     log_error "Updated waybar config is invalid JSON"
+    log_info "Checking waybar config for errors:"
+    python3 -m json.tool "$waybar_config" 2>&1 || true
+    log_warning "Waybar may crash due to invalid config. Run 'waybar' from CLI to see detailed errors."
     return 1
   fi
 
