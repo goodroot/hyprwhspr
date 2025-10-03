@@ -71,7 +71,7 @@ validate_install_dir() {
     "lib/main.py"
     "requirements.txt"
     "config/hyprland/hyprwhspr-tray.sh"
-    "packaging/systemd/hyprwhspr.service"
+    "config/systemd/hyprwhspr.service"
   )
   
   for file in "${required_files[@]}"; do
@@ -524,8 +524,8 @@ setup_systemd_service() {
   mkdir -p "$USER_HOME/.config/systemd/user"
   
   # Copy service file from package
-  if [ -f "$INSTALL_DIR/packaging/systemd/$SERVICE_NAME" ]; then
-    cp "$INSTALL_DIR/packaging/systemd/$SERVICE_NAME" "$USER_HOME/.config/systemd/user/" || true
+  if [ -f "$INSTALL_DIR/config/systemd/$SERVICE_NAME" ]; then
+    cp "$INSTALL_DIR/config/systemd/$SERVICE_NAME" "$USER_HOME/.config/systemd/user/" || true
   fi
   
   log_success "User services created"
