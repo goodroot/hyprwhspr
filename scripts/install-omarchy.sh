@@ -593,32 +593,15 @@ setup_waybar_integration() {
   "modules-left": ["hyprland/workspaces"],
   "modules-center": ["hyprland/window"],
   "modules-right": ["custom/hyprwhspr", "clock", "tray"],
-  "include": ["hyprwhspr-module.jsonc"]
+  "include": ["/usr/lib/hyprwhspr/config/waybar/hyprwhspr-module.jsonc"]
 }
 WAYBAR_CONFIG
     log_success "Created basic Waybar config"
   fi
 
-  mkdir -p "$USER_HOME/.config/waybar"
-  cat > "$USER_HOME/.config/waybar/hyprwhspr-module.jsonc" <<EOF
-{
-  "custom/hyprwhspr": {
-    "format": "{}",
-    "exec": "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh status",
-    "interval": 1,
-    "return-type": "json",
-    "exec-on-event": true,
-    "on-click": "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh toggle",
-    "on-click-right": "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh start",
-    "on-click-middle": "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh restart",
-    "tooltip": true
-  }
-}
-EOF
-
-  # Validate the generated JSON
-  if ! python3 -m json.tool "$USER_HOME/.config/waybar/hyprwhspr-module.jsonc" >/dev/null 2>&1; then
-    log_error "Generated waybar module JSON is invalid"
+  # Validate the system module JSON
+  if ! python3 -m json.tool "$INSTALL_DIR/config/waybar/hyprwhspr-module.jsonc" >/dev/null 2>&1; then
+    log_error "System waybar module JSON is invalid"
     return 1
   fi
 
@@ -636,7 +619,7 @@ import sys
 import json
 
 config_path = "$waybar_config"
-module_path = "$USER_HOME/.config/waybar/hyprwhspr-module.jsonc"
+module_path = "$INSTALL_DIR/config/waybar/hyprwhspr-module.jsonc"
 
 try:
     # Read existing config with standard JSON parser
@@ -647,9 +630,9 @@ try:
     if 'include' not in config:
         config['include'] = []
     
-    if 'hyprwhspr-module.jsonc' not in config['include']:
-        config['include'].append('hyprwhspr-module.jsonc')
-        print("Added hyprwhspr-module.jsonc to include list")
+    if module_path not in config['include']:
+        config['include'].append(module_path)
+        print("Added hyprwhspr module to include list")
     
     # Add module to modules-right if not present
     if 'modules-right' not in config:
@@ -697,21 +680,13 @@ EOF
   pkill -f "waybar --config $waybar_config" 2>/dev/null || true
 
   if [ -f "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" ]; then
-    log_info "Copying waybar CSS file to user config..."
-    if cp "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" "$USER_HOME/.config/waybar/"; then
-      log_success "✓ Waybar CSS file copied to user config"
-    else
-      log_error "✗ Failed to copy waybar CSS file to user config"
-      return 1
-    fi
-    
+    log_info "Adding CSS import to waybar style.css..."
     local waybar_style="$USER_HOME/.config/waybar/style.css"
     if [ -f "$waybar_style" ] && ! grep -q "hyprwhspr-style.css" "$waybar_style"; then
-      log_info "Adding CSS import to waybar style.css..."
       if grep -q "^@import" "$waybar_style"; then
-        awk '/^@import/ { print; last_import = NR } !/^@import/ { if (last_import && NR == last_import + 1) { print "@import \"hyprwhspr-style.css\";"; } print }' "$waybar_style" > "$waybar_style.tmp" && mv "$waybar_style.tmp" "$waybar_style"
+        awk '/^@import/ { print; last_import = NR } !/^@import/ { if (last_import && NR == last_import + 1) { print "@import \"/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css\";"; } print }' "$waybar_style" > "$waybar_style.tmp" && mv "$waybar_style.tmp" "$waybar_style"
       else
-        echo -e "@import \"hyprwhspr-style.css\";\n$(cat "$waybar_style")" > "$waybar_style.tmp" && mv "$waybar_style.tmp" "$waybar_style"
+        echo -e "@import \"/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css\";\n$(cat "$waybar_style")" > "$waybar_style.tmp" && mv "$waybar_style.tmp" "$waybar_style"
       fi
       log_success "✓ CSS import added to waybar style.css"
     elif [ -f "$waybar_style" ]; then

@@ -19,12 +19,7 @@
   border-color: #dc2626;
 }
 
-#custom-hyprwhspr.error,
-#custom-hyprwhspr.error.service_inactive,
-#custom-hyprwhspr.error.ydotoold,
-#custom-hyprwhspr.error.pipewire_down,
-#custom-hyprwhspr.error.model_missing,
-#custom-hyprwhspr.error.unknown {
+#custom-hyprwhspr.error {
   color: #d97706;            /* amber-600 - original perfect color */
   border-color: #d97706;
 }

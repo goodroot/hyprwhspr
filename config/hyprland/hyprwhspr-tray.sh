@@ -253,7 +253,7 @@ emit_json() {
             icon="󰆉"
             text="$icon ERR"
             tooltip="hyprwhspr: Issue detected${reason:+ ($reason)}\n\nLeft-click: Toggle service\nRight-click: Start service\nMiddle-click: Restart service"
-            class="error ${reason}"
+            class="error"
             ;;
         "ready")
             icon="󰍬"
@@ -264,7 +264,7 @@ emit_json() {
             icon="󰆉"
             text="$icon"
             tooltip="hyprwhspr: Unknown state\n\nLeft-click: Toggle service\nRight-click: Start service\nMiddle-click: Restart service"
-            class="error unknown"
+            class="error"
             state="error"
             ;;
     esac
