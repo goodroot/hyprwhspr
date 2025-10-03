@@ -39,6 +39,20 @@ Any other setups may run into bumps.
 
 If stuck, create an issue or visit the thread in [Omarchy discord](https://discord.com/channels/1390012484194275541/1410373168765468774).
 
+**AUR:**
+
+_New!_
+
+```bash
+# Install package
+yay -S hyprwhspr
+
+# Setup package
+hyprwhspr-setup
+```
+
+**Script:**
+
 ```bash
 # Clone the repository
 git clone https://github.com/goodroot/hyprwhspr.git
