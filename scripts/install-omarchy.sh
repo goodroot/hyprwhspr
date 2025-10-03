@@ -29,6 +29,8 @@ VENV_DIR="$USER_BASE/venv"                    # Python virtual environment
 USER_WC_DIR="$USER_BASE/whisper.cpp"          # Built whisper.cpp
 USER_MODELS_DIR="$USER_WC_DIR/models"         # Downloaded models
 USER_BIN_DIR="$HOME/.local/bin"               # User's local bin directory
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/hyprwhspr"
+STATE_FILE="$STATE_DIR/install-state.json"    # Persistent installation state
 
 # ----------------------- Detect actual user --------------------
 if [ "$EUID" -eq 0 ]; then
@@ -42,6 +44,13 @@ else
 fi
 USER_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
 USER_CONFIG_DIR="$USER_HOME/.config/hyprwhspr"
+
+# ----------------------- Command line options ------------------
+CHECK_MODE=false
+if [ "${1:-}" = "--check" ]; then
+  CHECK_MODE=true
+  log_info "Running in check mode - no changes will be made"
+fi
 
 # ----------------------- Preconditions -------------------------
 command -v pacman >/dev/null 2>&1 || { log_error "Arch Linux required."; exit 1; }
@@ -104,6 +113,147 @@ ensure_user_bin_symlink() {
   fi
 }
 
+# ----------------------- State Management ------------------------
+# Initialize state directory and file
+init_state() {
+  mkdir -p "$STATE_DIR"
+  if [ ! -f "$STATE_FILE" ]; then
+    echo '{}' > "$STATE_FILE"
+  fi
+}
+
+# Get a value from the state file
+get_state() {
+  local key="$1"
+  if [ -f "$STATE_FILE" ]; then
+    python3 -c "import json, sys; data=json.load(open('$STATE_FILE')); print(data.get('$key', ''))" 2>/dev/null || echo ""
+  else
+    echo ""
+  fi
+}
+
+# Set a value in the state file
+set_state() {
+  local key="$1"
+  local value="$2"
+  init_state
+  python3 -c "
+import json, sys
+try:
+    with open('$STATE_FILE', 'r') as f:
+        data = json.load(f)
+except:
+    data = {}
+data['$key'] = '$value'
+with open('$STATE_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null || true
+}
+
+# Compute SHA256 hash of a file
+compute_file_hash() {
+  local file="$1"
+  if [ -f "$file" ]; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    echo ""
+  fi
+}
+
+# Check if model file is valid (returns 0 if valid, 1 if not)
+check_model_validity() {
+  local model_file="$1"
+  local file_size
+  local stored_hash
+  local current_hash
+  
+  if [ ! -f "$model_file" ]; then
+    return 1  # File doesn't exist
+  fi
+  
+  file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
+  stored_hash=$(get_state "model_base_en_hash")
+  current_hash=$(compute_file_hash "$model_file")
+  
+  # If we have a stored hash and it matches, it's valid
+  if [ -n "$stored_hash" ] && [ "$current_hash" = "$stored_hash" ]; then
+    return 0
+  fi
+  
+  # If file is reasonable size (>100MB), it's probably valid
+  if [ "$file_size" -gt 100000000 ]; then
+    return 0
+  fi
+  
+  return 1  # File is corrupted or too small
+}
+
+
+# ----------------------- Installation Plan ----------------------
+generate_installation_plan() {
+  log_info "Installation Plan:"
+  
+  # Check Python environment
+  local cur_req_hash
+  cur_req_hash=$(compute_file_hash "$INSTALL_DIR/requirements.txt")
+  local stored_req_hash
+  stored_req_hash=$(get_state "requirements_hash")
+  
+  if [ "$cur_req_hash" != "$stored_req_hash" ] || [ -z "$stored_req_hash" ]; then
+    log_info "  • Python env: UPDATE (requirements.txt changed)"
+  else
+    log_info "  • Python env: OK (up to date)"
+  fi
+  
+  # Check whisper.cpp build
+  if [ -d "$USER_WC_DIR/.git" ]; then
+    local current_rev
+    current_rev=$(cd "$USER_WC_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+    local stored_rev
+    stored_rev=$(get_state "whisper_cpp_rev")
+    
+    if [ "$current_rev" != "$stored_rev" ] || [ -z "$stored_rev" ]; then
+      log_info "  • whisper.cpp: BUILD (new revision or not built)"
+    else
+      log_info "  • whisper.cpp: OK (up to date)"
+    fi
+  else
+    log_info "  • whisper.cpp: BUILD (not cloned)"
+  fi
+  
+  # Check models
+  local model_file="$USER_MODELS_DIR/ggml-base.en.bin"
+  if check_model_validity "$model_file"; then
+    local file_size
+    file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
+    local stored_hash
+    stored_hash=$(get_state "model_base_en_hash")
+    
+    if [ -n "$stored_hash" ]; then
+      log_info "  • model: OK (verified)"
+    else
+      log_info "  • model: OK (appears valid, ${file_size} bytes)"
+    fi
+  else
+    log_info "  • model: DOWNLOAD (missing or corrupted)"
+  fi
+  
+  # Check waybar config (simplified check)
+  local waybar_config="$USER_HOME/.config/waybar/config.jsonc"
+  if [ -f "$waybar_config" ] && grep -q "custom/hyprwhspr" "$waybar_config"; then
+    log_info "  • waybar: OK (configured)"
+  else
+    log_info "  • waybar: UPDATE (needs configuration)"
+  fi
+  
+  # Check systemd services
+  if systemctl --user is-enabled "$SERVICE_NAME" >/dev/null 2>&1; then
+    log_info "  • systemd: OK (enabled)"
+  else
+    log_info "  • systemd: UPDATE (needs enabling)"
+  fi
+}
+
 # ----------------------- Install dependencies ------------------
 install_system_dependencies() {
   log_info "Ensuring system dependencies..."
@@ -133,6 +283,12 @@ setup_python_environment() {
     return 1
   fi
   
+  # Check if pip install is needed based on requirements.txt hash
+  local cur_req_hash
+  cur_req_hash=$(compute_file_hash "$INSTALL_DIR/requirements.txt")
+  local stored_req_hash
+  stored_req_hash=$(get_state "requirements_hash")
+  
   # Always use user space for venv
   if [ ! -d "$VENV_DIR" ]; then
     log_info "Creating venv at $VENV_DIR"
@@ -145,8 +301,15 @@ setup_python_environment() {
   # Install dependencies from system files
   source "$VENV_DIR/bin/activate"
   pip install --upgrade pip wheel
-  pip install -r "$INSTALL_DIR/requirements.txt"
-  log_success "Python dependencies installed"
+  
+  if [ "$cur_req_hash" != "$stored_req_hash" ] || [ -z "$stored_req_hash" ]; then
+    log_info "Installing Python dependencies (requirements.txt changed)"
+    pip install -r "$INSTALL_DIR/requirements.txt"
+    set_state "requirements_hash" "$cur_req_hash"
+    log_success "Python dependencies installed"
+  else
+    log_info "Python dependencies up to date (skipping pip install)"
+  fi
 }
 
 # ----------------------- NVIDIA support -----------------------
@@ -303,13 +466,48 @@ setup_whisper() {
 download_models() {
   log_info "Downloading Whisper base model…"
   mkdir -p "$USER_MODELS_DIR"
-  if [ -f "$USER_MODELS_DIR/ggml-base.en.bin" ] || [ -f "$USER_MODELS_DIR/base.en.bin" ]; then
-    log_info "Model already present"
+  
+  local model_file="$USER_MODELS_DIR/ggml-base.en.bin"
+  local model_url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+  
+  # Check if model is already valid
+  if check_model_validity "$model_file"; then
+    local file_size
+    file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
+    local stored_hash
+    stored_hash=$(get_state "model_base_en_hash")
+    
+    if [ -n "$stored_hash" ]; then
+      log_info "Model already present and verified (${file_size} bytes)"
+    else
+      log_info "Model file exists and appears valid (${file_size} bytes) - storing hash"
+      local current_hash
+      current_hash=$(compute_file_hash "$model_file")
+      set_state "model_base_en_hash" "$current_hash"
+    fi
     return 0
   fi
-  local url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
-  curl -L --fail -o "$USER_MODELS_DIR/ggml-base.en.bin" "$url"
-  log_success "Model downloaded"
+  
+  # Model is missing or corrupted, download it
+  if [ -f "$model_file" ]; then
+    local file_size
+    file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
+    log_warning "Model file exists but appears corrupted (${file_size} bytes) - re-downloading"
+    rm -f "$model_file"
+  fi
+  
+  log_info "Downloading model from $model_url"
+  if curl -L --fail -o "$model_file" "$model_url"; then
+    local downloaded_hash
+    downloaded_hash=$(compute_file_hash "$model_file")
+    local file_size
+    file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
+    set_state "model_base_en_hash" "$downloaded_hash"
+    log_success "Model downloaded and verified (${file_size} bytes)"
+  else
+    log_error "Failed to download model"
+    return 1
+  fi
 }
 
 # ----------------------- Systemd (user) ------------------------
@@ -705,6 +903,13 @@ test_installation() {
 
 # ----------------------- Main ---------------------------------
 main() {
+  if [ "$CHECK_MODE" = true ]; then
+    log_info "Checking installation plan for $INSTALL_DIR"
+    generate_installation_plan
+    log_info "Check mode complete - no changes made"
+    return 0
+  fi
+  
   log_info "Installing to $INSTALL_DIR"
   
   # Always copy files to system directory
