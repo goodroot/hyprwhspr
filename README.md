@@ -63,7 +63,7 @@ cd hyprwhspr
 
 ### First use
 
-> Ensure your microphone of choice is available in audio settings.
+> Ensure your microphone of choice is available in audio settings!
 
 1. **Log out and back in** (for group permissions)
 2. **Press `Super+Alt+D`** to start dictation - _beep!_
@@ -79,23 +79,19 @@ cd hyprwhspr
 
 ## Directory Structure
 
-hyprwhspr uses a clean separation between static files and runtime data:
+hyprwhspr separates static files and runtime data:
 
 ### Static Files (System)
+
 - **Location**: `/usr/lib/hyprwhspr/`
 - **Contains**: `bin/hyprwhspr`, `lib/`, `config/`, `share/`, `requirements.txt`
 - **Purpose**: Application files, configurations, assets
 
 ### Runtime Data (User Space)
+
 - **Location**: `~/.local/share/hyprwhspr/`
 - **Contains**: `venv/`, `whisper.cpp/`, `run.sh`, `whisper.cpp/models/`
 - **Purpose**: Python environment, built whisper.cpp, downloaded models
-
-This unified approach ensures:
-- **Consistency** across all installation methods
-- **User ownership** of runtime data
-- **Easy cleanup** and updates
-- **No permission issues** with system directories
 
 ## Configuration
 
@@ -119,6 +115,8 @@ Edit `~/.config/hyprwhspr/config.json`:
 - **Medium (high accuracy)**: `"medium.en"`
 - **Large (best accuracy)**: `"large"` ⚠️ **GPU required**
 - **Large-v3 (latest)**: `"large-v3"` ⚠️ **GPU required**
+
+See [model information](#whisper-models) for install instructions.
 
 **Word overrides** - customize transcriptions:
 
@@ -160,6 +158,7 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 ```
 
 **Default sounds included:**
+
 - **Start recording**: `ping-up.ogg` (ascending tone)
 - **Stop recording**: `ping-down.ogg` (descending tone)
 
@@ -204,6 +203,7 @@ Automatically converts spoken words to symbols and punctuation for natural dicta
 _Thanks for the speech-to-text replacement ideas from [WhisperTux](https://github.com/cjams/whispertux), @cjams!_
 
 **Custom sounds:**
+
 - **Supported formats**: `.ogg`, `.wav`, `.mp3`
 - **Fallback**: Uses defaults if custom files don't exist
 
@@ -276,7 +276,6 @@ Add to your `~/.config/waybar/config`:
 - **Right-click**: Start Hyprwhspr (if not running)
 - **Middle-click**: Restart Hyprwhspr
 
-
 ## Advanced Setup
 
 ### NVIDIA GPU Acceleration
@@ -307,8 +306,8 @@ sh ./models/download-ggml-model.sh tiny.en      # ~39MB
 sh ./models/download-ggml-model.sh tiny         # ~39MB
 
 # Base models (good balance)
-sh ./models/download-ggml-model.sh base.en      # ~1GB (default)
-sh ./models/download-ggml-model.sh base         # ~1GB
+sh ./models/download-ggml-model.sh base.en      # ~148MB (default)
+sh ./models/download-ggml-model.sh base         # ~148MB
 
 # Small models (better accuracy)
 sh ./models/download-ggml-model.sh small.en     # ~244MB
@@ -327,9 +326,8 @@ sh ./models/download-ggml-model.sh large-v3     # ⚠️ ~1.5GB (latest)
 
 Models `large` and `large-v3` require NVIDIA GPU acceleration for reasonable performance. 
 
-Without a GPU, these models will be extremely slow (10-30 seconds per transcription).
+Without a GPU, these models will be extremely slow (10-30 seconds per transcription):
 
-**Model selection guide:**
 - **`tiny.en`** - Fastest, good for real-time dictation
 - **`base.en`** - Best balance of speed/accuracy (recommended)
 - **`small.en`** - Better accuracy, still fast
@@ -365,31 +363,11 @@ Without a GPU, these models will be extremely slow (10-30 seconds per transcript
 - **Process management** - No manual process killing or starting
 - **Service dependencies** - Proper startup/shutdown ordering
 
-## Directory Structure Issues
+## Troubleshooting
 
-If you encounter permission or path issues:
+### Reset Installation
 
-1. **Verify static files**:
-
-   ```bash
-   ls -la /usr/lib/hyprwhspr/
-   ```
-
-2. **Verify runtime data**:
-
-   ```bash
-   ls -la ~/.local/share/hyprwhspr/
-   ```
-
-3. **Check service status**:
-
-   ```bash
-   systemctl --user status hyprwhspr
-   ```
-
-### Clean Reinstall
-
-To completely remove hyprwhspr:
+If you're having persistent issues, you can completely reset hyprwhspr:
 
 ```bash
 # Stop services
@@ -405,28 +383,12 @@ rm -rf ~/.config/hyprwhspr/
 sudo rm -rf /usr/lib/hyprwhspr/
 ```
 
-## Troubleshooting
-
-### Reset Installation
-
-If you're having persistent issues, you can completely reset hyprwhspr:
+And then...
 
 ```bash
-# Run the reset script (removes everything)
-./scripts/reset-hyprwhspr.sh
-
 # Then reinstall fresh
 ./scripts/install-omarchy.sh
 ```
-
-The reset script will:
-
-- Stop and disable all services
-- Remove installation directory (`/usr/lib/hyprwhspr`)
-- Remove user config and data
-- Clean up waybar integration
-- Remove hyprland scripts
-- Clean systemd configuration
 
 ### Common issues
 
@@ -437,11 +399,19 @@ It's fairly common in Arch and other distros for the microphone to need to be pl
 **Hotkey not working:**
 
 ```bash
-# Check service status
+# Check service status for hyprwhspr
 systemctl --user status hyprwhspr.service
 
 # Check logs
 journalctl --user -u hyprwhspr.service -f
+```
+
+```bash
+# Check service statusr for ydotool
+systemctl --user status ydotool.service
+
+# Check logs
+journalctl --user -u ydotool.service -f
 ```
 
 **Permission denied:**
@@ -454,6 +424,8 @@ journalctl --user -u hyprwhspr.service -f
 ```
 
 **No audio input:**
+
+If your mic _actually_ available?
 
 ```bash
 # Check audio devices
@@ -505,14 +477,10 @@ systemctl --user status hyprwhspr.service
 
 ### Getting help
 
-1. **Check logs**: `journalctl --user -u hyprwhspr.service`
+1. **Check logs**: `journalctl --user -u hyprwhspr.service` `journalctl --user -u ydotool.service`
 2. **Verify permissions**: Run the permissions fix script
 3. **Test components**: Check ydotool, audio devices, whisper.cpp
 4. **Report issues**: Include logs and system information
-
-## Other DEs
-
-Gnome, KDE, etc might work. Untested. Try!
 
 ## License
 
