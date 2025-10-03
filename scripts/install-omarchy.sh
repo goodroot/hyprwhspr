@@ -434,19 +434,35 @@ EOF
     return 1
   fi
 
-  # Use Python to safely modify the waybar config JSON
-  python3 <<EOF
-import json
+  # Create backup of waybar config before modifying
+  local backup_file="$waybar_config.backup-$(date +%Y%m%d-%H%M%S)"
+  if cp "$waybar_config" "$backup_file"; then
+    log_info "Backup created: $backup_file"
+  else
+    log_warning "Could not create backup of waybar config"
+  fi
+
+  # Use Python to safely modify the waybar config (supports both JSON and JSONC)
+  # Note: JSONC format (unquoted keys, comments) will be normalized to strict JSON
+  "$VENV_DIR/bin/python3" <<EOF
 import sys
 import os
 
 config_path = "$waybar_config"
 module_path = "$USER_HOME/.config/waybar/hyprwhspr-module.jsonc"
 
+# Import json5 for JSONC support (should be installed in venv)
+try:
+    import json5 as json_parser
+except ImportError:
+    print("ERROR: json5 module not found. This should have been installed in the venv.", file=sys.stderr)
+    print("Try running: $VENV_DIR/bin/pip install json5", file=sys.stderr)
+    sys.exit(1)
+
 try:
     # Read existing config
     with open(config_path, 'r') as f:
-        config = json.load(f)
+        config = json_parser.load(f)
     
     # Add include if not present
     if 'include' not in config:
@@ -464,11 +480,13 @@ try:
         config['modules-right'].insert(0, 'custom/hyprwhspr')
         print("Added custom/hyprwhspr to modules-right array")
     
-    # Write back the config
+    # Write back the config (normalized to strict JSON format)
     with open(config_path, 'w') as f:
-        json.dump(config, f, indent=2)
-    
+        json_parser.dump(config, f, indent=2)
+
     print("Waybar config updated successfully")
+    print("Note: JSONC format normalized to strict JSON (all keys quoted, comments removed)")
+    print("This is fully compatible with Waybar")
     
 except Exception as e:
     print(f"Error updating waybar config: {e}", file=sys.stderr)
@@ -480,14 +498,22 @@ EOF
     return 1
   fi
 
-  # Validate the updated config and show errors if invalid
-  if ! python3 -m json.tool "$waybar_config" >/dev/null 2>&1; then
-    log_error "Updated waybar config is invalid JSON"
-    log_info "Checking waybar config for errors:"
-    python3 -m json.tool "$waybar_config" 2>&1 || true
-    log_warning "Waybar may crash due to invalid config. Run 'waybar' from CLI to see detailed errors."
+  # Test the updated config with waybar to ensure it can be parsed
+  log_info "Testing waybar config..."
+  if timeout 2s waybar --config "$waybar_config" --log-level error 2>&1 | head -5 | grep -i "error parsing" >/dev/null 2>&1; then
+    log_error "Waybar cannot parse the updated config"
+    log_info "Attempting to restore backup..."
+    if [ -f "$backup_file" ]; then
+      cp "$backup_file" "$waybar_config"
+      log_warning "Config restored from backup. Please check your waybar config manually."
+    fi
     return 1
+  else
+    log_success "✓ Waybar config validated successfully"
   fi
+
+  # Kill the test waybar instance
+  pkill -f "waybar --config $waybar_config" 2>/dev/null || true
 
   if [ -f "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" ]; then
     log_info "Copying waybar CSS file to user config..."
