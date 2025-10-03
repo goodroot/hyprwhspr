@@ -62,8 +62,6 @@ cd hyprwhspr
 ./scripts/install-omarchy.sh
 ```
 
-* AUR is wip - please use script!
-
 **The installer will:**
 
 1. ✅ Install system dependencies (ydotool, etc.)
