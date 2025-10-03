@@ -1,11 +1,7 @@
 #!/bin/bash
 # hyprwhspr Omarchy/Arch Installation Script
-# Modes:
-#   • Omarchy/local: INSTALL_DIR=/opt/hyprwhspr, venv & whisper.cpp under /opt
-#   • AUR:           INSTALL_DIR=/usr/lib/hyprwhspr (read-only)
-#       VENV_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv"
-#       USER_WC_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/whisper.cpp"
-#   AUR mode is detected by HYPRWHSPR_AUR_INSTALL=1 (set by /usr/bin/hyprwhspr-setup)
+#   • Static files: /usr/lib/hyprwhspr (read-only system files)
+#   • Runtime data: ~/.local/share/hyprwhspr (user space, always writable)
 
 set -euo pipefail
 
@@ -23,29 +19,16 @@ err()  { log_error "$@"; }
 
 # ----------------------- Configuration -------------------------
 PACKAGE_NAME="hyprwhspr"
-INSTALL_DIR="/opt/hyprwhspr"   # default for Omarchy/local
+INSTALL_DIR="/usr/lib/hyprwhspr"  # Always read-only system files
 SERVICE_NAME="hyprwhspr.service"
 YDOTOOL_UNIT="ydotool.service"
 
-is_aur() { [[ "${HYPRWHSPR_AUR_INSTALL:-}" == "1" ]]; }
-if is_aur; then
-  INSTALL_DIR="/usr/lib/hyprwhspr"
-fi
-
+# Always use user space for runtime data (consistent across all installations)
 USER_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr"
-VENV_DIR="$USER_BASE/venv"
-USER_WC_DIR="$USER_BASE/whisper.cpp"
-USER_MODELS_DIR="$USER_WC_DIR/models"
-USER_BIN_DIR="$HOME/.local/bin"
-LAUNCHER="$USER_BASE/run.sh"               # venv-aware launcher used by systemd unit
-
-# In Omarchy mode, legacy layout under /opt
-if ! is_aur; then
-  VENV_DIR="$INSTALL_DIR/venv"
-  USER_WC_DIR="$INSTALL_DIR/whisper.cpp"
-  USER_MODELS_DIR="$INSTALL_DIR/whisper.cpp/models"
-  LAUNCHER="$INSTALL_DIR/run.sh"
-fi
+VENV_DIR="$USER_BASE/venv"                    # Python virtual environment
+USER_WC_DIR="$USER_BASE/whisper.cpp"          # Built whisper.cpp
+USER_MODELS_DIR="$USER_WC_DIR/models"         # Downloaded models
+USER_BIN_DIR="$HOME/.local/bin"               # User's local bin directory
 
 # ----------------------- Detect actual user --------------------
 if [ "$EUID" -eq 0 ]; then
@@ -63,13 +46,34 @@ USER_CONFIG_DIR="$USER_HOME/.config/hyprwhspr"
 # ----------------------- Preconditions -------------------------
 command -v pacman >/dev/null 2>&1 || { log_error "Arch Linux required."; exit 1; }
 log_info "Setting up hyprwhspr for user: $ACTUAL_USER"
-log_info "Mode: $(is_aur && echo AUR || echo Omarchy/local)"
-log_info "INSTALL_DIR=$INSTALL_DIR"
+log_info "Unified installation approach"
+log_info "INSTALL_DIR=$INSTALL_DIR (static application files)"
+log_info "USER_BASE=$USER_BASE (runtime data)"
 log_info "VENV_DIR=$VENV_DIR"
 log_info "USER_WC_DIR=$USER_WC_DIR"
 
 # ----------------------- Helpers -------------------------------
 have_system_whisper() { command -v whisper-cli >/dev/null 2>&1; }
+
+# Validate that INSTALL_DIR contains required files
+validate_install_dir() {
+  local required_files=(
+    "bin/hyprwhspr"
+    "lib/main.py"
+    "requirements.txt"
+    "config/hyprland/hyprwhspr-tray.sh"
+    "packaging/systemd/hyprwhspr.service"
+  )
+  
+  for file in "${required_files[@]}"; do
+    if [ ! -f "$INSTALL_DIR/$file" ]; then
+      log_error "Required file missing: $INSTALL_DIR/$file"
+      return 1
+    fi
+  done
+  log_success "All required files present in $INSTALL_DIR"
+  return 0
+}
 
 ensure_path_contains_local_bin() {
   case ":$PATH:" in *":$USER_BIN_DIR:"*) ;; *) export PATH="$USER_BIN_DIR:$PATH" ;; esac
@@ -122,6 +126,14 @@ install_system_dependencies() {
 # ----------------------- Python environment --------------------
 setup_python_environment() {
   log_info "Setting up Python virtual environment…"
+  
+  # Validate requirements.txt exists
+  if [ ! -f "$INSTALL_DIR/requirements.txt" ]; then
+    log_error "requirements.txt not found at $INSTALL_DIR/requirements.txt"
+    return 1
+  fi
+  
+  # Always use user space for venv
   if [ ! -d "$VENV_DIR" ]; then
     log_info "Creating venv at $VENV_DIR"
     mkdir -p "$(dirname "$VENV_DIR")"
@@ -129,7 +141,8 @@ setup_python_environment() {
   else
     log_info "Venv already exists at $VENV_DIR"
   fi
-  # shellcheck disable=SC1091
+  
+  # Install dependencies from system files
   source "$VENV_DIR/bin/activate"
   pip install --upgrade pip wheel
   pip install -r "$INSTALL_DIR/requirements.txt"
@@ -186,14 +199,9 @@ setup_nvidia_support() {
 setup_whisper() {
   log_info "Setting up whisper.cpp…"
 
-  # ---------- choose build location ----------
-  if is_aur; then
-    mkdir -p "$USER_WC_DIR"
-    cd "$USER_WC_DIR"
-  else
-    mkdir -p "$INSTALL_DIR/whisper.cpp"
-    cd "$INSTALL_DIR/whisper.cpp"
-  fi
+  # Always use user space for whisper.cpp
+  mkdir -p "$USER_WC_DIR"
+  cd "$USER_WC_DIR"
 
   # ---------- clone or update ----------
   if [ ! -d ".git" ]; then
@@ -308,51 +316,25 @@ download_models() {
 setup_systemd_service() {
   log_info "Configuring systemd user services…"
 
-  # Create a venv-aware launcher the unit will ExecStart
-  mkdir -p "$(dirname "$LAUNCHER")"
-  cat > "$LAUNCHER" <<EOF
-#!/usr/bin/env bash
-set -e
-VENV="$VENV_DIR"
-APP_DIR="$INSTALL_DIR"
-# shellcheck disable=SC1091
-source "\$VENV/bin/activate"
-exec "\$APP_DIR/bin/hyprwhspr" "\$@"
-EOF
-  chmod +x "$LAUNCHER"
+  # Validate main executable exists
+  if [ ! -x "$INSTALL_DIR/bin/hyprwhspr" ]; then
+    log_error "Main executable not found or not executable: $INSTALL_DIR/bin/hyprwhspr"
+    return 1
+  fi
 
-  # Always create user services (both AUR and Omarchy modes)
-  log_info "Creating user systemd services..."
+  # Create user systemd directory
   mkdir -p "$USER_HOME/.config/systemd/user"
   
-  # Copy service templates from package
-  if [ -f "$INSTALL_DIR/config/systemd/$SERVICE_NAME" ]; then
-    cp "$INSTALL_DIR/config/systemd/$SERVICE_NAME" "$USER_HOME/.config/systemd/user/" || true
-  fi
-  if [ -f "$INSTALL_DIR/config/systemd/$YDOTOOL_UNIT" ]; then
-    cp "$INSTALL_DIR/config/systemd/$YDOTOOL_UNIT" "$USER_HOME/.config/systemd/user/" || true
+  # Copy service file from package
+  if [ -f "$INSTALL_DIR/packaging/systemd/$SERVICE_NAME" ]; then
+    cp "$INSTALL_DIR/packaging/systemd/$SERVICE_NAME" "$USER_HOME/.config/systemd/user/" || true
   fi
   
-  # Configure services for current installation
-  if [ -f "$USER_HOME/.config/systemd/user/$SERVICE_NAME" ]; then
-    # Replace any ExecStart line with our launcher
-    sed -i 's|^ExecStart=.*|ExecStart='"$LAUNCHER"'|g' "$USER_HOME/.config/systemd/user/$SERVICE_NAME"
-    # Normalize WorkingDirectory
-    if grep -q '^WorkingDirectory=' "$USER_HOME/.config/systemd/user/$SERVICE_NAME"; then
-      sed -i 's|^WorkingDirectory=.*|WorkingDirectory='"$INSTALL_DIR"'|g' "$USER_HOME/.config/systemd/user/$SERVICE_NAME"
-    else
-      sed -i '/^\[Service\]/a WorkingDirectory='"$INSTALL_DIR" "$USER_HOME/.config/systemd/user/$SERVICE_NAME"
-    fi
-    # Standardize logs to journal
-    sed -i '/^\[Service\]/,$!b;/^\[Service\]/,/\[/{/StandardOutput=/d;/StandardError=/d}' "$USER_HOME/.config/systemd/user/$SERVICE_NAME"
-    sed -i '/^\[Service\]/a StandardOutput=journal\nStandardError=journal' "$USER_HOME/.config/systemd/user/$SERVICE_NAME"
-  fi
-  
-  log_success "User services created and configured"
+  log_success "User services created"
 
-  # Only reload systemd daemon for our services, not all user services
+  # Reload systemd daemon
   systemctl --user daemon-reload
-  # As requested: same behavior as before → enable & start automatically in all modes
+  # Enable & start services
   systemctl --user enable --now "$YDOTOOL_UNIT" 2>/dev/null || true
   systemctl --user enable --now "$SERVICE_NAME"
 
@@ -362,14 +344,18 @@ EOF
 # ----------------------- Hyprland integration ------------------
 setup_hyprland_integration() {
   log_info "Setting up Hyprland integration…"
-  mkdir -p "$USER_HOME/.config/hypr/scripts"
-  if [ -f "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh" ]; then
-    cp "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh" "$USER_HOME/.config/hypr/scripts/"
-    chmod +x "$USER_HOME/.config/hypr/scripts/hyprwhspr-tray.sh"
-    if [ "$INSTALL_DIR" != "/opt/hyprwhspr" ]; then
-      sed -i "s|/opt/hyprwhspr|$INSTALL_DIR|g" "$USER_HOME/.config/hypr/scripts/hyprwhspr-tray.sh"
-    fi
+  
+  # Validate tray script exists
+  if [ ! -f "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh" ]; then
+    log_error "Tray script not found: $INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh"
+    return 1
   fi
+  
+  mkdir -p "$USER_HOME/.config/hypr/scripts"
+  cp "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh" "$USER_HOME/.config/hypr/scripts/"
+  chmod +x "$USER_HOME/.config/hypr/scripts/hyprwhspr-tray.sh"
+  
+  # NO sed replacement needed - file handles both modes dynamically
   log_success "Hyprland integration configured"
 }
 
@@ -377,10 +363,14 @@ setup_hyprland_integration() {
 setup_waybar_integration() {
   log_info "Waybar integration…"
   
-  # Check if waybar is installed (should be required dependency now)
-  if ! command -v waybar >/dev/null 2>&1; then
-    log_error "Waybar not found - this should be installed as a dependency"
-    log_info "Please install waybar: yay -S waybar"
+  # Validate required files exist
+  if [ ! -f "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh" ]; then
+    log_error "Tray script not found: $INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh"
+    return 1
+  fi
+  
+  if [ ! -f "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" ]; then
+    log_error "Waybar CSS not found: $INSTALL_DIR/config/waybar/hyprwhspr-style.css"
     return 1
   fi
 
@@ -442,27 +432,18 @@ EOF
     log_warning "Could not create backup of waybar config"
   fi
 
-  # Use Python to safely modify the waybar config (supports both JSON and JSONC)
-  # Note: JSONC format (unquoted keys, comments) will be normalized to strict JSON
+  # Use Python to safely modify the waybar config with proper JSON handling
   "$VENV_DIR/bin/python3" <<EOF
 import sys
-import os
+import json
 
 config_path = "$waybar_config"
 module_path = "$USER_HOME/.config/waybar/hyprwhspr-module.jsonc"
 
-# Import json5 for JSONC support (should be installed in venv)
 try:
-    import json5 as json_parser
-except ImportError:
-    print("ERROR: json5 module not found. This should have been installed in the venv.", file=sys.stderr)
-    print("Try running: $VENV_DIR/bin/pip install json5", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    # Read existing config
+    # Read existing config with standard JSON parser
     with open(config_path, 'r') as f:
-        config = json_parser.load(f)
+        config = json.load(f)
     
     # Add include if not present
     if 'include' not in config:
@@ -480,14 +461,16 @@ try:
         config['modules-right'].insert(0, 'custom/hyprwhspr')
         print("Added custom/hyprwhspr to modules-right array")
     
-    # Write back the config (normalized to strict JSON format)
+    # Write back the config with proper JSON formatting
     with open(config_path, 'w') as f:
-        json_parser.dump(config, f, indent=2)
+        json.dump(config, f, indent=2, separators=(',', ': '))
 
     print("Waybar config updated successfully")
-    print("Note: JSONC format normalized to strict JSON (all keys quoted, comments removed)")
-    print("This is fully compatible with Waybar")
     
+except json.JSONDecodeError as e:
+    print(f"ERROR: Invalid JSON in waybar config: {e}", file=sys.stderr)
+    print("Please check your waybar config for syntax errors", file=sys.stderr)
+    sys.exit(1)
 except Exception as e:
     print(f"Error updating waybar config: {e}", file=sys.stderr)
     sys.exit(1)
@@ -630,7 +613,14 @@ setup_audio_devices() {
 # ----------------------- Validation ---------------------------
 validate_installation() {
   log_info "Validating installation…"
-
+  
+  # Validate static files
+  validate_install_dir || return 1
+  
+  # Validate runtime files
+  [ -x "$VENV_DIR/bin/python" ] || { log_error "Venv missing ($VENV_DIR)"; return 1; }
+  
+  # Validate whisper-cli
   if have_system_whisper; then
     log_success "whisper-cli on PATH: $(command -v whisper-cli)"
   elif [ -x "$USER_WC_DIR/build/bin/whisper-cli" ]; then
@@ -639,15 +629,13 @@ validate_installation() {
     log_error "whisper-cli missing"
     return 1
   fi
-
+  
+  # Validate models
   if [ ! -f "$USER_MODELS_DIR/ggml-base.en.bin" ] && [ ! -f "$USER_MODELS_DIR/base.en.bin" ]; then
     log_error "Model missing (${USER_MODELS_DIR})"
     return 1
   fi
-
-  [ -x "$VENV_DIR/bin/python" ] || { log_error "Venv missing ($VENV_DIR)"; return 1; }
-  [ -f "$INSTALL_DIR/lib/main.py" ] || { log_error "App missing ($INSTALL_DIR/lib/main.py)"; return 1; }
-
+  
   log_success "Validation passed"
 }
 
@@ -686,7 +674,16 @@ verify_permissions_and_functionality() {
 
 # ----------------------- Smoke test ---------------------------
 test_installation() {
-  log_info "Testing service start…"
+  log_info "Testing installation…"
+  
+  # Test static files
+  [ -f "$INSTALL_DIR/bin/hyprwhspr" ] || { log_error "Main executable missing"; return 1; }
+  [ -f "$INSTALL_DIR/requirements.txt" ] || { log_error "Requirements file missing"; return 1; }
+  
+  # Test runtime files
+  [ -d "$USER_BASE/venv" ] || { log_error "Python venv missing"; return 1; }
+  
+  # Test service start
   validate_installation || { log_error "Validation failed"; return 1; }
 
   if systemctl --user start "$SERVICE_NAME"; then
@@ -709,29 +706,33 @@ test_installation() {
 # ----------------------- Main ---------------------------------
 main() {
   log_info "Installing to $INSTALL_DIR"
-
-  if ! is_aur; then
-    sudo mkdir -p "$INSTALL_DIR"; sudo chown "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
-    log_info "Copying application files…"
-    sudo cp -r . "$INSTALL_DIR/"; sudo chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
-    
-    # Verify critical files were copied
-    if [ -f "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" ]; then
-      log_success "✓ Waybar CSS file copied successfully"
-    else
-      log_error "✗ Waybar CSS file missing after copy operation"
-      exit 1
-    fi
-    
-    if [ -d "$INSTALL_DIR/share/assets" ]; then
-      log_success "✓ Assets directory copied successfully"
-    else
-      log_error "✗ Assets directory missing after copy operation"
-      exit 1
-    fi
+  
+  # Always copy files to system directory
+  sudo mkdir -p "$INSTALL_DIR"
+  sudo cp -r . "$INSTALL_DIR/"
+  sudo chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
+  
+  # Verify critical files were copied
+  if [ -f "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" ]; then
+    log_success "✓ Waybar CSS file copied successfully"
   else
-    log_info "AUR mode: payload already at $INSTALL_DIR"
+    log_error "✗ Waybar CSS file missing after copy operation"
+    exit 1
   fi
+  
+  if [ -d "$INSTALL_DIR/share/assets" ]; then
+    log_success "✓ Assets directory copied successfully"
+  else
+    log_error "✗ Assets directory missing after copy operation"
+    exit 1
+  fi
+  
+  # Validate that required files exist
+  validate_install_dir || { log_error "Installation validation failed"; exit 1; }
+  
+  # Ensure user space exists for runtime data
+  mkdir -p "$USER_BASE"
+  log_info "User runtime data directory: $USER_BASE"
 
   install_system_dependencies
   setup_python_environment
@@ -740,24 +741,32 @@ main() {
   download_models
   setup_systemd_service   # <— auto-enable & start (all modes)
   setup_hyprland_integration
-  setup_waybar_integration
   setup_user_config
   setup_permissions
   setup_audio_devices
+  setup_waybar_integration
   validate_installation
   verify_permissions_and_functionality
-  test_installation
+  test_installation 
 
-  log_success "🎉 hyprwhspr installation completed!"
+  # Final service restart to ensure everything is fresh
+  log_info "Performing final service restart..."
+  systemctl --user restart "$YDOTOOL_UNIT" 2>/dev/null || true
+  systemctl --user restart "$SERVICE_NAME"
+  log_success "Services restarted successfully"
+
+  log_success "✓ hyprwhspr installation completed!"
   log_info ""
-  log_info "📋 Next steps:"
+  log_info "Next steps:"
   log_info "  • Reboot your system to apply all changes"
-  log_info "  • After reboot, hyprwhspr will be ready to use"
+  log_info "  • After reboot, hyprwhspr will be ready to use!"
   log_info ""
-  log_info "🔧 Service status:"
+  log_info "Service status:"
   log_info "  systemctl --user status $YDOTOOL_UNIT $SERVICE_NAME"
-  log_info "📝 View logs:"
+  log_info ""
+  log_info "View logs:"
   log_info "  journalctl --user -u $SERVICE_NAME"
+  log_info ""
 }
 
 main "$@"

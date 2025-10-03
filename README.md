@@ -53,11 +53,13 @@ cd hyprwhspr
 **The installer will:**
 
 1. ✅ Install system dependencies (ydotool, etc.)
-2. ✅ Clone and build whisper.cpp (with CUDA if GPU available)
-3. ✅ Download base Whisper models
-4. ✅ Set up systemd services for hyprwhspr & ydotoolds
-5. ✅ Configure Waybar integration
-6. ✅ Test everything works
+2. ✅ Copy application files to system directory (`/usr/lib/hyprwhspr`)
+3. ✅ Set up Python virtual environment in user space (`~/.local/share/hyprwhspr/venv`)
+4. ✅ Clone and build whisper.cpp in user space (`~/.local/share/hyprwhspr/whisper.cpp`)
+5. ✅ Download base Whisper models to user space (`~/.local/share/hyprwhspr/whisper.cpp/models`)
+6. ✅ Set up systemd services for hyprwhspr & ydotoolds
+7. ✅ Configure Waybar integration
+8. ✅ Test everything works
 
 ### First use
 
@@ -75,6 +77,26 @@ cd hyprwhspr
 
 - **`Super+Alt+D`** - Toggle dictation on/off
 
+## Directory Structure
+
+hyprwhspr uses a clean separation between static files and runtime data:
+
+### Static Files (System)
+- **Location**: `/usr/lib/hyprwhspr/`
+- **Contains**: `bin/hyprwhspr`, `lib/`, `config/`, `share/`, `requirements.txt`
+- **Purpose**: Application files, configurations, assets
+
+### Runtime Data (User Space)
+- **Location**: `~/.local/share/hyprwhspr/`
+- **Contains**: `venv/`, `whisper.cpp/`, `run.sh`, `whisper.cpp/models/`
+- **Purpose**: Python environment, built whisper.cpp, downloaded models
+
+This unified approach ensures:
+- **Consistency** across all installation methods
+- **User ownership** of runtime data
+- **Easy cleanup** and updates
+- **No permission issues** with system directories
+
 ## Configuration
 
 Edit `~/.config/hyprwhspr/config.json`:
@@ -91,7 +113,7 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 **Model options**:
 
-- **Default**: `"base.en"` (automatically resolves to `/opt/hyprwhspr/whisper.cpp/models/ggml-base.en.bin`)
+- **Default**: `"base.en"` (automatically resolves to `~/.local/share/hyprwhspr/whisper.cpp/models/ggml-base.en.bin`)
 - **Tiny (fastest)**: `"tiny.en"`
 - **Small (better)**: `"small.en"`
 - **Medium (high accuracy)**: `"medium.en"`
@@ -229,14 +251,14 @@ Add to your `~/.config/waybar/config`:
 ```json
 {
     "custom/hyprwhspr": {
-        "exec": "/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh status",
+        "exec": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh status",
         "interval": 2,
         "return-type": "json",
         "exec-on-event": true,
         "format": "{}",
-        "on-click": "/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh toggle",
-        "on-click-right": "/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh start",
-        "on-click-middle": "/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh restart",
+        "on-click": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh toggle",
+        "on-click-right": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh start",
+        "on-click-middle": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh restart",
         "tooltip": true
     }
 }
@@ -245,7 +267,7 @@ Add to your `~/.config/waybar/config`:
 **Add CSS styling** to your `~/.config/waybar/style.css`:
 
 ```css
-@import "/opt/hyprwhspr/config/waybar/hyprwhspr-style.css";
+@import "/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css";
 ```
 
 **Click interactions:**
@@ -263,10 +285,10 @@ Use if adding GPU after GPU-less installation:
 
 ```bash
 # Build with CUDA support (if NVIDIA detected)
-/opt/hyprwhspr/scripts/build-whisper-nvidia.sh
+/usr/lib/hyprwhspr/scripts/build-whisper-nvidia.sh
 
 # Test GPU acceleration
-/opt/hyprwhspr/scripts/build-whisper-nvidia.sh --test
+/usr/lib/hyprwhspr/scripts/build-whisper-nvidia.sh --test
 ```
 
 Or re-run install script.
@@ -278,7 +300,7 @@ Or re-run install script.
 **Available models to download:**
 
 ```bash
-cd /opt/hyprwhspr/whisper.cpp
+cd ~/.local/share/hyprwhspr/whisper.cpp
 
 # Tiny models (fastest, least accurate)
 sh ./models/download-ggml-model.sh tiny.en      # ~39MB
@@ -327,9 +349,9 @@ Without a GPU, these models will be extremely slow (10-30 seconds per transcript
 
 **hyprwhspr is designed as a system package:**
 
-- **`/opt/hyprwhspr/`** - Main installation directory
-- **`/opt/hyprwhspr/lib/`** - Python application
-- **`/opt/hyprwhspr/whisper.cpp/`** - Speech recognition engine
+- **`/usr/lib/hyprwhspr/`** - Main installation directory
+- **`/usr/lib/hyprwhspr/lib/`** - Python application
+- **`~/.local/share/hyprwhspr/whisper.cpp/`** - Speech recognition engine
 - **`~/.config/hyprwhspr/`** - User configuration
 - **`~/.config/systemd/user/`** - Systemd service
 
@@ -342,6 +364,46 @@ Without a GPU, these models will be extremely slow (10-30 seconds per transcript
 - **Tray integration** - All tray operations use systemd commands
 - **Process management** - No manual process killing or starting
 - **Service dependencies** - Proper startup/shutdown ordering
+
+## Directory Structure Issues
+
+If you encounter permission or path issues:
+
+1. **Verify static files**:
+
+   ```bash
+   ls -la /usr/lib/hyprwhspr/
+   ```
+
+2. **Verify runtime data**:
+
+   ```bash
+   ls -la ~/.local/share/hyprwhspr/
+   ```
+
+3. **Check service status**:
+
+   ```bash
+   systemctl --user status hyprwhspr
+   ```
+
+### Clean Reinstall
+
+To completely remove hyprwhspr:
+
+```bash
+# Stop services
+systemctl --user stop hyprwhspr ydotool
+
+# Remove runtime data
+rm -rf ~/.local/share/hyprwhspr/
+
+# Remove user config
+rm -rf ~/.config/hyprwhspr/
+
+# Remove system files
+sudo rm -rf /usr/lib/hyprwhspr/
+```
 
 ## Troubleshooting
 
@@ -360,7 +422,7 @@ If you're having persistent issues, you can completely reset hyprwhspr:
 The reset script will:
 
 - Stop and disable all services
-- Remove installation directory (`/opt/hyprwhspr`)
+- Remove installation directory (`/usr/lib/hyprwhspr`)
 - Remove user config and data
 - Clean up waybar integration
 - Remove hyprland scripts
@@ -386,7 +448,7 @@ journalctl --user -u hyprwhspr.service -f
 
 ```bash
 # Fix uinput permissions
-/opt/hyprwhspr/scripts/fix-uinput-permissions.sh
+/usr/lib/hyprwhspr/scripts/fix-uinput-permissions.sh
 
 # Log out and back in
 ```
@@ -408,7 +470,7 @@ systemctl --user restart pipewire
 cat ~/.config/hyprwhspr/config.json | grep audio_feedback
 
 # Verify sound files exist
-ls -la /opt/hyprwhspr/assets/
+ls -la /usr/lib/hyprwhspr/share/assets/
 
 # Check if ffplay/aplay/paplay is available
 which ffplay aplay paplay
@@ -418,10 +480,10 @@ which ffplay aplay paplay
 
 ```bash
 # Check if model exists
-ls -la /opt/hyprwhspr/whisper.cpp/models/
+ls -la ~/.local/share/hyprwhspr/whisper.cpp/models/
 
 # Download a different model
-cd /opt/hyprwhspr/whisper.cpp
+cd ~/.local/share/hyprwhspr/whisper.cpp
 sh ./models/download-ggml-model.sh tiny.en
 
 # Verify model path in config
@@ -432,7 +494,7 @@ cat ~/.config/hyprwhspr/config.json | grep model
 
 ```bash
 # Check service health and auto-recover
-/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh health
+/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh health
 
 # Manual restart if needed
 systemctl --user restart hyprwhspr.service

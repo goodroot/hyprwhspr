@@ -97,8 +97,9 @@ class ConfigManager:
     
     def get_whisper_model_path(self, model_name: str) -> Path:
         """Get the path to a whisper model file"""
-        # Look for models in the installation directory
-        install_dir = Path("/opt/hyprwhspr")
+        # Look for models in user space
+        user_data_dir = Path.home() / '.local' / 'share' / 'hyprwhspr'
+        models_dir = user_data_dir / "whisper.cpp" / "models"
         
         # Handle different model naming conventions
         if model_name.endswith('.en'):
@@ -106,8 +107,8 @@ class ConfigManager:
             model_filename = f"ggml-{model_name}.bin"
         else:
             # Multilingual model - check both .en.bin and .bin versions
-            en_model_path = install_dir / "whisper.cpp" / "models" / f"ggml-{model_name}.en.bin"
-            multi_model_path = install_dir / "whisper.cpp" / "models" / f"ggml-{model_name}.bin"
+            en_model_path = models_dir / f"ggml-{model_name}.en.bin"
+            multi_model_path = models_dir / f"ggml-{model_name}.bin"
             
             # Prefer English-only version if both exist
             if en_model_path.exists():
@@ -118,18 +119,20 @@ class ConfigManager:
                 # Default to English-only path for error messages
                 return en_model_path
         
-        model_path = install_dir / "whisper.cpp" / "models" / model_filename
+        model_path = models_dir / model_filename
         return model_path
     
     def get_whisper_binary_path(self) -> Path:
         """Get the path to the whisper binary"""
-        # Look for whisper.cpp in the installation directory
-        install_dir = Path("/opt/hyprwhspr")
+        # Look for whisper.cpp in user space
+        user_data_dir = Path.home() / '.local' / 'share' / 'hyprwhspr'
+        whisper_dir = user_data_dir / "whisper.cpp"
+        
         # Check a few possible locations for the whisper binary
         possible_paths = [
-            install_dir / "whisper.cpp" / "build" / "bin" / "whisper-cli",
-            install_dir / "whisper.cpp" / "main",
-            install_dir / "whisper.cpp" / "whisper"
+            whisper_dir / "build" / "bin" / "whisper-cli",
+            whisper_dir / "main",
+            whisper_dir / "whisper"
         ]
         
         for path in possible_paths:

@@ -11,9 +11,14 @@ PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
 export PYTHONPATH="$PACKAGE_ROOT/lib:$PYTHONPATH"
 
-# Activate virtual environment if it exists
-if [ -f "$PACKAGE_ROOT/venv/bin/activate" ]; then
-    source "$PACKAGE_ROOT/venv/bin/activate"
+# Activate virtual environment in user space
+USER_VENV="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv"
+if [ -f "$USER_VENV/bin/activate" ]; then
+    source "$USER_VENV/bin/activate"
+else
+    echo "Error: Virtual environment not found at $USER_VENV"
+    echo "Please run the installation script to set up hyprwhspr"
+    exit 1
 fi
 
 # Run the main application

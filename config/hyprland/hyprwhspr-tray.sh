@@ -3,12 +3,7 @@
 # hyprwhspr System Tray Status Script
 # Shows hyprwhspr status in the Hyprland system tray with JSON output
 
-# Dynamic path resolution - works in both Omarchy and AUR modes
-if [ -n "${HYPRWHSPR_AUR_INSTALL:-}" ] && [ "${HYPRWHSPR_AUR_INSTALL}" = "1" ]; then
-    PACKAGE_ROOT="/usr/lib/hyprwhspr"
-else
-    PACKAGE_ROOT="/opt/hyprwhspr"
-fi
+PACKAGE_ROOT="/usr/lib/hyprwhspr"
 
 ICON_PATH="$PACKAGE_ROOT/share/assets/hyprwhspr.png"
 
@@ -66,13 +61,8 @@ model_exists() {
     
     # If it's a short name like "base.en", resolve to full path
     if [[ "$model_path" != /* ]]; then
-        if [ -n "${HYPRWHSPR_AUR_INSTALL:-}" ] && [ "${HYPRWHSPR_AUR_INSTALL}" = "1" ]; then
-            # AUR mode: models in user data directory
-            model_path="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/whisper.cpp/models/ggml-${model_path}.bin"
-        else
-            # Omarchy mode: models in package directory
-            model_path="$PACKAGE_ROOT/whisper.cpp/models/ggml-${model_path}.bin"
-        fi
+        # Always use user data directory for models
+        model_path="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/whisper.cpp/models/ggml-${model_path}.bin"
     fi
     
     [[ -f "$model_path" ]] || return 1

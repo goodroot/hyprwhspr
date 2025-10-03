@@ -6,7 +6,7 @@ Wants=ydotool.service
 [Service]
 Type=simple
 ExecStartPre=/bin/sleep 2
-ExecStart=/usr/bin/hyprwhspr
+ExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr
 Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
 Restart=on-failure
 RestartSec=5

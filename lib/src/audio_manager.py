@@ -36,7 +36,7 @@ class AudioManager:
         
         # Audio file paths - use custom paths if specified, otherwise fall back to defaults
         # Look for assets in the installation directory first, then fall back to relative paths
-        install_dir = Path("/opt/hyprwhspr")
+        install_dir = Path("/usr/lib/hyprwhspr")
         self.assets_dir = install_dir / "share" / "assets"
         
         # Fallback to relative paths if installation directory doesn't exist

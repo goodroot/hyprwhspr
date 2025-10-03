@@ -30,8 +30,8 @@ log_error() {
 }
 
 # Configuration
-INSTALL_DIR="/opt/hyprwhspr"
-WHISPER_DIR="$INSTALL_DIR/whisper.cpp"
+INSTALL_DIR="/usr/lib/hyprwhspr"
+WHISPER_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/whisper.cpp"
 
 # Check if running as root
 if [[ $EUID -eq 0 ]]; then

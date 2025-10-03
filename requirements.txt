@@ -13,8 +13,5 @@ requests>=2.25.0
 # System integration
 psutil>=5.8.0
 
-# Configuration and utilities
-json5>=0.9.0
-
 # CLI formatting and logging
 rich>=13.0.0
