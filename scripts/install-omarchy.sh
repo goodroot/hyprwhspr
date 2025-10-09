@@ -483,7 +483,7 @@ setup_whisper() {
     log_info "Attempting ROCm build..."
     rm -rf build
     if timeout 300 cmake -B build \
-      -DGGML_HIPBLAS=ON \
+      -DGGML_HIP=ON \
       -DCMAKE_BUILD_TYPE=Release 2>/dev/null; then
       
       log_info "ROCm configuration successful, building..."

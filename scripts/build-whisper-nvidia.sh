@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# hyprwhspr - NVIDIA-optimized Whisper.cpp Build Script
-# This script builds whisper.cpp with CUDA support for GPU acceleration
+# hyprwhspr - Multi-GPU Whisper.cpp Build Script
+# This script builds whisper.cpp with CUDA or ROCm/HIP support for GPU acceleration
 
 set -e
 
@@ -46,35 +46,52 @@ if [ ! -d "$WHISPER_DIR" ]; then
     exit 1
 fi
 
-# Function to check NVIDIA setup
-check_nvidia() {
-    log_info "Checking NVIDIA setup..."
+# Function to detect GPU backend
+detect_gpu_backend() {
+    log_info "Detecting GPU backend..."
     
-    # Check if nvidia-smi is available
-    if ! command -v nvidia-smi &> /dev/null; then
-        log_error "nvidia-smi not found. NVIDIA drivers may not be installed."
-        log_error "Please install NVIDIA drivers first:"
-        log_error "  sudo pacman -S nvidia nvidia-utils"
-        exit 1
+    # Check NVIDIA CUDA
+    if command -v nvidia-smi &> /dev/null; then
+        log_info "NVIDIA GPU detected:"
+        nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits
+        
+        if command -v nvcc &> /dev/null; then
+            log_success "CUDA toolkit found - using CUDA backend"
+            echo "cuda"
+            return
+        else
+            log_warning "nvcc (CUDA compiler) not found."
+            log_warning "Installing CUDA toolkit..."
+            sudo pacman -S --needed --noconfirm cuda
+            echo "cuda"
+            return
+        fi
     fi
     
-    # Check GPU info
-    log_info "NVIDIA GPU detected:"
-    nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits
-    
-    # Check CUDA toolkit
-    if ! command -v nvcc &> /dev/null; then
-        log_warning "nvcc (CUDA compiler) not found."
-        log_warning "Installing CUDA toolkit..."
-        sudo pacman -S --needed --noconfirm cuda
+    # Check AMD ROCm
+    if command -v rocm-smi &> /dev/null || [ -d "/opt/rocm" ]; then
+        log_info "AMD ROCm detected"
+        log_success "Using ROCm/HIP backend"
+        echo "rocm"
+        return
     fi
     
-    log_success "NVIDIA setup verified"
+    # Check Vulkan
+    if command -v vulkaninfo &> /dev/null; then
+        log_info "Vulkan detected"
+        log_success "Using Vulkan backend"
+        echo "vulkan"
+        return
+    fi
+    
+    log_warning "No GPU backend detected - falling back to CPU"
+    echo "cpu"
 }
 
-# Function to build with CUDA support
-build_with_cuda() {
-    log_info "Building whisper.cpp with CUDA support..."
+# Function to build with GPU support
+build_with_gpu() {
+    local backend=$1
+    log_info "Building whisper.cpp with $backend support..."
     
     cd "$WHISPER_DIR"
     
@@ -85,12 +102,28 @@ build_with_cuda() {
     mkdir -p build
     cd build
     
-    # Configure with CUDA support
-    log_info "Configuring CMake with CUDA..."
-    cmake .. -DWHISPER_CUDA=ON -DCMAKE_BUILD_TYPE=Release
+    # Configure with appropriate GPU support
+    case $backend in
+        "cuda")
+            log_info "Configuring CMake with CUDA..."
+            cmake .. -DWHISPER_CUDA=ON -DCMAKE_BUILD_TYPE=Release
+            ;;
+        "rocm")
+            log_info "Configuring CMake with ROCm/HIP..."
+            cmake .. -DGGML_HIP=ON -DCMAKE_BUILD_TYPE=Release
+            ;;
+        "vulkan")
+            log_info "Configuring CMake with Vulkan..."
+            cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+            ;;
+        "cpu")
+            log_info "Configuring CMake for CPU-only..."
+            cmake .. -DCMAKE_BUILD_TYPE=Release
+            ;;
+    esac
     
     # Build with optimizations
-    log_info "Building with CUDA support..."
+    log_info "Building with $backend support..."
     cmake --build . -j --config Release
     
     # Verify binary was created
@@ -99,7 +132,7 @@ build_with_cuda() {
         exit 1
     fi
     
-    log_success "whisper.cpp built with CUDA support"
+    log_success "whisper.cpp built with $backend support"
 }
 
 # Function to test GPU acceleration
@@ -132,10 +165,11 @@ show_usage() {
     echo "  --help     Show this help message"
     echo "  --test     Run GPU acceleration test after build"
     echo ""
-    echo "This script builds whisper.cpp with NVIDIA GPU support for hyprwhspr."
+    echo "This script builds whisper.cpp with multi-GPU support for hyprwhspr."
+    echo "Supported backends: NVIDIA CUDA, AMD ROCm/HIP, Vulkan, CPU-only"
     echo "Make sure you have:"
-    echo "  - NVIDIA drivers installed"
-    echo "  - CUDA toolkit installed"
+    echo "  - Appropriate GPU drivers installed"
+    echo "  - Required toolkits (CUDA, ROCm, etc.)"
     echo "  - Run the main installation script first"
 }
 
@@ -162,20 +196,20 @@ main() {
         esac
     done
     
-    log_info "Starting NVIDIA-optimized whisper.cpp build for hyprwhspr..."
+    log_info "Starting multi-GPU whisper.cpp build for hyprwhspr..."
     
-    # Check NVIDIA setup
-    check_nvidia
+    # Detect GPU backend
+    BACKEND=$(detect_gpu_backend)
     
-    # Build with CUDA
-    build_with_cuda
+    # Build with detected backend
+    build_with_gpu "$BACKEND"
     
     # Test if requested
     if [ "$test_gpu" = true ]; then
         test_gpu_acceleration
     fi
     
-    log_success "NVIDIA-optimized build completed!"
+    log_success "Multi-GPU build completed!"
     log_info ""
     log_info "Your hyprwhspr installation now has GPU acceleration!"
     log_info "The service will automatically use GPU acceleration when available."
