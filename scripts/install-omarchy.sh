@@ -1003,24 +1003,31 @@ main() {
   
   log_info "Installing to $INSTALL_DIR"
   
-  # Always copy files to system directory
-  sudo mkdir -p "$INSTALL_DIR"
-  sudo cp -r -P bin lib config share requirements.txt LICENSE README.md "$INSTALL_DIR/"
-  sudo chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
-  
-  # Verify critical files were copied
-  if [ -f "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" ]; then
-    log_success "✓ Waybar CSS file copied successfully"
+  # Check if files already exist (AUR installation)
+  if [ -f "$INSTALL_DIR/lib/main.py" ] && [ -f "$INSTALL_DIR/requirements.txt" ]; then
+    log_info "Files already present in $INSTALL_DIR (AUR installation detected)"
+    log_success "✓ Skipping file copy - using existing installation"
   else
-    log_error "✗ Waybar CSS file missing after copy operation"
-    exit 1
-  fi
-  
-  if [ -d "$INSTALL_DIR/share/assets" ]; then
-    log_success "✓ Assets directory copied successfully"
-  else
-    log_error "✗ Assets directory missing after copy operation"
-    exit 1
+    # Copy files to system directory (development/local installation)
+    log_info "Copying files to $INSTALL_DIR"
+    sudo mkdir -p "$INSTALL_DIR"
+    sudo cp -r -P bin lib config share requirements.txt LICENSE README.md "$INSTALL_DIR/"
+    sudo chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
+    
+    # Verify critical files were copied
+    if [ -f "$INSTALL_DIR/config/waybar/hyprwhspr-style.css" ]; then
+      log_success "✓ Waybar CSS file copied successfully"
+    else
+      log_error "✗ Waybar CSS file missing after copy operation"
+      exit 1
+    fi
+    
+    if [ -d "$INSTALL_DIR/share/assets" ]; then
+      log_success "✓ Assets directory copied successfully"
+    else
+      log_error "✗ Assets directory missing after copy operation"
+      exit 1
+    fi
   fi
   
   # Validate that required files exist
