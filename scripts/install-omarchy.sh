@@ -37,12 +37,31 @@ if [ "$EUID" -eq 0 ]; then
   if [ -n "${SUDO_USER:-}" ]; then
     ACTUAL_USER="$SUDO_USER"
   else
-    ACTUAL_USER=$(stat -c '%U' /home 2>/dev/null | head -1 || echo "root")
+    # Try to find the first non-root user with a home directory
+    ACTUAL_USER=""
+    for user in $(getent passwd | cut -d: -f1 | grep -v "^root$"); do
+      user_home=$(getent passwd "$user" | cut -d: -f6)
+      if [ -d "$user_home" ] && [ "$user_home" != "/" ]; then
+        ACTUAL_USER="$user"
+        break
+      fi
+    done
+    
+    # Fallback to root if no suitable user found
+    if [ -z "$ACTUAL_USER" ]; then
+      log_warning "No suitable non-root user found, using root"
+      ACTUAL_USER="root"
+    fi
   fi
 else
   ACTUAL_USER="$USER"
 fi
+
 USER_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
+if [ -z "$USER_HOME" ] || [ ! -d "$USER_HOME" ]; then
+  log_error "Invalid user home directory for user: $ACTUAL_USER"
+  exit 1
+fi
 USER_CONFIG_DIR="$USER_HOME/.config/hyprwhspr"
 
 # ----------------------- Command line options ------------------
@@ -607,19 +626,20 @@ WAYBAR_CONFIG
 
   # Create backup of waybar config before modifying
   local backup_file="$waybar_config.backup-$(date +%Y%m%d-%H%M%S)"
-  if cp "$waybar_config" "$backup_file"; then
+  if cp -P "$waybar_config" "$backup_file"; then
     log_info "Backup created: $backup_file"
   else
     log_warning "Could not create backup of waybar config"
   fi
 
   # Use Python to safely modify the waybar config with proper JSON handling
-  "$VENV_DIR/bin/python3" <<EOF
+  "$VENV_DIR/bin/python3" -c "
 import sys
 import json
+import os
 
-config_path = "$waybar_config"
-module_path = "$INSTALL_DIR/config/waybar/hyprwhspr-module.jsonc"
+config_path = '$waybar_config'
+module_path = '$INSTALL_DIR/config/waybar/hyprwhspr-module.jsonc'
 
 try:
     # Read existing config with standard JSON parser
@@ -632,7 +652,7 @@ try:
     
     if module_path not in config['include']:
         config['include'].append(module_path)
-        print("Added hyprwhspr module to include list")
+        print('Added hyprwhspr module to include list')
     
     # Add module to modules-right if not present
     if 'modules-right' not in config:
@@ -640,22 +660,22 @@ try:
     
     if 'custom/hyprwhspr' not in config['modules-right']:
         config['modules-right'].insert(0, 'custom/hyprwhspr')
-        print("Added custom/hyprwhspr to modules-right array")
+        print('Added custom/hyprwhspr to modules-right array')
     
     # Write back the config with proper JSON formatting
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2, separators=(',', ': '))
 
-    print("Waybar config updated successfully")
+    print('Waybar config updated successfully')
     
 except json.JSONDecodeError as e:
-    print(f"ERROR: Invalid JSON in waybar config: {e}", file=sys.stderr)
-    print("Please check your waybar config for syntax errors", file=sys.stderr)
+    print(f'ERROR: Invalid JSON in waybar config: {e}', file=sys.stderr)
+    print('Please check your waybar config for syntax errors', file=sys.stderr)
     sys.exit(1)
 except Exception as e:
-    print(f"Error updating waybar config: {e}", file=sys.stderr)
+    print(f'Error updating waybar config: {e}', file=sys.stderr)
     sys.exit(1)
-EOF
+"
 
   if [ $? -ne 0 ]; then
     log_error "Failed to update waybar config"
@@ -683,12 +703,46 @@ EOF
     log_info "Adding CSS import to waybar style.css..."
     local waybar_style="$USER_HOME/.config/waybar/style.css"
     if [ -f "$waybar_style" ] && ! grep -q "hyprwhspr-style.css" "$waybar_style"; then
-      if grep -q "^@import" "$waybar_style"; then
-        awk '/^@import/ { print; last_import = NR } !/^@import/ { if (last_import && NR == last_import + 1) { print "@import \"/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css\";"; } print }' "$waybar_style" > "$waybar_style.tmp" && mv "$waybar_style.tmp" "$waybar_style"
+      # Use Python for safer CSS manipulation
+      "$VENV_DIR/bin/python3" <<EOF
+import sys
+import os
+
+css_file = "$waybar_style"
+import_line = '@import "/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css";'
+
+try:
+    with open(css_file, 'r') as f:
+        content = f.read()
+    
+    # Check if import already exists
+    if import_line in content:
+        print("CSS import already present")
+        sys.exit(0)
+    
+    # Add import at the beginning
+    new_content = import_line + "\n" + content
+    
+    # Write to temporary file first
+    temp_file = css_file + ".tmp"
+    with open(temp_file, 'w') as f:
+        f.write(new_content)
+    
+    # Atomic move
+    os.rename(temp_file, css_file)
+    print("CSS import added successfully")
+    
+except Exception as e:
+    print(f"Error updating CSS file: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+      
+      if [ $? -eq 0 ]; then
+        log_success "✓ CSS import added to waybar style.css"
       else
-        echo -e "@import \"/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css\";\n$(cat "$waybar_style")" > "$waybar_style.tmp" && mv "$waybar_style.tmp" "$waybar_style"
+        log_error "✗ Failed to add CSS import to waybar style.css"
+        return 1
       fi
-      log_success "✓ CSS import added to waybar style.css"
     elif [ -f "$waybar_style" ]; then
       log_info "CSS import already present in waybar style.css"
     else
@@ -889,7 +943,7 @@ main() {
   
   # Always copy files to system directory
   sudo mkdir -p "$INSTALL_DIR"
-  sudo cp -r . "$INSTALL_DIR/"
+  sudo cp -r -P . "$INSTALL_DIR/"
   sudo chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
   
   # Verify critical files were copied
