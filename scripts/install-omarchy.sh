@@ -321,8 +321,14 @@ setup_python_environment() {
   source "$VENV_DIR/bin/activate"
   pip install --upgrade pip wheel
   
-  if [ "$cur_req_hash" != "$stored_req_hash" ] || [ -z "$stored_req_hash" ]; then
-    log_info "Installing Python dependencies (requirements.txt changed)"
+  # Check if dependencies are actually installed in the venv
+  local deps_installed=false
+  if timeout 5s "$VENV_DIR/bin/python" -c "import sounddevice, pywhispercpp" >/dev/null 2>&1; then
+    deps_installed=true
+  fi
+  
+  if [ "$cur_req_hash" != "$stored_req_hash" ] || [ -z "$stored_req_hash" ] || [ "$deps_installed" = "false" ]; then
+    log_info "Installing Python dependencies (requirements.txt changed or deps missing)"
     pip install -r "$INSTALL_DIR/requirements.txt"
     set_state "requirements_hash" "$cur_req_hash"
     log_success "Python dependencies installed"
@@ -377,6 +383,25 @@ setup_nvidia_support() {
   fi
 }
 
+# ----------------------- AMD support -----------------------
+setup_amd_support() {
+  log_info "Checking for AMD GPU..."
+  if command -v rocm-smi >/dev/null 2>&1 || [ -d /opt/rocm ]; then
+    log_success "AMD GPU with ROCm detected"
+    export ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
+    if [ -d "$ROCM_PATH" ]; then
+      export PATH="$ROCM_PATH/bin:$PATH"
+      log_success "ROCm toolkit present"
+    else
+      log_warning "ROCm not found; installing..."
+      # ROCm installation for Arch (adjust for distro)
+      yay -S --needed --noconfirm rocm-hip-sdk rocm-opencl-sdk || true
+    fi
+  else
+    log_info "No AMD GPU detected"
+  fi
+}
+
 # ----------------------- whisper.cpp build ---------------------
 setup_whisper() {
   log_info "Setting up whisper.cpp…"
@@ -414,9 +439,17 @@ setup_whisper() {
     log_info "Building CPU-only"
   fi
 
+  # Check for AMD ROCm support
+  local use_rocm=false
+  if [ -d /opt/rocm ] && command -v hipcc >/dev/null 2>&1; then
+    use_rocm=true
+    log_info "ROCm detected: building with AMD GPU support"
+  fi
+
   # ---------- configure & build ----------
   local build_success=false
   local cuda_build_failed=false
+  local rocm_build_failed=false
   
   if [[ "$use_cuda" == true ]]; then
     log_info "Attempting CUDA build..."
@@ -445,13 +478,42 @@ setup_whisper() {
     fi
   fi
   
-  # Fallback to CPU-only build if CUDA failed or wasn't requested
-  if [[ "$build_success" != true ]]; then
-    if [[ "$cuda_build_failed" == true ]]; then
-      log_info "Falling back to CPU-only build due to CUDA issues..."
-      log_info "This is common with older NVIDIA cards (RTX 20xx series) and newer CUDA toolchains"
+  # Try ROCm build if CUDA failed or wasn't requested
+  if [[ "$build_success" != true && "$use_rocm" == true ]]; then
+    log_info "Attempting ROCm build..."
+    rm -rf build
+    if timeout 300 cmake -B build \
+      -DGGML_HIPBLAS=ON \
+      -DCMAKE_BUILD_TYPE=Release 2>/dev/null; then
+      
+      log_info "ROCm configuration successful, building..."
+      if timeout 800 cmake --build build -j --config Release 2>/dev/null; then
+        # Verify ROCm binary was built correctly
+        if [ -x "build/bin/whisper-cli" ] && ldd build/bin/whisper-cli | grep -qi hip; then
+          log_success "ROCm build completed successfully"
+          build_success=true
+        else
+          log_warning "ROCm build completed but binary not HIP-linked"
+          rocm_build_failed=true
+        fi
+      else
+        log_warning "ROCm build timed out or failed"
+        rocm_build_failed=true
+      fi
     else
-      log_info "Building CPU-only (no CUDA requested)"
+      log_warning "ROCm configuration failed"
+      rocm_build_failed=true
+    fi
+  fi
+  
+  # Fallback to CPU-only build if CUDA/ROCm failed or wasn't requested
+  if [[ "$build_success" != true ]]; then
+    if [[ "$cuda_build_failed" == true || "$rocm_build_failed" == true ]]; then
+      log_info "Falling back to CPU-only build due to GPU issues..."
+      log_info "This is common with older NVIDIA cards (RTX 20xx series) and newer CUDA toolchains"
+      log_info "Or with AMD cards that don't have proper ROCm support"
+    else
+      log_info "Building CPU-only (no GPU requested)"
     fi
     
     rm -rf build
@@ -943,7 +1005,7 @@ main() {
   
   # Always copy files to system directory
   sudo mkdir -p "$INSTALL_DIR"
-  sudo cp -r -P . "$INSTALL_DIR/"
+  sudo cp -r -P bin lib config share requirements.txt LICENSE README.md "$INSTALL_DIR/"
   sudo chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
   
   # Verify critical files were copied
@@ -971,6 +1033,7 @@ main() {
   install_system_dependencies
   setup_python_environment
   setup_nvidia_support
+  setup_amd_support
   setup_whisper
   download_models
   setup_systemd_service   # <— auto-enable & start (all modes)

@@ -20,7 +20,8 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 - **Optimized for Arch Linux / Omarchy** - Seamless integration with [Omarchy](https://omarchy.org/) / [Hyprland](https://github.com/hyprwm/Hyprland) & [Waybar](https://github.com/Alexays/Waybar)
 - **Whisper-powered** - State-of-the-art speech recognition via [OpenAI's Whisper](https://github.com/openai/whisper)
-- **NVIDIA GPU support** - Automatic CUDA detection and acceleration
+- **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA), AMD (ROCm), Vulkan, and Metal
+- **Hot model loading** - pywhispercpp backend keeps models in memory for _fast_ transcription
 - **Word overrides** - Customize transcriptions, prompt and corrections
 - **Run as user** - Runs in user space, just sudo once for the installer
 
@@ -29,7 +30,8 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 ### Prerequisites
 
 - **[Omarchy](https://omarchy.org/)**
-- **NVIDIA GPU** (optional, for acceleration)
+- **NVIDIA GPU** (optional, for CUDA acceleration)
+- **AMD GPU** (optional, for ROCm acceleration)
 
 ### Installation
 
@@ -129,6 +131,19 @@ Edit `~/.config/hyprwhspr/config.json`:
 - **Large-v3 (latest)**: `"large-v3"` ⚠️ **GPU required**
 
 See [model information](#whisper-models) for install instructions.
+
+**Backend options** - choose transcription engine:
+
+```jsonc
+{
+    "fallback_cli": false,  // false = pywhispercpp (in-process, default), true = CLI subprocess
+    "threads": 4            // thread count for whisper processing
+}
+```
+
+- **pywhispercpp (default)**: In-process Python bindings with hot model loading, 2-4× faster than CLI
+- **CLI subprocess**: Traditional subprocess approach (fallback if pywhispercpp fails)
+- **Threads**: Adjust CPU thread count (default: 4, increase for better CPU performance)
 
 **Word overrides** - customize transcriptions:
 

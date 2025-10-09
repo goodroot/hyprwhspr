@@ -4,6 +4,9 @@ hyprwhspr - Voice dictation application for Hyprland (Headless Mode)
 Fast, reliable speech-to-text with instant text injection
 """
 
+print("🚀 HYPRWHSPR STARTING UP!")
+print("=" * 50)
+
 import sys
 import time
 from pathlib import Path

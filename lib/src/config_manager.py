@@ -4,9 +4,8 @@ Handles loading, saving, and managing application settings
 """
 
 import json
-import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 class ConfigManager:
@@ -17,6 +16,8 @@ class ConfigManager:
         self.default_config = {
             'primary_shortcut': 'SUPER+ALT+D',
             'model': 'base',
+            'fallback_cli': False,  # False = use pywhispercpp (in-process, default), True = use CLI subprocess
+            'threads': 4,           # Thread count for whisper processing
             'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
             'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
@@ -52,7 +53,7 @@ class ConfigManager:
         """Load configuration from file"""
         try:
             if self.config_file.exists():
-                with open(self.config_file, 'r') as f:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f)
                     
                 # Merge loaded config with defaults (preserving any new default keys)
@@ -70,7 +71,7 @@ class ConfigManager:
     def save_config(self) -> bool:
         """Save current configuration to file"""
         try:
-            with open(self.config_file, 'w') as f:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=2)
             print(f"Configuration saved to {self.config_file}")
             return True
