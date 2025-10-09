@@ -145,8 +145,9 @@ class ConfigManager:
     
     def get_temp_directory(self) -> Path:
         """Get the temporary directory for audio files"""
-        temp_dir = Path(__file__).parent.parent / "temp"
-        temp_dir.mkdir(exist_ok=True)
+        # Use user-writable temp directory instead of system installation directory
+        temp_dir = Path.home() / '.local' / 'share' / 'hyprwhspr' / 'temp'
+        temp_dir.mkdir(parents=True, exist_ok=True)
         return temp_dir
     
     def get_word_overrides(self) -> Dict[str, str]:
