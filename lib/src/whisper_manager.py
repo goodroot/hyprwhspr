@@ -43,7 +43,6 @@ class WhisperManager:
             # Detect GPU backend for logging
             gpu_backend = self._detect_gpu_backend()
 
-            # pywhispercpp backend only
             try:
                 from pywhispercpp.model import Model
 
