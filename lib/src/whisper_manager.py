@@ -63,6 +63,29 @@ class WhisperManager:
                         print(f"ERROR: Whisper model not found at: {self.model_path}")
                         print(f"  Please download the {self.current_model} model first")
                         raise FileNotFoundError("Whisper model not found")
+
+                    # If GPU available but CLI binary is CPU-only, attempt on-demand GPU rebuild
+                    try:
+                        if gpu_backend != "CPU":
+                            result = subprocess.run(["ldd", str(self.whisper_binary)], capture_output=True, text=True)
+                            binary_info = result.stdout.lower() if result.returncode == 0 else ""
+                            needs_cuda = (gpu_backend.startswith("CUDA") and ("cuda" not in binary_info))
+                            needs_rocm = (gpu_backend.startswith("ROCm") and ("hip" not in binary_info and "rocm" not in binary_info))
+                            needs_vulkan = (gpu_backend == "Vulkan" and ("vulkan" not in binary_info))
+                            if needs_cuda or needs_rocm or needs_vulkan:
+                                print("[CLI] GPU available but whisper.cpp CLI lacks GPU support. Rebuilding with GPU flags…", flush=True)
+                                rebuild_script = "/usr/lib/hyprwhspr/scripts/build-whisper-nvidia.sh"
+                                if os.path.isfile(rebuild_script) and os.access(rebuild_script, os.X_OK):
+                                    ret = subprocess.run([rebuild_script])
+                                    if ret.returncode == 0:
+                                        print("[CLI] whisper.cpp CLI rebuilt with GPU support.", flush=True)
+                                    else:
+                                        print("[CLI] WARNING: Failed to rebuild whisper.cpp with GPU support. Continuing with CPU binary.", flush=True)
+                                else:
+                                    print("[CLI] WARNING: Rebuild script not found or not executable. Continuing with CPU binary.", flush=True)
+                    except Exception as _:
+                        # Non-fatal: proceed with whatever binary we have
+                        pass
                     
                     print(f"[CLI] Using model: {self.current_model} at {self.model_path}", flush=True)
                     print(f"[CLI] Detected GPU backend: {gpu_backend}", flush=True)

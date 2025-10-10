@@ -319,8 +319,27 @@ setup_python_environment() {
   
   # Install dependencies from system files
   source "$VENV_DIR/bin/activate"
-  pip install --upgrade pip wheel
+  local pip_bin="$VENV_DIR/bin/pip"
+  "$pip_bin" install --upgrade pip wheel
+
+  local enable_cuda=false
+  local enable_rocm=false
   
+  # Detect GPU toolchains
+  if command -v nvidia-smi >/dev/null 2>&1 && command -v nvcc >/dev/null 2>&1; then
+    enable_cuda=true
+    log_info "CUDA toolchain detected; enabling GGML_CUDA=ON for pywhispercpp build"
+  elif command -v nvidia-smi >/dev/null 2>&1; then
+    log_warning "NVIDIA GPU detected but nvcc compiler missing; pywhispercpp build stays CPU-only"
+  fi
+  
+  if { command -v rocm-smi >/dev/null 2>&1 || [ -d /opt/rocm ]; } && command -v hipcc >/dev/null 2>&1; then
+    enable_rocm=true
+    log_info "ROCm toolchain detected; enabling GGML_HIP=ON for pywhispercpp build"
+  elif { command -v rocm-smi >/dev/null 2>&1 || [ -d /opt/rocm ]; }; then
+    log_warning "ROCm detected but hipcc compiler missing; pywhispercpp build stays CPU-only"
+  fi
+
   # Check if dependencies are actually installed in the venv
   local deps_installed=false
   if timeout 5s "$VENV_DIR/bin/python" -c "import sounddevice, pywhispercpp" >/dev/null 2>&1; then
@@ -329,12 +348,113 @@ setup_python_environment() {
   
   if [ "$cur_req_hash" != "$stored_req_hash" ] || [ -z "$stored_req_hash" ] || [ "$deps_installed" = "false" ]; then
     log_info "Installing Python dependencies (requirements.txt changed or deps missing)"
-    pip install -r "$INSTALL_DIR/requirements.txt"
+    
+    if [ "$enable_cuda" = true ] || [ "$enable_rocm" = true ]; then
+      # GPU build path: install everything except pywhispercpp first
+      local tmp_req
+      tmp_req=$(mktemp)
+      grep -vi '^pywhispercpp' "$INSTALL_DIR/requirements.txt" > "$tmp_req"
+      if [ -s "$tmp_req" ]; then
+        if ! "$pip_bin" install -r "$tmp_req"; then
+          log_error "Failed to install base Python dependencies"
+          rm -f "$tmp_req"
+          return 1
+        fi
+      fi
+      rm -f "$tmp_req"
+
+      # Remove any pre-existing pywhispercpp wheel before rebuilding
+      "$pip_bin" uninstall -y pywhispercpp >/dev/null 2>&1 || true
+
+      # Build pywhispercpp with GPU support
+      if [ "$enable_cuda" = true ]; then
+        if ! install_pywhispercpp_cuda "$pip_bin"; then
+          log_error "Failed to install pywhispercpp with CUDA support"
+          return 1
+        fi
+      elif [ "$enable_rocm" = true ]; then
+        if ! install_pywhispercpp_rocm "$pip_bin"; then
+          log_error "Failed to install pywhispercpp with ROCm support"
+          return 1
+        fi
+      fi
+    else
+      # CPU-only path: install everything normally
+      "$pip_bin" install -r "$INSTALL_DIR/requirements.txt"
+    fi
+    
     set_state "requirements_hash" "$cur_req_hash"
     log_success "Python dependencies installed"
   else
     log_info "Python dependencies up to date (skipping pip install)"
   fi
+}
+
+# ----------------------- GPU-specific pywhispercpp installers -----------------------
+install_pywhispercpp_cuda() {
+  local pip_bin="$1"
+  local src_dir="$USER_BASE/pywhispercpp-src"
+
+  if [ -z "$pip_bin" ]; then
+    log_error "pip binary not provided for pywhispercpp CUDA install"
+    return 1
+  fi
+
+  # Clone or update pywhispercpp sources (with submodules)
+  if [ ! -d "$src_dir/.git" ]; then
+    log_info "Cloning pywhispercpp sources → $src_dir"
+    git clone --recurse-submodules https://github.com/Absadiki/pywhispercpp.git "$src_dir" || return 1
+  else
+    log_info "Updating pywhispercpp sources in $src_dir"
+    (cd "$src_dir" && git fetch --tags && git pull --ff-only && git submodule update --init --recursive) || log_warning "Could not update pywhispercpp repository"
+  fi
+
+  # Use pip to build/install from source with CUDA support
+  log_info "Building pywhispercpp with CUDA (ggml CUDA) via pip"
+  if GGML_CUDA=ON "$pip_bin" install \
+      -e "$src_dir" \
+      --no-cache-dir \
+      --force-reinstall \
+      -v; then
+    log_success "pywhispercpp installed with CUDA acceleration via pip"
+    return 0
+  fi
+
+  log_error "pip install of pywhispercpp with CUDA failed"
+  return 1
+}
+
+install_pywhispercpp_rocm() {
+  local pip_bin="$1"
+  local src_dir="$USER_BASE/pywhispercpp-src"
+
+  if [ -z "$pip_bin" ]; then
+    log_error "pip binary not provided for pywhispercpp ROCm install"
+    return 1
+  fi
+
+  # Clone or update pywhispercpp sources (with submodules)
+  if [ ! -d "$src_dir/.git" ]; then
+    log_info "Cloning pywhispercpp sources → $src_dir"
+    git clone --recurse-submodules https://github.com/Absadiki/pywhispercpp.git "$src_dir" || return 1
+  else
+    log_info "Updating pywhispercpp sources in $src_dir"
+    (cd "$src_dir" && git fetch --tags && git pull --ff-only && git submodule update --init --recursive) || log_warning "Could not update pywhispercpp repository"
+  fi
+
+  # Use pip to build/install from source with HIP support
+  log_info "Building pywhispercpp with ROCm (ggml HIP) via pip"
+  if GGML_HIP=ON "$pip_bin" install \
+      -e "$src_dir" \
+      --no-cache-dir \
+      --force-reinstall \
+      -v; then
+    log_success "pywhispercpp installed with ROCm acceleration via pip"
+    return 0
+  fi
+
+  log_error "pip install of pywhispercpp with ROCm failed"
+  return 1
 }
 
 # ----------------------- NVIDIA support -----------------------
@@ -445,6 +565,11 @@ setup_whisper() {
     use_rocm=true
     log_info "ROCm detected: building with AMD GPU support"
   fi
+
+  # Initial install: force CPU-only build to avoid heavy GPU toolchain compile
+  use_cuda=false
+  use_rocm=false
+  log_info "Initial install: skipping GPU build for whisper.cpp (CPU-only)"
 
   # ---------- configure & build ----------
   local build_success=false
@@ -827,6 +952,7 @@ setup_user_config() {
 {
   "primary_shortcut": "SUPER+ALT+D",
   "model": "base.en",
+  "fallback_cli": false,
   "audio_feedback": true,
   "start_sound_volume": 0.5,
   "stop_sound_volume": 0.5,
@@ -838,6 +964,9 @@ CFG
     log_success "Created $USER_CONFIG_DIR/config.json"
   else
     sed -i 's|"model": "[^"]*"|"model": "base.en"|' "$USER_CONFIG_DIR/config.json"
+    if ! grep -q '"fallback_cli"' "$USER_CONFIG_DIR/config.json"; then
+      sed -i 's|"model": "base.en"|"model": "base.en",\n  "fallback_cli": false|' "$USER_CONFIG_DIR/config.json"
+    fi
     if ! grep -q "\"audio_feedback\"" "$USER_CONFIG_DIR/config.json"; then
       sed -i 's|"word_overrides": {}|"audio_feedback": true,\n    "start_sound_volume": 0.5,\n    "stop_sound_volume": 0.5,\n    "start_sound_path": "ping-up.ogg",\n    "stop_sound_path": "ping-down.ogg",\n    "word_overrides": {}|' "$USER_CONFIG_DIR/config.json"
     fi
@@ -1011,7 +1140,7 @@ main() {
     # Copy files to system directory (development/local installation)
     log_info "Copying files to $INSTALL_DIR"
     sudo mkdir -p "$INSTALL_DIR"
-    sudo cp -r -P bin lib config share requirements.txt LICENSE README.md "$INSTALL_DIR/"
+    sudo cp -r -P bin lib config share scripts requirements.txt LICENSE README.md "$INSTALL_DIR/"
     sudo chown -R "$ACTUAL_USER:$ACTUAL_USER" "$INSTALL_DIR"
     
     # Verify critical files were copied
@@ -1038,9 +1167,9 @@ main() {
   log_info "User runtime data directory: $USER_BASE"
 
   install_system_dependencies
-  setup_python_environment
   setup_nvidia_support
   setup_amd_support
+  setup_python_environment
   setup_whisper
   download_models
   setup_systemd_service   # <— auto-enable & start (all modes)

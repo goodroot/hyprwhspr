@@ -16,7 +16,7 @@ class ConfigManager:
         self.default_config = {
             'primary_shortcut': 'SUPER+ALT+D',
             'model': 'base',
-            'fallback_cli': True,   # True = use CLI subprocess (default), False = use pywhispercpp (in-process fallback)
+            'fallback_cli': False,   # False = use pywhispercpp (default, in-process); True = use CLI subprocess
             'threads': 4,           # Thread count for whisper processing
             'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
