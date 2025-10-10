@@ -136,13 +136,13 @@ See [model information](#whisper-models) for install instructions.
 
 ```jsonc
 {
-    "fallback_cli": false,  // false = pywhispercpp (in-process, default), true = CLI subprocess
+    "fallback_cli": true,   // true = CLI subprocess (default), false = pywhispercpp (in-process fallback)
     "threads": 4            // thread count for whisper processing
 }
 ```
 
-- **pywhispercpp (default)**: In-process Python bindings with hot model loading, 2-4× faster than CLI
-- **CLI subprocess**: Traditional subprocess approach (fallback if pywhispercpp fails)
+- **CLI subprocess (default)**: Traditional subprocess approach with reliable performance
+- **pywhispercpp (fallback)**: In-process Python bindings with hot model loading, 2-4× faster than CLI
 - **Threads**: Adjust CPU thread count (default: 4, increase for better CPU performance)
 
 **Word overrides** - customize transcriptions:
