@@ -26,8 +26,7 @@ YDOTOOL_UNIT="ydotool.service"
 # Always use user space for runtime data (consistent across all installations)
 USER_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr"
 VENV_DIR="$USER_BASE/venv"                    # Python virtual environment
-USER_WC_DIR="$USER_BASE/whisper.cpp"          # Built whisper.cpp
-USER_MODELS_DIR="$USER_WC_DIR/models"         # Downloaded models
+PYWHISPERCPP_MODELS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/pywhispercpp/models" # pywhispercpp model dir
 USER_BIN_DIR="$HOME/.local/bin"               # User's local bin directory
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/hyprwhspr"
 STATE_FILE="$STATE_DIR/install-state.json"    # Persistent installation state
@@ -78,10 +77,10 @@ log_info "Unified installation approach"
 log_info "INSTALL_DIR=$INSTALL_DIR (static application files)"
 log_info "USER_BASE=$USER_BASE (runtime data)"
 log_info "VENV_DIR=$VENV_DIR"
-log_info "USER_WC_DIR=$USER_WC_DIR"
+:
 
 # ----------------------- Helpers -------------------------------
-have_system_whisper() { command -v whisper-cli >/dev/null 2>&1; }
+:
 
 # Validate that INSTALL_DIR contains required files
 validate_install_dir() {
@@ -124,13 +123,7 @@ detect_cuda_host_compiler() {
   echo ""
 }
 
-ensure_user_bin_symlink() {
-  mkdir -p "$USER_BIN_DIR"
-  if [ -x "$USER_WC_DIR/build/bin/whisper-cli" ] && [ ! -e "$USER_BIN_DIR/whisper-cli" ]; then
-    ln -s "$USER_WC_DIR/build/bin/whisper-cli" "$USER_BIN_DIR/whisper-cli" || true
-    log_info "Linked whisper-cli → $USER_BIN_DIR/whisper-cli"
-  fi
-}
+:
 
 # ----------------------- State Management ------------------------
 # Initialize state directory and file
@@ -224,24 +217,8 @@ generate_installation_plan() {
     log_info "  • Python env: OK (up to date)"
   fi
   
-  # Check whisper.cpp build
-  if [ -d "$USER_WC_DIR/.git" ]; then
-    local current_rev
-    current_rev=$(cd "$USER_WC_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
-    local stored_rev
-    stored_rev=$(get_state "whisper_cpp_rev")
-    
-    if [ "$current_rev" != "$stored_rev" ] || [ -z "$stored_rev" ]; then
-      log_info "  • whisper.cpp: BUILD (new revision or not built)"
-    else
-      log_info "  • whisper.cpp: OK (up to date)"
-    fi
-  else
-    log_info "  • whisper.cpp: BUILD (not cloned)"
-  fi
-  
-  # Check models
-  local model_file="$USER_MODELS_DIR/ggml-base.en.bin"
+  # Check pywhispercpp base model
+  local model_file="${XDG_DATA_HOME:-$HOME/.local/share}/pywhispercpp/models/ggml-base.en.bin"
   if check_model_validity "$model_file"; then
     local file_size
     file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
@@ -254,7 +231,7 @@ generate_installation_plan() {
       log_info "  • model: OK (appears valid, ${file_size} bytes)"
     fi
   else
-    log_info "  • model: DOWNLOAD (missing or corrupted)"
+    log_info "  • pywhispercpp model: DOWNLOAD (missing or corrupted)"
   fi
   
   # Check waybar config (simplified check)
@@ -522,196 +499,30 @@ setup_amd_support() {
   fi
 }
 
-# ----------------------- whisper.cpp build ---------------------
-setup_whisper() {
-  log_info "Setting up whisper.cpp…"
+# ----------------------- pywhispercpp base model ---------------
+download_pywhispercpp_base_model() {
+  log_info "Downloading pywhispercpp base model…"
+  local py_models_dir="${XDG_DATA_HOME:-$HOME/.local/share}/pywhispercpp/models"
+  mkdir -p "$py_models_dir"
 
-  # Always use user space for whisper.cpp
-  mkdir -p "$USER_WC_DIR"
-  cd "$USER_WC_DIR"
-
-  # ---------- clone or update ----------
-  if [ ! -d ".git" ]; then
-    log_info "Cloning whisper.cpp → $PWD"
-    git clone https://github.com/ggml-org/whisper.cpp.git .
-  else
-    git pull --ff-only || true
-  fi
-
-  # ---------- CUDA availability ----------
-  if [ -z "${CUDACXX:-}" ] && [ -x /opt/cuda/bin/nvcc ]; then
-    export CUDACXX="/opt/cuda/bin/nvcc"
-    export PATH="/opt/cuda/bin:$PATH"
-  fi
-
-  local use_cuda=false
-  if [[ -n "${CUDACXX:-}" && -x "${CUDACXX}" ]]; then
-    if [ -z "${CUDAHOSTCXX:-}" ]; then
-      CUDAHOSTCXX="$(detect_cuda_host_compiler)"; export CUDAHOSTCXX
-    fi
-    if [[ -n "${CUDAHOSTCXX:-}" && -x "${CUDAHOSTCXX}" ]]; then
-      use_cuda=true
-      log_info "CUDA detected: building with GPU support (host: $CUDAHOSTCXX)"
-    else
-      log_warning "CUDA present but no suitable host compiler; building CPU-only"
-    fi
-  else
-    log_info "Building CPU-only"
-  fi
-
-  # Check for AMD ROCm support
-  local use_rocm=false
-  if [ -d /opt/rocm ] && command -v hipcc >/dev/null 2>&1; then
-    use_rocm=true
-    log_info "ROCm detected: building with AMD GPU support"
-  fi
-
-  # Initial install: force CPU-only build to avoid heavy GPU toolchain compile
-  use_cuda=false
-  use_rocm=false
-  log_info "Initial install: skipping GPU build for whisper.cpp (CPU-only)"
-
-  # ---------- configure & build ----------
-  local build_success=false
-  local cuda_build_failed=false
-  local rocm_build_failed=false
-  
-  if [[ "$use_cuda" == true ]]; then
-    log_info "Attempting CUDA build..."
-    if timeout 300 cmake -B build \
-      -DGGML_CUDA=ON \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_CUDA_HOST_COMPILER="${CUDAHOSTCXX}" 2>/dev/null; then
-      
-      log_info "CUDA configuration successful, building..."
-      if timeout 800 cmake --build build -j --config Release 2>/dev/null; then
-        # Verify CUDA binary was built correctly
-        if [ -x "build/bin/whisper-cli" ] && ldd build/bin/whisper-cli | grep -qi cuda; then
-          log_success "CUDA build completed successfully"
-          build_success=true
-        else
-          log_warning "CUDA build completed but binary not CUDA-linked"
-          cuda_build_failed=true
-        fi
-      else
-        log_warning "CUDA build timed out or failed"
-        cuda_build_failed=true
-      fi
-    else
-      log_warning "CUDA configuration failed"
-      cuda_build_failed=true
-    fi
-  fi
-  
-  # Try ROCm build if CUDA failed or wasn't requested
-  if [[ "$build_success" != true && "$use_rocm" == true ]]; then
-    log_info "Attempting ROCm build..."
-    rm -rf build
-    if timeout 300 cmake -B build \
-      -DGGML_HIP=ON \
-      -DCMAKE_BUILD_TYPE=Release 2>/dev/null; then
-      
-      log_info "ROCm configuration successful, building..."
-      if timeout 800 cmake --build build -j --config Release 2>/dev/null; then
-        # Verify ROCm binary was built correctly
-        if [ -x "build/bin/whisper-cli" ] && ldd build/bin/whisper-cli | grep -qi hip; then
-          log_success "ROCm build completed successfully"
-          build_success=true
-        else
-          log_warning "ROCm build completed but binary not HIP-linked"
-          rocm_build_failed=true
-        fi
-      else
-        log_warning "ROCm build timed out or failed"
-        rocm_build_failed=true
-      fi
-    else
-      log_warning "ROCm configuration failed"
-      rocm_build_failed=true
-    fi
-  fi
-  
-  # Fallback to CPU-only build if CUDA/ROCm failed or wasn't requested
-  if [[ "$build_success" != true ]]; then
-    if [[ "$cuda_build_failed" == true || "$rocm_build_failed" == true ]]; then
-      log_info "Falling back to CPU-only build due to GPU issues..."
-      log_info "This is common with older NVIDIA cards (RTX 20xx series) and newer CUDA toolchains"
-      log_info "Or with AMD cards that don't have proper ROCm support"
-    else
-      log_info "Building CPU-only (no GPU requested)"
-    fi
-    
-    rm -rf build
-    cmake -B build \
-      -DGGML_CUDA=OFF \
-      -DCMAKE_BUILD_TYPE=Release
-    
-    if cmake --build build -j --config Release; then
-      log_success "CPU-only build completed successfully"
-      build_success=true
-    else
-      log_error "CPU-only build failed"
-      build_success=false
-    fi
-  fi
-
-  # ---------- verify binary ----------
-  if [[ "$build_success" != true ]] || [ ! -x "build/bin/whisper-cli" ]; then
-    err "whisper.cpp build failed"
-    exit 1
-  fi
-
-  # ---------- link into ~/.local/bin for PATH ----------
-  ensure_path_contains_local_bin
-  ensure_user_bin_symlink
-
-  ok "whisper.cpp ready"
-}
-
-# ----------------------- Models --------------------------------
-download_models() {
-  log_info "Downloading Whisper base model…"
-  mkdir -p "$USER_MODELS_DIR"
-  
-  local model_file="$USER_MODELS_DIR/ggml-base.en.bin"
+  local model_file="$py_models_dir/ggml-base.en.bin"
   local model_url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
-  
-  # Check if model is already valid
+
   if check_model_validity "$model_file"; then
-    local file_size
-    file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
-    local stored_hash
-    stored_hash=$(get_state "model_base_en_hash")
-    
-    if [ -n "$stored_hash" ]; then
-      log_info "Model already present and verified (${file_size} bytes)"
-    else
-      log_info "Model file exists and appears valid (${file_size} bytes) - storing hash"
-      local current_hash
-      current_hash=$(compute_file_hash "$model_file")
-      set_state "model_base_en_hash" "$current_hash"
-    fi
+    log_success "pywhispercpp base model present"
     return 0
   fi
-  
-  # Model is missing or corrupted, download it
+
   if [ -f "$model_file" ]; then
-    local file_size
-    file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
-    log_warning "Model file exists but appears corrupted (${file_size} bytes) - re-downloading"
+    log_warning "Existing base model appears invalid; re-downloading"
     rm -f "$model_file"
   fi
-  
-  log_info "Downloading model from $model_url"
+
+  log_info "Fetching $model_url"
   if curl -L --fail -o "$model_file" "$model_url"; then
-    local downloaded_hash
-    downloaded_hash=$(compute_file_hash "$model_file")
-    local file_size
-    file_size=$(stat -c%s "$model_file" 2>/dev/null || echo "0")
-    set_state "model_base_en_hash" "$downloaded_hash"
-    log_success "Model downloaded and verified (${file_size} bytes)"
+    log_success "pywhispercpp base model downloaded"
   else
-    log_error "Failed to download model"
+    log_error "Failed to download pywhispercpp base model"
     return 1
   fi
 }
@@ -1038,19 +849,10 @@ validate_installation() {
   # Validate runtime files
   [ -x "$VENV_DIR/bin/python" ] || { log_error "Venv missing ($VENV_DIR)"; return 1; }
   
-  # Validate whisper-cli
-  if have_system_whisper; then
-    log_success "whisper-cli on PATH: $(command -v whisper-cli)"
-  elif [ -x "$USER_WC_DIR/build/bin/whisper-cli" ]; then
-    log_success "whisper-cli present at $USER_WC_DIR/build/bin/whisper-cli"
-  else
-    log_error "whisper-cli missing"
-    return 1
-  fi
-  
-  # Validate models
-  if [ ! -f "$USER_MODELS_DIR/ggml-base.en.bin" ] && [ ! -f "$USER_MODELS_DIR/base.en.bin" ]; then
-    log_error "Model missing (${USER_MODELS_DIR})"
+  # Validate pywhispercpp base model
+  local py_models_dir="${XDG_DATA_HOME:-$HOME/.local/share}/pywhispercpp/models"
+  if [ ! -f "$py_models_dir/ggml-base.en.bin" ]; then
+    log_error "pywhispercpp base model missing ($py_models_dir)"
     return 1
   fi
   
@@ -1077,10 +879,6 @@ verify_permissions_and_functionality() {
   command -v pactl >/dev/null && pactl list short sources | grep -q input \
     && log_success "✓ audio inputs present" || log_warning "⚠ no audio inputs detected"
 
-  if have_system_whisper || [ -x "$USER_WC_DIR/build/bin/whisper-cli" ]; then
-    timeout 10s whisper-cli --help >/dev/null 2>&1 \
-      && log_success "✓ whisper-cli responds" || { log_error "✗ whisper-cli not responding"; all_ok=false; }
-  fi
 
   if [ -x "$VENV_DIR/bin/python" ]; then
     timeout 5s "$VENV_DIR/bin/python" -c "import sounddevice" >/dev/null 2>&1 \
@@ -1170,8 +968,7 @@ main() {
   setup_nvidia_support
   setup_amd_support
   setup_python_environment
-  setup_whisper
-  download_models
+  download_pywhispercpp_base_model
   setup_systemd_service   # <— auto-enable & start (all modes)
   setup_hyprland_integration
   setup_user_config

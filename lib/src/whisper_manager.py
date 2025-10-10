@@ -1,8 +1,6 @@
 """
 Whisper manager for hyprwhspr
-Now supports two backends:
-gg- whisper_cpp CLI (subprocess, default)
-- pywhispercpp (in-process fallback, model kept hot)
+PyWhisperCPP-only backend (in-process, model kept hot)
 """
 
 import subprocess
@@ -30,12 +28,8 @@ class WhisperManager:
             
         # Whisper configuration
         self.current_model = self.config.get_setting('model', 'base')
-        self.fallback_cli = self.config.get_setting('fallback_cli', True)
-        
-        # Backend-specific attributes
-        self._pywhisper_model = None  # pywhispercpp model (in-process)
-        self.whisper_binary = None    # CLI binary path (default)
-        self.model_path = None        # CLI model path (default)
+        # Backend-specific attributes (pywhispercpp only)
+        self._pywhisper_model = None
         self.temp_dir = None
         
         # State
@@ -48,89 +42,34 @@ class WhisperManager:
             
             # Detect GPU backend for logging
             gpu_backend = self._detect_gpu_backend()
-            
-            if self.fallback_cli:
-                # Try CLI subprocess backend (default)
-                try:
-                    self.whisper_binary = self.config.get_whisper_binary_path()
-                    if not self.whisper_binary.exists():
-                        print(f"ERROR: Whisper binary not found at: {self.whisper_binary}")
-                        print("  Please build whisper.cpp first by running the build scripts")
-                        raise FileNotFoundError("Whisper binary not found")
-                    
-                    self.model_path = self.config.get_whisper_model_path(self.current_model)
-                    if not self.model_path.exists():
-                        print(f"ERROR: Whisper model not found at: {self.model_path}")
-                        print(f"  Please download the {self.current_model} model first")
-                        raise FileNotFoundError("Whisper model not found")
 
-                    # If GPU available but CLI binary is CPU-only, attempt on-demand GPU rebuild
-                    try:
-                        if gpu_backend != "CPU":
-                            result = subprocess.run(["ldd", str(self.whisper_binary)], capture_output=True, text=True)
-                            binary_info = result.stdout.lower() if result.returncode == 0 else ""
-                            needs_cuda = (gpu_backend.startswith("CUDA") and ("cuda" not in binary_info))
-                            needs_rocm = (gpu_backend.startswith("ROCm") and ("hip" not in binary_info and "rocm" not in binary_info))
-                            needs_vulkan = (gpu_backend == "Vulkan" and ("vulkan" not in binary_info))
-                            if needs_cuda or needs_rocm or needs_vulkan:
-                                print("[CLI] GPU available but whisper.cpp CLI lacks GPU support. Rebuilding with GPU flags…", flush=True)
-                                rebuild_script = "/usr/lib/hyprwhspr/scripts/build-whisper-nvidia.sh"
-                                if os.path.isfile(rebuild_script) and os.access(rebuild_script, os.X_OK):
-                                    ret = subprocess.run([rebuild_script])
-                                    if ret.returncode == 0:
-                                        print("[CLI] whisper.cpp CLI rebuilt with GPU support.", flush=True)
-                                    else:
-                                        print("[CLI] WARNING: Failed to rebuild whisper.cpp with GPU support. Continuing with CPU binary.", flush=True)
-                                else:
-                                    print("[CLI] WARNING: Rebuild script not found or not executable. Continuing with CPU binary.", flush=True)
-                    except Exception as _:
-                        # Non-fatal: proceed with whatever binary we have
-                        pass
-                    
-                    print(f"[CLI] Using model: {self.current_model} at {self.model_path}", flush=True)
-                    print(f"[CLI] Detected GPU backend: {gpu_backend}", flush=True)
-                    print(f"[BACKEND] Using CLI subprocess with {gpu_backend} acceleration", flush=True)
-                    import sys
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-                    self.ready = True
-                    return True
-                    
-                except Exception as e:
-                    print(f"[CLI] Initialization failed: {e}")
-                    print("[CLI] Falling back to pywhispercpp mode")
-                    self.fallback_cli = False
-            
-            if not self.fallback_cli:
-                # Fallback to pywhispercpp backend
-                try:
-                    from pywhispercpp.model import Model
-                    
-                    print(f"[pywhispercpp] Initializing model: {self.current_model}")
-                    print(f"[pywhispercpp] Detected GPU backend: {gpu_backend}")
-                    
-                    self._pywhisper_model = Model(
-                        model=self.current_model,
-                        n_threads=self.config.get_setting('threads', 4),
-                        redirect_whispercpp_logs_to=None  # suppress logs
-                    )
-                    
-                    print(f"[pywhispercpp] Model loaded successfully", flush=True)
-                    print(f"[BACKEND] Using pywhispercpp (in-process) with {gpu_backend} acceleration", flush=True)
-                    import sys
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-                    self.ready = True
-                    return True
-                    
-                except ImportError as e:
-                    print(f"[pywhispercpp] Import failed: {e}")
-                    print("[pywhispercpp] Cannot fallback - no backend available")
-                    return False
-                except Exception as e:
-                    print(f"[pywhispercpp] Initialization failed: {e}")
-                    print("[pywhispercpp] Cannot fallback - no backend available")
-                    return False
+            # pywhispercpp backend only
+            try:
+                from pywhispercpp.model import Model
+
+                print(f"[pywhispercpp] Initializing model: {self.current_model}")
+                print(f"[pywhispercpp] Detected GPU backend: {gpu_backend}")
+
+                self._pywhisper_model = Model(
+                    model=self.current_model,
+                    n_threads=self.config.get_setting('threads', 4),
+                    redirect_whispercpp_logs_to=None
+                )
+
+                print(f"[pywhispercpp] Model loaded successfully", flush=True)
+                print(f"[BACKEND] Using pywhispercpp (in-process) with {gpu_backend} acceleration", flush=True)
+                import sys
+                sys.stdout.flush()
+                sys.stderr.flush()
+                self.ready = True
+                return True
+
+            except ImportError as e:
+                print(f"[pywhispercpp] Import failed: {e}")
+                return False
+            except Exception as e:
+                print(f"[pywhispercpp] Initialization failed: {e}")
+                return False
             
         except Exception as e:
             print(f"ERROR: Failed to initialize Whisper manager: {e}")
@@ -167,11 +106,7 @@ class WhisperManager:
         if not self.ready:
             raise RuntimeError("Whisper manager not initialized")
         
-        # Log which backend is being used for transcription
-        if self.fallback_cli:
-            print("[TRANSCRIBE] Using CLI subprocess backend", flush=True)
-        else:
-            print("[TRANSCRIBE] Using pywhispercpp backend", flush=True)
+        print("[TRANSCRIBE] Using pywhispercpp backend", flush=True)
         import sys
         sys.stdout.flush()
         sys.stderr.flush()
@@ -191,39 +126,14 @@ class WhisperManager:
             print(f"Audio too short: {len(audio_data)} samples (minimum {min_samples})")
             return ""
         
-        if self._pywhisper_model:
-            # Use pywhispercpp (in-process, direct numpy array)
-            try:
-                segments = self._pywhisper_model.transcribe(audio_data)
-                return ' '.join(seg.text for seg in segments).strip()
-            except Exception as e:
-                print(f"ERROR: pywhispercpp transcription failed: {e}")
-                return ""
-        else:
-            # Use CLI subprocess (default path)
-            return self._transcribe_via_cli(audio_data, sample_rate)
-    
-    def _transcribe_via_cli(self, audio_data: np.ndarray, sample_rate: int) -> str:
-        """Transcribe using CLI subprocess (default method)"""
-        # Create temporary WAV file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=self.temp_dir) as temp_file:
-            temp_wav_path = temp_file.name
-            
         try:
-            # Save audio data as WAV file
-            self._save_audio_as_wav(audio_data, temp_wav_path, sample_rate)
-            
-            # Run whisper.cpp transcription
-            transcription = self._run_whisper_cli(temp_wav_path)
-            
-            return transcription.strip() if transcription else ""
-            
-        finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_wav_path)
-            except:
-                pass  # Ignore cleanup errors
+            segments = self._pywhisper_model.transcribe(audio_data)
+            return ' '.join(seg.text for seg in segments).strip()
+        except Exception as e:
+            print(f"ERROR: pywhispercpp transcription failed: {e}")
+            return ""
+    
+    # CLI transcription helpers removed (pywhispercpp-only)
     
     def _save_audio_as_wav(self, audio_data: np.ndarray, filepath: str, sample_rate: int):
         """Save numpy audio data as a WAV file"""
@@ -316,16 +226,7 @@ class WhisperManager:
                 except Exception as e:
                     print(f"ERROR: Failed to load model {model_name} with pywhispercpp: {e}")
                     return False
-            else:
-                # Existing CLI path validation
-                new_model_path = self.config.get_whisper_model_path(model_name)
-                
-                if not new_model_path.exists():
-                    print(f"ERROR: Model {model_name} not found at {new_model_path}")
-                    return False
-                
-                self.model_path = new_model_path
-                print(f"[CLI] Switched to model: {model_name}")
+            # No CLI path; pywhispercpp only
             
             # Update current model
             self.current_model = model_name
@@ -345,7 +246,8 @@ class WhisperManager:
     
     def get_available_models(self) -> list:
         """Get list of available whisper models"""
-        models_dir = self.config.get_whisper_model_path('').parent
+        from pathlib import Path
+        models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
         available_models = []
         
         # Look for the supported model files
@@ -374,7 +276,4 @@ class WhisperManager:
     
     def get_backend_info(self) -> str:
         """Get information about the current backend"""
-        if self._pywhisper_model:
-            return f"pywhispercpp (in-process fallback, model: {self.current_model})"
-        else:
-            return f"CLI subprocess (default, model: {self.current_model})"
+        return f"pywhispercpp (in-process, model: {self.current_model})"
