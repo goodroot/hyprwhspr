@@ -132,8 +132,38 @@ class WhisperManager:
         except Exception as e:
             print(f"ERROR: pywhispercpp transcription failed: {e}")
             return ""
-    
-    # CLI transcription helpers removed (pywhispercpp-only)
+
+    def set_threads(self, num_threads: int) -> bool:
+        """Update the number of threads used by the backend.
+
+        Attempts to update the active model; if unsupported, reloads the model with
+        the same parameters but a new thread count.
+        """
+        try:
+            # Persist to config
+            self.config.set_setting('threads', int(num_threads))
+
+            # Try dynamic update if the backend supports it
+            try:
+                if hasattr(self._pywhisper_model, 'set_n_threads'):
+                    self._pywhisper_model.set_n_threads(int(num_threads))
+                    print(f"[pywhispercpp] Threads updated to {int(num_threads)}")
+                    return True
+            except Exception:
+                pass
+
+            # Fallback: reload model with new thread count
+            from pywhispercpp.model import Model
+            self._pywhisper_model = Model(
+                model=self.current_model,
+                n_threads=int(num_threads),
+                redirect_whispercpp_logs_to=None
+            )
+            print(f"[pywhispercpp] Model reloaded with threads={int(num_threads)}")
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to set threads: {e}")
+            return False
     
     def _save_audio_as_wav(self, audio_data: np.ndarray, filepath: str, sample_rate: int):
         """Save numpy audio data as a WAV file"""
