@@ -16,7 +16,6 @@ class ConfigManager:
         self.default_config = {
             'primary_shortcut': 'SUPER+ALT+D',
             'model': 'base',
-            'fallback_cli': False,  # False = use pywhispercpp (in-process, default), True = use CLI subprocess
             'threads': 4,           # Thread count for whisper processing
             'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
@@ -95,53 +94,6 @@ class ConfigManager:
         """Reset configuration to default values"""
         self.config = self.default_config.copy()
         print("Configuration reset to defaults")
-    
-    def get_whisper_model_path(self, model_name: str) -> Path:
-        """Get the path to a whisper model file"""
-        # Look for models in user space
-        user_data_dir = Path.home() / '.local' / 'share' / 'hyprwhspr'
-        models_dir = user_data_dir / "whisper.cpp" / "models"
-        
-        # Handle different model naming conventions
-        if model_name.endswith('.en'):
-            # English-only model
-            model_filename = f"ggml-{model_name}.bin"
-        else:
-            # Multilingual model - check both .en.bin and .bin versions
-            en_model_path = models_dir / f"ggml-{model_name}.en.bin"
-            multi_model_path = models_dir / f"ggml-{model_name}.bin"
-            
-            # Prefer English-only version if both exist
-            if en_model_path.exists():
-                return en_model_path
-            elif multi_model_path.exists():
-                return multi_model_path
-            else:
-                # Default to English-only path for error messages
-                return en_model_path
-        
-        model_path = models_dir / model_filename
-        return model_path
-    
-    def get_whisper_binary_path(self) -> Path:
-        """Get the path to the whisper binary"""
-        # Look for whisper.cpp in user space
-        user_data_dir = Path.home() / '.local' / 'share' / 'hyprwhspr'
-        whisper_dir = user_data_dir / "whisper.cpp"
-        
-        # Check a few possible locations for the whisper binary
-        possible_paths = [
-            whisper_dir / "build" / "bin" / "whisper-cli",
-            whisper_dir / "main",
-            whisper_dir / "whisper"
-        ]
-        
-        for path in possible_paths:
-            if path.exists():
-                return path
-                
-        # Return the most likely path even if it doesn't exist yet
-        return possible_paths[0]
     
     def get_temp_directory(self) -> Path:
         """Get the temporary directory for audio files"""

@@ -59,10 +59,9 @@ model_exists() {
     model_path=$(grep -oE '"model"\s*:\s*"[^"]+"' "$cfg" 2>/dev/null | cut -d\" -f4)
     [[ -n "$model_path" ]] || return 0  # use defaults; skip
     
-    # If it's a short name like "base.en", resolve to full path
+    # If it's a short name like "base.en", resolve to pywhispercpp full path
     if [[ "$model_path" != /* ]]; then
-        # Always use user data directory for models
-        model_path="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/whisper.cpp/models/ggml-${model_path}.bin"
+        model_path="${XDG_DATA_HOME:-$HOME/.local/share}/pywhispercpp/models/ggml-${model_path}.bin"
     fi
     
     [[ -f "$model_path" ]] || return 1

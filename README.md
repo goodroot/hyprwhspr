@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 - **Optimized for Arch Linux / Omarchy** - Seamless integration with [Omarchy](https://omarchy.org/) / [Hyprland](https://github.com/hyprwm/Hyprland) & [Waybar](https://github.com/Alexays/Waybar)
 - **Whisper-powered** - State-of-the-art speech recognition via [OpenAI's Whisper](https://github.com/openai/whisper)
-- **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA), AMD (ROCm), Vulkan, and Metal
+- **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA), AMD (ROCm) 
 - **Hot model loading** - pywhispercpp backend keeps models in memory for _fast_ transcription
 - **Word overrides** - Customize transcriptions, prompt and corrections
 - **Run as user** - Runs in user space, just sudo once for the installer
@@ -36,10 +36,6 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 ### Installation
 
 "Just works" with Omarchy.
-
-Any other setups may run into bumps.
-
-If stuck, create an issue or visit the thread in [Omarchy discord](https://discord.com/channels/1390012484194275541/1410373168765468774).
 
 **AUR:**
 
@@ -69,8 +65,8 @@ cd hyprwhspr
 1. ✅ Install system dependencies (ydotool, etc.)
 2. ✅ Copy application files to system directory (`/usr/lib/hyprwhspr`)
 3. ✅ Set up Python virtual environment in user space (`~/.local/share/hyprwhspr/venv`)
-4. ✅ Clone and build whisper.cpp in user space (`~/.local/share/hyprwhspr/whisper.cpp`)
-5. ✅ Download base Whisper models to user space (`~/.local/share/hyprwhspr/whisper.cpp/models`)
+4. ✅ Install pywhispercpp backend
+5. ✅ Download base model to user space (`~/.local/share/pywhispercpp/models/ggml-base.en.bin`)
 6. ✅ Set up systemd services for hyprwhspr & ydotoolds
 7. ✅ Configure Waybar integration
 8. ✅ Test everything works
@@ -104,8 +100,9 @@ hyprwhspr separates static files and runtime data:
 ### Runtime Data (User Space)
 
 - **Location**: `~/.local/share/hyprwhspr/`
-- **Contains**: `venv/`, `whisper.cpp/`, `run.sh`, `whisper.cpp/models/`
-- **Purpose**: Python environment, built whisper.cpp, downloaded models
+- **Contains**: `venv/`, `run.sh`
+- **Model directory**: `~/.local/share/pywhispercpp/models/`
+- **Purpose**: Python environment, downloaded models
 
 ## Configuration
 
@@ -123,7 +120,7 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 **Model options**:
 
-- **Default**: `"base.en"` (automatically resolves to `~/.local/share/hyprwhspr/whisper.cpp/models/ggml-base.en.bin`)
+- **Default**: `"base.en"` (installed to `~/.local/share/pywhispercpp/models/ggml-base.en.bin`)
 - **Tiny (fastest)**: `"tiny.en"`
 - **Small (better)**: `"small.en"`
 - **Medium (high accuracy)**: `"medium.en"`
@@ -132,18 +129,15 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 See [model information](#whisper-models) for install instructions.
 
-**Backend options** - choose transcription engine:
+**Performance options**:
 
 ```jsonc
 {
-    "fallback_cli": false,  // false = pywhispercpp (in-process, default), true = CLI subprocess
-    "threads": 4            // thread count for whisper processing
+    "threads": 4            // thread count for whisper cpu processing
 }
 ```
 
-- **pywhispercpp (default)**: In-process Python bindings with hot model loading, 2-4× faster than CLI
-- **CLI subprocess**: Traditional subprocess approach (fallback if pywhispercpp fails)
-- **Threads**: Adjust CPU thread count (default: 4, increase for better CPU performance)
+- **Threads**: Increase for more CPU parallelism when using CPU; on GPU, modest values are fine
 
 **Word overrides** - customize transcriptions:
 
@@ -305,48 +299,39 @@ Add to your `~/.config/waybar/config`:
 
 ## Advanced Setup
 
-### NVIDIA GPU Acceleration
+### GPU Acceleration (NVIDIA & AMD)
 
-Use if adding GPU after GPU-less installation:
+- NVIDIA (CUDA) and AMD (ROCm) are detected automatically; pywhispercpp will use GPU when available.
+- No manual build steps required. If toolchains are present, installer can build pywhispercpp with GPU support; otherwise CPU wheel is used.
 
-```bash
-# Build with CUDA support (if NVIDIA detected)
-/usr/lib/hyprwhspr/scripts/build-whisper-nvidia.sh
+### Whisper Models (pywhispercpp)
 
-# Test GPU acceleration
-/usr/lib/hyprwhspr/scripts/build-whisper-nvidia.sh --test
-```
-
-Or re-run install script.
-
-### Whisper Models
-
-**Default model included:** `ggml-base.en.bin` (CPU-optimized, ~1GB)
+**Default model installed:** `ggml-base.en.bin` (~148MB) to `~/.local/share/pywhispercpp/models/`
 
 **Available models to download:**
 
 ```bash
-cd ~/.local/share/hyprwhspr/whisper.cpp
+cd ~/.local/share/pywhispercpp/models/
 
 # Tiny models (fastest, least accurate)
-sh ./models/download-ggml-model.sh tiny.en      # ~39MB
-sh ./models/download-ggml-model.sh tiny         # ~39MB
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
 
 # Base models (good balance)
-sh ./models/download-ggml-model.sh base.en      # ~148MB (default)
-sh ./models/download-ggml-model.sh base         # ~148MB
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
 
 # Small models (better accuracy)
-sh ./models/download-ggml-model.sh small.en     # ~244MB
-sh ./models/download-ggml-model.sh small        # ~244MB
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
 
 # Medium models (high accuracy)
-sh ./models/download-ggml-model.sh medium.en    # ⚠️ ~769MB
-sh ./models/download-ggml-model.sh medium       # ⚠️ ~769MB
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
 
 # Large models (best accuracy, requires GPU)
-sh ./models/download-ggml-model.sh large        # ⚠️ ~1.5GB
-sh ./models/download-ggml-model.sh large-v3     # ⚠️ ~1.5GB (latest)
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large.bin
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
 ```
 
 **⚠️ GPU Acceleration Required:**
@@ -376,7 +361,7 @@ Without a GPU, these models will be extremely slow (10-30 seconds per transcript
 
 - **`/usr/lib/hyprwhspr/`** - Main installation directory
 - **`/usr/lib/hyprwhspr/lib/`** - Python application
-- **`~/.local/share/hyprwhspr/whisper.cpp/`** - Speech recognition engine
+- **`~/.local/share/pywhispercpp/models/`** - Whisper models (user space)
 - **`~/.config/hyprwhspr/`** - User configuration
 - **`~/.config/systemd/user/`** - Systemd service
 
@@ -479,11 +464,11 @@ which ffplay aplay paplay
 
 ```bash
 # Check if model exists
-ls -la ~/.local/share/hyprwhspr/whisper.cpp/models/
+ls -la ~/.local/share/pywhispercpp/models/
 
 # Download a different model
-cd ~/.local/share/hyprwhspr/whisper.cpp
-sh ./models/download-ggml-model.sh tiny.en
+cd ~/.local/share/pywhispercpp/models/
+wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 
 # Verify model path in config
 cat ~/.config/hyprwhspr/config.json | grep model

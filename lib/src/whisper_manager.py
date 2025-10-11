@@ -1,8 +1,6 @@
 """
 Whisper manager for hyprwhspr
-Now supports two backends:
-- pywhispercpp (in-process, model kept hot, default)
-- whisper_cpp CLI (subprocess fallback)
+PyWhisperCPP-only backend (in-process, model kept hot)
 """
 
 import subprocess
@@ -30,12 +28,8 @@ class WhisperManager:
             
         # Whisper configuration
         self.current_model = self.config.get_setting('model', 'base')
-        self.fallback_cli = self.config.get_setting('fallback_cli', False)
-        
-        # Backend-specific attributes
-        self._pywhisper_model = None  # pywhispercpp model (in-process)
-        self.whisper_binary = None    # CLI binary path (fallback)
-        self.model_path = None        # CLI model path (fallback)
+        # Backend-specific attributes (pywhispercpp only)
+        self._pywhisper_model = None
         self.temp_dir = None
         
         # State
@@ -48,60 +42,33 @@ class WhisperManager:
             
             # Detect GPU backend for logging
             gpu_backend = self._detect_gpu_backend()
-            
-            if not self.fallback_cli:
-                # Try pywhispercpp backend (default)
-                try:
-                    from pywhispercpp.model import Model
-                    
-                    print(f"[pywhispercpp] Initializing model: {self.current_model}")
-                    print(f"[pywhispercpp] Detected GPU backend: {gpu_backend}")
-                    
-                    self._pywhisper_model = Model(
-                        model=self.current_model,
-                        n_threads=self.config.get_setting('threads', 4),
-                        redirect_whispercpp_logs_to=None  # suppress logs
-                    )
-                    
-                    print(f"[pywhispercpp] Model loaded successfully", flush=True)
-                    print(f"[BACKEND] Using pywhispercpp (in-process) with {gpu_backend} acceleration", flush=True)
-                    import sys
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-                    self.ready = True
-                    return True
-                    
-                except ImportError as e:
-                    print(f"[pywhispercpp] Import failed: {e}")
-                    print("[pywhispercpp] Falling back to CLI subprocess mode")
-                    self.fallback_cli = True
-                except Exception as e:
-                    print(f"[pywhispercpp] Initialization failed: {e}")
-                    print("[pywhispercpp] Falling back to CLI subprocess mode")
-                    self.fallback_cli = True
-            
-            if self.fallback_cli:
-                # Fallback to CLI subprocess (existing path)
-                self.whisper_binary = self.config.get_whisper_binary_path()
-                if not self.whisper_binary.exists():
-                    print(f"ERROR: Whisper binary not found at: {self.whisper_binary}")
-                    print("  Please build whisper.cpp first by running the build scripts")
-                    return False
-                
-                self.model_path = self.config.get_whisper_model_path(self.current_model)
-                if not self.model_path.exists():
-                    print(f"ERROR: Whisper model not found at: {self.model_path}")
-                    print(f"  Please download the {self.current_model} model first")
-                    return False
-                
-                print(f"[CLI] Using model: {self.current_model} at {self.model_path}", flush=True)
-                print(f"[CLI] Detected GPU backend: {gpu_backend}", flush=True)
-                print(f"[BACKEND] Using CLI subprocess with {gpu_backend} acceleration", flush=True)
+
+            try:
+                from pywhispercpp.model import Model
+
+                print(f"[pywhispercpp] Initializing model: {self.current_model}")
+                print(f"[pywhispercpp] Detected GPU backend: {gpu_backend}")
+
+                self._pywhisper_model = Model(
+                    model=self.current_model,
+                    n_threads=self.config.get_setting('threads', 4),
+                    redirect_whispercpp_logs_to=None
+                )
+
+                print(f"[pywhispercpp] Model loaded successfully", flush=True)
+                print(f"[BACKEND] Using pywhispercpp (in-process) with {gpu_backend} acceleration", flush=True)
                 import sys
                 sys.stdout.flush()
                 sys.stderr.flush()
                 self.ready = True
                 return True
+
+            except ImportError as e:
+                print(f"[pywhispercpp] Import failed: {e}")
+                return False
+            except Exception as e:
+                print(f"[pywhispercpp] Initialization failed: {e}")
+                return False
             
         except Exception as e:
             print(f"ERROR: Failed to initialize Whisper manager: {e}")
@@ -138,11 +105,7 @@ class WhisperManager:
         if not self.ready:
             raise RuntimeError("Whisper manager not initialized")
         
-        # Log which backend is being used for transcription
-        if not self.fallback_cli:
-            print("[TRANSCRIBE] Using pywhispercpp backend", flush=True)
-        else:
-            print("[TRANSCRIBE] Using CLI subprocess backend", flush=True)
+        print("[TRANSCRIBE] Using pywhispercpp backend", flush=True)
         import sys
         sys.stdout.flush()
         sys.stderr.flush()
@@ -162,39 +125,44 @@ class WhisperManager:
             print(f"Audio too short: {len(audio_data)} samples (minimum {min_samples})")
             return ""
         
-        if self._pywhisper_model:
-            # Use pywhispercpp (in-process, direct numpy array)
-            try:
-                segments = self._pywhisper_model.transcribe(audio_data)
-                return ' '.join(seg.text for seg in segments).strip()
-            except Exception as e:
-                print(f"ERROR: pywhispercpp transcription failed: {e}")
-                return ""
-        else:
-            # Fallback to CLI subprocess (existing path)
-            return self._transcribe_via_cli(audio_data, sample_rate)
-    
-    def _transcribe_via_cli(self, audio_data: np.ndarray, sample_rate: int) -> str:
-        """Transcribe using CLI subprocess (fallback method)"""
-        # Create temporary WAV file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=self.temp_dir) as temp_file:
-            temp_wav_path = temp_file.name
-            
         try:
-            # Save audio data as WAV file
-            self._save_audio_as_wav(audio_data, temp_wav_path, sample_rate)
-            
-            # Run whisper.cpp transcription
-            transcription = self._run_whisper_cli(temp_wav_path)
-            
-            return transcription.strip() if transcription else ""
-            
-        finally:
-            # Clean up temporary file
+            segments = self._pywhisper_model.transcribe(audio_data)
+            return ' '.join(seg.text for seg in segments).strip()
+        except Exception as e:
+            print(f"ERROR: pywhispercpp transcription failed: {e}")
+            return ""
+
+    def set_threads(self, num_threads: int) -> bool:
+        """Update the number of threads used by the backend.
+
+        Attempts to update the active model; if unsupported, reloads the model with
+        the same parameters but a new thread count.
+        """
+        try:
+            # Persist to config
+            self.config.set_setting('threads', int(num_threads))
+
+            # Try dynamic update if the backend supports it
             try:
-                os.unlink(temp_wav_path)
-            except:
-                pass  # Ignore cleanup errors
+                if hasattr(self._pywhisper_model, 'set_n_threads'):
+                    self._pywhisper_model.set_n_threads(int(num_threads))
+                    print(f"[pywhispercpp] Threads updated to {int(num_threads)}")
+                    return True
+            except Exception:
+                pass
+
+            # Fallback: reload model with new thread count
+            from pywhispercpp.model import Model
+            self._pywhisper_model = Model(
+                model=self.current_model,
+                n_threads=int(num_threads),
+                redirect_whispercpp_logs_to=None
+            )
+            print(f"[pywhispercpp] Model reloaded with threads={int(num_threads)}")
+            return True
+        except Exception as e:
+            print(f"ERROR: Failed to set threads: {e}")
+            return False
     
     def _save_audio_as_wav(self, audio_data: np.ndarray, filepath: str, sample_rate: int):
         """Save numpy audio data as a WAV file"""
@@ -287,16 +255,7 @@ class WhisperManager:
                 except Exception as e:
                     print(f"ERROR: Failed to load model {model_name} with pywhispercpp: {e}")
                     return False
-            else:
-                # Existing CLI path validation
-                new_model_path = self.config.get_whisper_model_path(model_name)
-                
-                if not new_model_path.exists():
-                    print(f"ERROR: Model {model_name} not found at {new_model_path}")
-                    return False
-                
-                self.model_path = new_model_path
-                print(f"[CLI] Switched to model: {model_name}")
+            # No CLI path; pywhispercpp only
             
             # Update current model
             self.current_model = model_name
@@ -316,7 +275,8 @@ class WhisperManager:
     
     def get_available_models(self) -> list:
         """Get list of available whisper models"""
-        models_dir = self.config.get_whisper_model_path('').parent
+        from pathlib import Path
+        models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
         available_models = []
         
         # Look for the supported model files
@@ -345,7 +305,4 @@ class WhisperManager:
     
     def get_backend_info(self) -> str:
         """Get information about the current backend"""
-        if self._pywhisper_model:
-            return f"pywhispercpp (in-process, model: {self.current_model})"
-        else:
-            return f"CLI subprocess (model: {self.current_model})"
+        return f"pywhispercpp (in-process, model: {self.current_model})"
