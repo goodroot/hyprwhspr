@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 - **Optimized for Arch Linux / Omarchy** - Seamless integration with [Omarchy](https://omarchy.org/) / [Hyprland](https://github.com/hyprwm/Hyprland) & [Waybar](https://github.com/Alexays/Waybar)
 - **Whisper-powered** - State-of-the-art speech recognition via [OpenAI's Whisper](https://github.com/openai/whisper)
-- **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA), AMD (ROCm) 
+- **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA) / AMD (ROCm) 
 - **Hot model loading** - pywhispercpp backend keeps models in memory for _fast_ transcription
 - **Word overrides** - Customize transcriptions, prompt and corrections
 - **Run as user** - Runs in user space, just sudo once for the installer
@@ -87,49 +87,22 @@ cd hyprwhspr
 
 - **`Super+Alt+D`** - Toggle dictation on/off
 
-## Directory Structure
-
-hyprwhspr separates static files and runtime data:
-
-### Static Files (System)
-
-- **Location**: `/usr/lib/hyprwhspr/`
-- **Contains**: `bin/hyprwhspr`, `lib/`, `config/`, `share/`, `requirements.txt`
-- **Purpose**: Application files, configurations, assets
-
-### Runtime Data (User Space)
-
-- **Location**: `~/.local/share/hyprwhspr/`
-- **Contains**: `venv/`, `run.sh`
-- **Model directory**: `~/.local/share/pywhispercpp/models/`
-- **Purpose**: Python environment, downloaded models
-
 ## Configuration
 
 Edit `~/.config/hyprwhspr/config.json`:
 
-**Minimal config** - only 3 essential options:
+**Minimal config** - only 2 essential options:
 
 ```jsonc
 {
     "primary_shortcut": "SUPER+ALT+D",
-    "model": "base.en",
-    "audio_feedback": true, // Optional
+    "model": "base.en"
 }
 ```
 
-**Model options**:
+For choice of model, see [model instructions](#whisper-models).
 
-- **Default**: `"base.en"` (installed to `~/.local/share/pywhispercpp/models/ggml-base.en.bin`)
-- **Tiny (fastest)**: `"tiny.en"`
-- **Small (better)**: `"small.en"`
-- **Medium (high accuracy)**: `"medium.en"`
-- **Large (best accuracy)**: `"large"` ⚠️ **GPU required**
-- **Large-v3 (latest)**: `"large-v3"` ⚠️ **GPU required**
-
-See [model information](#whisper-models) for install instructions.
-
-**Performance options**:
+**Performance options** - improve cpu transcription speed:
 
 ```jsonc
 {
@@ -137,7 +110,7 @@ See [model information](#whisper-models) for install instructions.
 }
 ```
 
-- **Threads**: Increase for more CPU parallelism when using CPU; on GPU, modest values are fine
+Increase for more CPU parallelism when using CPU; on GPU, modest values are fine.
 
 **Word overrides** - customize transcriptions:
 
@@ -164,7 +137,7 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 
 - `"Transcribe as casual conversation with natural speech patterns."`
   
-- `"Transcribe as formal business communication with professional language."`
+- `"Transcribe as an ornery pirate on the cusp of scurvy."`
 
 **Audio feedback** - optional sound notifications:
 
@@ -182,6 +155,11 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 
 - **Start recording**: `ping-up.ogg` (ascending tone)
 - **Stop recording**: `ping-down.ogg` (descending tone)
+
+**Custom sounds:**
+
+- **Supported formats**: `.ogg`, `.wav`, `.mp3`
+- **Fallback**: Uses defaults if custom files don't exist
 
 _Thanks for [the sounds](https://github.com/akx/Notifications), @akx!_
 
@@ -221,12 +199,7 @@ Automatically converts spoken words to symbols and punctuation for natural dicta
 - "new line" → new line
 - "tab" → tab character
 
-_Thanks for the speech-to-text replacement ideas from [WhisperTux](https://github.com/cjams/whispertux), @cjams!_
-
-**Custom sounds:**
-
-- **Supported formats**: `.ogg`, `.wav`, `.mp3`
-- **Fallback**: Uses defaults if custom files don't exist
+_Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whispertux), thanks g@cjams!_
 
 **Clipboard behavior** - control what happens to clipboard after text injection:
 
@@ -238,12 +211,10 @@ _Thanks for the speech-to-text replacement ideas from [WhisperTux](https://githu
 ```
 
 **Clipboard behavior options:**
-
-- **`clipboard_behavior: false`** (default) - Transcribed text stays on clipboard indefinitely
 - **`clipboard_behavior: true`** - Clipboard is automatically cleared after the specified delay
 - **`clipboard_clear_delay`** - How long to wait before clearing (only matters when `clipboard_behavior` is `true`)
 
-**Privacy note:** hyprwhspr never reads your existing clipboard content - it only clears the transcribed text after injection.
+> PRIVACY: hyprwhspr never reads your existing - or any - clipboard / audio content 
 
 **Paste behavior** - control how text is pasted into applications:
 
@@ -263,11 +234,9 @@ _Thanks for the speech-to-text replacement ideas from [WhisperTux](https://githu
   - ✅ Standard paste behavior
   - ❌ May not work in some terminal applications
 
-**Why Ctrl+Shift+V by default?** Most Linux applications support Ctrl+Shift+V as an alternative paste command, making it work universally across both terminals and GUI applications.
-
 ### Waybar integration
 
-Add to your `~/.config/waybar/config`:
+**Add dynamic tray icon** to your `~/.config/waybar/config`:
 
 ```json
 {
@@ -301,8 +270,9 @@ Add to your `~/.config/waybar/config`:
 
 ### GPU Acceleration (NVIDIA & AMD)
 
-- NVIDIA (CUDA) and AMD (ROCm) are detected automatically; pywhispercpp will use GPU when available.
-- No manual build steps required. If toolchains are present, installer can build pywhispercpp with GPU support; otherwise CPU wheel is used.
+- NVIDIA (CUDA) and AMD (ROCm) are detected automatically; pywhispercpp will use GPU when available
+- No manual build steps required. 
+    - If toolchains are present, installer can build pywhispercpp with GPU support; otherwise CPU wheel is used.
 
 ### Whisper Models (pywhispercpp)
 
