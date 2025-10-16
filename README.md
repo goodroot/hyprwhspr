@@ -234,6 +234,25 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
   - ✅ Standard paste behavior
   - ❌ May not work in some terminal applications
 
+**Language detection** - control transcription language:
+
+```jsonc
+{
+    "language": null    // null = auto-detect (default), or specify language code
+}
+```
+
+Language options:
+- **`null`** (default) - Auto-detect language from audio
+- **`"en"`** - Force English transcription
+- **`"nl"`** - Force Dutch transcription  
+- **`"fr"`** - Force French transcription
+- **`"de"`** - Force German transcription
+- **`"es"`** - Force Spanish transcription
+- **`etc.`** - Any supported language code
+
+> **Note:** Multilingual models (like `base`, `medium`) are preferred over English-only models (like `base.en`) for language auto-detection.
+
 ### Waybar integration
 
 **Add dynamic tray icon** to your `~/.config/waybar/config`:
@@ -254,13 +273,13 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 }
 ```
 
-**Add CSS styling** to your `~/.config/waybar/style.css`:
+Add CSS styling to your `~/.config/waybar/style.css`:
 
 ```css
 @import "/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css";
 ```
 
-**Click interactions:**
+Click interactions:
 
 - **Left-click**: Toggle Hyprwhspr on/off
 - **Right-click**: Start Hyprwhspr (if not running)
