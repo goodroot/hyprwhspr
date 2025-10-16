@@ -299,6 +299,17 @@ Click interactions:
 
 **Available models to download:**
 
+- **`tiny.en`** - Fastest, good for real-time dictation
+- **`base.en`** - Best balance of speed/accuracy (recommended)
+- **`small.en`** - Better accuracy, still fast
+- **`medium.en`** - High accuracy, slower processing
+- **`large`** - Best accuracy, **requires GPU acceleration** for reasonable speed
+- **`large-v3`** - Latest large model, **requires GPU acceleration** for reasonable speed
+
+**⚠️ GPU Acceleration Required:** Models `large` and `large-v3` require GPU acceleration for reasonable performance. 
+
+**⚠️ Omit `.en` for the multi-lingual model, if supported - defaults to `.en` if both present.**
+
 ```bash
 cd ~/.local/share/pywhispercpp/models/
 
@@ -323,24 +334,11 @@ wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large.bin
 wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
 ```
 
-**⚠️ GPU Acceleration Required:**
-
-Models `large` and `large-v3` require NVIDIA GPU acceleration for reasonable performance. 
-
-Without a GPU, these models will be extremely slow (10-30 seconds per transcription):
-
-- **`tiny.en`** - Fastest, good for real-time dictation
-- **`base.en`** - Best balance of speed/accuracy (recommended)
-- **`small.en`** - Better accuracy, still fast
-- **`medium.en`** - High accuracy, slower processing
-- **`large`** - Best accuracy, **requires GPU acceleration** for reasonable speed
-- **`large-v3`** - Latest large model, **requires GPU acceleration** for reasonable speed
-
 **Update your config after downloading:**
 
 ```json
 {
-    "model": "small.en"
+    "model": "small.en" // Or just small if multi-lingual model
 }
 ```
 
