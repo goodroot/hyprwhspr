@@ -308,8 +308,6 @@ Click interactions:
 
 **⚠️ GPU Acceleration Required:** Models `large` and `large-v3` require GPU acceleration for reasonable performance. 
 
-**⚠️ Omit `.en` for the multi-lingual model, if supported - defaults to `.en` if both present.**
-
 ```bash
 cd ~/.local/share/pywhispercpp/models/
 
@@ -338,7 +336,7 @@ wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
 
 ```json
 {
-    "model": "small.en" // Or just small if multi-lingual model
+    "model": "small.en" // Or just small if multi-lingual model. If both available, general model is chosen.
 }
 ```
 
