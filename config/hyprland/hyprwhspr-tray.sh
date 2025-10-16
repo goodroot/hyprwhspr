@@ -105,19 +105,8 @@ mic_recording_now() {
             return 1
         fi
     else
-        # Fallback: check if mic is accessible and in use
-        if ! mic_accessible; then
-            return 1
-        fi
-        
-        # Check PipeWire state as fallback
-        local def state
-        def="$(try 'pactl get-default-source')"
-        [[ -n "$def" ]] || def='@DEFAULT_SOURCE@'
-        state="$(try "pactl list sources | grep -B 5 -A 5 \"Name: $def\" | grep 'State:' | awk '{print \$2}'")"
-        
-        # Only consider RUNNING as recording (not SUSPENDED) to avoid false positives
-        [[ "$state" == "RUNNING" ]]
+        # No recording status file means hyprwhspr is not recording
+        return 1
     fi
 }
 

@@ -560,24 +560,6 @@ setup_systemd_service() {
   log_success "Systemd user services enabled and started"
 }
 
-# ----------------------- Hyprland integration ------------------
-setup_hyprland_integration() {
-  log_info "Setting up Hyprland integration…"
-  
-  # Validate tray script exists
-  if [ ! -f "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh" ]; then
-    log_error "Tray script not found: $INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh"
-    return 1
-  fi
-  
-  mkdir -p "$USER_HOME/.config/hypr/scripts"
-  cp "$INSTALL_DIR/config/hyprland/hyprwhspr-tray.sh" "$USER_HOME/.config/hypr/scripts/"
-  chmod +x "$USER_HOME/.config/hypr/scripts/hyprwhspr-tray.sh"
-  
-  # NO sed replacement needed - file handles both modes dynamically
-  log_success "Hyprland integration configured"
-}
-
 # ----------------------- Waybar integration --------------------
 setup_waybar_integration() {
   log_info "Waybar integration…"
@@ -620,9 +602,27 @@ WAYBAR_CONFIG
     log_success "Created basic Waybar config"
   fi
 
-  # Validate the system module JSON
-  if ! python3 -m json.tool "$INSTALL_DIR/config/waybar/hyprwhspr-module.jsonc" >/dev/null 2>&1; then
-    log_error "System waybar module JSON is invalid"
+  # Create a user-specific waybar module configuration
+  local user_module_config="$USER_HOME/.config/waybar/hyprwhspr-module.jsonc"
+  cat > "$user_module_config" <<WAYBAR_MODULE_CONFIG
+{
+  "custom/hyprwhspr": {
+    "format": "{}",
+    "exec": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh status",
+    "interval": 1,
+    "return-type": "json",
+    "exec-on-event": true,
+    "on-click": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh toggle",
+    "on-click-right": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh start",
+    "on-click-middle": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh restart",
+    "tooltip": true
+  }
+}
+WAYBAR_MODULE_CONFIG
+  
+  # Validate the user module JSON
+  if ! python3 -m json.tool "$user_module_config" >/dev/null 2>&1; then
+    log_error "Failed to create valid waybar module configuration"
     return 1
   fi
 
@@ -641,7 +641,7 @@ import json
 import os
 
 config_path = '$waybar_config'
-module_path = '$INSTALL_DIR/config/waybar/hyprwhspr-module.jsonc'
+module_path = '$user_module_config'
 
 try:
     # Read existing config with standard JSON parser
@@ -974,7 +974,6 @@ main() {
   setup_python_environment
   download_pywhispercpp_base_model
   setup_systemd_service   # <— auto-enable & start (all modes)
-  setup_hyprland_integration
   setup_user_config
   setup_permissions
   setup_audio_devices
