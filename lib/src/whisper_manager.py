@@ -3,10 +3,7 @@ Whisper manager for hyprwhspr
 PyWhisperCPP-only backend (in-process, model kept hot)
 """
 
-import subprocess
-import tempfile
 import os
-import wave
 import numpy as np
 import shutil
 from typing import Optional
@@ -126,7 +123,15 @@ class WhisperManager:
             return ""
         
         try:
-            segments = self._pywhisper_model.transcribe(audio_data)
+            # Get language setting from config (None = auto-detect)
+            language = self.config.get_setting('language', None)
+            
+            # Transcribe with language parameter if specified
+            if language:
+                segments = self._pywhisper_model.transcribe(audio_data, language=language)
+            else:
+                segments = self._pywhisper_model.transcribe(audio_data)
+            
             return ' '.join(seg.text for seg in segments).strip()
         except Exception as e:
             print(f"ERROR: pywhispercpp transcription failed: {e}")
@@ -163,73 +168,6 @@ class WhisperManager:
         except Exception as e:
             print(f"ERROR: Failed to set threads: {e}")
             return False
-    
-    def _save_audio_as_wav(self, audio_data: np.ndarray, filepath: str, sample_rate: int):
-        """Save numpy audio data as a WAV file"""
-        # Convert float32 to int16 for WAV format
-        if audio_data.dtype == np.float32:
-            # Scale from [-1, 1] to [-32768, 32767]
-            audio_int16 = (audio_data * 32767).astype(np.int16)
-        else:
-            audio_int16 = audio_data.astype(np.int16)
-        
-        with wave.open(filepath, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(audio_int16.tobytes())
-    
-    def _run_whisper_cli(self, audio_file_path: str) -> str:
-        """Run whisper.cpp CLI on the given audio file"""
-        try:
-            # Get whisper prompt from config or use default
-            whisper_prompt = self.config.get_setting(
-                'whisper_prompt', 
-                'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.'
-            )
-            
-            # Construct whisper.cpp command
-            cmd = [
-                str(self.whisper_binary),
-                '-m', str(self.model_path),
-                '-f', audio_file_path,
-                '--output-txt',
-                '--language', 'en',
-                '--threads', str(self.config.get_setting('threads', 4)),
-                '--prompt', whisper_prompt
-            ]
-            
-            # Run the command
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30  # 30 second timeout
-            )
-            
-            if result.returncode == 0:
-                # Try to read the output txt file
-                txt_file = audio_file_path + '.txt'
-                if os.path.exists(txt_file):
-                    with open(txt_file, 'r', encoding='utf-8') as f:
-                        transcription = f.read().strip()
-                    # Clean up the txt file
-                    os.unlink(txt_file)
-                    return transcription
-                else:
-                    # Fall back to stdout if no txt file
-                    return result.stdout.strip()
-            else:
-                print(f"Whisper command failed with return code {result.returncode}")
-                print(f"stderr: {result.stderr}")
-                return ""
-                
-        except subprocess.TimeoutExpired:
-            print("Whisper transcription timed out")
-            return ""
-        except Exception as e:
-            print(f"Error running whisper: {e}")
-            return ""
     
     def set_model(self, model_name: str) -> bool:
         """
@@ -283,10 +221,11 @@ class WhisperManager:
         supported_models = ['tiny', 'base', 'small', 'medium', 'large']
         
         for model in supported_models:
-            # Check for both English-only and multilingual versions
+            # Check for both multilingual and English-only versions
+            # Prefer multilingual for better language auto-detection
             model_files = [
-                models_dir / f"ggml-{model}.en.bin",  # English-only
-                models_dir / f"ggml-{model}.bin"      # Multilingual
+                models_dir / f"ggml-{model}.bin",      # Multilingual (preferred)
+                models_dir / f"ggml-{model}.en.bin"   # English-only (fallback)
             ]
             
             for model_file in model_files:

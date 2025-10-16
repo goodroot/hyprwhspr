@@ -17,6 +17,7 @@ class ConfigManager:
             'primary_shortcut': 'SUPER+ALT+D',
             'model': 'base',
             'threads': 4,           # Thread count for whisper processing
+            'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
             'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
             'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
