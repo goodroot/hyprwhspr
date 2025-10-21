@@ -767,7 +767,6 @@ setup_user_config() {
 {
   "primary_shortcut": "SUPER+ALT+D",
   "model": "base.en",
-  "fallback_cli": false,
   "audio_feedback": true,
   "start_sound_volume": 0.5,
   "stop_sound_volume": 0.5,
@@ -779,9 +778,6 @@ CFG
     log_success "Created $USER_CONFIG_DIR/config.json"
   else
     sed -i 's|"model": "[^"]*"|"model": "base.en"|' "$USER_CONFIG_DIR/config.json"
-    if ! grep -q '"fallback_cli"' "$USER_CONFIG_DIR/config.json"; then
-      sed -i 's|"model": "base.en"|"model": "base.en",\n  "fallback_cli": false|' "$USER_CONFIG_DIR/config.json"
-    fi
     if ! grep -q "\"audio_feedback\"" "$USER_CONFIG_DIR/config.json"; then
       sed -i 's|"word_overrides": {}|"audio_feedback": true,\n    "start_sound_volume": 0.5,\n    "stop_sound_volume": 0.5,\n    "start_sound_path": "ping-up.ogg",\n    "stop_sound_path": "ping-down.ogg",\n    "word_overrides": {}|' "$USER_CONFIG_DIR/config.json"
     fi

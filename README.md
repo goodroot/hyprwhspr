@@ -220,19 +220,32 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 
 ```jsonc
 {
-    "shift_paste": true    // Boolean: true = Ctrl+Shift+V (default), false = Ctrl+V
+    "paste_mode": "super"   // "super" | "ctrl_shift" | "ctrl"  (default: "super")
 }
 ```
 
 **Paste behavior options:**
 
-- **`shift_paste: true`** (default) - Uses Ctrl+Shift+V for pasting
-  - ✅ Works in terminals (bash, zsh, fish, etc.)
-  - ✅ Probably works everywhere else
+- **`"super"`** (default) — Sends Super+V. Omarchy default.
 
-- **`shift_paste: false`** - Uses traditional Ctrl+V for pasting
-  - ✅ Standard paste behavior
-  - ❌ May not work in some terminal applications
+- **`"ctrl_shift"`** — Sends Ctrl+Shift+V. Works in most terminals.
+
+- **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
+
+**Backwards compatibility:**
+
+Older configs using:
+```jsonc
+{
+    "shift_paste": true   // Ctrl+Shift+V
+}
+```
+```jsonc
+{
+    "shift_paste": false  // Ctrl+V
+}
+```
+still work. If `paste_mode` is present, it takes precedence over `shift_paste`.
 
 **Language detection** - control transcription language:
 

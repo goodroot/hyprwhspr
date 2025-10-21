@@ -22,7 +22,11 @@ class ConfigManager:
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
             'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
             'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
-            'shift_paste': True  # Boolean: true = Ctrl+Shift+V (works in terminals), false = Ctrl+V (traditional paste)
+            # Values: "super" | "ctrl_shift" | "ctrl"
+            # Default "super" aligns with Omarchy global paste via Super+V.
+            'paste_mode': 'super',
+            # Back-compat for older configs (used only if paste_mode is absent):
+            'shift_paste': True  # true = Ctrl+Shift+V, false = Ctrl+V
         }
         
         # Set up config directory and file path

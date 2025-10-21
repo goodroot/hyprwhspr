@@ -246,17 +246,44 @@ class TextInjector:
 
             # 2) Press paste key combination based on config
             if self.ydotool_available:
-                # Check shift_paste config: true = Ctrl+Shift+V, false = Ctrl+V
-                shift_paste = True  # Default to Ctrl+Shift+V
+                #   "super"      -> Super+V      (125:1 47:1 47:0 125:0)
+                #   "ctrl_shift" -> Ctrl+Shift+V (29:1  42:1 47:1 47:0 42:0 29:0)
+                #   "ctrl"       -> Ctrl+V       (29:1  47:1 47:0 29:0)
+                paste_mode = None
                 if self.config_manager:
-                    shift_paste = self.config_manager.get_setting('shift_paste', True)
-                
-                if shift_paste:
-                    # Ctrl+Shift+V: Linux evdev codes: 29 = LeftCtrl, 42 = LeftShift, 47 = 'V'
-                    result = subprocess.run(['ydotool', 'key', '29:1', '42:1', '47:1', '47:0', '42:0', '29:0'], capture_output=True, timeout=5)
+                    paste_mode = self.config_manager.get_setting('paste_mode', None)
+
+                if paste_mode == 'super':
+                    # LeftMeta (Super) = 125, 'V' = 47
+                    result = subprocess.run(
+                        ['ydotool', 'key', '125:1', '47:1', '47:0', '125:0'],
+                        capture_output=True, timeout=5
+                    )
+                elif paste_mode == 'ctrl_shift':
+                    result = subprocess.run(
+                        ['ydotool', 'key', '29:1', '42:1', '47:1', '47:0', '42:0', '29:0'],
+                        capture_output=True, timeout=5
+                    )
+                elif paste_mode == 'ctrl':
+                    result = subprocess.run(
+                        ['ydotool', 'key', '29:1', '47:1', '47:0', '29:0'],
+                        capture_output=True, timeout=5
+                    )
                 else:
-                    # Ctrl+V: Linux evdev codes: 29 = LeftCtrl, 47 = 'V'
-                    result = subprocess.run(['ydotool', 'key', '29:1', '47:1', '47:0', '29:0'], capture_output=True, timeout=5)
+                    # Back-compat path: fall back to legacy shift_paste boolean
+                    shift_paste = True
+                    if self.config_manager:
+                        shift_paste = self.config_manager.get_setting('shift_paste', True)
+                    if shift_paste:
+                        result = subprocess.run(
+                            ['ydotool', 'key', '29:1', '42:1', '47:1', '47:0', '42:0', '29:0'],
+                            capture_output=True, timeout=5
+                        )
+                    else:
+                        result = subprocess.run(
+                            ['ydotool', 'key', '29:1', '47:1', '47:0', '29:0'],
+                            capture_output=True, timeout=5
+                        )
                 
                 if result.returncode != 0:
                     stderr = (result.stderr or b"").decode("utf-8", "ignore")
