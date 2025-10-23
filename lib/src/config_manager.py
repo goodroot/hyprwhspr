@@ -26,7 +26,20 @@ class ConfigManager:
             # Default "super" aligns with Omarchy global paste via Super+V.
             'paste_mode': 'super',
             # Back-compat for older configs (used only if paste_mode is absent):
-            'shift_paste': True  # true = Ctrl+Shift+V, false = Ctrl+V
+            'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
+
+            # Backend configuration
+            'backend': 'local',  # 'local' or 'remote'
+            'remote_backend': {  # Only used when backend='remote'
+                'api_url': 'http://localhost:8000',
+                'api_key': 'dummy',
+                'model': 'Systran/faster-whisper-base',
+                'prompt': None,
+                'language': None,
+                'response_format': 'text',
+                'timeout': 30,
+                'max_retries': 2
+            }
         }
         
         # Set up config directory and file path
@@ -125,3 +138,11 @@ class ConfigManager:
     def clear_word_overrides(self):
         """Clear all word overrides"""
         self.config['word_overrides'] = {}
+
+    def get_backend(self) -> str:
+        """Get configured backend (local or remote)"""
+        return self.get_setting('backend')
+
+    def get_remote_config(self) -> Dict[str, Any]:
+        """Get remote backend configuration"""
+        return self.get_setting('remote_backend')

@@ -10,6 +10,7 @@ pyperclip>=1.8.2
 # Whisper integration
 pywhispercpp==1.3.3
 requests>=2.25.0
+openai>=1.0.0
 
 # System integration
 psutil>=5.8.0

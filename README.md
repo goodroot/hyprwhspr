@@ -353,6 +353,216 @@ wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
 }
 ```
 
+## Remote Backend (speaches.ai / OpenAI)
+
+hyprwhspr can use a remote transcription service instead of local processing.
+
+### Use Cases
+- 🚀 Offload processing to a more powerful server
+- 🔧 Use custom Whisper models not available locally
+- 🌐 Centralized transcription for multiple devices
+- ☁️ Use OpenAI's API without local GPU requirements
+
+### Quick Setup with speaches.ai
+
+1. **Deploy speaches server:**
+   ```bash
+   docker run -d -p 8000:8000 ghcr.io/speaches-ai/speaches:latest
+   ```
+
+2. **Configure hyprwhspr for remote backend:**
+
+   Edit `~/.config/hyprwhspr/config.json`:
+   ```json
+   {
+     "backend": "remote",
+     "remote_backend": {
+       "api_url": "http://localhost:8000",
+       "model": "Systran/faster-whisper-base"
+     }
+   }
+   ```
+
+3. **Restart hyprwhspr:**
+   ```bash
+   systemctl --user restart hyprwhspr.service
+   ```
+
+### Configuration Options
+
+**Backend Selection:**
+```json
+{
+  "backend": "local"   // Use local pywhispercpp (default)
+}
+```
+```json
+{
+  "backend": "remote"  // Use remote API
+}
+```
+
+**Remote Backend Settings:**
+
+| Setting | Required | Default | Description |
+|---------|----------|---------|-------------|
+| `api_url` | ✅ Yes | - | Base URL of speaches/OpenAI server |
+| `model` | ✅ Yes | - | Model identifier |
+| `api_key` | No | `"dummy"` | API key (use "dummy" for speaches) |
+| `prompt` | No | `null` | Optional prompt for better accuracy |
+| `language` | No | `null` | Language code (e.g., "en", "es") |
+| `response_format` | No | `"text"` | Response format ("text" or "json") |
+| `timeout` | No | `30` | Request timeout in seconds |
+| `max_retries` | No | `2` | Automatic retry attempts |
+
+**Available Models:**
+
+*speaches.ai:*
+- `Systran/faster-whisper-base` - Good balance (recommended)
+- `Systran/faster-whisper-small` - Better accuracy
+- `Systran/faster-whisper-medium` - High accuracy
+- `Systran/faster-whisper-large-v3` - Best accuracy
+
+*OpenAI:*
+- `whisper-1` - Standard Whisper model
+- `gpt-4o-transcribe` - High quality
+- `gpt-4o-mini-transcribe` - Fast and efficient
+
+### Example Configurations
+
+**Minimal remote config:**
+```json
+{
+  "backend": "remote",
+  "remote_backend": {
+    "api_url": "http://192.168.1.100:8000",
+    "model": "Systran/faster-whisper-base"
+  }
+}
+```
+
+**Full remote config with all options:**
+```json
+{
+  "backend": "remote",
+  "remote_backend": {
+    "api_url": "http://your-server:8000",
+    "api_key": "dummy",
+    "model": "Systran/faster-whisper-small",
+    "prompt": "Technical transcription with proper terminology",
+    "language": "en",
+    "response_format": "text",
+    "timeout": 30,
+    "max_retries": 2
+  }
+}
+```
+
+**Using OpenAI's official API:**
+```json
+{
+  "backend": "remote",
+  "remote_backend": {
+    "api_url": "https://api.openai.com/v1",
+    "api_key": "sk-your-actual-openai-api-key",
+    "model": "whisper-1",
+    "timeout": 60
+  }
+}
+```
+
+### Privacy & Security
+
+⚠️ **Important:** When using remote backend, your audio is sent over the network to the remote server.
+
+**Privacy considerations:**
+- Ensure you trust the server hosting the API
+- Use HTTPS (not HTTP) for sensitive content
+- Consider self-hosting speaches for full privacy control
+- Review the server's data retention policies
+
+**Self-hosting speaches ensures:**
+- ✅ Audio never leaves your infrastructure
+- ✅ Full control over data
+- ✅ No third-party dependencies
+
+### Troubleshooting Remote Backend
+
+**Test server connectivity:**
+```bash
+curl http://your-server:8000/v1/audio/transcriptions \
+  -F "file=@test.wav" \
+  -F "model=Systran/faster-whisper-base"
+```
+
+**Check hyprwhspr logs:**
+```bash
+journalctl --user -u hyprwhspr.service -f
+```
+
+**Common errors:**
+
+*"Connection refused"* - Server not running or wrong URL
+```bash
+# Verify server is running
+docker ps | grep speaches
+```
+
+*"remote_backend configuration is required"* - Add config
+```json
+{
+  "backend": "remote",
+  "remote_backend": { ... }
+}
+```
+
+*"openai package not installed"* - Install dependency
+```bash
+~/.local/share/hyprwhspr/venv/bin/pip install openai
+```
+
+**Switch back to local mode:**
+```json
+{
+  "backend": "local"
+}
+```
+Then restart:
+```bash
+systemctl --user restart hyprwhspr.service
+```
+
+### Advanced: Custom Prompts
+
+Use prompts to improve transcription quality for specific contexts:
+
+**Technical content:**
+```json
+{
+  "remote_backend": {
+    "prompt": "Technical documentation with proper capitalization of technology terms like API, HTTP, SQL, Python, Docker."
+  }
+}
+```
+
+**Medical transcription:**
+```json
+{
+  "remote_backend": {
+    "prompt": "Medical transcription with proper medical terminology and abbreviations."
+  }
+}
+```
+
+**Casual conversation:**
+```json
+{
+  "remote_backend": {
+    "prompt": "Transcribe as natural conversation with informal language."
+  }
+}
+```
+
 ## Architecture
 
 **hyprwhspr is designed as a system package:**

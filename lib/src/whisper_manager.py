@@ -8,6 +8,8 @@ import numpy as np
 import shutil
 import threading
 from typing import Optional
+from io import BytesIO
+import wave
 
 try:
     from .config_manager import ConfigManager
@@ -37,43 +39,67 @@ class WhisperManager:
         self.ready = False
         
     def initialize(self) -> bool:
-        """Initialize the whisper manager and check dependencies"""
+        """Initialize whisper manager based on configured backend"""
         try:
             self.temp_dir = self.config.get_temp_directory()
-            
-            # Detect GPU backend for logging
-            gpu_backend = self._detect_gpu_backend()
+            backend = self.config.get_backend()
 
-            try:
-                from pywhispercpp.model import Model
-
-                print(f"[pywhispercpp] Initializing model: {self.current_model}")
-                print(f"[pywhispercpp] Detected GPU backend: {gpu_backend}")
-
-                self._pywhisper_model = Model(
-                    model=self.current_model,
-                    n_threads=self.config.get_setting('threads', 4),
-                    redirect_whispercpp_logs_to=None
-                )
-
-                print("[pywhispercpp] Model loaded successfully", flush=True)
-                print(f"[BACKEND] Using pywhispercpp (in-process) with {gpu_backend} acceleration", flush=True)
-                import sys
-                sys.stdout.flush()
-                sys.stderr.flush()
-                self.ready = True
-                return True
-
-            except ImportError as e:
-                print(f"[pywhispercpp] Import failed: {e}")
+            if backend == 'local':
+                return self._initialize_local()
+            elif backend == 'remote':
+                return self._initialize_remote()
+            else:
+                print(f"ERROR: Unknown backend '{backend}'. Use 'local' or 'remote'")
                 return False
-            except Exception as e:
-                print(f"[pywhispercpp] Initialization failed: {e}")
-                return False
-            
+
         except Exception as e:
             print(f"ERROR: Failed to initialize Whisper manager: {e}")
             return False
+
+    def _initialize_local(self) -> bool:
+        """Initialize local pywhispercpp backend"""
+        gpu_backend = self._detect_gpu_backend()
+
+        try:
+            from pywhispercpp.model import Model
+
+            print(f"[pywhispercpp] Initializing model: {self.current_model}")
+            print(f"[pywhispercpp] Detected GPU backend: {gpu_backend}")
+
+            self._pywhisper_model = Model(
+                model=self.current_model,
+                n_threads=self.config.get_setting('threads', 4),
+                redirect_whispercpp_logs_to=None
+            )
+
+            print("[pywhispercpp] Model loaded successfully", flush=True)
+            print(f"[BACKEND] Using local pywhispercpp with {gpu_backend}", flush=True)
+            import sys
+            sys.stdout.flush()
+            sys.stderr.flush()
+
+            self.ready = True
+            return True
+
+        except ImportError as e:
+            print(f"[pywhispercpp] Import failed: {e}")
+            return False
+        except Exception as e:
+            print(f"[pywhispercpp] Initialization failed: {e}")
+            return False
+
+    def _initialize_remote(self) -> bool:
+        """Initialize remote API backend"""
+        if not self._validate_remote_config():
+            return False
+
+        remote_config = self.config.get_remote_config()
+        print(f"[BACKEND] Using remote API at {remote_config['api_url']}", flush=True)
+        print(f"[BACKEND] Model: {remote_config['model']}", flush=True)
+        print("[BACKEND] Note: Audio will be sent over network", flush=True)
+
+        self.ready = True
+        return True
     
     def _detect_gpu_backend(self) -> str:
         """Detect available GPU backend for logging purposes"""
@@ -94,52 +120,161 @@ class WhisperManager:
     
     def transcribe_audio(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
         """
-        Transcribe audio data using whisper
-        
+        Transcribe audio data using configured backend
+
         Args:
             audio_data: NumPy array of audio samples (float32)
             sample_rate: Sample rate of the audio data
-            
+
         Returns:
             Transcribed text string
         """
         if not self.ready:
             raise RuntimeError("Whisper manager not initialized")
-        
-        print("[TRANSCRIBE] Using pywhispercpp backend", flush=True)
-        import sys
-        sys.stdout.flush()
-        sys.stderr.flush()
-        
-        # Check if we have valid audio data
+
+        # Validate audio data
         if audio_data is None:
             print("No audio data provided to transcribe")
             return ""
-        
+
         if len(audio_data) == 0:
             print("Empty audio data provided to transcribe")
             return ""
-        
+
         # Check if audio is too short (less than 0.1 seconds)
-        min_samples = int(sample_rate * 0.1)  # 0.1 seconds minimum
+        min_samples = int(sample_rate * 0.1)
         if len(audio_data) < min_samples:
             print(f"Audio too short: {len(audio_data)} samples (minimum {min_samples})")
             return ""
-        
+
+        # Route to appropriate backend
+        backend = self.config.get_backend()
+
+        try:
+            if backend == 'local':
+                return self._transcribe_local(audio_data, sample_rate)
+            elif backend == 'remote':
+                return self._transcribe_remote(audio_data, sample_rate)
+            else:
+                print(f"ERROR: Unknown backend: {backend}")
+                return ""
+
+        except Exception as e:
+            print(f"ERROR: Transcription failed ({backend} backend): {e}")
+            import traceback
+            traceback.print_exc()
+            return ""
+
+    def _transcribe_local(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
+        """Transcribe audio using local pywhispercpp"""
+        print("[TRANSCRIBE] Using local pywhispercpp backend", flush=True)
+        import sys
+        sys.stdout.flush()
+        sys.stderr.flush()
+
         try:
             # Get language setting from config (None = auto-detect)
             language = self.config.get_setting('language', None)
-            
+
             # Transcribe with language parameter if specified
             if language:
                 segments = self._pywhisper_model.transcribe(audio_data, language=language)
             else:
                 segments = self._pywhisper_model.transcribe(audio_data)
-            
+
             return ' '.join(seg.text for seg in segments).strip()
+
         except Exception as e:
-            print(f"ERROR: pywhispercpp transcription failed: {e}")
-            return ""
+            print(f"ERROR: Local transcription failed: {e}")
+            raise
+
+    def _transcribe_remote(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
+        """Transcribe audio using remote API (OpenAI-compatible)"""
+        print("[TRANSCRIBE] Using remote API backend", flush=True)
+
+        try:
+            from openai import OpenAI
+        except ImportError:
+            print("ERROR: openai package not installed")
+            print("Install with: pip install openai")
+            raise
+
+        # Get remote configuration
+        remote_config = self.config.get_remote_config()
+
+        # Create OpenAI client with custom base URL
+        client = OpenAI(
+            api_key=remote_config.get('api_key', 'dummy'),
+            base_url=remote_config['api_url'],
+            timeout=remote_config.get('timeout', 30),
+            max_retries=remote_config.get('max_retries', 2)
+        )
+
+        # Convert numpy array to WAV bytes
+        wav_bytes = self._numpy_to_wav_bytes(audio_data, sample_rate)
+
+        # Prepare transcription parameters
+        transcribe_params = {
+            'model': remote_config['model'],
+            'file': ('audio.wav', wav_bytes, 'audio/wav')
+        }
+
+        # Add optional parameters if present
+        if remote_config.get('prompt'):
+            transcribe_params['prompt'] = remote_config['prompt']
+
+        # Use remote language setting, or fall back to global language setting
+        language = remote_config.get('language') or self.config.get_setting('language')
+        if language:
+            transcribe_params['language'] = language
+
+        if remote_config.get('response_format'):
+            transcribe_params['response_format'] = remote_config['response_format']
+
+        # Make API request (retries handled by SDK)
+        print(f"[TRANSCRIBE] Sending request to {remote_config['api_url']}", flush=True)
+        transcription = client.audio.transcriptions.create(**transcribe_params)
+
+        return transcription.text.strip()
+
+    def _numpy_to_wav_bytes(self, audio_data: np.ndarray, sample_rate: int) -> BytesIO:
+        """Convert numpy array to WAV file bytes"""
+        # Convert float32 to int16 for WAV format
+        audio_int16 = (audio_data * 32767).astype(np.int16)
+
+        # Create WAV file in memory
+        wav_buffer = BytesIO()
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(1)  # Mono
+            wav_file.setsampwidth(2)  # 16-bit
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(audio_int16.tobytes())
+
+        wav_buffer.seek(0)
+        return wav_buffer
+
+    def _validate_remote_config(self) -> bool:
+        """Validate remote backend configuration"""
+        remote_config = self.config.get_remote_config()
+
+        if not remote_config:
+            print("ERROR: 'remote_backend' configuration is required when backend='remote'")
+            print("\nAdd to ~/.config/hyprwhspr/config.json:")
+            print('  "remote_backend": {')
+            print('    "api_url": "http://localhost:8000",')
+            print('    "model": "Systran/faster-whisper-base"')
+            print('  }')
+            return False
+
+        if not remote_config.get('api_url'):
+            print("ERROR: remote_backend.api_url is required")
+            return False
+
+        if not remote_config.get('model'):
+            print("ERROR: remote_backend.model is required")
+            return False
+
+        return True
 
     def _validate_model_file(self, model_name: str) -> bool:
         """Validate that model file exists and is not corrupted"""
@@ -290,4 +425,12 @@ class WhisperManager:
     
     def get_backend_info(self) -> str:
         """Get information about the current backend"""
-        return f"pywhispercpp (in-process, model: {self.current_model})"
+        backend = self.config.get_backend()
+
+        if backend == 'local':
+            return f"pywhispercpp (local, model: {self.current_model})"
+        elif backend == 'remote':
+            remote_config = self.config.get_remote_config()
+            return f"Remote API ({remote_config['api_url']}, model: {remote_config['model']})"
+
+        return "unknown"
