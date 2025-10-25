@@ -144,6 +144,8 @@ class GlobalShortcuts:
             'ctrl': ecodes.KEY_LEFTCTRL,
             'control': ecodes.KEY_LEFTCTRL,
             'alt': ecodes.KEY_LEFTALT,
+            'rightalt': ecodes.KEY_RIGHTALT,
+            'ralt': ecodes.KEY_RIGHTALT,
             'shift': ecodes.KEY_LEFTSHIFT,
             'super': ecodes.KEY_LEFTMETA,
             'windows': ecodes.KEY_LEFTMETA,
