@@ -8,13 +8,13 @@ import numpy as np
 import shutil
 import threading
 from typing import Optional
-from io import BytesIO
-import wave
 
 try:
     from .config_manager import ConfigManager
+    from .remote_utils import numpy_to_wav_bytes, validate_remote_config
 except ImportError:
     from config_manager import ConfigManager
+    from remote_utils import numpy_to_wav_bytes, validate_remote_config
 
 
 class WhisperManager:
@@ -90,7 +90,7 @@ class WhisperManager:
 
     def _initialize_remote(self) -> bool:
         """Initialize remote API backend"""
-        if not self._validate_remote_config():
+        if not validate_remote_config(self.config):
             return False
 
         remote_config = self.config.get_remote_config()
@@ -211,7 +211,7 @@ class WhisperManager:
         )
 
         # Convert numpy array to WAV bytes
-        wav_bytes = self._numpy_to_wav_bytes(audio_data, sample_rate)
+        wav_bytes = numpy_to_wav_bytes(audio_data, sample_rate)
 
         # Prepare transcription parameters
         transcribe_params = {
@@ -236,45 +236,6 @@ class WhisperManager:
         transcription = client.audio.transcriptions.create(**transcribe_params)
 
         return transcription.text.strip()
-
-    def _numpy_to_wav_bytes(self, audio_data: np.ndarray, sample_rate: int) -> BytesIO:
-        """Convert numpy array to WAV file bytes"""
-        # Convert float32 to int16 for WAV format
-        audio_int16 = (audio_data * 32767).astype(np.int16)
-
-        # Create WAV file in memory
-        wav_buffer = BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(audio_int16.tobytes())
-
-        wav_buffer.seek(0)
-        return wav_buffer
-
-    def _validate_remote_config(self) -> bool:
-        """Validate remote backend configuration"""
-        remote_config = self.config.get_remote_config()
-
-        if not remote_config:
-            print("ERROR: 'remote_backend' configuration is required when backend='remote'")
-            print("\nAdd to ~/.config/hyprwhspr/config.json:")
-            print('  "remote_backend": {')
-            print('    "api_url": "http://localhost:8000",')
-            print('    "model": "Systran/faster-whisper-base"')
-            print('  }')
-            return False
-
-        if not remote_config.get('api_url'):
-            print("ERROR: remote_backend.api_url is required")
-            return False
-
-        if not remote_config.get('model'):
-            print("ERROR: remote_backend.model is required")
-            return False
-
-        return True
 
     def _validate_model_file(self, model_name: str) -> bool:
         """Validate that model file exists and is not corrupted"""
