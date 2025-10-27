@@ -263,7 +263,7 @@ Increase for more CPU parallelism when using CPU; on GPU, modest values are fine
 
 ## Backend Options
 
-hyprwhspr supports two transcription backends: **local** processing using pywhispercpp, or **remote** processing via speaches.ai or OpenAI API. Choose the option that best fits your needs.
+hyprwhspr supports two transcription backends: **local** processing using pywhispercpp, or **remote** processing via speaches.ai or any OpenAI-compatible API. Choose the option that best fits your needs.
 
 ### Local Backend (pywhispercpp) 
 
@@ -339,7 +339,7 @@ Language options:
 - **`"es"`** - Spanish transcription
 - **`etc.`** - Any supported language code
 
-### Remote Backend (speaches.ai / OpenAI)
+### Remote Backend (speaches.ai / OpenAI-compatible APIs)
 
 hyprwhspr can use a remote transcription service instead of local processing.
 
@@ -347,7 +347,7 @@ hyprwhspr can use a remote transcription service instead of local processing.
 - 🚀 Offload processing to a more powerful server
 - 🔧 Use custom Whisper models not available locally
 - 🌐 Centralized transcription for multiple devices
-- ☁️ Use OpenAI's API without local GPU requirements
+- ☁️ Use cloud APIs without local GPU requirements
 
 #### Quick Setup with speaches.ai
 
@@ -407,7 +407,7 @@ hyprwhspr can use a remote transcription service instead of local processing.
 
 | Setting | Required | Default | Description |
 |---------|----------|---------|-------------|
-| `api_url` | ✅ Yes | - | Base URL of speaches/OpenAI server |
+| `api_url` | ✅ Yes | - | Base URL of API server |
 | `model` | ✅ Yes | - | Model identifier |
 | `api_key` | No | `"dummy"` | API key (use "dummy" for speaches) |
 | `prompt` | No | `null` | Optional prompt for better accuracy |
@@ -423,10 +423,12 @@ hyprwhspr can use a remote transcription service instead of local processing.
 - `Systran/faster-whisper-medium` - High accuracy
 - `Systran/faster-whisper-large-v3` - Best accuracy
 
-*OpenAI:*
-- `whisper-1` - Standard Whisper model
-- `gpt-4o-transcribe` - High quality
-- `gpt-4o-mini-transcribe` - Fast and efficient
+*OpenAI-compatible APIs:*
+- `whisper-1` - Standard Whisper model (OpenAI)
+- `gpt-4o-transcribe` - High quality (OpenAI)
+- `gpt-4o-mini-transcribe` - Fast and efficient (OpenAI)
+
+> **Note:** Any OpenAI-compatible service can be used. Model availability depends on your API provider.
 
 #### Example Configurations
 
@@ -457,7 +459,7 @@ hyprwhspr can use a remote transcription service instead of local processing.
 }
 ```
 
-**Using OpenAI's official API:**
+**Using OpenAI-compatible APIs:**
 ```json
 {
   "backend": "remote",
@@ -469,6 +471,8 @@ hyprwhspr can use a remote transcription service instead of local processing.
   }
 }
 ```
+
+> **Compatible services include:** OpenAI, Azure OpenAI, LocalAI, Ollama (with OpenAI compatibility), and any other service implementing the OpenAI API specification.
 
 #### Privacy & Security
 
@@ -484,52 +488,6 @@ hyprwhspr can use a remote transcription service instead of local processing.
 - ✅ Audio never leaves your infrastructure
 - ✅ Full control over data
 - ✅ No third-party dependencies
-
-#### Troubleshooting Remote Backend
-
-**Test server connectivity:**
-```bash
-curl http://your-server:8000/v1/audio/transcriptions \
-  -F "file=@test.wav" \
-  -F "model=Systran/faster-whisper-base"
-```
-
-**Check hyprwhspr logs:**
-```bash
-journalctl --user -u hyprwhspr.service -f
-```
-
-**Common errors:**
-
-*"Connection refused"* - Server not running or wrong URL
-```bash
-# Verify server is running
-docker ps | grep speaches
-```
-
-*"remote_backend configuration is required"* - Add config
-```json
-{
-  "backend": "remote",
-  "remote_backend": { ... }
-}
-```
-
-*"openai package not installed"* - Install dependency
-```bash
-~/.local/share/hyprwhspr/venv/bin/pip install openai
-```
-
-**Switch back to local mode:**
-```json
-{
-  "backend": "local"
-}
-```
-Then restart:
-```bash
-systemctl --user restart hyprwhspr.service
-```
 
 #### Advanced: Custom Prompts
 
