@@ -228,8 +228,8 @@ class WhisperManager:
         if language:
             transcribe_params['language'] = language
 
-        if remote_config.get('response_format'):
-            transcribe_params['response_format'] = remote_config['response_format']
+        # Always use text format (hyprwhspr only uses the .text property)
+        transcribe_params['response_format'] = 'text'
 
         # Make API request (retries handled by SDK)
         print(f"[TRANSCRIBE] Sending request to {remote_config['api_url']}", flush=True)

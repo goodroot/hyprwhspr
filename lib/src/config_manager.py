@@ -36,7 +36,6 @@ class ConfigManager:
                 'model': 'Systran/faster-whisper-base',
                 'prompt': None,
                 'language': None,
-                'response_format': 'text',
                 'timeout': 30,
                 'max_retries': 2
             }

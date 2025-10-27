@@ -426,7 +426,6 @@ hyprwhspr can use a remote transcription service instead of local processing.
 | `api_key` | No | `"dummy"` | API key (use "dummy" for speaches) |
 | `prompt` | No | `null` | Optional prompt for better accuracy |
 | `language` | No | `null` | Language code (e.g., "en", "es") |
-| `response_format` | No | `"text"` | Response format ("text" or "json") |
 | `timeout` | No | `30` | Request timeout in seconds |
 | `max_retries` | No | `2` | Automatic retry attempts |
 
@@ -466,7 +465,6 @@ hyprwhspr can use a remote transcription service instead of local processing.
     "model": "Systran/faster-whisper-small",
     "prompt": "Technical transcription with proper terminology",
     "language": "en",
-    "response_format": "text",
     "timeout": 30,
     "max_retries": 2
   }
