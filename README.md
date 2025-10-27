@@ -265,6 +265,18 @@ Increase for more CPU parallelism when using CPU; on GPU, modest values are fine
 
 hyprwhspr supports two transcription backends: **local** processing using pywhispercpp, or **remote** processing via speaches.ai or any OpenAI-compatible API. Choose the option that best fits your needs.
 
+**Backend Selection:**
+```json
+{
+  "backend": "local"   // Use local pywhispercpp (default)
+}
+```
+```json
+{
+  "backend": "remote"  // Use remote API
+}
+```
+
 ### Local Backend (pywhispercpp) 
 
 **Default model installed:** `ggml-base.en.bin` (~148MB) to `~/.local/share/pywhispercpp/models/`
@@ -389,18 +401,6 @@ hyprwhspr can use a remote transcription service instead of local processing.
    ```
 
 #### Configuration Options
-
-**Backend Selection:**
-```json
-{
-  "backend": "local"   // Use local pywhispercpp (default)
-}
-```
-```json
-{
-  "backend": "remote"  // Use remote API
-}
-```
 
 **Remote Backend Settings:**
 
