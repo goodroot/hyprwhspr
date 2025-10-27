@@ -482,29 +482,10 @@ Remote backends transmit audio to the API server. Use HTTPS for sensitive conten
 
 Use prompts to improve transcription quality for specific contexts:
 
-**Technical content:**
 ```json
 {
   "remote_backend": {
     "prompt": "Technical documentation with proper capitalization of technology terms like API, HTTP, SQL, Python, Docker."
-  }
-}
-```
-
-**Medical transcription:**
-```json
-{
-  "remote_backend": {
-    "prompt": "Medical transcription with proper medical terminology and abbreviations."
-  }
-}
-```
-
-**Casual conversation:**
-```json
-{
-  "remote_backend": {
-    "prompt": "Transcribe as natural conversation with informal language."
   }
 }
 ```
