@@ -367,10 +367,25 @@ hyprwhspr can use a remote transcription service instead of local processing.
 
 1. **Deploy speaches server:**
    ```bash
-   docker run -d -p 8000:8000 ghcr.io/speaches-ai/speaches:latest
+   # With volume mount to persist models
+   docker run -d -p 8000:8000 -v speaches-models:/root/.cache/speaches ghcr.io/speaches-ai/speaches:latest
    ```
 
-2. **Configure hyprwhspr for remote backend:**
+   > **Note:** The volume mount `-v speaches-models:/root/.cache/speaches` persists downloaded models across container restarts.
+
+2. **Download a Whisper model:**
+   ```bash
+   # Download the base model (recommended to start)
+   uvx speaches-cli model download Systran/faster-whisper-base
+
+   # Or download other models:
+   # uvx speaches-cli model download Systran/faster-distil-whisper-small.en
+   # uvx speaches-cli model download Systran/faster-whisper-small
+   # uvx speaches-cli model download Systran/faster-whisper-medium
+   # uvx speaches-cli model download Systran/faster-whisper-large-v3
+   ```
+
+3. **Configure hyprwhspr for remote backend:**
 
    Edit `~/.config/hyprwhspr/config.json`:
    ```json
@@ -383,7 +398,7 @@ hyprwhspr can use a remote transcription service instead of local processing.
    }
    ```
 
-3. **Restart hyprwhspr:**
+4. **Restart hyprwhspr:**
    ```bash
    systemctl --user restart hyprwhspr.service
    ```
