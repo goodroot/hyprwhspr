@@ -347,7 +347,6 @@ hyprwhspr can use a remote transcription service instead of local processing.
 - 🚀 Offload processing to a more powerful server
 - 🔧 Use custom Whisper models not available locally
 - 🌐 Centralized transcription for multiple devices
-- ☁️ Use cloud APIs without local GPU requirements
 
 #### Quick Setup with speaches.ai
 
