@@ -24,6 +24,45 @@ def numpy_to_wav_bytes(audio_data: np.ndarray, sample_rate: int) -> BytesIO:
     return wav_buffer
 
 
+def build_transcribe_params(
+    remote_config: dict,
+    audio_data: np.ndarray,
+    sample_rate: int,
+    global_language: str = None
+) -> dict:
+    """Build transcription parameters for OpenAI-compatible API
+
+    Args:
+        remote_config: Remote backend configuration
+        audio_data: Audio as numpy array
+        sample_rate: Sample rate of audio
+        global_language: Global language setting (fallback)
+
+    Returns:
+        Dict of parameters for OpenAI audio.transcriptions.create()
+    """
+    # Convert audio to WAV bytes
+    wav_bytes = numpy_to_wav_bytes(audio_data, sample_rate)
+
+    # Base parameters
+    params = {
+        'model': remote_config['model'],
+        'file': ('audio.wav', wav_bytes, 'audio/wav'),
+        'response_format': 'text'
+    }
+
+    # Optional prompt
+    if remote_config.get('prompt'):
+        params['prompt'] = remote_config['prompt']
+
+    # Language (remote config takes precedence over global)
+    language = remote_config.get('language') or global_language
+    if language:
+        params['language'] = language
+
+    return params
+
+
 def validate_remote_config(config_manager) -> bool:
     """Validate remote backend configuration"""
     remote_config = config_manager.get_remote_config()

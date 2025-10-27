@@ -11,10 +11,10 @@ from typing import Optional
 
 try:
     from .config_manager import ConfigManager
-    from .remote_utils import numpy_to_wav_bytes, validate_remote_config
+    from .remote_utils import build_transcribe_params, validate_remote_config
 except ImportError:
     from config_manager import ConfigManager
-    from remote_utils import numpy_to_wav_bytes, validate_remote_config
+    from remote_utils import build_transcribe_params, validate_remote_config
 
 
 class WhisperManager:
@@ -210,26 +210,11 @@ class WhisperManager:
             max_retries=remote_config.get('max_retries', 2)
         )
 
-        # Convert numpy array to WAV bytes
-        wav_bytes = numpy_to_wav_bytes(audio_data, sample_rate)
-
-        # Prepare transcription parameters
-        transcribe_params = {
-            'model': remote_config['model'],
-            'file': ('audio.wav', wav_bytes, 'audio/wav')
-        }
-
-        # Add optional parameters if present
-        if remote_config.get('prompt'):
-            transcribe_params['prompt'] = remote_config['prompt']
-
-        # Use remote language setting, or fall back to global language setting
-        language = remote_config.get('language') or self.config.get_setting('language')
-        if language:
-            transcribe_params['language'] = language
-
-        # Always use text format (hyprwhspr only uses the .text property)
-        transcribe_params['response_format'] = 'text'
+        # Prepare transcription parameters (includes audio conversion)
+        global_language = self.config.get_setting('language')
+        transcribe_params = build_transcribe_params(
+            remote_config, audio_data, sample_rate, global_language
+        )
 
         # Make API request (retries handled by SDK)
         print(f"[TRANSCRIBE] Sending request to {remote_config['api_url']}", flush=True)
