@@ -476,18 +476,7 @@ hyprwhspr can use a remote transcription service instead of local processing.
 
 #### Privacy & Security
 
-⚠️ **Important:** When using remote backend, your audio is sent over the network to the remote server.
-
-**Privacy considerations:**
-- Ensure you trust the server hosting the API
-- Use HTTPS (not HTTP) for sensitive content
-- Consider self-hosting speaches for full privacy control
-- Review the server's data retention policies
-
-**Self-hosting speaches ensures:**
-- ✅ Audio never leaves your infrastructure
-- ✅ Full control over data
-- ✅ No third-party dependencies
+Remote backends transmit audio to the API server. Use HTTPS for sensitive content, verify server trust and data retention policies, or self-host for full control.
 
 #### Advanced: Custom Prompts
 
