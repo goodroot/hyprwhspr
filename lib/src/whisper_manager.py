@@ -176,7 +176,6 @@ class WhisperManager:
             # Get language setting from config (None = auto-detect)
             language = self.config.get_setting('language', None)
 
-            # Transcribe with language parameter if specified
             if language:
                 segments = self._pywhisper_model.transcribe(audio_data, language=language)
             else:
@@ -199,25 +198,20 @@ class WhisperManager:
             print("Install with: pip install openai")
             raise
 
-        # Get remote configuration
         remote_config = self.config.get_remote_config()
-
-        # Create OpenAI client with custom base URL
         client = OpenAI(
-            api_key=remote_config.get('api_key', 'dummy'),
+            api_key=remote_config['api_key'],
             base_url=remote_config['api_url'],
-            timeout=remote_config.get('timeout', 30),
-            max_retries=remote_config.get('max_retries', 2)
+            timeout=remote_config['timeout'],
+            max_retries=remote_config['max_retries']
         )
 
-        # Prepare transcription parameters (includes audio conversion)
         global_language = self.config.get_setting('language')
         global_prompt = self.config.get_setting('whisper_prompt')
         transcribe_params = build_transcribe_params(
             remote_config, audio_data, sample_rate, global_language, global_prompt
         )
 
-        # Make API request (retries handled by SDK)
         print(f"[TRANSCRIBE] Sending request to {remote_config['api_url']}", flush=True)
         transcription = client.audio.transcriptions.create(**transcribe_params)
 
