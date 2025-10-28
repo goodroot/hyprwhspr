@@ -365,10 +365,10 @@ hyprwhspr can use a remote transcription service instead of local processing.
 1. **Deploy speaches server:**
    ```bash
    # With volume mount to persist models
-   docker run -d -p 8000:8000 -v speaches-models:/root/.cache/speaches ghcr.io/speaches-ai/speaches:latest
+   docker run -p 8000:8000 --name speaches --rm --volume hf-hub-cache:$HOME/.cache/huggingface/hub ghcr.io/speaches-ai/speaches:latest-cpu
    ```
 
-   > **Note:** The volume mount `-v speaches-models:/root/.cache/speaches` persists downloaded models across container restarts.
+   > **Note:** The volume mount `--volume hf-hub-cache:$HOME/.cache/huggingface/hub` persists downloaded models across container restarts.
 
 2. **Download a Whisper model:**
    ```bash
