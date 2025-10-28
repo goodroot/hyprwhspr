@@ -221,7 +221,7 @@ class WhisperManager:
         print(f"[TRANSCRIBE] Sending request to {remote_config['api_url']}", flush=True)
         transcription = client.audio.transcriptions.create(**transcribe_params)
 
-        return transcription.text.strip()
+        return transcription.strip()
 
     def _validate_model_file(self, model_name: str) -> bool:
         """Validate that model file exists and is not corrupted"""
