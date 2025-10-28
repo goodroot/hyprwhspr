@@ -25,11 +25,13 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 - **Word overrides** - Customize transcriptions, prompt and corrections
 - **Run as user** - Runs in user space, just sudo once for the installer
 
+> 🔐 **PRIVATE**: hyprwhspr is local and never reads any clipboard / audio content 
+
 ## Quick start
 
 ### Prerequisites
 
-- **[Omarchy](https://omarchy.org/)**
+- **[Omarchy](https://omarchy.org/)** or **[Arch Linux](https://archlinux.org/)**
 - **NVIDIA GPU** (optional, for CUDA acceleration)
 - **AMD GPU** (optional, for ROCm acceleration)
 
@@ -81,6 +83,8 @@ cd hyprwhspr
 4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
 5. **Bam!** Text appears in active buffer!
 
+Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) or visit [Omarchy Discord](https://discord.com/channels/1390012484194275541/1410373168765468774).
+
 ## Usage
 
 ### Toggle-able global hotkey
@@ -100,17 +104,7 @@ Edit `~/.config/hyprwhspr/config.json`:
 }
 ```
 
-For choice of model, see [model instructions](#whisper-models).
-
-**Performance options** - improve cpu transcription speed:
-
-```jsonc
-{
-    "threads": 4            // thread count for whisper cpu processing
-}
-```
-
-Increase for more CPU parallelism when using CPU; on GPU, modest values are fine.
+> For choice of model and languages, see [model instructions](https://github.com/goodroot/hyprwhspr/tree/main?tab=readme-ov-file#whisper-models).
 
 **Word overrides** - customize transcriptions:
 
@@ -163,9 +157,7 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 
 _Thanks for [the sounds](https://github.com/akx/Notifications), @akx!_
 
-### Speech-to-text replacements
-
-Automatically converts spoken words to symbols and punctuation for natural dictation:
+**Text replacement:** Automatically converts spoken words to symbols / punctuation:
 
 **Punctuation:**
 
@@ -199,7 +191,7 @@ Automatically converts spoken words to symbols and punctuation for natural dicta
 - "new line" → new line
 - "tab" → tab character
 
-_Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whispertux), thanks g@cjams!_
+_Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whispertux), thanks @cjams!_
 
 **Clipboard behavior** - control what happens to clipboard after text injection:
 
@@ -210,11 +202,8 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 }
 ```
 
-**Clipboard behavior options:**
 - **`clipboard_behavior: true`** - Clipboard is automatically cleared after the specified delay
 - **`clipboard_clear_delay`** - How long to wait before clearing (only matters when `clipboard_behavior` is `true`)
-
-> PRIVACY: hyprwhspr never reads your existing - or any - clipboard / audio content 
 
 **Paste behavior** - control how text is pasted into applications:
 
@@ -231,42 +220,6 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 - **`"ctrl_shift"`** — Sends Ctrl+Shift+V. Works in most terminals.
 
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
-
-**Backwards compatibility:**
-
-Older configs using:
-```jsonc
-{
-    "shift_paste": true   // Ctrl+Shift+V
-}
-```
-```jsonc
-{
-    "shift_paste": false  // Ctrl+V
-}
-```
-still work. If `paste_mode` is present, it takes precedence over `shift_paste`.
-
-**Language detection** - control transcription language:
-
-```jsonc
-{
-    "language": null    // null = auto-detect (default), or specify language code
-}
-```
-
-Language options:
-- **`null`** (default) - Auto-detect language from audio
-- **`"en"`** - Force English transcription
-- **`"nl"`** - Force Dutch transcription  
-- **`"fr"`** - Force French transcription
-- **`"de"`** - Force German transcription
-- **`"es"`** - Force Spanish transcription
-- **`etc.`** - Any supported language code
-
-> **Note:** Multilingual models (like `base`, `medium`) are preferred over English-only models (like `base.en`) for language auto-detection.
-
-### Waybar integration
 
 **Add dynamic tray icon** to your `~/.config/waybar/config`:
 
@@ -286,40 +239,48 @@ Language options:
 }
 ```
 
-Add CSS styling to your `~/.config/waybar/style.css`:
+**Add CSS styling** to your `~/.config/waybar/style.css`:
 
 ```css
 @import "/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css";
 ```
 
-Click interactions:
+**Waybar icon click interactions**:
 
 - **Left-click**: Toggle Hyprwhspr on/off
 - **Right-click**: Start Hyprwhspr (if not running)
 - **Middle-click**: Restart Hyprwhspr
 
-## Advanced Setup
+**CPU performance options** - improve cpu transcription speed:
 
-### GPU Acceleration (NVIDIA & AMD)
+```jsonc
+{
+    "threads": 4            // thread count for whisper cpu processing
+}
+```
+
+Increase for more CPU parallelism when using CPU; on GPU, modest values are fine.
+
+## Whisper Models 
+
+**Default model installed:** `ggml-base.en.bin` (~148MB) to `~/.local/share/pywhispercpp/models/`
+
+**GPU Acceleration (NVIDIA & AMD):**
 
 - NVIDIA (CUDA) and AMD (ROCm) are detected automatically; pywhispercpp will use GPU when available
 - No manual build steps required. 
     - If toolchains are present, installer can build pywhispercpp with GPU support; otherwise CPU wheel is used.
 
-### Whisper Models (pywhispercpp)
-
-**Default model installed:** `ggml-base.en.bin` (~148MB) to `~/.local/share/pywhispercpp/models/`
-
 **Available models to download:**
 
-- **`tiny.en`** - Fastest, good for real-time dictation
-- **`base.en`** - Best balance of speed/accuracy (recommended)
-- **`small.en`** - Better accuracy, still fast
-- **`medium.en`** - High accuracy, slower processing
+- **`tiny`** - Fastest, good for real-time dictation
+- **`base`** - Best balance of speed/accuracy (recommended)
+- **`small`** - Better accuracy, still fast
+- **`medium`** - High accuracy, slower processing
 - **`large`** - Best accuracy, **requires GPU acceleration** for reasonable speed
 - **`large-v3`** - Latest large model, **requires GPU acceleration** for reasonable speed
 
-**⚠️ GPU Acceleration Required:** Models `large` and `large-v3` require GPU acceleration for reasonable performance. 
+**⚠️ GPU required:** Models `large` and `large-v3` require GPU acceleration to perform. 
 
 ```bash
 cd ~/.local/share/pywhispercpp/models/
@@ -347,31 +308,32 @@ wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
 
 **Update your config after downloading:**
 
-```json
+```jsonc
 {
     "model": "small.en" // Or just small if multi-lingual model. If both available, general model is chosen.
 }
 ```
 
-## Architecture
+**Language detection** - control transcription language:
 
-**hyprwhspr is designed as a system package:**
+English only speakers use `.en` models which are smaller.
 
-- **`/usr/lib/hyprwhspr/`** - Main installation directory
-- **`/usr/lib/hyprwhspr/lib/`** - Python application
-- **`~/.local/share/pywhispercpp/models/`** - Whisper models (user space)
-- **`~/.config/hyprwhspr/`** - User configuration
-- **`~/.config/systemd/user/`** - Systemd service
+For multi-language detection, ensure you select a model which does not say `.en`:
 
-### Systemd integration
+```jsonc
+{
+    "language": null // null = auto-detect (default), or specify language code
+}
+```
 
-**hyprwhspr uses systemd for reliable service management:**
-
-- **`hyprwhspr.service`** - Main application service with auto-restart
-- **`ydotool.service`** - Input injection daemon service
-- **Tray integration** - All tray operations use systemd commands
-- **Process management** - No manual process killing or starting
-- **Service dependencies** - Proper startup/shutdown ordering
+Language options:
+- **`null`** (default) - Auto-detect language from audio
+- **`"en"`** - English transcription
+- **`"nl"`** - Dutch transcription  
+- **`"fr"`** - French transcription
+- **`"de"`** - German transcription
+- **`"es"`** - Spanish transcription
+- **`etc.`** - Any supported language code
 
 ## Troubleshooting
 
@@ -485,12 +447,32 @@ systemctl --user restart hyprwhspr.service
 systemctl --user status hyprwhspr.service
 ```
 
-### Getting help
+## Architecture
+
+**hyprwhspr is designed as a system package:**
+
+- **`/usr/lib/hyprwhspr/`** - Main installation directory
+- **`/usr/lib/hyprwhspr/lib/`** - Python application
+- **`~/.local/share/pywhispercpp/models/`** - Whisper models (user space)
+- **`~/.config/hyprwhspr/`** - User configuration
+- **`~/.config/systemd/user/`** - Systemd service
+
+### Systemd integration
+
+**hyprwhspr uses systemd for reliable service management:**
+
+- **`hyprwhspr.service`** - Main application service with auto-restart
+- **`ydotool.service`** - Input injection daemon service
+- **Tray integration** - All tray operations use systemd commands
+- **Process management** - No manual process killing or starting
+- **Service dependencies** - Proper startup/shutdown ordering
+
+## Getting help
 
 1. **Check logs**: `journalctl --user -u hyprwhspr.service` `journalctl --user -u ydotool.service`
 2. **Verify permissions**: Run the permissions fix script
 3. **Test components**: Check ydotool, audio devices, whisper.cpp
-4. **Report issues**: Include logs and system information
+4. **Report issues**: [Create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) or visit [Omarchy Discord](https://discord.com/channels/1390012484194275541/1410373168765468774) - logging info helpful!
 
 ## License
 
@@ -504,6 +486,6 @@ For pull requests, also best to start with an issue.
 
 ---
 
-**Built with ❤️ for the Omarchy community**
+**Built with ❤️ in 🇨🇦 for the Omarchy community**
 
 *Integrated and natural speech-to-text.*
