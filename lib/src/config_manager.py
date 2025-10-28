@@ -34,8 +34,6 @@ class ConfigManager:
                 'api_url': 'http://localhost:8000',
                 'api_key': 'dummy',
                 'model': 'Systran/faster-whisper-base',
-                'prompt': None,
-                'language': None,
                 'timeout': 30,
                 'max_retries': 2
             }

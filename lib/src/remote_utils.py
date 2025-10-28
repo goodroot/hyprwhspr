@@ -28,7 +28,8 @@ def build_transcribe_params(
     remote_config: dict,
     audio_data: np.ndarray,
     sample_rate: int,
-    global_language: str = None
+    global_language: str = None,
+    global_prompt: str = None
 ) -> dict:
     """Build transcription parameters for OpenAI-compatible API
 
@@ -36,7 +37,8 @@ def build_transcribe_params(
         remote_config: Remote backend configuration
         audio_data: Audio as numpy array
         sample_rate: Sample rate of audio
-        global_language: Global language setting (fallback)
+        global_language: Global language setting
+        global_prompt: Global whisper prompt setting
 
     Returns:
         Dict of parameters for OpenAI audio.transcriptions.create()
@@ -51,14 +53,13 @@ def build_transcribe_params(
         'response_format': 'text'
     }
 
-    # Optional prompt
-    if remote_config.get('prompt'):
-        params['prompt'] = remote_config['prompt']
+    # Optional prompt from global config
+    if global_prompt:
+        params['prompt'] = global_prompt
 
-    # Language (remote config takes precedence over global)
-    language = remote_config.get('language') or global_language
-    if language:
-        params['language'] = language
+    # Optional language from global config
+    if global_language:
+        params['language'] = global_language
 
     return params
 

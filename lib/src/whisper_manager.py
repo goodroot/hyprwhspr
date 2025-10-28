@@ -212,8 +212,9 @@ class WhisperManager:
 
         # Prepare transcription parameters (includes audio conversion)
         global_language = self.config.get_setting('language')
+        global_prompt = self.config.get_setting('whisper_prompt')
         transcribe_params = build_transcribe_params(
-            remote_config, audio_data, sample_rate, global_language
+            remote_config, audio_data, sample_rate, global_language, global_prompt
         )
 
         # Make API request (retries handled by SDK)

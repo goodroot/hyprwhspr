@@ -409,8 +409,6 @@ hyprwhspr can use a remote transcription service instead of local processing.
 | `api_url` | ✅ Yes | - | Base URL of API server |
 | `model` | ✅ Yes | - | Model identifier |
 | `api_key` | No | `"dummy"` | API key (use "dummy" for speaches) |
-| `prompt` | No | `null` | Optional prompt for better accuracy |
-| `language` | No | `null` | Language code (e.g., "en", "es") |
 | `timeout` | No | `30` | Request timeout in seconds |
 | `max_retries` | No | `2` | Automatic retry attempts |
 
@@ -450,8 +448,6 @@ hyprwhspr can use a remote transcription service instead of local processing.
     "api_url": "http://your-server:8000",
     "api_key": "dummy",
     "model": "Systran/faster-whisper-small",
-    "prompt": "Technical transcription with proper terminology",
-    "language": "en",
     "timeout": 30,
     "max_retries": 2
   }
@@ -476,18 +472,6 @@ hyprwhspr can use a remote transcription service instead of local processing.
 #### Privacy & Security
 
 Remote backends transmit audio to the API server. Use HTTPS for sensitive content, verify server trust and data retention policies, or self-host for full control.
-
-#### Advanced: Custom Prompts
-
-Use prompts to improve transcription quality for specific contexts:
-
-```json
-{
-  "remote_backend": {
-    "prompt": "Technical documentation with proper capitalization of technology terms like API, HTTP, SQL, Python, Docker."
-  }
-}
-```
 
 ## Troubleshooting
 
