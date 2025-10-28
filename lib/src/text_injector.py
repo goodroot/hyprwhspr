@@ -79,7 +79,7 @@ class TextInjector:
             return True
 
         # Preprocess; also trim trailing newlines (avoid unwanted Enter)
-        processed_text = self._preprocess_text(text).rstrip("\r\n")
+        processed_text = self._preprocess_text(text).rstrip("\r\n") + ' '
 
         try:
             # Use strategy-based injection
