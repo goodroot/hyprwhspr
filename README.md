@@ -39,20 +39,6 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 "Just works" with Omarchy.
 
-**AUR:**
-
-_New!_
-
-```bash
-# Install package
-yay -S hyprwhspr
-
-# Setup package
-hyprwhspr-setup
-```
-
-**Script:**
-
 ```bash
 # Clone the repository
 git clone https://github.com/goodroot/hyprwhspr.git
