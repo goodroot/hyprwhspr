@@ -143,6 +143,8 @@ class GlobalShortcuts:
         modifier_key_map = {
             'ctrl': ecodes.KEY_LEFTCTRL,
             'control': ecodes.KEY_LEFTCTRL,
+            'rightctrl': ecodes.KEY_RIGHTCTRL,
+            'rctrl': ecodes.KEY_RIGHTCTRL,
             'alt': ecodes.KEY_LEFTALT,
             'rightalt': ecodes.KEY_RIGHTALT,
             'ralt': ecodes.KEY_RIGHTALT,
