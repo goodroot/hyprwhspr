@@ -3,7 +3,6 @@ Parakeet manager for hyprwhspr
 ONNX-based backend using onnx-asr library
 """
 
-import os
 import time
 import numpy as np
 import threading
@@ -14,10 +13,12 @@ try:
     from .config_manager import ConfigManager
     from .stt_backend import STTBackend
     from .audio_utils import save_audio_to_wav
+    from .logger import log_info, log_error, log_warning, log_success
 except ImportError:
     from config_manager import ConfigManager
     from stt_backend import STTBackend
     from audio_utils import save_audio_to_wav
+    from logger import log_info, log_error, log_warning, log_success
 
 
 class ParakeetManager(STTBackend):
@@ -51,39 +52,39 @@ class ParakeetManager(STTBackend):
             try:
                 import onnx_asr
 
-                print(f"[onnx-asr] Initializing model: {self.current_model}")
-                print(f"[onnx-asr] Note: First-time download is ~3.2 GB")
+                log_info(f"Initializing model: {self.current_model}", "onnx-asr")
+                log_info(f"Note: First-time download is ~3.2 GB", "onnx-asr")
 
                 # Load model (handles download if needed)
                 model_name = self.current_model
                 if self.config.get_setting('parakeet_use_quantized', False):
                     model_name += "-int8"
-                    print(f"[onnx-asr] Using quantized model: {model_name}")
+                    log_info(f"Using quantized model: {model_name}", "onnx-asr")
 
                 if self.custom_model_path:
                     self._onnx_model = onnx_asr.load_model(self.custom_model_path)
                 else:
                     self._onnx_model = onnx_asr.load_model(model_name)
 
-                print("[onnx-asr] Model loaded successfully", flush=True)
-                print(f"[BACKEND] Using onnx-asr (ONNX Runtime) for Parakeet TDT v3", flush=True)
+                log_success(f"Model loaded successfully", "onnx-asr")
+                log_info(f"Using onnx-asr (ONNX Runtime) for Parakeet TDT v3", "BACKEND")
 
                 self.ready = True
                 return True
 
             except ImportError as e:
-                print(f"[onnx-asr] Import failed: {e}")
-                print("ERROR: onnx-asr not installed. Run: pip install onnx-asr>=0.7.0")
+                log_error(f"Import failed: {e}", "onnx-asr")
+                log_error("onnx-asr not installed. Run: pip install onnx-asr>=0.7.0", "ERROR")
                 return False
             except Exception as e:
-                print(f"[onnx-asr] Initialization failed: {e}")
-                print(f"ERROR: Parakeet model not found")
-                print(f"Please download from: https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx")
-                print(f"Expected files: .onnx, .tokenizer.json, vocab.txt")
+                log_error(f"Initialization failed: {e}", "onnx-asr")
+                log_error("Parakeet model not found", "ERROR")
+                log_error("Please download from: https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx", "ERROR")
+                log_error("Expected files: .onnx, .tokenizer.json, vocab.txt", "ERROR")
                 return False
 
         except Exception as e:
-            print(f"ERROR: Failed to initialize Parakeet manager: {e}")
+            log_error(f"Failed to initialize Parakeet manager: {e}", "ERROR")
             return False
 
     def is_ready(self) -> bool:
@@ -104,21 +105,21 @@ class ParakeetManager(STTBackend):
         if not self.ready:
             raise RuntimeError("Parakeet manager not initialized")
 
-        print("[TRANSCRIBE] Using onnx-asr backend", flush=True)
+        log_info("Using onnx-asr backend", "TRANSCRIBE")
 
         # Check if we have valid audio data
         if audio_data is None:
-            print("No audio data provided to transcribe")
+            log_warning("No audio data provided to transcribe")
             return ""
 
         if len(audio_data) == 0:
-            print("Empty audio data provided to transcribe")
+            log_warning("Empty audio data provided to transcribe")
             return ""
 
         # Check if audio is too short (less than 0.1 seconds)
         min_samples = int(sample_rate * 0.1)  # 0.1 seconds minimum
         if len(audio_data) < min_samples:
-            print(f"Audio too short: {len(audio_data)} samples (minimum {min_samples})")
+            log_warning(f"Audio too short: {len(audio_data)} samples (minimum {min_samples})")
             return ""
 
         temp_filename = None
@@ -135,7 +136,7 @@ class ParakeetManager(STTBackend):
             return transcription.strip() if transcription else ""
 
         except Exception as e:
-            print(f"ERROR: onnx-asr transcription failed: {e}")
+            log_error(f"onnx-asr transcription failed: {e}", "ERROR")
             return ""
         finally:
             # Always clean up temp file
@@ -143,7 +144,7 @@ class ParakeetManager(STTBackend):
                 try:
                     temp_filename.unlink()
                 except Exception as e:
-                    print(f"Warning: Failed to delete temp file {temp_filename}: {e}")
+                    log_warning(f"Failed to delete temp file {temp_filename}: {e}")
 
     def set_threads(self, num_threads: int) -> bool:
         """
@@ -154,11 +155,11 @@ class ParakeetManager(STTBackend):
             try:
                 # Store setting for future model loads
                 self.config.set_setting('threads', int(num_threads))
-                print(f"[onnx-asr] Thread setting saved: {int(num_threads)}")
-                print(f"[onnx-asr] Note: Reload model to apply thread changes")
+                log_info(f"Thread setting saved: {int(num_threads)}", "onnx-asr")
+                log_info("Note: Reload model to apply thread changes", "onnx-asr")
                 return True
             except Exception as e:
-                print(f"ERROR: Failed to set threads: {e}")
+                log_error(f"Failed to set threads: {e}", "ERROR")
                 return False
 
     def set_model(self, model_name: str) -> bool:
@@ -173,7 +174,7 @@ class ParakeetManager(STTBackend):
         """
         with self._model_lock:
             try:
-                print(f"[onnx-asr] Switching to model: {model_name}")
+                log_info(f"Switching to model: {model_name}", "onnx-asr")
 
                 import onnx_asr
 
@@ -181,7 +182,7 @@ class ParakeetManager(STTBackend):
                 effective_model_name = model_name
                 if self.config.get_setting('parakeet_use_quantized', False):
                     effective_model_name += "-int8"
-                    print(f"[onnx-asr] Using quantized model: {effective_model_name}")
+                    log_info(f"Using quantized model: {effective_model_name}", "onnx-asr")
 
                 # Clean up existing model
                 self._onnx_model = None
@@ -192,12 +193,12 @@ class ParakeetManager(STTBackend):
                 # Update state
                 self.current_model = model_name
                 self.config.set_setting('parakeet_model', model_name)
-                print(f"[onnx-asr] Successfully switched to model: {model_name}")
+                log_success(f"Successfully switched to model: {model_name}", "onnx-asr")
 
                 return True
 
             except Exception as e:
-                print(f"ERROR: Failed to set model {model_name}: {e}")
+                log_error(f"Failed to set model {model_name}: {e}", "ERROR")
                 self.ready = False
                 return False
 
@@ -207,7 +208,7 @@ class ParakeetManager(STTBackend):
 
     def get_available_models(self) -> list:
         """Get list of available Parakeet models"""
-        models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models' / 'parakeet'
+        models_dir = Path.home() / '.local' / 'share' / 'hyprwhspr' / 'models' / 'parakeet'
         available_models = []
 
         if not models_dir.exists():

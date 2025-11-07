@@ -7,11 +7,13 @@ try:
     from .stt_backend import STTBackend
     from .whisper_manager import WhisperManager
     from .parakeet_manager import ParakeetManager
+    from .logger import log_info, log_error
 except ImportError:
     from config_manager import ConfigManager
     from stt_backend import STTBackend
     from whisper_manager import WhisperManager
     from parakeet_manager import ParakeetManager
+    from logger import log_info, log_error
 
 
 class STTBackendFactory:
@@ -31,11 +33,11 @@ class STTBackendFactory:
         backend_name = config_manager.get_setting('stt_backend', 'whisper')
 
         if backend_name == 'parakeet':
-            print(f"[FACTORY] Creating Parakeet backend")
+            log_info("Creating Parakeet backend", "FACTORY")
             return ParakeetManager(config_manager)
         elif backend_name == 'whisper':
-            print(f"[FACTORY] Creating Whisper backend")
+            log_info("Creating Whisper backend", "FACTORY")
             return WhisperManager(config_manager)
         else:
-            print(f"[FACTORY] Unknown backend '{backend_name}', defaulting to Whisper")
+            log_error(f"Unknown backend '{backend_name}', defaulting to Whisper", "FACTORY")
             return WhisperManager(config_manager)
