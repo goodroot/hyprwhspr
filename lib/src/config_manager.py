@@ -15,7 +15,11 @@ class ConfigManager:
         # Default configuration values - minimal set for hyprwhspr
         self.default_config = {
             'primary_shortcut': 'SUPER+ALT+D',
+            'stt_backend': 'whisper',  # "whisper" or "parakeet"
             'model': 'base',
+            'parakeet_model': 'nemo-parakeet-tdt-0.6b-v3',  # Default Parakeet model
+            'parakeet_model_path': None,  # Custom path override for Parakeet models
+            'parakeet_use_quantized': False,  # Use int8 quantized models (faster, less accurate)
             'threads': 4,           # Thread count for whisper processing
             'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
             'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}

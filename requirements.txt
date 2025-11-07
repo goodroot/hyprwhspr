@@ -16,3 +16,7 @@ psutil>=5.8.0
 
 # CLI formatting and logging
 rich>=13.0.0
+
+# ONNX Runtime for Parakeet backend
+onnxruntime>=1.15.0
+onnx-asr>=0.7.0

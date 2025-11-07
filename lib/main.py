@@ -18,6 +18,7 @@ sys.path.insert(0, str(src_path))
 from config_manager import ConfigManager
 from audio_capture import AudioCapture
 from whisper_manager import WhisperManager
+from stt_backend_factory import STTBackendFactory
 from text_injector import TextInjector
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
@@ -36,7 +37,7 @@ class hyprwhsprApp:
         # Initialize audio feedback manager
         self.audio_manager = AudioManager(self.config)
 
-        self.whisper_manager = WhisperManager()
+        self.whisper_manager = STTBackendFactory.create(self.config)
         self.text_injector = TextInjector(self.config)
         self.global_shortcuts = None
 
@@ -123,8 +124,9 @@ class hyprwhsprApp:
 
         try:
             self.is_processing = True
-            print("🧠 Processing audio with Whisper...")
-            
+            backend_info = self.whisper_manager.get_backend_info()
+            print(f"🧠 Processing audio with {backend_info}...")
+
             # Transcribe audio
             transcription = self.whisper_manager.transcribe_audio(audio_data)
             

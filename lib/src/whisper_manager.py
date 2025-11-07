@@ -11,11 +11,13 @@ from typing import Optional
 
 try:
     from .config_manager import ConfigManager
+    from .stt_backend import STTBackend
 except ImportError:
     from config_manager import ConfigManager
+    from stt_backend import STTBackend
 
 
-class WhisperManager:
+class WhisperManager(STTBackend):
     """Manages whisper transcription with dual backend support"""
     
     def __init__(self, config_manager: Optional[ConfigManager] = None):
