@@ -12,6 +12,85 @@ import evdev
 from evdev import InputDevice, categorize, ecodes
 
 
+# Key aliases mapping to evdev KEY_* constants
+KEY_ALIASES: dict[str, str] = {
+    # Left-side modifiers
+    'ctrl': 'KEY_LEFTCTRL', 'control': 'KEY_LEFTCTRL', 'lctrl': 'KEY_LEFTCTRL',
+    'alt': 'KEY_LEFTALT', 'lalt': 'KEY_LEFTALT',
+    'shift': 'KEY_LEFTSHIFT', 'lshift': 'KEY_LEFTSHIFT',
+    'super': 'KEY_LEFTMETA', 'meta': 'KEY_LEFTMETA', 'lsuper': 'KEY_LEFTMETA',
+    'win': 'KEY_LEFTMETA', 'windows': 'KEY_LEFTMETA', 'cmd': 'KEY_LEFTMETA',
+    
+    # Right-side modifiers
+    'rctrl': 'KEY_RIGHTCTRL', 'rightctrl': 'KEY_RIGHTCTRL',
+    'ralt': 'KEY_RIGHTALT', 'rightalt': 'KEY_RIGHTALT',
+    'rshift': 'KEY_RIGHTSHIFT', 'rightshift': 'KEY_RIGHTSHIFT',
+    'rsuper': 'KEY_RIGHTMETA', 'rightsuper': 'KEY_RIGHTMETA', 'rmeta': 'KEY_RIGHTMETA',
+    
+    # Common special keys
+    'enter': 'KEY_ENTER', 'return': 'KEY_ENTER',
+    'backspace': 'KEY_BACKSPACE', 'bksp': 'KEY_BACKSPACE',
+    'tab': 'KEY_TAB',
+    'caps': 'KEY_CAPSLOCK', 'capslock': 'KEY_CAPSLOCK',
+    'esc': 'KEY_ESC', 'escape': 'KEY_ESC',
+    'space': 'KEY_SPACE', 'spacebar': 'KEY_SPACE',
+    'delete': 'KEY_DELETE', 'del': 'KEY_DELETE',
+    'insert': 'KEY_INSERT', 'ins': 'KEY_INSERT',
+    'home': 'KEY_HOME',
+    'end': 'KEY_END',
+    'pageup': 'KEY_PAGEUP', 'pgup': 'KEY_PAGEUP',
+    'pagedown': 'KEY_PAGEDOWN', 'pgdn': 'KEY_PAGEDOWN', 'pgdown': 'KEY_PAGEDOWN',
+    
+    # Arrow keys
+    'up': 'KEY_UP', 'uparrow': 'KEY_UP',
+    'down': 'KEY_DOWN', 'downarrow': 'KEY_DOWN',
+    'left': 'KEY_LEFT', 'leftarrow': 'KEY_LEFT',
+    'right': 'KEY_RIGHT', 'rightarrow': 'KEY_RIGHT',
+    
+    # Lock keys
+    'numlock': 'KEY_NUMLOCK',
+    'scrolllock': 'KEY_SCROLLLOCK', 'scroll': 'KEY_SCROLLLOCK',
+    
+    # Function keys (f1-f24)
+    'f1': 'KEY_F1', 'f2': 'KEY_F2', 'f3': 'KEY_F3', 'f4': 'KEY_F4',
+    'f5': 'KEY_F5', 'f6': 'KEY_F6', 'f7': 'KEY_F7', 'f8': 'KEY_F8',
+    'f9': 'KEY_F9', 'f10': 'KEY_F10', 'f11': 'KEY_F11', 'f12': 'KEY_F12',
+    'f13': 'KEY_F13', 'f14': 'KEY_F14', 'f15': 'KEY_F15', 'f16': 'KEY_F16',
+    'f17': 'KEY_F17', 'f18': 'KEY_F18', 'f19': 'KEY_F19', 'f20': 'KEY_F20',
+    'f21': 'KEY_F21', 'f22': 'KEY_F22', 'f23': 'KEY_F23', 'f24': 'KEY_F24',
+    
+    # Numpad keys
+    'kp0': 'KEY_KP0', 'kp1': 'KEY_KP1', 'kp2': 'KEY_KP2', 'kp3': 'KEY_KP3',
+    'kp4': 'KEY_KP4', 'kp5': 'KEY_KP5', 'kp6': 'KEY_KP6', 'kp7': 'KEY_KP7',
+    'kp8': 'KEY_KP8', 'kp9': 'KEY_KP9',
+    'kpenter': 'KEY_KPENTER', 'kpplus': 'KEY_KPPLUS', 'kpminus': 'KEY_KPMINUS',
+    'kpmultiply': 'KEY_KPASTERISK', 'kpdivide': 'KEY_KPSLASH',
+    'kpdot': 'KEY_KPDOT', 'kpperiod': 'KEY_KPDOT',
+    
+    # Media keys
+    'mute': 'KEY_MUTE', 'volumemute': 'KEY_MUTE',
+    'volumeup': 'KEY_VOLUMEUP', 'volup': 'KEY_VOLUMEUP',
+    'volumedown': 'KEY_VOLUMEDOWN', 'voldown': 'KEY_VOLUMEDOWN',
+    'play': 'KEY_PLAYPAUSE', 'playpause': 'KEY_PLAYPAUSE',
+    'stop': 'KEY_STOPCD', 'mediastop': 'KEY_STOPCD',
+    'nextsong': 'KEY_NEXTSONG', 'next': 'KEY_NEXTSONG',
+    'previoussong': 'KEY_PREVIOUSSONG', 'prev': 'KEY_PREVIOUSSONG',
+    
+    # Browser keys (for keyboards with browser control buttons)
+    'browser': 'KEY_WWW',
+    'browserback': 'KEY_BACK',
+    'browserforward': 'KEY_FORWARD',
+    'refresh': 'KEY_REFRESH',
+    'browsersearch': 'KEY_SEARCH',
+    'favorites': 'KEY_BOOKMARKS',
+    
+    # System keys
+    'menu': 'KEY_MENU',
+    'print': 'KEY_PRINT', 'printscreen': 'KEY_SYSRQ', 'prtsc': 'KEY_SYSRQ',
+    'pause': 'KEY_PAUSE', 'break': 'KEY_PAUSE',
+}
+
+
 class GlobalShortcuts:
     """Handles global keyboard shortcuts using evdev for hardware-level capture"""
     
@@ -129,55 +208,35 @@ class GlobalShortcuts:
         return keys
     
     def _string_to_keycode(self, key_string: str) -> Optional[int]:
-        """Convert a key string to evdev keycode"""
+        """Convert a human-friendly key string into an evdev keycode.
+        
+        Tries local aliases first, then falls back to evdev-style KEY_* names.
+        This hybrid approach supports both user-friendly names (ctrl, super, etc.)
+        and direct evdev key names (KEY_COMMA, KEY_1, etc.).
+        
+        Returns None if no matching keycode is found.
+        """
+        original = key_string
         key_string = key_string.lower().strip()
         
-        # Function keys
-        function_key_map = {
-            'f1': ecodes.KEY_F1, 'f2': ecodes.KEY_F2, 'f3': ecodes.KEY_F3, 'f4': ecodes.KEY_F4,
-            'f5': ecodes.KEY_F5, 'f6': ecodes.KEY_F6, 'f7': ecodes.KEY_F7, 'f8': ecodes.KEY_F8,
-            'f9': ecodes.KEY_F9, 'f10': ecodes.KEY_F10, 'f11': ecodes.KEY_F11, 'f12': ecodes.KEY_F12
-        }
+        # 1. Try alias mapping first, easy names
+        if key_string in KEY_ALIASES:
+            key_name = KEY_ALIASES[key_string]
+        else:
+            # 2. Try as direct evdev KEY_* name
+            # Can use any evdev key name directly
+            key_name = key_string.upper()
+            if not key_name.startswith('KEY_'):
+                key_name = f'KEY_{key_name}'
         
-        # Modifier keys
-        modifier_key_map = {
-            'ctrl': ecodes.KEY_LEFTCTRL,
-            'control': ecodes.KEY_LEFTCTRL,
-            'alt': ecodes.KEY_LEFTALT,
-            'rightalt': ecodes.KEY_RIGHTALT,
-            'ralt': ecodes.KEY_RIGHTALT,
-            'shift': ecodes.KEY_LEFTSHIFT,
-            'super': ecodes.KEY_LEFTMETA,
-            'windows': ecodes.KEY_LEFTMETA,
-            'win': ecodes.KEY_LEFTMETA,
-            'meta': ecodes.KEY_LEFTMETA,
-            'cmd': ecodes.KEY_LEFTMETA
-        }
+        # 3. Look up the keycode in evdev's complete mapping
+        code = ecodes.ecodes.get(key_name)
         
-        # Character keys
-        char_key_map = {
-            'a': ecodes.KEY_A, 'b': ecodes.KEY_B, 'c': ecodes.KEY_C, 'd': ecodes.KEY_D,
-            'e': ecodes.KEY_E, 'f': ecodes.KEY_F, 'g': ecodes.KEY_G, 'h': ecodes.KEY_H,
-            'i': ecodes.KEY_I, 'j': ecodes.KEY_J, 'k': ecodes.KEY_K, 'l': ecodes.KEY_L,
-            'm': ecodes.KEY_M, 'n': ecodes.KEY_N, 'o': ecodes.KEY_O, 'p': ecodes.KEY_P,
-            'q': ecodes.KEY_Q, 'r': ecodes.KEY_R, 's': ecodes.KEY_S, 't': ecodes.KEY_T,
-            'u': ecodes.KEY_U, 'v': ecodes.KEY_V, 'w': ecodes.KEY_W, 'x': ecodes.KEY_X,
-            'y': ecodes.KEY_Y, 'z': ecodes.KEY_Z
-        }
+        if code is None:
+            print(f"Warning: Unknown key string '{original}' (resolved to '{key_name}')")
+            return None
         
-        # Check function keys first
-        if key_string in function_key_map:
-            return function_key_map[key_string]
-            
-        # Check modifier keys
-        if key_string in modifier_key_map:
-            return modifier_key_map[key_string]
-            
-        # Check character keys
-        if key_string in char_key_map:
-            return char_key_map[key_string]
-            
-        return None
+        return code
     
     def _keycode_to_name(self, keycode: int) -> str:
         """Convert evdev keycode to human readable name"""
