@@ -249,6 +249,7 @@ class TextInjector:
                 #   "super"      -> Super+V      (125:1 47:1 47:0 125:0)
                 #   "ctrl_shift" -> Ctrl+Shift+V (29:1  42:1 47:1 47:0 42:0 29:0)
                 #   "ctrl"       -> Ctrl+V       (29:1  47:1 47:0 29:0)
+                #   "alt"        -> Alt+V        (56:1  47:1 47:0 56:0)
                 paste_mode = None
                 if self.config_manager:
                     paste_mode = self.config_manager.get_setting('paste_mode', None)
@@ -267,6 +268,12 @@ class TextInjector:
                 elif paste_mode == 'ctrl':
                     result = subprocess.run(
                         ['ydotool', 'key', '29:1', '47:1', '47:0', '29:0'],
+                        capture_output=True, timeout=5
+                    )
+                elif paste_mode == 'alt':
+                    # LeftAlt = 56, 'V' = 47
+                    result = subprocess.run(
+                        ['ydotool', 'key', '56:1', '47:1', '47:0', '56:0'],
                         capture_output=True, timeout=5
                     )
                 else:
