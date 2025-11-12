@@ -106,6 +106,41 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 > For choice of model and languages, see [model instructions](https://github.com/goodroot/hyprwhspr/tree/main?tab=readme-ov-file#whisper-models).
 
+**Custom hotkey** - extensive key support:
+
+```json
+{
+    "primary_shortcut": "CTRL+SHIFT+SPACE"
+}
+```
+
+Supported key types:
+
+- **Modifiers**: `ctrl`, `alt`, `shift`, `super` (left) or `rctrl`, `ralt`, `rshift`, `rsuper` (right)
+- **Function keys**: `f1` through `f24`
+- **Letters**: `a` through `z`
+- **Numbers**: `1` through `9`, `0`
+- **Arrow keys**: `up`, `down`, `left`, `right`
+- **Special keys**: `enter`, `space`, `tab`, `esc`, `backspace`, `delete`, `home`, `end`, `pageup`, `pagedown`
+- **Lock keys**: `capslock`, `numlock`, `scrolllock`
+- **Media keys**: `mute`, `volumeup`, `volumedown`, `play`, `nextsong`, `previoussong`
+- **Numpad**: `kp0` through `kp9`, `kpenter`, `kpplus`, `kpminus`
+
+Or use direct evdev key names for any key not in the alias list:
+
+```json
+{
+    "primary_shortcut": "SUPER+KEY_COMMA"
+}
+```
+
+Examples:
+
+- `"SUPER+SHIFT+M"` - Super + Shift + M
+- `"CTRL+ALT+F1"` - Ctrl + Alt + F1
+- `"F12"` - Just F12 (no modifier)
+- `"RCTRL+RSHIFT+ENTER"` - Right Ctrl + Right Shift + Enter
+
 **Word overrides** - customize transcriptions:
 
 ```json
