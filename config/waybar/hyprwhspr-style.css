@@ -3,8 +3,9 @@
 /* Base styles - same icon for all states, only colors change */
 #custom-hyprwhspr {
   margin: 0 16px;
-  font-size: 16px;
+  font-size: 12px;
   font-weight: bold;
+  border-top: 2px solid transparent;
   border-bottom: 2px solid transparent;
   transition: color 150ms ease-in-out, border-color 150ms ease-in-out;
 }
@@ -16,12 +17,12 @@
 
 #custom-hyprwhspr.recording {
   color: #dc2626;            /* red-600 - darker red for better contrast */
-  border-color: #dc2626;
+  border-bottom-color: #dc2626;
 }
 
 #custom-hyprwhspr.error {
   color: #d97706;            /* amber-600 - original perfect color */
-  border-color: #d97706;
+  border-bottom-color: #d97706;
 }
 
 /* Hover effects - Waybar doesn't support filter, so we use opacity instead */
