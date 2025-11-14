@@ -1,15 +1,19 @@
 [Unit]
 Description=hyprwhspr Voice Dictation Service
-After=graphical-session.target pipewire.service
-Wants=ydotool.service
+Documentation=https://github.com/goodroot/hyprwhspr
+After=graphical-session.target pipewire.service ydotool.service
+Requires=ydotool.service
+Wants=pipewire.service
 
 [Service]
 Type=simple
-ExecStartPre=/bin/sleep 2
+ExecStartPre=/bin/sleep 3
 ExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr
 Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
 Restart=on-failure
-RestartSec=5
+RestartSec=2
+StartLimitIntervalSec=10
+StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 
