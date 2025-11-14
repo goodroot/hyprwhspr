@@ -231,7 +231,7 @@ class GlobalShortcuts:
         
         # 3. Look up the keycode in evdev's complete mapping
         code = ecodes.ecodes.get(key_name)
-        
+
         if code is None:
             print(f"Warning: Unknown key string '{original}' (resolved to '{key_name}')")
             return None
