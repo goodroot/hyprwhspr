@@ -211,6 +211,12 @@ class WhisperManager:
 
                 extra_body[key_str] = value
 
+            # Fill prompt from config if not provided
+            if 'prompt' not in extra_body:
+                whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                if whisper_prompt:
+                    extra_body['prompt'] = whisper_prompt
+
             if not endpoint_url:
                 raise ValueError('REST endpoint URL not configured')
 
