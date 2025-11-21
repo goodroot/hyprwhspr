@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    all local | waybar integration | audio feedback | whisper/parakeet/any | cpu/gpu | flexible/easy setup
+    local & secure | waybar integration | audio feedback | whisper / parakeet / any | cpu / gpu
 </p>
 
  <p align="center">
