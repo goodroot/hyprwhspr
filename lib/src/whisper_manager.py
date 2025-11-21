@@ -146,9 +146,7 @@ class WhisperManager:
                 wav_file.setframerate(sample_rate)
                 wav_file.writeframes(audio_int16.tobytes())
 
-            # Get the bytes
-            wav_bytes = wav_buffer.getvalue()
-            return wav_bytes
+            return wav_buffer.getvalue()
 
         except Exception as e:
             print(f'ERROR: Failed to convert audio to WAV: {e}')
