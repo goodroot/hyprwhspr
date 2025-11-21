@@ -132,6 +132,10 @@ class WhisperManager:
             WAV file as bytes
         """
         try:
+            # Ensure mono
+            if audio_data.ndim != 1:
+                raise ValueError(f'Expected mono audio array, got shape {audio_data.shape}')
+            
             # Convert float32 to int16 for WAV format
             if audio_data.dtype == np.float32:
                 # Ensure float never expands (possible in some mic contexts)
