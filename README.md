@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 ---
 
 - **Optimized for Arch Linux / Omarchy** - Seamless integration with [Omarchy](https://omarchy.org/) / [Hyprland](https://github.com/hyprwm/Hyprland) & [Waybar](https://github.com/Alexays/Waybar)
-- **Hyper fast defaults** - State-of-the-art, fast speech recognition via in memory [Whisper](https://github.com/openai/whisper)
+- **Hyper fast defaults** - State-of-the-art, fast speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA) / AMD (ROCm) 
 - **Supports >any< ASR backend** - [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? New-thing? Use the remote API and templates
 - **Word overrides** - Customize transcriptions, prompt and corrections
@@ -288,7 +288,7 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 
 Increase for more CPU parallelism when using CPU; on GPU, modest values are fine.
 
-## Whisper Models 
+## Whisper (OpenAI)
 
 **Default model installed:** `ggml-base.en.bin` (~148MB) to `~/.local/share/pywhispercpp/models/`
 
@@ -371,7 +371,7 @@ Language options:
 - **`"es"`** - Spanish transcription
 - **`etc.`** - Any supported language code
 
-## Parakeet (NVIDIA)
+## Parakeet (Nvidia)
 
 Whisper is the default, but any model works via API.
 
