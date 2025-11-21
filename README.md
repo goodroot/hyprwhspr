@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 ### Installation
 
-"Just works" with Omarchy.
+"Just works" with Arch and Omarchy.
 
 ```bash
 # Clone the repository
@@ -93,6 +93,8 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 **Remote backends** - use any ASR backend via HTTP API:
 
+See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for backend examples like [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3).
+
 ```jsonc
 {
     "transcription_backend": "remote",
@@ -102,7 +104,7 @@ Edit `~/.config/hyprwhspr/config.json`:
 }
 ```
 
-> See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for backend examples and the HTTP contract, eg [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3).
+_Kudos to [@cd-slash](https://github.com/cd-slash) for the contribution!_
 
 **Custom hotkey** - extensive key support:
 
