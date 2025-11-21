@@ -133,7 +133,8 @@ class WhisperManager:
         try:
             # Convert float32 to int16 for WAV format
             if audio_data.dtype == np.float32:
-                audio_int16 = (audio_data * 32767).astype(np.int16)
+                audio_clipped = np.clip(audio_data, -1.0, 1.0)
+                audio_int16 = (audio_clipped * 32767).astype(np.int16)
             else:
                 audio_int16 = audio_data.astype(np.int16)
 
