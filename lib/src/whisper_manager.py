@@ -55,7 +55,6 @@ class WhisperManager:
                     print('ERROR: REST backend selected but rest_endpoint_url not configured')
                     return False
                 
-                # Validate URL is HTTPS (for security)
                 if not endpoint_url.startswith('https://') and not endpoint_url.startswith('http://'):
                     print(f'WARNING: REST endpoint URL should start with https:// or http://: {endpoint_url}')
                 
