@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-all local | waybar integration | audio feedback | auto-paste | cpu or gpu | easy setup
+    all local | waybar integration | audio feedback | whisper/parakeet/any | cpu/gpu | flexible/easy setup
 </p>
 
  <p align="center">
@@ -19,9 +19,10 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 ---
 
 - **Optimized for Arch Linux / Omarchy** - Seamless integration with [Omarchy](https://omarchy.org/) / [Hyprland](https://github.com/hyprwm/Hyprland) & [Waybar](https://github.com/Alexays/Waybar)
-- **Whisper-powered** - State-of-the-art speech recognition via [OpenAI's Whisper](https://github.com/openai/whisper)
+- **Whisper default** - State-of-the-art default speech recognition via [OpenAI's Whisper](https://github.com/openai/whisper)
 - **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA) / AMD (ROCm) 
 - **Hot model loading** - pywhispercpp backend keeps models in memory for _fast_ transcription
+- **Supports any ASR backend** - Parakeet? New-thing? Use the remote API and backend templates
 - **Word overrides** - Customize transcriptions, prompt and corrections
 - **Run as user** - Runs in user space, just sudo once for the installer
 
@@ -53,7 +54,7 @@ cd hyprwhspr
 1. ✅ Install system dependencies (ydotool, etc.)
 2. ✅ Copy application files to system directory (`/usr/lib/hyprwhspr`)
 3. ✅ Set up Python virtual environment in user space (`~/.local/share/hyprwhspr/venv`)
-4. ✅ Install pywhispercpp backend
+4. ✅ Install default pywhispercpp backend
 5. ✅ Download base model to user space (`~/.local/share/pywhispercpp/models/ggml-base.en.bin`)
 6. ✅ Set up systemd services for hyprwhspr & ydotoolds
 7. ✅ Configure Waybar integration
@@ -90,7 +91,18 @@ Edit `~/.config/hyprwhspr/config.json`:
 }
 ```
 
-> For choice of model and languages, see [model instructions](https://github.com/goodroot/hyprwhspr/tree/main?tab=readme-ov-file#whisper-models).
+**Remote backends** - use any ASR backend via HTTP API:
+
+```jsonc
+{
+    "transcription_backend": "remote",
+    "rest_endpoint_url": "https://your-server.example.com/transcribe",
+    "rest_api_key": "your-api-key-here",  // optional
+    "rest_timeout": 30                     // optional, default: 30
+}
+```
+
+> See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for backend examples and the HTTP contract, eg [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3).
 
 **Custom hotkey** - extensive key support:
 
@@ -272,14 +284,6 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 - **Right-click**: Start Hyprwhspr (if not running)
 - **Middle-click**: Restart Hyprwhspr
 
-**CPU performance options** - improve cpu transcription speed:
-
-```jsonc
-{
-    "threads": 4            // thread count for whisper cpu processing
-}
-```
-
 Increase for more CPU parallelism when using CPU; on GPU, modest values are fine.
 
 ## Whisper Models 
@@ -291,6 +295,14 @@ Increase for more CPU parallelism when using CPU; on GPU, modest values are fine
 - NVIDIA (CUDA) and AMD (ROCm) are detected automatically; pywhispercpp will use GPU when available
 - No manual build steps required. 
     - If toolchains are present, installer can build pywhispercpp with GPU support; otherwise CPU wheel is used.
+
+**CPU performance options** - improve cpu transcription speed:
+
+```jsonc
+{
+    "threads": 4            // thread count for whisper cpu processing
+}
+```
 
 **Available models to download:**
 
@@ -327,7 +339,7 @@ wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large.bin
 wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
 ```
 
-**Update your config after downloading:**
+**Update config after downloading:**
 
 ```jsonc
 {
@@ -348,6 +360,7 @@ For multi-language detection, ensure you select a model which does not say `.en`
 ```
 
 Language options:
+
 - **`null`** (default) - Auto-detect language from audio
 - **`"en"`** - English transcription
 - **`"nl"`** - Dutch transcription  
@@ -355,6 +368,25 @@ Language options:
 - **`"de"`** - German transcription
 - **`"es"`** - Spanish transcription
 - **`etc.`** - Any supported language code
+
+## Parakeet (NVIDIA)
+
+Whisper is the default, but any model works via API.
+
+See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for the [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3) example.
+
+After that, setup the following to match your backend, and then restart hyprwhspr:
+
+```jsonc
+{
+    "transcription_backend": "remote",
+    "rest_endpoint_url": "https://127.0.0.1:8080/transcribe",
+    "rest_api_key": "your-api-key-here",  // optional
+    "rest_timeout": 60                     // optional, default: 30
+}
+```
+
+Uses local Python and optionally systemd. Works great with GPU, or set the CPU flag.
 
 ## Troubleshooting
 
