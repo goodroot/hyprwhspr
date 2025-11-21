@@ -26,7 +26,13 @@ class ConfigManager:
             # Default "super" aligns with Omarchy global paste via Super+V.
             'paste_mode': 'super',
             # Back-compat for older configs (used only if paste_mode is absent):
-            'shift_paste': True  # true = Ctrl+Shift+V, false = Ctrl+V
+            'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
+            # Transcription backend settings
+            'transcription_backend': 'local',  # "local" or "remote"
+            'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
+            'rest_api_key': None,              # Optional API key for authentication
+            'rest_timeout': 30,                # Request timeout in seconds
+            'rest_audio_format': 'wav'         # Audio format for remote transcription
         }
         
         # Set up config directory and file path
