@@ -55,8 +55,32 @@ is_pipewire_ok() {
 # Function to check if model file exists
 model_exists() {
     local cfg="$HOME/.config/hyprwhspr/config.json"
-    local model_path
-    model_path=$(grep -oE '"model"\s*:\s*"[^"]+"' "$cfg" 2>/dev/null | cut -d\" -f4)
+    [[ -f "$cfg" ]] || return 0
+
+    local backend model_path
+    mapfile -t _model_info < <(python3 - <<'PY' "$cfg" 2>/dev/null
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text())
+except Exception:
+    print("local")
+    print("")
+    sys.exit(0)
+print(data.get("transcription_backend", "local"))
+print(data.get("model", ""))
+PY
+    )
+
+    backend="${_model_info[0]:-local}"
+    model_path="${_model_info[1]:-}"
+
+    # Remote backends don't require a local model file
+    if [[ "$backend" == "remote" ]]; then
+        return 0
+    fi
+
     [[ -n "$model_path" ]] || return 0  # use defaults; skip
     
     # If it's a short name like "base.en", resolve to pywhispercpp full path
