@@ -260,6 +260,10 @@ class WhisperManager:
         Returns:
             Transcribed text string
         """
+        # Check that manager is ready regardless of backend
+        if not self.ready:
+            raise RuntimeError('Whisper manager not initialized')
+        
         # Check if we have valid audio data
         if audio_data is None:
             print("No audio data provided to transcribe")
@@ -281,10 +285,6 @@ class WhisperManager:
         if backend == 'remote':
             # Use REST API transcription
             return self._transcribe_rest(audio_data, sample_rate)
-        
-        # Use local pywhispercpp transcription
-        if not self.ready:
-            raise RuntimeError('Whisper manager not initialized')
 
         print('[TRANSCRIBE] Using pywhispercpp backend', flush=True)
         import sys
