@@ -8,6 +8,7 @@ import numpy as np
 import shutil
 import threading
 import wave
+import requests
 from io import BytesIO
 from typing import Optional
 
@@ -164,7 +165,6 @@ class WhisperManager:
             Transcribed text string
         """
         try:
-            import requests
 
             # Get REST endpoint configuration
             endpoint_url = self.config.get_setting('rest_endpoint_url')
