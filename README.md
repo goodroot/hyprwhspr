@@ -19,11 +19,11 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 ---
 
 - **Optimized for Arch Linux / Omarchy** - Seamless integration with [Omarchy](https://omarchy.org/) / [Hyprland](https://github.com/hyprwm/Hyprland) & [Waybar](https://github.com/Alexays/Waybar)
-- **Whisper default** - State-of-the-art default speech recognition via [OpenAI's Whisper](https://github.com/openai/whisper)
+- **Hyper fast defaults** - State-of-the-art, fast speech recognition via in memory [Whisper](https://github.com/openai/whisper)
 - **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA) / AMD (ROCm) 
-- **Hot model loading** - pywhispercpp backend keeps models in memory for _fast_ transcription
-- **Supports any ASR backend** - [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? New-thing? Use the remote API and backend templates
+- **Supports >any< ASR backend** - [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? New-thing? Use the remote API and templates
 - **Word overrides** - Customize transcriptions, prompt and corrections
+- **Multi-lingual** - Use a multi-language model and speak your own language
 - **Run as user** - Runs in user space, just sudo once for the installer
 
 > 🔐 **PRIVATE**: hyprwhspr is local and never reads any clipboard / audio content 
