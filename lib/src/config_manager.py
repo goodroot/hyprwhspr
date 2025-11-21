@@ -29,7 +29,7 @@ class ConfigManager:
             'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
             # Transcription backend settings
             'transcription_backend': 'local',  # "local" or "remote"
-            'rest_endpoint_url': None,         # Full HTTPS URL for remote transcription
+            'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
             'rest_api_key': None,              # Optional API key for authentication
             'rest_timeout': 30,                # Request timeout in seconds
             'rest_audio_format': 'wav'         # Audio format for remote transcription
