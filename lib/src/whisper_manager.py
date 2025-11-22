@@ -175,6 +175,47 @@ class WhisperManager:
             endpoint_url = self.config.get_setting('rest_endpoint_url')
             api_key = self.config.get_setting('rest_api_key')
             timeout = self.config.get_setting('rest_timeout', 30)
+            rest_headers = self.config.get_setting('rest_headers', {})
+            rest_body = self.config.get_setting('rest_body', {})
+
+            if not isinstance(rest_headers, dict):
+                print('WARNING: rest_headers must be an object/dict; ignoring invalid value')
+                rest_headers = {}
+
+            if not isinstance(rest_body, dict):
+                print('WARNING: rest_body must be an object/dict; ignoring invalid value')
+                rest_body = {}
+
+            extra_headers = {}
+            for key, value in rest_headers.items():
+                if value is None:
+                    continue
+                try:
+                    extra_headers[str(key)] = str(value)
+                except Exception:
+                    print(f'WARNING: Skipping non-serializable rest_headers entry: {key}')
+
+            extra_body = {}
+            for key, value in rest_body.items():
+                if value is None:
+                    continue
+                try:
+                    key_str = str(key)
+                except Exception:
+                    print(f'WARNING: Skipping rest_body entry with non-stringable key: {key}')
+                    continue
+
+                if isinstance(value, (dict, list, tuple, set)):
+                    print(f'WARNING: rest_body values must be scalar (key: {key_str}); skipping entry')
+                    continue
+
+                extra_body[key_str] = value
+
+            # Fill prompt from config if not provided
+            if 'prompt' not in extra_body:
+                whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                if whisper_prompt:
+                    extra_body['prompt'] = whisper_prompt
 
             if not endpoint_url:
                 raise ValueError('REST endpoint URL not configured')
@@ -192,13 +233,16 @@ class WhisperManager:
             files = {'file': ('audio.wav', wav_bytes, 'audio/wav')}
 
             headers = {'Accept': 'application/json'}
+            headers.update(extra_headers)
             if api_key:
-                headers['Authorization'] = f'Bearer {api_key}'
+                header_names = {key.lower() for key in headers.keys()}
+                if 'authorization' not in header_names:
+                    headers['Authorization'] = f'Bearer {api_key}'
 
             # Add language parameter if configured
-            data = {}
+            data = extra_body.copy()
             language = self.config.get_setting('language', None)
-            if language:
+            if language and 'language' not in data:
                 data['language'] = language
 
             # Send the request

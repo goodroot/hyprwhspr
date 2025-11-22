@@ -99,10 +99,20 @@ See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for bac
 {
     "transcription_backend": "remote",
     "rest_endpoint_url": "https://your-server.example.com/transcribe",
-    "rest_api_key": "your-api-key-here",  // optional
-    "rest_timeout": 30                     // optional, default: 30
+    "rest_headers": {                     // optional arbitrary headers
+        "authorization": "Bearer your-api-key-here"
+    },
+    "rest_body": {                        // optional body fields merged with defaults
+        "model": "custom-model"
+    },
+    "rest_api_key": "your-api-key-here",  // equivalent to rest_headers: { authorization: Bearer your-api-key-here }
+    "rest_timeout": 30                    // optional, default: 30
 }
 ```
+
+Note: `rest_body` merges with auto-generated fields (like `language`). 
+
+Set `language` inside `rest_body` if you need to override the configured language per request.
 
 _Kudos to [@cd-slash](https://github.com/cd-slash) for the contribution!_
 
@@ -383,8 +393,15 @@ After that, setup the following to match your backend, and then restart hyprwhsp
 {
     "transcription_backend": "remote",
     "rest_endpoint_url": "https://127.0.0.1:8080/transcribe",
-    "rest_api_key": "your-api-key-here",  // optional
-    "rest_timeout": 60                     // optional, default: 30
+    "rest_headers": {
+        "authorization": "Bearer your-api-key-here",
+        "x-model": "parakeet-tdt-0.6b-v3"
+    },
+    "rest_body": {
+        "temperature": "0.0"
+    },
+    "rest_api_key": "your-api-key-here",  // optional, equivalent to rest_headers: { authorization: Bearer your-api-key-here }
+    "rest_timeout": 60                    // optional, default: 30
 }
 ```
 
