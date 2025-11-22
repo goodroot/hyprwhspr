@@ -93,7 +93,7 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 **Remote backends** - use any ASR backend via HTTP API:
 
-See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for backend examples like [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3).
+See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for backend examples, such as [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3).
 
 ```jsonc
 {
@@ -161,22 +161,6 @@ Examples:
     }
 }
 ```
-
-**Whisper prompt** - customize transcription behavior:
-
-```json
-{
-    "whisper_prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
-}
-```
-
-The prompt influences how Whisper interprets and transcribes your audio, eg:
-
-- `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
-
-- `"Transcribe as casual conversation with natural speech patterns."`
-  
-- `"Transcribe as an ornery pirate on the cusp of scurvy."`
 
 **Audio feedback** - optional sound notifications:
 
@@ -380,6 +364,22 @@ Language options:
 - **`"de"`** - German transcription
 - **`"es"`** - Spanish transcription
 - **`etc.`** - Any supported language code
+
+**Whisper prompt** - customize transcription behavior:
+
+```json
+{
+    "whisper_prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+}
+```
+
+The prompt influences how Whisper interprets and transcribes your audio, eg:
+
+- `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
+
+- `"Transcribe as casual conversation with natural speech patterns."`
+  
+- `"Transcribe as an ornery pirate on the cusp of scurvy."`
 
 ## Parakeet (Nvidia)
 
