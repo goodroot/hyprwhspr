@@ -110,7 +110,9 @@ See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for bac
 }
 ```
 
-`rest_body` merges with auto-generated fields (like `language`); set `language` inside `rest_body` if you need to override the configured language per request.
+Note: `rest_body` merges with auto-generated fields (like `language`). 
+
+Set `language` inside `rest_body` if you need to override the configured language per request.
 
 _Kudos to [@cd-slash](https://github.com/cd-slash) for the contribution!_
 
