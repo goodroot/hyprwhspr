@@ -23,8 +23,8 @@ class ConfigManager:
             'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
             'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
             # Values: "super" | "ctrl_shift" | "ctrl"
-            # Default "super" aligns with Omarchy global paste via Super+V.
-            'paste_mode': 'super',
+            # Default "ctrl_shift" for flexible unix-y primitive
+            'paste_mode': 'ctrl_shift',
             # Back-compat for older configs (used only if paste_mode is absent):
             'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
             # Transcription backend settings

@@ -254,15 +254,15 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 
 ```jsonc
 {
-    "paste_mode": "super"   // "super" | "ctrl_shift" | "ctrl"  (default: "super")
+    "paste_mode": "ctrl_shift"   // "super" | "ctrl_shift" | "ctrl"  (default: "ctrl_shift")
 }
 ```
 
 **Paste behavior options:**
 
-- **`"super"`** (default) — Sends Super+V. Omarchy default.
+- **`"ctrl_shift"`** (default) — Sends Ctrl+Shift+V. Works in most terminals.
 
-- **`"ctrl_shift"`** — Sends Ctrl+Shift+V. Works in most terminals.
+- **`"super"`** — Sends Super+V. Omarchy default. Maybe finicky.
 
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
 
