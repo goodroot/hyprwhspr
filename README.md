@@ -398,7 +398,7 @@ After that, setup the following to match your backend, and then restart hyprwhsp
     "rest_body": {
         "temperature": "0.0"
     },
-    "rest_api_key": "your-api-key-here",  // equivalent to rest_headers: { authorization: Bearer your-api-key-here }
+    "rest_api_key": "your-api-key-here",  // optional, equivalent to rest_headers: { authorization: Bearer your-api-key-here }
     "rest_timeout": 60                    // optional, default: 30
 }
 ```
