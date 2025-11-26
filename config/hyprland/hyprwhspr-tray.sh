@@ -96,7 +96,15 @@ PY
     
     # If it's a short name like "base.en", resolve to pywhispercpp full path
     if [[ "$model_path" != /* ]]; then
-        model_path="${XDG_DATA_HOME:-$HOME/.local/share}/pywhispercpp/models/ggml-${model_path}.bin"
+        # Check for both multilingual and English-only versions (like pywhispercpp does)
+        local models_dir="${XDG_DATA_HOME:-$HOME/.local/share}/pywhispercpp/models"
+        local multilingual="${models_dir}/ggml-${model_path}.bin"
+        local english_only="${models_dir}/ggml-${model_path}.en.bin"
+        
+        # Return success if either version exists
+        [[ -f "$multilingual" ]] && return 0
+        [[ -f "$english_only" ]] && return 0
+        return 1
     fi
     
     [[ -f "$model_path" ]] || return 1
