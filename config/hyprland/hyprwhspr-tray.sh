@@ -57,29 +57,40 @@ model_exists() {
     local cfg="$HOME/.config/hyprwhspr/config.json"
     [[ -f "$cfg" ]] || return 0
 
-    local backend model_path
-    mapfile -t _model_info < <(python3 - <<'PY' "$cfg" 2>/dev/null
+    # Check backend first - remote backends don't require local model validation
+    local backend
+    backend=$(python3 - <<'PY' "$cfg" 2>/dev/null
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
 try:
     data = json.loads(path.read_text())
+    print(data.get("transcription_backend", "local"))
 except Exception:
     print("local")
-    print("")
-    sys.exit(0)
-print(data.get("transcription_backend", "local"))
-print(data.get("model", ""))
 PY
     )
 
-    backend="${_model_info[0]:-local}"
-    model_path="${_model_info[1]:-}"
+    backend="${backend:-local}"
 
     # Remote backends don't require a local model file
     if [[ "$backend" == "remote" ]]; then
         return 0
     fi
+
+    # Only read model setting for local backends
+    local model_path
+    model_path=$(python3 - <<'PY' "$cfg" 2>/dev/null
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text())
+    print(data.get("model", ""))
+except Exception:
+    print("")
+PY
+    )
 
     [[ -n "$model_path" ]] || return 0  # use defaults; skip
     
