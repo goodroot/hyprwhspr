@@ -6,6 +6,7 @@ PyWhisperCPP-only backend (in-process, model kept hot)
 import os
 import shutil
 import threading
+import time
 import wave
 from io import BytesIO
 from typing import Optional
@@ -68,6 +69,28 @@ class WhisperManager:
 
                 print(f'[BACKEND] Using remote REST API: {endpoint_url}')
                 print(f'[REST] Timeout configured: {timeout}s')
+
+                # Log user-defined config objects (sanitized)
+                rest_headers = self.config.get_setting('rest_headers', {})
+                rest_body = self.config.get_setting('rest_body', {})
+                api_key = self.config.get_setting('rest_api_key')
+
+                if rest_headers and isinstance(rest_headers, dict):
+                    header_count = len([k for k in rest_headers.keys() if rest_headers.get(k) is not None])
+                    if header_count > 0:
+                        print(f'[REST] Custom headers configured ({header_count} keys)')
+
+                if rest_body and isinstance(rest_body, dict):
+                    body_count = len([k for k in rest_body.keys() if rest_body.get(k) is not None])
+                    if body_count > 0:
+                        print(f'[REST] Custom body fields configured ({body_count} fields)')
+
+                if api_key:
+                    print('[REST] API key configured (via rest_api_key)')
+
+                language = self.config.get_setting('language', None)
+                if language:
+                    print(f'[REST] Language hint: {language}')
 
                 # Explicitly set to None to avoid confusion with top-level model setting
                 self.current_model = None
@@ -228,8 +251,9 @@ class WhisperManager:
 
             # Convert audio to WAV format
             wav_bytes = self._numpy_to_wav_bytes(audio_data, sample_rate)
+            audio_duration = len(audio_data) / sample_rate
             print(
-                f'[REST] Converted audio to WAV format ({len(wav_bytes)} bytes)',
+                f'[REST] Audio: {audio_duration:.2f}s @ {sample_rate}Hz, {len(wav_bytes)} bytes',
                 flush=True,
             )
 
@@ -251,7 +275,10 @@ class WhisperManager:
 
             # Send the request
             print(f'[REST] Sending request to {endpoint_url}...', flush=True)
+            start_time = time.time()
             response = requests.post(endpoint_url, files=files, data=data, headers=headers, timeout=timeout)
+            response_time = time.time() - start_time
+            print(f'[REST] Response received in {response_time:.2f}s (status: {response.status_code})', flush=True)
 
             # Check for HTTP errors
             if response.status_code != 200:
