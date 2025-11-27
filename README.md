@@ -88,9 +88,16 @@ This script will:
 
 ## Usage
 
-### Toggle-able global hotkey
+### Global hotkey modes
 
+hyprwhspr supports two interaction modes:
+
+**Toggle mode (default):**
 - **`Super+Alt+D`** - Toggle dictation on/off
+
+**Push-to-talk mode:**
+- **Hold `Super+Alt+D`** - Start dictation
+- **Release `Super+Alt+D`** - Stop dictation
 
 ## Configuration
 
@@ -104,6 +111,17 @@ Edit `~/.config/hyprwhspr/config.json`:
     "model": "base.en"
 }
 ```
+
+**Push-to-talk mode** - hold to record, release to stop:
+
+```jsonc
+{
+    "push_to_talk": true
+}
+```
+
+- **`push_to_talk: false`** (default) - Toggle mode: press to start, press again to stop
+- **`push_to_talk: true`** - Push-to-talk mode: hold to record, release to stop
 
 **Remote backends** - use any ASR backend via HTTP API:
 

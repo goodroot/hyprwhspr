@@ -51,19 +51,51 @@ class hyprwhsprApp:
     def _setup_global_shortcuts(self):
         """Initialize global keyboard shortcuts"""
         try:
-            shortcut_key = self.config.get_setting('primary_shortcut', 'Super+Alt+D')
-            self.global_shortcuts = GlobalShortcuts(shortcut_key, self._on_shortcut_triggered)
-            print(f"🎯 Global shortcut configured: {shortcut_key}")
+            shortcut_key = self.config.get_setting("primary_shortcut", "Super+Alt+D")
+            push_to_talk = self.config.get_setting(
+                "push_to_talk", False
+            )
+
+            if push_to_talk:
+                # Push-to-talk mode: register both press and release callbacks
+                self.global_shortcuts = GlobalShortcuts(
+                    shortcut_key,
+                    self._on_shortcut_triggered,
+                    self._on_shortcut_released,
+                )
+                print(f"🎯 Global shortcut configured (push-to-talk): {shortcut_key}")
+            else:
+                # Toggle mode: only register press callback
+                self.global_shortcuts = GlobalShortcuts(
+                    shortcut_key, self._on_shortcut_triggered
+                )
+                print(f"🎯 Global shortcut configured (toggle): {shortcut_key}")
         except Exception as e:
             print(f"❌ Failed to initialize global shortcuts: {e}")
             self.global_shortcuts = None
 
     def _on_shortcut_triggered(self):
         """Handle global shortcut trigger"""
-        if self.is_recording:
-            self._stop_recording()
+        push_to_talk = self.config.get_setting("push_to_talk", False)
+
+        if push_to_talk:
+            # Push-to-talk mode: only start recording on key press
+            if not self.is_recording:
+                self._start_recording()
         else:
-            self._start_recording()
+            # Toggle mode: start/stop recording
+            if self.is_recording:
+                self._stop_recording()
+            else:
+                self._start_recording()
+
+    def _on_shortcut_released(self):
+        """Handle global shortcut release (push-to-talk mode)"""
+        push_to_talk = self.config.get_setting("push_to_talk", False)
+
+        if push_to_talk and self.is_recording:
+            # Push-to-talk mode: stop recording on key release
+            self._stop_recording()
 
     def _start_recording(self):
         """Start voice recording"""
