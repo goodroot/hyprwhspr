@@ -299,7 +299,7 @@ class GlobalShortcuts:
     
     def _check_shortcut_combination(self):
         """Check if current pressed keys match target combination"""
-        if self.target_keys.issubset(self.pressed_keys):
+        if self.target_keys == self.pressed_keys:
             current_time = time.time()
             
             # Implement debouncing
