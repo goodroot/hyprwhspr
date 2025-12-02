@@ -307,19 +307,33 @@ setup_python_environment() {
   local enable_cuda=false
   local enable_rocm=false
   
-  # Detect GPU toolchains
-  if command -v nvidia-smi >/dev/null 2>&1 && command -v nvcc >/dev/null 2>&1; then
-    enable_cuda=true
-    log_info "CUDA toolchain detected; enabling GGML_CUDA=ON for pywhispercpp build"
-  elif command -v nvidia-smi >/dev/null 2>&1; then
-    log_warning "NVIDIA GPU detected but nvcc compiler missing; pywhispercpp build stays CPU-only"
+  # Detect GPU toolchains - verify they actually work (parity with whisper_manager.py)
+  # Check NVIDIA CUDA - verify it actually works
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    if timeout 2s nvidia-smi -L >/dev/null 2>&1; then
+      if command -v nvcc >/dev/null 2>&1; then
+        enable_cuda=true
+        log_info "CUDA toolchain detected; enabling GGML_CUDA=ON for pywhispercpp build"
+      else
+        log_warning "NVIDIA GPU detected and working but nvcc compiler missing; pywhispercpp build stays CPU-only"
+      fi
+    else
+      log_warning "nvidia-smi found but not responding (no GPU hardware or driver issue); pywhispercpp build stays CPU-only"
+    fi
   fi
   
-  if { command -v rocm-smi >/dev/null 2>&1 || [ -d /opt/rocm ]; } && command -v hipcc >/dev/null 2>&1; then
-    enable_rocm=true
-    log_info "ROCm toolchain detected; enabling GGML_HIP=ON for pywhispercpp build"
-  elif { command -v rocm-smi >/dev/null 2>&1 || [ -d /opt/rocm ]; }; then
-    log_warning "ROCm detected but hipcc compiler missing; pywhispercpp build stays CPU-only"
+  # Check AMD ROCm - verify it actually works
+  if command -v rocm-smi >/dev/null 2>&1 || [ -d /opt/rocm ]; then
+    if timeout 2s rocm-smi --showproductname >/dev/null 2>&1; then
+      if command -v hipcc >/dev/null 2>&1; then
+        enable_rocm=true
+        log_info "ROCm toolchain detected; enabling GGML_HIP=ON for pywhispercpp build"
+      else
+        log_warning "ROCm detected and working but hipcc compiler missing; pywhispercpp build stays CPU-only"
+      fi
+    else
+      log_warning "rocm-smi found but not responding (no GPU hardware or driver issue); pywhispercpp build stays CPU-only"
+    fi
   fi
 
   # Check if dependencies are actually installed in the venv
