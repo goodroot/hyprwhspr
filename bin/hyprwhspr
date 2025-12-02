@@ -11,15 +11,25 @@ PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
 export PYTHONPATH="$PACKAGE_ROOT/lib:$PYTHONPATH"
 
-# Activate virtual environment in user space
+# Set up ROCm library path if ROCm is installed
+
+if [ -d "/opt/rocm" ]; then
+  ROCM_LIB_DIRS=""
+  [ -d "/opt/rocm/lib" ] && ROCM_LIB_DIRS="/opt/rocm/lib"
+  [ -d "/opt/rocm/lib64" ] && ROCM_LIB_DIRS="${ROCM_LIB_DIRS:+$ROCM_LIB_DIRS:}/opt/rocm/lib64"
+  
+  if [ -n "$ROCM_LIB_DIRS" ]; then
+    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${ROCM_LIB_DIRS}"
+  fi
+fi
+
+# Use Python from virtual environment directly
 USER_VENV="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv"
-if [ -f "$USER_VENV/bin/activate" ]; then
-    source "$USER_VENV/bin/activate"
-else
+if [ ! -f "$USER_VENV/bin/python" ]; then
     echo "Error: Virtual environment not found at $USER_VENV"
     echo "Please run the installation script to set up hyprwhspr"
     exit 1
 fi
 
-# Run the main application
-exec python3 "$PACKAGE_ROOT/lib/main.py" "$@"
+# Run the main application using venv Python directly
+exec "$USER_VENV/bin/python" "$PACKAGE_ROOT/lib/main.py" "$@"
