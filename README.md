@@ -60,6 +60,20 @@ cd hyprwhspr
 7. ✅ Configure Waybar integration
 8. ✅ Test everything works
 
+### Updating
+
+Udate hyprwhspr with a single command:
+
+```bash
+cd hyprwhspr
+./scripts/update.sh
+```
+
+This script will:
+1. Pull the latest changes from the git repository
+2. Run the installer with `--force` to update system files
+3. Update all components (dependencies, services, configurations)
+
 ### First use
 
 > Ensure your microphone of choice is available in audio settings!
