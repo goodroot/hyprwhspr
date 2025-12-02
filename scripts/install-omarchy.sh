@@ -65,9 +65,14 @@ USER_CONFIG_DIR="$USER_HOME/.config/hyprwhspr"
 
 # ----------------------- Command line options ------------------
 CHECK_MODE=false
+FORCE_MODE=false
 if [ "${1:-}" = "--check" ]; then
   CHECK_MODE=true
   log_info "Running in check mode - no changes will be made"
+fi
+if [ "${1:-}" = "--force" ]; then
+  FORCE_MODE=true
+  log_info "Running in force mode - existing files will be overwritten"
 fi
 
 # ----------------------- Preconditions -------------------------
@@ -931,10 +936,7 @@ main() {
   log_info "Installing to $INSTALL_DIR"
   
   # Check if files already exist (AUR installation)
-  if [ -f "$INSTALL_DIR/lib/main.py" ] && [ -f "$INSTALL_DIR/requirements.txt" ]; then
-    log_info "Files already present in $INSTALL_DIR (AUR installation detected)"
-    log_success "✓ Skipping file copy - using existing installation"
-  else
+  if [ "$FORCE_MODE" = true ] || { [ ! -f "$INSTALL_DIR/lib/main.py" ] && [ ! -f "$INSTALL_DIR/requirements.txt" ]; }; then
     # Copy files to system directory (development/local installation)
     log_info "Copying files to $INSTALL_DIR"
     sudo mkdir -p "$INSTALL_DIR"
@@ -955,6 +957,9 @@ main() {
       log_error "✗ Assets directory missing after copy operation"
       exit 1
     fi
+  else
+    log_info "Files already present in $INSTALL_DIR (AUR installation detected)"
+    log_success "✓ Skipping file copy - using existing installation"
   fi
   
   # Validate that required files exist
