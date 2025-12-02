@@ -307,7 +307,7 @@ setup_python_environment() {
   local enable_cuda=false
   local enable_rocm=false
   
-  # Detect GPU toolchains - verify they actually work (parity with whisper_manager.py)
+  # Detect GPU toolchains - verify they actually work 
   # Check NVIDIA CUDA - verify it actually works
   if command -v nvidia-smi >/dev/null 2>&1; then
     if timeout 2s nvidia-smi -L >/dev/null 2>&1; then
