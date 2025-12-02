@@ -60,6 +60,18 @@ cd hyprwhspr
 7. ✅ Configure Waybar integration
 8. ✅ Test everything works
 
+### First use
+
+> Ensure your microphone of choice is available in audio settings!
+
+1. **Log out and back in** (for group permissions)
+2. **Press `Super+Alt+D`** to start dictation - _beep!_
+3. **Speak naturally**
+4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
+5. **Bam!** Text appears in active buffer!
+
+Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) or visit [Omarchy Discord](https://discord.com/channels/1390012484194275541/1410373168765468774).
+
 ### Updating
 
 Udate hyprwhspr with a single command:
@@ -73,18 +85,6 @@ This script will:
 1. Pull the latest changes from the git repository
 2. Run the installer with `--force` to update system files
 3. Update all components (dependencies, services, configurations)
-
-### First use
-
-> Ensure your microphone of choice is available in audio settings!
-
-1. **Log out and back in** (for group permissions)
-2. **Press `Super+Alt+D`** to start dictation - _beep!_
-3. **Speak naturally**
-4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
-5. **Bam!** Text appears in active buffer!
-
-Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) or visit [Omarchy Discord](https://discord.com/channels/1390012484194275541/1410373168765468774).
 
 ## Usage
 
