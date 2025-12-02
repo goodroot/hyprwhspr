@@ -136,15 +136,34 @@ class WhisperManager:
 
     def _detect_gpu_backend(self) -> str:
         """Detect available GPU backend for logging purposes"""
-        # Check NVIDIA CUDA
+        import subprocess
+
+        # Check NVIDIA CUDA - verify it actually works
         if shutil.which('nvidia-smi'):
-            return "CUDA (NVIDIA)"
-        # Check AMD ROCm
+            try:
+                result = subprocess.run(['nvidia-smi', '-L'],
+                                       capture_output=True,
+                                       timeout=2)
+                if result.returncode == 0:
+                    return "CUDA (NVIDIA)"
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+
+        # Check AMD ROCm - verify it actually works
         if shutil.which('rocm-smi') or os.path.exists('/opt/rocm'):
-            return "ROCm (AMD)"
+            try:
+                result = subprocess.run(['rocm-smi', '--showproductname'],
+                                       capture_output=True,
+                                       timeout=2)
+                if result.returncode == 0:
+                    return "ROCm (AMD)"
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+
         # Check Vulkan
         if shutil.which('vulkaninfo'):
             return "Vulkan"
+
         return "CPU"
 
     def _numpy_to_wav_bytes(self, audio_data: np.ndarray, sample_rate: int = 16000) -> bytes:
