@@ -90,12 +90,14 @@ This script will:
 
 ### Global hotkey modes
 
-hyprwhspr supports two interaction modes:
+hyprwhspr supports two configurable interaction modes:
 
 **Toggle mode (default):**
+
 - **`Super+Alt+D`** - Toggle dictation on/off
 
 **Push-to-talk mode:**
+
 - **Hold `Super+Alt+D`** - Start dictation
 - **Release `Super+Alt+D`** - Stop dictation
 

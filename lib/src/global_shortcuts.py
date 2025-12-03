@@ -298,7 +298,6 @@ class GlobalShortcuts:
                 
             elif key_event.keystate == key_event.key_up:
                 # Key released
-                self.pressed_keys.discard(event.code)
                 was_combination_active = self.combination_active
                 self.pressed_keys.discard(event.code)
                 self._check_combination_release(was_combination_active)
@@ -313,11 +312,10 @@ class GlobalShortcuts:
             keys_match = self.target_keys.issubset(self.pressed_keys)
         
         if keys_match:
-            if not self.combination_active:
-                current_time = time.time()
+            current_time = time.time()
             
-            # Implement debouncing
-            if current_time - self.last_trigger_time > self.debounce_time:
+            # Only trigger if not already active and debounce time has passed
+            if not self.combination_active and (current_time - self.last_trigger_time > self.debounce_time):
                 self.last_trigger_time = current_time
                 self.combination_active = True
                 self._trigger_callback()
