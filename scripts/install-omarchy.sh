@@ -369,9 +369,30 @@ setup_python_environment() {
           return 1
         fi
       elif [ "$enable_rocm" = true ]; then
-        if ! install_pywhispercpp_rocm "$pip_bin"; then
-          log_error "Failed to install pywhispercpp with ROCm support"
-          return 1
+        install_pywhispercpp_rocm "$pip_bin"
+        local rocm_exit_code=$?
+        if [ "$rocm_exit_code" -ne 0 ]; then
+          if [ "$rocm_exit_code" -eq 2 ]; then
+            # ROCm build failed - fall back to CPU-only
+            log_warning "ROCm build failed - falling back to CPU-only installation"
+            log_warning ""
+            log_warning "ROCm 7.x has known compatibility issues with pywhispercpp v1.4.0"
+            log_warning "See: https://github.com/ggml-org/whisper.cpp/issues/3553"
+            log_warning ""
+            log_warning "Alternatives:"
+            log_warning "  • Use CPU mode (current fallback)"
+            log_warning "  • Use remote transcription backend (see README)"
+            log_warning ""
+            log_info "Installing pywhispercpp with CPU-only support..."
+            if ! "$pip_bin" install -r "$INSTALL_DIR/requirements.txt"; then
+              log_error "Failed to install pywhispercpp (CPU-only fallback)"
+              return 1
+            fi
+            log_success "pywhispercpp installed (CPU-only mode)"
+          else
+            log_error "Failed to install pywhispercpp with ROCm support"
+            return 1
+          fi
         fi
       fi
     else
@@ -461,8 +482,8 @@ install_pywhispercpp_rocm() {
     return 0
   fi
 
-  log_error "pip install of pywhispercpp with ROCm failed"
-  return 1
+  # Build failed - return 2 to signal fallback should occur
+  return 2
 }
 
 # ----------------------- NVIDIA support -----------------------
