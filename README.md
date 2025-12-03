@@ -326,6 +326,9 @@ Increase for more CPU parallelism when using CPU; on GPU, modest values are fine
 - No manual build steps required. 
     - If toolchains are present, installer can build pywhispercpp with GPU support; otherwise CPU wheel is used.
 
+> **⚠️ AMD ROCm 7.x / HIPBLAS**
+> ROCm 7.0+ introduced breaking changes to hipBLAS datatype signatures. As of now, ggml’s HIP backend is compatible with ROCm 6.x, but ROCm 7.x will fail to build with errors and fallback to CPU.
+
 **CPU performance options** - improve cpu transcription speed:
 
 ```jsonc
