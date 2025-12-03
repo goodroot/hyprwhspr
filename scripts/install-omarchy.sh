@@ -327,7 +327,7 @@ setup_python_environment() {
     if timeout 2s rocm-smi --showproductname >/dev/null 2>&1; then
       if command -v hipcc >/dev/null 2>&1; then
         enable_rocm=true
-        log_info "ROCm toolchain detected; enabling GGML_HIP=ON for pywhispercpp build"
+        log_info "ROCm toolchain detected; enabling GGML_HIPBLAS=ON for pywhispercpp build"
       else
         log_warning "ROCm detected and working but hipcc compiler missing; pywhispercpp build stays CPU-only"
       fi
@@ -442,9 +442,17 @@ install_pywhispercpp_rocm() {
     (cd "$src_dir" && git fetch --tags && git checkout "$pinned_commit" && git submodule update --init --recursive) || log_warning "Could not update pywhispercpp repository to v1.4.0"
   fi
 
-  # Use pip to build/install from source with HIP support
-  log_info "Building pywhispercpp with ROCm (ggml HIP) via pip"
-  if GGML_HIP=ON "$pip_bin" install \
+  # Set up ROCm environment
+  export ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
+  export PATH="$ROCM_PATH/bin:$PATH"
+
+  # Use pip to build/install from source with HIPBLAS support
+  log_info "Building pywhispercpp with ROCm (ggml HIPBLAS) via pip"
+  if GGML_HIPBLAS=ON \
+     GGML_HIP=ON \
+     GGML_ROCM=1 \
+     CMAKE_PREFIX_PATH="$ROCM_PATH" \
+     "$pip_bin" install \
       -e "$src_dir" \
       --no-cache-dir \
       --force-reinstall \
