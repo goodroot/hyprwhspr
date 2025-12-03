@@ -94,10 +94,11 @@ KEY_ALIASES: dict[str, str] = {
 class GlobalShortcuts:
     """Handles global keyboard shortcuts using evdev for hardware-level capture"""
     
-    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, device_path: Optional[str] = None):
+    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None):
         self.primary_key = primary_key
         self.callback = callback
         self.selected_device_path = device_path
+        self.release_callback = release_callback
         
         # Device and event handling
         self.devices = []
@@ -110,6 +111,8 @@ class GlobalShortcuts:
         self.pressed_keys = set()
         self.last_trigger_time = 0
         self.debounce_time = 0.5  # 500ms debounce to prevent double triggers
+        self.combination_active = False  # Track if full combination is currently active
+        self.last_release_time = 0  # Debounce for release events
         
         # Parse the primary key combination
         self.target_keys = self._parse_key_combination(primary_key)
@@ -295,7 +298,9 @@ class GlobalShortcuts:
                 
             elif key_event.keystate == key_event.key_up:
                 # Key released
+                was_combination_active = self.combination_active
                 self.pressed_keys.discard(event.code)
+                self._check_combination_release(was_combination_active)
     
     def _check_shortcut_combination(self):
         """Check if current pressed keys match target combination"""
@@ -309,10 +314,13 @@ class GlobalShortcuts:
         if keys_match:
             current_time = time.time()
             
-            # Implement debouncing
-            if current_time - self.last_trigger_time > self.debounce_time:
+            # Only trigger if not already active and debounce time has passed
+            if not self.combination_active and (current_time - self.last_trigger_time > self.debounce_time):
                 self.last_trigger_time = current_time
+                self.combination_active = True
                 self._trigger_callback()
+        else:
+            self.combination_active = False
     
     def _trigger_callback(self):
         """Trigger the callback function"""
@@ -324,6 +332,28 @@ class GlobalShortcuts:
                 callback_thread.start()
             except Exception as e:
                 print(f"Error calling shortcut callback: {e}")
+
+    def _check_combination_release(self, was_combination_active: bool):
+        """Check if combination was released and trigger release callback"""
+        if was_combination_active and not self.target_keys.issubset(self.pressed_keys):
+            current_time = time.time()
+            
+            # Implement debouncing for release events
+            if current_time - self.last_release_time > self.debounce_time:
+                self.last_release_time = current_time
+                self.combination_active = False
+                self._trigger_release_callback()
+    
+    def _trigger_release_callback(self):
+        """Trigger the release callback function"""
+        if self.release_callback:
+            try:
+                print(f"Global shortcut released: {self.primary_key}")
+                # Run callback in a separate thread to avoid blocking the listener
+                callback_thread = threading.Thread(target=self.release_callback, daemon=True)
+                callback_thread.start()
+            except Exception as e:
+                print(f"Error calling shortcut release callback: {e}")
     
     def start(self) -> bool:
         """Start listening for global shortcuts"""
