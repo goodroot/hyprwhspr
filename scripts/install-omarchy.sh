@@ -396,15 +396,15 @@ install_pywhispercpp_cuda() {
     return 1
   fi
 
-  # Clone or update pywhispercpp sources (with submodules) - pinned to v1.3.3
-  local pinned_commit="2b09b82f681d3b01b25cdb1b314c57d7cc193179"
+  # Clone or update pywhispercpp sources (with submodules) - pinned to v1.4.0
+  local pinned_commit="4ab96165f84e8eb579077dfc3d0476fa5606affe"
   if [ ! -d "$src_dir/.git" ]; then
-    log_info "Cloning pywhispercpp sources (v1.3.3) → $src_dir"
+    log_info "Cloning pywhispercpp sources (v1.4.0) → $src_dir"
     git clone --recurse-submodules https://github.com/Absadiki/pywhispercpp.git "$src_dir" || return 1
     (cd "$src_dir" && git checkout "$pinned_commit" && git submodule update --init --recursive) || return 1
   else
-    log_info "Updating pywhispercpp sources to v1.3.3 in $src_dir"
-    (cd "$src_dir" && git fetch --tags && git checkout "$pinned_commit" && git submodule update --init --recursive) || log_warning "Could not update pywhispercpp repository to v1.3.3"
+    log_info "Updating pywhispercpp sources to v1.4.0 in $src_dir"
+    (cd "$src_dir" && git fetch --tags && git checkout "$pinned_commit" && git submodule update --init --recursive) || log_warning "Could not update pywhispercpp repository to v1.4.0"
   fi
 
   # Use pip to build/install from source with CUDA support
@@ -431,15 +431,15 @@ install_pywhispercpp_rocm() {
     return 1
   fi
 
-  # Clone or update pywhispercpp sources (with submodules) - pinned to v1.3.3
-  local pinned_commit="2b09b82f681d3b01b25cdb1b314c57d7cc193179"
+  # Clone or update pywhispercpp sources (with submodules) - pinned to v1.4.0
+  local pinned_commit="4ab96165f84e8eb579077dfc3d0476fa5606affe"
   if [ ! -d "$src_dir/.git" ]; then
-    log_info "Cloning pywhispercpp sources (v1.3.3) → $src_dir"
+    log_info "Cloning pywhispercpp sources (v1.4.0) → $src_dir"
     git clone --recurse-submodules https://github.com/Absadiki/pywhispercpp.git "$src_dir" || return 1
     (cd "$src_dir" && git checkout "$pinned_commit" && git submodule update --init --recursive) || return 1
   else
-    log_info "Updating pywhispercpp sources to v1.3.3 in $src_dir"
-    (cd "$src_dir" && git fetch --tags && git checkout "$pinned_commit" && git submodule update --init --recursive) || log_warning "Could not update pywhispercpp repository to v1.3.3"
+    log_info "Updating pywhispercpp sources to v1.4.0 in $src_dir"
+    (cd "$src_dir" && git fetch --tags && git checkout "$pinned_commit" && git submodule update --init --recursive) || log_warning "Could not update pywhispercpp repository to v1.4.0"
   fi
 
   # Use pip to build/install from source with HIP support
