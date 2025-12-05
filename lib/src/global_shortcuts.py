@@ -9,7 +9,7 @@ import time
 from typing import Callable, Optional, List, Set, Dict
 from pathlib import Path
 import evdev
-from evdev import InputDevice, categorize, ecodes
+from evdev import InputDevice, categorize, ecodes, UInput
 
 
 # Key aliases mapping to evdev KEY_* constants
@@ -88,41 +88,75 @@ KEY_ALIASES: dict[str, str] = {
     'menu': 'KEY_MENU',
     'print': 'KEY_PRINT', 'printscreen': 'KEY_SYSRQ', 'prtsc': 'KEY_SYSRQ',
     'pause': 'KEY_PAUSE', 'break': 'KEY_PAUSE',
+
+    # Punctuation and symbol keys
+    '.': 'KEY_DOT', 'dot': 'KEY_DOT', 'period': 'KEY_DOT',
+    ',': 'KEY_COMMA', 'comma': 'KEY_COMMA',
+    '/': 'KEY_SLASH', 'slash': 'KEY_SLASH',
+    '\\': 'KEY_BACKSLASH', 'backslash': 'KEY_BACKSLASH',
+    ';': 'KEY_SEMICOLON', 'semicolon': 'KEY_SEMICOLON',
+    "'": 'KEY_APOSTROPHE', 'apostrophe': 'KEY_APOSTROPHE', 'quote': 'KEY_APOSTROPHE',
+    '[': 'KEY_LEFTBRACE', 'leftbrace': 'KEY_LEFTBRACE', 'lbrace': 'KEY_LEFTBRACE',
+    ']': 'KEY_RIGHTBRACE', 'rightbrace': 'KEY_RIGHTBRACE', 'rbrace': 'KEY_RIGHTBRACE',
+    '-': 'KEY_MINUS', 'minus': 'KEY_MINUS', 'dash': 'KEY_MINUS',
+    '=': 'KEY_EQUAL', 'equal': 'KEY_EQUAL', 'equals': 'KEY_EQUAL',
+    '`': 'KEY_GRAVE', 'grave': 'KEY_GRAVE', 'backtick': 'KEY_GRAVE',
+
+    # Number keys (top row)
+    '0': 'KEY_0', '1': 'KEY_1', '2': 'KEY_2', '3': 'KEY_3', '4': 'KEY_4',
+    '5': 'KEY_5', '6': 'KEY_6', '7': 'KEY_7', '8': 'KEY_8', '9': 'KEY_9',
+
+    # Letter keys (for completeness - allows lowercase in config)
+    'a': 'KEY_A', 'b': 'KEY_B', 'c': 'KEY_C', 'd': 'KEY_D', 'e': 'KEY_E',
+    'f': 'KEY_F', 'g': 'KEY_G', 'h': 'KEY_H', 'i': 'KEY_I', 'j': 'KEY_J',
+    'k': 'KEY_K', 'l': 'KEY_L', 'm': 'KEY_M', 'n': 'KEY_N', 'o': 'KEY_O',
+    'p': 'KEY_P', 'q': 'KEY_Q', 'r': 'KEY_R', 's': 'KEY_S', 't': 'KEY_T',
+    'u': 'KEY_U', 'v': 'KEY_V', 'w': 'KEY_W', 'x': 'KEY_X', 'y': 'KEY_Y',
+    'z': 'KEY_Z',
 }
 
 
 class GlobalShortcuts:
     """Handles global keyboard shortcuts using evdev for hardware-level capture"""
-    
-    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None):
+
+    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None, grab_keys: bool = True):
         self.primary_key = primary_key
         self.callback = callback
         self.selected_device_path = device_path
         self.release_callback = release_callback
-        
+        self.grab_keys = grab_keys
+
         # Device and event handling
         self.devices = []
         self.device_fds = {}
         self.listener_thread = None
         self.is_running = False
         self.stop_event = threading.Event()
-        
+
+        # Virtual keyboard for re-emitting non-shortcut keys
+        self.uinput = None
+        self.devices_grabbed = False
+
         # State tracking
         self.pressed_keys = set()
         self.last_trigger_time = 0
-        self.debounce_time = 0.5  # 500ms debounce to prevent double triggers
+        self.debounce_time = 0.1  # 100ms debounce - shorter for push-to-talk responsiveness
         self.combination_active = False  # Track if full combination is currently active
         self.last_release_time = 0  # Debounce for release events
-        
+
+        # Track which keys are currently being suppressed (part of active shortcut)
+        self.suppressed_keys = set()
+
         # Parse the primary key combination
         self.target_keys = self._parse_key_combination(primary_key)
-        
+
         # Initialize keyboard devices
         self._discover_keyboards()
-        
+
         print(f"Global shortcuts initialized with key: {primary_key}")
         print(f"Parsed keys: {[self._keycode_to_name(k) for k in self.target_keys]}")
         print(f"Found {len(self.devices)} keyboard device(s)")
+        print(f"Key grabbing: {'enabled' if grab_keys else 'disabled'}")
         
     def _discover_keyboards(self):
         """Discover and initialize keyboard input devices"""
@@ -286,30 +320,81 @@ class GlobalShortcuts:
         except:
             pass
     
+    # Modifier keys that should never get "stuck" - always pass through releases
+    MODIFIER_KEYS = {
+        ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL,
+        ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT,
+        ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT,
+        ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA,
+    }
+
     def _process_event(self, event):
         """Process individual keyboard events"""
         if event.type == ecodes.EV_KEY:
             key_event = categorize(event)
-            
+            should_suppress = False
+
             if key_event.keystate == key_event.key_down:
                 # Key pressed
                 self.pressed_keys.add(event.code)
+
+                # Only suppress if pressing this key COMPLETES the shortcut combination
+                # AND no extra modifiers are held (e.g., don't suppress for SUPER+SHIFT+.)
+                if event.code in self.target_keys and self.target_keys.issubset(self.pressed_keys):
+                    extra_modifiers = (self.pressed_keys - self.target_keys) & self.MODIFIER_KEYS
+                    if len(extra_modifiers) == 0 and event.code not in self.MODIFIER_KEYS:
+                        # Full shortcut with no extra modifiers - suppress this completing key
+                        should_suppress = True
+                        self.suppressed_keys.add(event.code)
+
                 self._check_shortcut_combination()
-                
+
             elif key_event.keystate == key_event.key_up:
                 # Key released
                 was_combination_active = self.combination_active
                 self.pressed_keys.discard(event.code)
+
+                # If this key was suppressed, suppress its release too
+                # But NEVER suppress modifier key releases to prevent stuck keys
+                if event.code in self.suppressed_keys:
+                    self.suppressed_keys.discard(event.code)
+                    if event.code not in self.MODIFIER_KEYS:
+                        should_suppress = True
+
                 self._check_combination_release(was_combination_active)
+
+            elif key_event.keystate == 2:  # Key repeat
+                # Suppress repeats for suppressed keys
+                if event.code in self.suppressed_keys:
+                    should_suppress = True
+
+            # Re-emit non-suppressed key events to virtual keyboard
+            if self.uinput and self.devices_grabbed and not should_suppress:
+                try:
+                    self.uinput.write(ecodes.EV_KEY, event.code, event.value)
+                    self.uinput.syn()
+                except Exception as e:
+                    print(f"Warning: Failed to re-emit key: {e}")
+
+        elif self.uinput and self.devices_grabbed:
+            # Pass through non-key events (like EV_SYN, EV_MSC, etc.)
+            try:
+                self.uinput.write(event.type, event.code, event.value)
+            except:
+                pass
     
     def _check_shortcut_combination(self):
         """Check if current pressed keys match target combination"""
-        # For single keys, use exact match to avoid triggering with modifiers
-        # For multi-key combinations, use subset to allow extra keys
-        if len(self.target_keys) == 1:
-            keys_match = self.target_keys == self.pressed_keys
+        # Check if target keys are pressed
+        if not self.target_keys.issubset(self.pressed_keys):
+            keys_match = False
         else:
-            keys_match = self.target_keys.issubset(self.pressed_keys)
+            # Target keys are pressed - but check for unwanted extra modifiers
+            # If user presses SUPER+SHIFT+. but shortcut is SUPER+., don't trigger
+            extra_keys = self.pressed_keys - self.target_keys
+            extra_modifiers = extra_keys & self.MODIFIER_KEYS
+            # Only match if no extra modifiers are pressed
+            keys_match = len(extra_modifiers) == 0
         
         if keys_match:
             current_time = time.time()
@@ -359,47 +444,99 @@ class GlobalShortcuts:
         """Start listening for global shortcuts"""
         if self.is_running:
             return True
-            
+
         # Rediscover keyboards if devices list is empty
         if not self.devices:
             print("Rediscovering keyboard devices...")
             self._discover_keyboards()
-            
+
         if not self.devices:
             print("No keyboard devices available")
             return False
-            
+
         try:
+            # Set up key grabbing if enabled
+            if self.grab_keys:
+                self._setup_key_grabbing()
+
             self.stop_event.clear()
             self.listener_thread = threading.Thread(target=self._event_loop, daemon=True)
             self.listener_thread.start()
             self.is_running = True
-            
+
             print(f"Global shortcuts started, listening for {self.primary_key}")
             return True
-            
+
         except Exception as e:
             print(f"Failed to start global shortcuts: {e}")
+            self._cleanup_key_grabbing()
             return False
-    
+
+    def _setup_key_grabbing(self):
+        """Set up UInput virtual keyboard and grab physical devices"""
+        try:
+            # Create a virtual keyboard that can emit all key events
+            # This will re-emit keys that aren't part of our shortcut
+            self.uinput = UInput(name="hyprwhspr-virtual-keyboard")
+            print("Created virtual keyboard for key pass-through")
+
+            # Grab all keyboard devices to intercept their events
+            for device in self.devices:
+                try:
+                    device.grab()
+                    print(f"Grabbed device: {device.name}")
+                except Exception as e:
+                    print(f"Warning: Could not grab {device.name}: {e}")
+
+            self.devices_grabbed = True
+
+        except Exception as e:
+            print(f"Warning: Could not set up key grabbing: {e}")
+            print("Keys may leak through to applications")
+            self._cleanup_key_grabbing()
+
+    def _cleanup_key_grabbing(self):
+        """Clean up UInput and ungrab devices"""
+        # Ungrab all devices
+        if self.devices_grabbed:
+            for device in self.devices:
+                try:
+                    device.ungrab()
+                    print(f"Ungrabbed device: {device.name}")
+                except:
+                    pass
+            self.devices_grabbed = False
+
+        # Close UInput
+        if self.uinput:
+            try:
+                self.uinput.close()
+            except:
+                pass
+            self.uinput = None
+
     def stop(self):
         """Stop listening for global shortcuts"""
         if not self.is_running:
             return
-            
+
         try:
             self.stop_event.set()
-            
+
             if self.listener_thread and self.listener_thread.is_alive():
                 self.listener_thread.join(timeout=1.0)
-            
+
+            # Clean up key grabbing
+            self._cleanup_key_grabbing()
+
             # Close all devices
             for device in self.devices[:]:  # Copy list to avoid modification during iteration
                 self._remove_device(device)
-            
+
             self.is_running = False
             self.pressed_keys.clear()
-            
+            self.suppressed_keys.clear()
+
         except Exception as e:
             print(f"Error stopping global shortcuts: {e}")
     

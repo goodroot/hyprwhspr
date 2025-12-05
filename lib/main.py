@@ -52,9 +52,8 @@ class hyprwhsprApp:
         """Initialize global keyboard shortcuts"""
         try:
             shortcut_key = self.config.get_setting("primary_shortcut", "Super+Alt+D")
-            push_to_talk = self.config.get_setting(
-                "push_to_talk", False
-            )
+            push_to_talk = self.config.get_setting("push_to_talk", False)
+            grab_keys = self.config.get_setting("grab_keys", True)
 
             if push_to_talk:
                 # Push-to-talk mode: register both press and release callbacks
@@ -62,12 +61,15 @@ class hyprwhsprApp:
                     shortcut_key,
                     self._on_shortcut_triggered,
                     self._on_shortcut_released,
+                    grab_keys=grab_keys,
                 )
                 print(f"🎯 Global shortcut configured (push-to-talk): {shortcut_key}")
             else:
                 # Toggle mode: only register press callback
                 self.global_shortcuts = GlobalShortcuts(
-                    shortcut_key, self._on_shortcut_triggered
+                    shortcut_key,
+                    self._on_shortcut_triggered,
+                    grab_keys=grab_keys,
                 )
                 print(f"🎯 Global shortcut configured (toggle): {shortcut_key}")
         except Exception as e:
