@@ -140,7 +140,7 @@ class GlobalShortcuts:
         # State tracking
         self.pressed_keys = set()
         self.last_trigger_time = 0
-        self.debounce_time = 0.5  # 500ms debounce to prevent double triggers
+        self.debounce_time = 0.1  # 100ms debounce - shorter for push-to-talk responsiveness
         self.combination_active = False  # Track if full combination is currently active
         self.last_release_time = 0  # Debounce for release events
 
@@ -320,6 +320,14 @@ class GlobalShortcuts:
         except:
             pass
     
+    # Modifier keys that should never get "stuck" - always pass through releases
+    MODIFIER_KEYS = {
+        ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL,
+        ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT,
+        ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT,
+        ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA,
+    }
+
     def _process_event(self, event):
         """Process individual keyboard events"""
         if event.type == ecodes.EV_KEY:
@@ -330,15 +338,12 @@ class GlobalShortcuts:
                 # Key pressed
                 self.pressed_keys.add(event.code)
 
-                # Check if this key is part of the target shortcut
-                if event.code in self.target_keys:
-                    # Check if we're building toward or completing the shortcut
-                    if self.target_keys.issubset(self.pressed_keys):
-                        # Full shortcut combination pressed - suppress all shortcut keys
-                        should_suppress = True
-                        self.suppressed_keys.add(event.code)
-                    elif self.target_keys & self.pressed_keys:
-                        # Partial match - suppress this key (might be completing shortcut)
+                # Only suppress if pressing this key COMPLETES the shortcut combination
+                # AND no extra modifiers are held (e.g., don't suppress for SUPER+SHIFT+.)
+                if event.code in self.target_keys and self.target_keys.issubset(self.pressed_keys):
+                    extra_modifiers = (self.pressed_keys - self.target_keys) & self.MODIFIER_KEYS
+                    if len(extra_modifiers) == 0 and event.code not in self.MODIFIER_KEYS:
+                        # Full shortcut with no extra modifiers - suppress this completing key
                         should_suppress = True
                         self.suppressed_keys.add(event.code)
 
@@ -350,9 +355,11 @@ class GlobalShortcuts:
                 self.pressed_keys.discard(event.code)
 
                 # If this key was suppressed, suppress its release too
+                # But NEVER suppress modifier key releases to prevent stuck keys
                 if event.code in self.suppressed_keys:
-                    should_suppress = True
                     self.suppressed_keys.discard(event.code)
+                    if event.code not in self.MODIFIER_KEYS:
+                        should_suppress = True
 
                 self._check_combination_release(was_combination_active)
 
@@ -378,12 +385,16 @@ class GlobalShortcuts:
     
     def _check_shortcut_combination(self):
         """Check if current pressed keys match target combination"""
-        # For single keys, use exact match to avoid triggering with modifiers
-        # For multi-key combinations, use subset to allow extra keys
-        if len(self.target_keys) == 1:
-            keys_match = self.target_keys == self.pressed_keys
+        # Check if target keys are pressed
+        if not self.target_keys.issubset(self.pressed_keys):
+            keys_match = False
         else:
-            keys_match = self.target_keys.issubset(self.pressed_keys)
+            # Target keys are pressed - but check for unwanted extra modifiers
+            # If user presses SUPER+SHIFT+. but shortcut is SUPER+., don't trigger
+            extra_keys = self.pressed_keys - self.target_keys
+            extra_modifiers = extra_keys & self.MODIFIER_KEYS
+            # Only match if no extra modifiers are pressed
+            keys_match = len(extra_modifiers) == 0
         
         if keys_match:
             current_time = time.time()
