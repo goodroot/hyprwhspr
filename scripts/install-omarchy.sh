@@ -66,14 +66,25 @@ USER_CONFIG_DIR="$USER_HOME/.config/hyprwhspr"
 # ----------------------- Command line options ------------------
 CHECK_MODE=false
 FORCE_MODE=false
-if [ "${1:-}" = "--check" ]; then
-  CHECK_MODE=true
-  log_info "Running in check mode - no changes will be made"
-fi
-if [ "${1:-}" = "--force" ]; then
-  FORCE_MODE=true
-  log_info "Running in force mode - existing files will be overwritten"
-fi
+UPDATE_MODE=false
+
+# Parse all command line arguments
+for arg in "$@"; do
+  case "$arg" in
+    --check)
+      CHECK_MODE=true
+      log_info "Running in check mode - no changes will be made"
+      ;;
+    --force)
+      FORCE_MODE=true
+      log_info "Running in force mode - existing files will be overwritten"
+      ;;
+    --update)
+      UPDATE_MODE=true
+      log_info "Running in update mode - suppressing installation messages"
+      ;;
+  esac
+done
 
 # ----------------------- Preconditions -------------------------
 command -v pacman >/dev/null 2>&1 || { log_error "Arch Linux required."; exit 1; }
@@ -976,7 +987,11 @@ main() {
     return 0
   fi
   
-  log_info "Installing to $INSTALL_DIR"
+  if [ "$UPDATE_MODE" = true ]; then
+    log_info "Updating installation at $INSTALL_DIR"
+  else
+    log_info "Installing to $INSTALL_DIR"
+  fi
   
   # Check if files already exist (AUR installation)
   if [ "$FORCE_MODE" = true ] || { [ ! -f "$INSTALL_DIR/lib/main.py" ] && [ ! -f "$INSTALL_DIR/requirements.txt" ]; }; then
@@ -1032,18 +1047,22 @@ main() {
   systemctl --user restart "$SERVICE_NAME"
   log_success "Services restarted successfully"
 
-  log_success "✓ hyprwhspr installation completed!"
-  log_info ""
-  log_info "Next steps:"
-  log_info "  • Reboot your system to apply all changes"
-  log_info "  • After reboot, hyprwhspr will be ready to use!"
-  log_info ""
-  log_info "Service status:"
-  log_info "  systemctl --user status $YDOTOOL_UNIT $SERVICE_NAME"
-  log_info ""
-  log_info "View logs:"
-  log_info "  journalctl --user -u $SERVICE_NAME"
-  log_info ""
+  if [ "$UPDATE_MODE" = true ]; then
+    log_success "✓ hyprwhspr update completed!"
+  else
+    log_success "✓ hyprwhspr installation completed!"
+    log_info ""
+    log_info "Next steps:"
+    log_info "  • Reboot your system to apply all changes"
+    log_info "  • After reboot, hyprwhspr will be ready to use!"
+    log_info ""
+    log_info "Service status:"
+    log_info "  systemctl --user status $YDOTOOL_UNIT $SERVICE_NAME"
+    log_info ""
+    log_info "View logs:"
+    log_info "  journalctl --user -u $SERVICE_NAME"
+    log_info ""
+  fi
 }
 
 main "$@"

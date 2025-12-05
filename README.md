@@ -74,17 +74,12 @@ Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues
 
 ### Updating
 
-Udate hyprwhspr with a single command:
+To update:
 
 ```bash
 cd hyprwhspr
 ./scripts/update.sh
 ```
-
-This script will:
-1. Pull the latest changes from the git repository
-2. Run the installer with `--force` to update system files
-3. Update all components (dependencies, services, configurations)
 
 ## Usage
 
