@@ -35,13 +35,17 @@ class AudioManager:
         self.stop_volume = self._validate_volume(self.stop_volume)
         
         # Audio file paths - use custom paths if specified, otherwise fall back to defaults
-        # Look for assets in the installation directory first, then fall back to relative paths
-        install_dir = Path("/usr/lib/hyprwhspr")
+        # Check HYPRWHSPR_ROOT env var first, then fall back to hardcoded path
+        install_dir = Path(os.environ.get('HYPRWHSPR_ROOT', '/usr/lib/hyprwhspr'))
         self.assets_dir = install_dir / "share" / "assets"
         
         # Fallback to relative paths if installation directory doesn't exist
         if not self.assets_dir.exists():
-            self.assets_dir = Path(__file__).parent.parent / "assets"
+            # Try parent directories for development
+            self.assets_dir = Path(__file__).parent.parent.parent / "share" / "assets"
+            # Final fallback for development
+            if not self.assets_dir.exists():
+                self.assets_dir = Path(__file__).parent.parent / "assets"
         
         # Start sound path resolution
         if self.start_sound_path:

@@ -11,8 +11,23 @@ PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
 export PYTHONPATH="$PACKAGE_ROOT/lib:$PYTHONPATH"
 
-# Set up ROCm library path if ROCm is installed
+# Help handling: route any -h/--help or leading "help" to CLI help
+for arg in "$@"; do
+  if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+    exec python3 "$PACKAGE_ROOT/lib/cli.py" --help
+  fi
+done
 
+if [[ "$1" == "help" ]]; then
+  exec python3 "$PACKAGE_ROOT/lib/cli.py" --help
+fi
+
+# Subcommands: route to CLI if recognized
+if [[ "$1" =~ ^(setup|config|waybar|systemd|status|model|validate)$ ]]; then
+  exec python3 "$PACKAGE_ROOT/lib/cli.py" "$@"
+fi
+
+# Set up ROCm library path if ROCm is installed
 if [ -d "/opt/rocm" ]; then
   ROCM_LIB_DIRS=""
   [ -d "/opt/rocm/lib" ] && ROCM_LIB_DIRS="/opt/rocm/lib"
@@ -23,13 +38,5 @@ if [ -d "/opt/rocm" ]; then
   fi
 fi
 
-# Use Python from virtual environment directly
-USER_VENV="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv"
-if [ ! -f "$USER_VENV/bin/python" ]; then
-    echo "Error: Virtual environment not found at $USER_VENV"
-    echo "Please run the installation script to set up hyprwhspr"
-    exit 1
-fi
-
-# Run the main application using venv Python directly
-exec "$USER_VENV/bin/python" "$PACKAGE_ROOT/lib/main.py" "$@"
+# Default: run main application
+exec python3 "$PACKAGE_ROOT/lib/main.py" "$@"
