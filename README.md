@@ -36,29 +36,35 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 - **NVIDIA GPU** (optional, for CUDA acceleration)
 - **AMD GPU** (optional, for ROCm acceleration)
 
-### Installation
+### Quick start
 
-"Just works" with Arch and Omarchy.
+For Arch Linux and Omarchy users, `hyprwhspr` is available via the AUR:
 
 ```bash
-# Clone the repository
-git clone https://github.com/goodroot/hyprwhspr.git
-cd hyprwhspr
+# Install hyprwhspr
+yay -S hyprwhspr
 
-# Run the automated installer
-./scripts/install-omarchy.sh
+# Choose a local backend (pick one):
+yay -S python-pywhispercpp-cpu    # CPU-only
+# OR
+yay -S python-pywhispercpp-cuda   # NVIDIA GPU
+# OR
+yay -S python-pywhispercpp-rocm   # AMD GPU
+# OR
+# None if going remote (Cloud APIs, Parakeet, etc.)
+
+# Run interactive setup
+hyprwhspr setup
 ```
 
-**The installer will:**
+**The setup will:**
 
-1. ✅ Install system dependencies (ydotool, etc.)
-2. ✅ Copy application files to system directory (`/usr/lib/hyprwhspr`)
-3. ✅ Set up Python virtual environment in user space (`~/.local/share/hyprwhspr/venv`)
-4. ✅ Install default pywhispercpp backend
-5. ✅ Download base model to user space (`~/.local/share/pywhispercpp/models/ggml-base.en.bin`)
-6. ✅ Set up systemd services for hyprwhspr & ydotoolds
-7. ✅ Configure Waybar integration
-8. ✅ Test everything works
+1. ✅ Configure transcription backend (local or remote)
+2. ✅ Set up systemd user services
+3. ✅ Configure Waybar integration (if Waybar is installed)
+4. ✅ Download models (if using local backend)
+5. ✅ Set up permissions
+6. ✅ Validate installation
 
 ### First use
 
@@ -74,12 +80,83 @@ Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues
 
 ### Updating
 
-To update:
+```bash
+# Update via your AUR helper
+yay -Syu hyprwhspr
+
+# If needed, re-run setup (idempotent)
+hyprwhspr setup
+```
+
+---
+
+> **Migrating from the old installation method?** If you previously installed via `./scripts/install-omarchy.sh`, you can migrate to the AUR package by:
+> 1. Installing the AUR package: `yay -S hyprwhspr`
+> 2. Installing your preferred backend: `yay -S python-pywhispercpp-cpu` (or cuda/rocm)
+> 3. Running setup: `hyprwhspr setup`
+> 
+> Your existing configuration and models will be preserved. The old venv-based installation is no longer needed.
+
+---
+
+## Installation
+
+**1. Install hyprwhspr:**
 
 ```bash
-cd hyprwhspr
-./scripts/update.sh
+# Using yay (or your preferred AUR helper)
+yay -S hyprwhspr
 ```
+
+**2. Choose a backend (pick exactly one):**
+
+For **CPU-only** (works on all systems):
+```bash
+yay -S python-pywhispercpp-cpu
+```
+
+For **NVIDIA GPU acceleration**:
+```bash
+yay -S python-pywhispercpp-cuda
+```
+
+For **AMD GPU acceleration** (ROCm):
+```bash
+yay -S python-pywhispercpp-rocm
+```
+
+> **Note:** Only install **one** `python-pywhispercpp-*` variant at a time. They conflict with each other by design.
+> 
+> **ROCm users:** The `python-pywhispercpp-rocm` package requires ROCm <7 due to compatibility constraints with pywhispercpp v1.4.0.
+
+**3. Run interactive setup:**
+
+```bash
+hyprwhspr setup
+```
+
+The setup command will guide you through:
+- Backend selection (local CPU/CUDA/ROCm or remote)
+- Waybar integration (auto-detected if Waybar is installed)
+- Systemd user services
+- Model download (if using local backend)
+- Permissions setup
+
+**4. For remote-only setups** (no local backend):
+
+If you're using a remote transcription backend, you can skip installing any `python-pywhispercpp-*` package. The setup will automatically skip model download when configured for remote backend.
+
+### CLI Commands
+
+After installation, use the `hyprwhspr` CLI to manage your installation:
+
+- `hyprwhspr setup` - Interactive initial setup
+- `hyprwhspr config` - Manage configuration (init/show/edit)
+- `hyprwhspr waybar` - Manage Waybar integration (install/remove/status)
+- `hyprwhspr systemd` - Manage systemd services (install/enable/disable/status/restart)
+- `hyprwhspr model` - Manage models (download/list/status)
+- `hyprwhspr status` - Overall status check
+- `hyprwhspr validate` - Validate installation
 
 ## Usage
 
@@ -309,6 +386,10 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 - **Right-click**: Start Hyprwhspr (if not running)
 - **Middle-click**: Restart Hyprwhspr
 
+> **Note:** If you're using `hyprwhspr waybar install` and your Waybar config contains comments (JSONC format), you may encounter parsing errors. The CLI uses Python's `json` module which doesn't support comments. To resolve this, either:
+> - Remove comments from your `config.jsonc` before running the command, or
+> - Manually add the module configuration as shown above
+
 Increase for more CPU parallelism when using CPU; on GPU, modest values are fine.
 
 ## Whisper (OpenAI)
@@ -462,8 +543,9 @@ sudo rm -rf /usr/lib/hyprwhspr/
 And then...
 
 ```bash
-# Then reinstall fresh
-./scripts/install-omarchy.sh
+# Then reinstall fresh via AUR
+yay -S hyprwhspr
+hyprwhspr setup
 ```
 
 ### Common issues
@@ -494,7 +576,7 @@ journalctl --user -u ydotool.service -f
 
 ```bash
 # Fix uinput permissions
-/usr/lib/hyprwhspr/scripts/fix-uinput-permissions.sh
+hyprwhspr setup
 
 # Log out and back in
 ```

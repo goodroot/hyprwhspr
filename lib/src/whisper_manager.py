@@ -123,8 +123,21 @@ class WhisperManager:
                 self.ready = True
                 return True
 
-            except ImportError as e:
-                print(f"[pywhispercpp] Import failed: {e}")
+            except ImportError:
+                print("")
+                print("ERROR: pywhispercpp is not installed.")
+                print("")
+                print("To use local transcription, install one of the following AUR packages:")
+                print("  • python-pywhispercpp-cpu    - CPU-only (works on all systems)")
+                print("  • python-pywhispercpp-cuda    - NVIDIA GPU acceleration")
+                print("  • python-pywhispercpp-rocm    - AMD GPU acceleration")
+                print("")
+                print("Install with: yay -S python-pywhispercpp-cpu")
+                print("(or python-pywhispercpp-cuda / python-pywhispercpp-rocm for GPU support)")
+                print("")
+                print("Alternatively, configure a remote transcription backend in config.json")
+                print("by setting 'transcription_backend': 'remote'")
+                print("")
                 return False
             except Exception as e:
                 print(f"[pywhispercpp] Initialization failed: {e}")

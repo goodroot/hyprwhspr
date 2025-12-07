@@ -3,7 +3,20 @@
 # hyprwhspr System Tray Status Script
 # Shows hyprwhspr status in the Hyprland system tray with JSON output
 
-PACKAGE_ROOT="/usr/lib/hyprwhspr"
+# Detect PACKAGE_ROOT dynamically
+if [ -n "${HYPRWHSPR_ROOT:-}" ]; then
+    PACKAGE_ROOT="$HYPRWHSPR_ROOT"
+elif [ -f "${BASH_SOURCE[0]}" ]; then
+    # Try to detect from script location
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$SCRIPT_DIR/../../bin/hyprwhspr" ]; then
+        PACKAGE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+    else
+        PACKAGE_ROOT="/usr/lib/hyprwhspr"
+    fi
+else
+    PACKAGE_ROOT="/usr/lib/hyprwhspr"
+fi
 
 ICON_PATH="$PACKAGE_ROOT/share/assets/hyprwhspr.png"
 
