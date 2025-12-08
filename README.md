@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 - **Supports >any< ASR backend** - [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Cloud API? New-thing? Use the API and templates
 - **Word overrides** - Customize transcriptions, prompt and corrections
 - **Multi-lingual** - Use a multi-language model and speak your own language
-- **Run as user** - Runs in user space, just sudo once for the installer
+- **Paste anywhere** - Start record or push to talk, and paste in active buffer without additional keypresses
 
 ## Quick start
 
