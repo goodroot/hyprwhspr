@@ -6,7 +6,6 @@ import os
 import sys
 import json
 import subprocess
-import urllib.error
 import getpass
 from pathlib import Path
 from typing import Optional
@@ -23,6 +22,11 @@ try:
     from .config_manager import ConfigManager
 except ImportError:
     from config_manager import ConfigManager
+
+try:
+    from .backend_installer import install_backend
+except ImportError:
+    from backend_installer import install_backend
 
 
 # Constants
@@ -207,72 +211,36 @@ def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] 
 # ==================== Setup Command ====================
 
 def _prompt_backend_selection():
-    """Prompt user for backend selection (local or remote)"""
-    # Check which pywhispercpp variants are available
-    available_backends = []
-    
-    # Try importing pywhispercpp to see if any variant is installed
-    try:
-        # Try modern layout first
-        try:
-            from pywhispercpp.model import Model  # noqa: F401
-            pywhispercpp_available = True
-        except ImportError:
-            # Fallback for flat layout
-            try:
-                from pywhispercpp import Model  # noqa: F401
-                pywhispercpp_available = True
-            except ImportError:
-                pywhispercpp_available = False
-    except ImportError:
-        pywhispercpp_available = False
-    
-    if pywhispercpp_available:
-        available_backends.append('local')
-    available_backends.append('remote')
-    
-    if not available_backends:
-        log_error("No backends available. Please install python-pywhispercpp-cpu/cuda/rocm or configure remote backend.")
-        return None
-    
+    """Prompt user for backend selection (CPU, NVIDIA, AMD, or Remote)"""
     print("\n" + "="*60)
     print("Backend Selection")
     print("="*60)
-    
-    # Inform user if local backend is not available
-    if 'local' not in available_backends:
-        print("\nNote: Local backend (pywhispercpp) is not available.")
-        print("      To enable local transcription, install one of:")
-        print("        • python-pywhispercpp-cpu    - CPU-only (works on all systems)")
-        print("        • python-pywhispercpp-cuda    - NVIDIA GPU acceleration")
-        print("        • python-pywhispercpp-rocm    - AMD GPU acceleration")
-        print("      Install with: yay -S python-pywhispercpp-cpu")
-        print()
-    
-    print("Choose your transcription backend:")
+    print("\nChoose your transcription backend:")
     print()
-    
-    choices = []
-    if 'local' in available_backends:
-        print("  [1] Local (pywhispercpp) - CPU/GPU acceleration, works offline")
-        choices.append('local')
-    print("  [2] Remote - Use external API/backend (requires network)")
-    choices.append('remote')
+    print("  [1] CPU - CPU-only, works on all systems")
+    print("  [2] NVIDIA - NVIDIA GPU acceleration (CUDA)")
+    print("  [3] AMD - AMD GPU acceleration (ROCm)")
+    print("  [4] Remote - Use external API/backend (requires network)")
     print()
     
     while True:
         try:
-            if 'local' in available_backends:
-                choice = Prompt.ask("Select backend", choices=['1', '2'], default='1')
-                selected = choices[int(choice) - 1]
-            else:
-                choice = Prompt.ask("Select backend", choices=['2'], default='2')
-                selected = 'remote'
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4'], default='1')
+            backend_map = {
+                '1': 'cpu',
+                '2': 'nvidia',
+                '3': 'amd',
+                '4': 'remote'
+            }
+            selected = backend_map[choice]
             
-            if selected == 'local':
-                print("\n✓ Selected: Local backend (pywhispercpp)")
-            else:
-                print("\n✓ Selected: Remote backend")
+            backend_names = {
+                'cpu': 'CPU',
+                'nvidia': 'NVIDIA (CUDA)',
+                'amd': 'AMD (ROCm)',
+                'remote': 'Remote'
+            }
+            print(f"\n✓ Selected: {backend_names[selected]}")
             return selected
         except (ValueError, IndexError, KeyboardInterrupt):
             print("\nInvalid selection. Please try again.")
@@ -339,9 +307,24 @@ def setup_command():
         log_error("Backend selection is required. Exiting.")
         return
     
+    # Step 1.5: Backend installation (if not remote)
+    if backend != 'remote':
+        print("\n" + "="*60)
+        print("Backend Installation")
+        print("="*60)
+        print(f"\nThis will install the {backend.upper()} backend for pywhispercpp.")
+        print("This may take several minutes as it compiles from source.")
+        if not Confirm.ask("Proceed with backend installation?", default=True):
+            log_warning("Skipping backend installation. You can install it later.")
+            log_warning("Backend installation is required for local transcription to work.")
+        else:
+            if not install_backend(backend):
+                log_error("Backend installation failed. Setup cannot continue.")
+                return
+    
     # Step 2: Model selection (if local backend)
     selected_model = None
-    if backend == 'local':
+    if backend != 'remote':
         selected_model = _prompt_model_selection()
     
     # Step 3: Waybar integration
@@ -420,7 +403,7 @@ def setup_command():
             log_info("Skipping permissions setup")
         
         # Step 5: Model download (if local backend)
-        if backend == 'local' and selected_model:
+        if backend != 'remote' and selected_model:
             try:
                 # Try modern layout first
                 try:
@@ -440,8 +423,8 @@ def setup_command():
                 print(f"\nDownloading model: {selected_model}")
                 download_model(selected_model)
             else:
-                log_warning("Local backend selected but pywhispercpp not available")
-                log_warning("Install a backend package first: python-pywhispercpp-cpu/cuda/rocm")
+                log_warning(f"{backend.upper()} backend selected but pywhispercpp not available")
+                log_warning("Backend installation may have failed or is incomplete")
                 log_info("You can download the model later with: hyprwhspr model download")
         
         # Step 6: Validation
@@ -509,8 +492,11 @@ def setup_config(backend: Optional[str] = None, model: Optional[str] = None):
             with open(config_file, 'r', encoding='utf-8') as f:
                 existing_config = json.load(f)
             
-            # Update backend if provided
+            # Update backend if provided (accept both old 'local' and new backend types)
             if backend:
+                # Map old 'local' to 'cpu' for backward compatibility
+                if backend == 'local':
+                    backend = 'cpu'
                 existing_config['transcription_backend'] = backend
             
             # Update model if provided, otherwise default to base.en if missing
@@ -1132,17 +1118,27 @@ def validate_command():
     
     # Check pywhispercpp (optional)
     try:
-        import pywhispercpp  # noqa: F401
-        log_success("✓ pywhispercpp available")
+        # Try modern layout first
+        try:
+            from pywhispercpp.model import Model  # noqa: F401
+            pywhispercpp_available = True
+        except ImportError:
+            # Fallback for flat layout
+            try:
+                from pywhispercpp import Model  # noqa: F401
+                pywhispercpp_available = True
+            except ImportError:
+                pywhispercpp_available = False
     except ImportError:
+        pywhispercpp_available = False
+    
+    if pywhispercpp_available:
+        log_success("✓ pywhispercpp available")
+    else:
         log_warning("⚠ pywhispercpp not available")
         print("")
-        print("To use local transcription, install one of the following AUR packages:")
-        print("  • python-pywhispercpp-cpu    - CPU-only (works on all systems)")
-        print("  • python-pywhispercpp-cuda    - NVIDIA GPU acceleration")
-        print("  • python-pywhispercpp-rocm    - AMD GPU acceleration")
-        print("")
-        print("Install with: yay -S python-pywhispercpp-cpu")
+        print("To use local transcription, run: hyprwhspr setup")
+        print("This will install the backend (CPU/NVIDIA/AMD) of your choice.")
         print("(or use remote backend by setting 'transcription_backend': 'remote' in config.json)")
         print("")
     
