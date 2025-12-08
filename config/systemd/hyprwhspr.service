@@ -7,7 +7,8 @@ Wants=pipewire.service
 
 [Service]
 Type=simple
-ExecStartPre=/bin/sleep 3
+# Wait for Wayland environment - wl-copy needs WAYLAND_DISPLAY to be set
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -n "$WAYLAND_DISPLAY" ] && exit 0; sleep 0.5; done; echo "Warning: WAYLAND_DISPLAY not set after 15s"'
 ExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr
 Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
 Restart=on-failure
