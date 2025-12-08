@@ -330,8 +330,42 @@ def setup_python_venv() -> Path:
         log_error(f"requirements.txt not found at {requirements_file}")
         raise FileNotFoundError(f"requirements.txt not found at {requirements_file}")
     
-    # Create venv if it doesn't exist
-    if not VENV_DIR.exists():
+    # Check if venv exists and if Python version matches
+    venv_needs_recreation = False
+    if VENV_DIR.exists():
+        venv_python = VENV_DIR / 'bin' / 'python'
+        if venv_python.exists():
+            try:
+                # Check Python version in venv
+                result = run_command([str(venv_python), '--version'], check=False, capture_output=True)
+                venv_version = result.stdout.strip() if result.returncode == 0 else ""
+                current_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+                
+                # Extract major.minor from venv version string (e.g., "Python 3.11.5" -> "3.11")
+                venv_major_minor = ""
+                if venv_version:
+                    import re
+                    match = re.search(r'(\d+)\.(\d+)', venv_version)
+                    if match:
+                        venv_major_minor = f"{match.group(1)}.{match.group(2)}"
+                
+                # Check if versions match (major.minor)
+                if venv_major_minor and venv_major_minor != current_version:
+                    log_warning(f"Venv Python version mismatch: venv has {venv_version}, current is Python {current_version}")
+                    log_info("Recreating venv to match current Python version...")
+                    venv_needs_recreation = True
+            except Exception:
+                # If we can't check, assume it's fine
+                pass
+        else:
+            venv_needs_recreation = True
+    
+    # Recreate venv if needed
+    if venv_needs_recreation or not VENV_DIR.exists():
+        if VENV_DIR.exists():
+            log_info(f"Removing existing venv at {VENV_DIR}")
+            import shutil
+            shutil.rmtree(VENV_DIR)
         log_info(f"Creating venv at {VENV_DIR}")
         VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
         run_command([sys.executable, '-m', 'venv', str(VENV_DIR)], check=True)
