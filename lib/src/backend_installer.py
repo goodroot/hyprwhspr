@@ -402,6 +402,22 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     """Install pywhispercpp with CUDA support"""
     log_info("Installing pywhispercpp with CUDA support...")
     
+    # Clean build artifacts if they exist (to avoid Python version mismatches)
+    if PYWHISPERCPP_SRC_DIR.exists():
+        log_info("Cleaning existing build artifacts...")
+        import shutil
+        # Remove common build directories
+        for build_dir in ['build', 'dist', '*.egg-info', 'whisper.cpp/build', 'whisper.cpp/ggml/build']:
+            for path in PYWHISPERCPP_SRC_DIR.glob(build_dir):
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                elif path.is_file():
+                    path.unlink(missing_ok=True)
+        # Also clean any __pycache__ directories
+        for pycache in PYWHISPERCPP_SRC_DIR.rglob('__pycache__'):
+            if pycache.is_dir():
+                shutil.rmtree(pycache, ignore_errors=True)
+    
     # Clone or update pywhispercpp sources
     if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
         log_info(f"Cloning pywhispercpp sources (v1.4.0) → {PYWHISPERCPP_SRC_DIR}")
@@ -451,6 +467,22 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
 def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
     """Install pywhispercpp with ROCm support. Returns (success, should_fallback)."""
     log_info("Installing pywhispercpp with ROCm support...")
+    
+    # Clean build artifacts if they exist (to avoid Python version mismatches)
+    if PYWHISPERCPP_SRC_DIR.exists():
+        log_info("Cleaning existing build artifacts...")
+        import shutil
+        # Remove common build directories
+        for build_dir in ['build', 'dist', '*.egg-info', 'whisper.cpp/build', 'whisper.cpp/ggml/build']:
+            for path in PYWHISPERCPP_SRC_DIR.glob(build_dir):
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                elif path.is_file():
+                    path.unlink(missing_ok=True)
+        # Also clean any __pycache__ directories
+        for pycache in PYWHISPERCPP_SRC_DIR.rglob('__pycache__'):
+            if pycache.is_dir():
+                shutil.rmtree(pycache, ignore_errors=True)
     
     # Clone or update pywhispercpp sources
     if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
