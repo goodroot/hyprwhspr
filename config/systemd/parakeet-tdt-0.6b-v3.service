@@ -1,0 +1,21 @@
+[Unit]
+Description=Parakeet-tdt-0.6B-v3 backend for hyprwhspr
+Documentation=https://github.com/goodroot/hyprwhspr
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/lib/hyprwhspr/lib/backends/parakeet
+ExecStart=/home/USER/.local/share/hyprwhspr/parakeet-venv/bin/python /usr/lib/hyprwhspr/lib/backends/parakeet/parakeet-tdt-0.6b-v3.py
+Environment=NEMO_CACHE_DIR=/home/USER/.local/share/hyprwhspr/.nemo_cache
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=10
+StartLimitBurst=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+

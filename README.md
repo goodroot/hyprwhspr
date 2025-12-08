@@ -132,11 +132,13 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 The installer will walk you through remote / Cloud endpoints:
 
-**Parakeet v3**
+**Local Parakeet v3**
 
 Fastest, latest, and apparently the best! GPU accel rcommended, not required.
 
 **OpenAI**
+
+Bring an API key from OpenAI, and choose from:
 
 - **GPT-4o Transcribe** - Latest model with best accuracy
 - **GPT-4o Mini Transcribe** - Faster, lighter model
@@ -144,10 +146,14 @@ Fastest, latest, and apparently the best! GPU accel rcommended, not required.
 
 **Groq**
 
+Bring an API key from Grok, and choose from:
+
 - **Whisper Large V3** - High accuracy processing
 - **Whisper Large V3 Turbo** - Fastest transcription speed
 
 **Any arbitrary backend:**
+
+Or connect to any backend, local of Cloud, via your own custom backend:
 
 ```jsonc
 {

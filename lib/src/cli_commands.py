@@ -27,13 +27,15 @@ try:
     from .backend_installer import (
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
-        init_state, _cleanup_partial_installation
+        init_state, _cleanup_partial_installation,
+        PARAKEET_VENV_DIR, PARAKEET_SCRIPT
     )
 except ImportError:
     from backend_installer import (
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
-        init_state, _cleanup_partial_installation
+        init_state, _cleanup_partial_installation,
+        PARAKEET_VENV_DIR, PARAKEET_SCRIPT
     )
 
 try:
@@ -71,6 +73,7 @@ except ImportError:
 # Constants
 HYPRWHSPR_ROOT = os.environ.get('HYPRWHSPR_ROOT', '/usr/lib/hyprwhspr')
 SERVICE_NAME = 'hyprwhspr.service'
+PARAKEET_SERVICE_NAME = 'parakeet-tdt-0.6b-v3.service'
 YDOTOOL_UNIT = 'ydotool.service'
 USER_HOME = Path.home()
 USER_CONFIG_DIR = USER_HOME / '.config' / 'hyprwhspr'
@@ -229,10 +232,6 @@ def _detect_current_backend() -> Optional[str]:
             endpoint = config_manager.get_setting('rest_endpoint_url', '')
             if endpoint == 'http://127.0.0.1:8080/transcribe':
                 # Check if parakeet venv exists
-                try:
-                    from .backend_installer import PARAKEET_VENV_DIR
-                except ImportError:
-                    from backend_installer import PARAKEET_VENV_DIR
                 if PARAKEET_VENV_DIR.exists():
                     return 'parakeet'
             return 'rest-api'
@@ -287,18 +286,33 @@ def _cleanup_backend(backend_type: str) -> bool:
     """
     if backend_type == 'parakeet':
         log_info("Cleaning up Parakeet backend...")
-        try:
-            from .backend_installer import PARAKEET_VENV_DIR
-        except ImportError:
-            from backend_installer import PARAKEET_VENV_DIR
         
+        # Clean up Parakeet systemd service
+        parakeet_service_dest = USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME
+        if parakeet_service_dest.exists():
+            log_info("Removing Parakeet systemd service...")
+            # Stop and disable service
+            run_command(['systemctl', '--user', 'stop', PARAKEET_SERVICE_NAME], check=False)
+            run_command(['systemctl', '--user', 'disable', PARAKEET_SERVICE_NAME], check=False)
+            # Remove the service file
+            try:
+                parakeet_service_dest.unlink()
+                log_success("Parakeet service file removed")
+            except Exception as e:
+                log_warning(f"Failed to remove Parakeet service file: {e}")
+            # Reload systemd daemon
+            run_command(['systemctl', '--user', 'daemon-reload'], check=False)
+        
+        # Clean up Parakeet venv
         if PARAKEET_VENV_DIR.exists():
             import shutil
             try:
                 shutil.rmtree(PARAKEET_VENV_DIR, ignore_errors=True)
-                log_success("Parakeet backend cleaned up")
+                log_success("Parakeet venv removed")
             except Exception as e:
                 log_warning(f"Cleanup warning: {e}")
+        
+        log_success("Parakeet backend cleaned up")
         return True
     
     if backend_type in ['rest-api', 'remote']:
@@ -777,10 +791,6 @@ def setup_command():
         }
         log_success("Parakeet REST API configuration ready")
         log_info("Note: Start the Parakeet server with:")
-        try:
-            from .backend_installer import PARAKEET_VENV_DIR, PARAKEET_SCRIPT
-        except ImportError:
-            from backend_installer import PARAKEET_VENV_DIR, PARAKEET_SCRIPT
         log_info(f"  {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
     elif backend in ['rest-api', 'remote']:
         # Prompt for remote provider selection
@@ -1084,10 +1094,64 @@ def setup_systemd(mode: str = 'install'):
         log_error(f"Main executable not found or not executable: {main_exec}")
         return False
     
+    # Detect current backend to determine if Parakeet service is needed
+    current_backend = _detect_current_backend()
+    is_parakeet = current_backend == 'parakeet'
+    
     # Create user systemd directory
     USER_SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
     
-    # Read service file template and substitute paths
+    # Handle Parakeet service if needed
+    if is_parakeet:
+        # Validate Parakeet components exist
+        if not PARAKEET_SCRIPT.exists():
+            log_error(f"Parakeet script not found at {PARAKEET_SCRIPT}")
+            return False
+        if not PARAKEET_VENV_DIR.exists():
+            log_error(f"Parakeet venv not found at {PARAKEET_VENV_DIR}")
+            return False
+        
+        # Clean old Parakeet service file first (following venv cleanup pattern)
+        parakeet_service_dest = USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME
+        if parakeet_service_dest.exists():
+            log_info("Removing existing Parakeet service file...")
+            # Stop and disable service if it's active
+            run_command(['systemctl', '--user', 'stop', PARAKEET_SERVICE_NAME], check=False)
+            run_command(['systemctl', '--user', 'disable', PARAKEET_SERVICE_NAME], check=False)
+            # Remove the service file
+            try:
+                parakeet_service_dest.unlink()
+            except Exception as e:
+                log_warning(f"Failed to remove old Parakeet service file: {e}")
+        
+        # Read Parakeet service template
+        parakeet_service_source = Path(HYPRWHSPR_ROOT) / 'config' / 'systemd' / PARAKEET_SERVICE_NAME
+        if not parakeet_service_source.exists():
+            log_error(f"Parakeet service template not found: {parakeet_service_source}")
+            return False
+        
+        try:
+            with open(parakeet_service_source, 'r', encoding='utf-8') as f:
+                parakeet_service_content = f.read()
+            
+            # Substitute paths
+            parakeet_service_content = parakeet_service_content.replace('/usr/lib/hyprwhspr', HYPRWHSPR_ROOT)
+            parakeet_service_content = parakeet_service_content.replace('/home/USER', str(USER_HOME))
+            parakeet_service_content = parakeet_service_content.replace(
+                '/home/USER/.local/share/hyprwhspr/parakeet-venv',
+                str(PARAKEET_VENV_DIR)
+            )
+            
+            # Write substituted content
+            with open(parakeet_service_dest, 'w', encoding='utf-8') as f:
+                f.write(parakeet_service_content)
+            
+            log_success("Parakeet service file created with correct paths")
+        except IOError as e:
+            log_error(f"Failed to read/write Parakeet service file: {e}")
+            return False
+    
+    # Read hyprwhspr service file template and substitute paths
     service_source = Path(HYPRWHSPR_ROOT) / 'config' / 'systemd' / SERVICE_NAME
     service_dest = USER_SYSTEMD_DIR / SERVICE_NAME
     
@@ -1102,6 +1166,39 @@ def setup_systemd(mode: str = 'install'):
         
         # Substitute hardcoded path with actual HYPRWHSPR_ROOT
         service_content = service_content.replace('/usr/lib/hyprwhspr', HYPRWHSPR_ROOT)
+        
+        # Conditionally inject Parakeet dependencies if Parakeet is configured
+        if is_parakeet:
+            # Add Parakeet service to After= line
+            if 'After=' in service_content:
+                # Find the After= line and add parakeet service
+                lines = service_content.split('\n')
+                for i, line in enumerate(lines):
+                    if line.startswith('After='):
+                        # Check if parakeet service is already in the line
+                        if PARAKEET_SERVICE_NAME not in line:
+                            lines[i] = line.rstrip() + ' ' + PARAKEET_SERVICE_NAME
+                        break
+                service_content = '\n'.join(lines)
+            
+            # Add Parakeet service to Wants= line (or create it if it doesn't exist)
+            if 'Wants=' in service_content:
+                lines = service_content.split('\n')
+                for i, line in enumerate(lines):
+                    if line.startswith('Wants='):
+                        # Check if parakeet service is already in the line
+                        if PARAKEET_SERVICE_NAME not in line:
+                            lines[i] = line.rstrip() + ' ' + PARAKEET_SERVICE_NAME
+                        break
+                service_content = '\n'.join(lines)
+            else:
+                # Insert Wants= line after After= line
+                lines = service_content.split('\n')
+                for i, line in enumerate(lines):
+                    if line.startswith('After='):
+                        lines.insert(i + 1, f'Wants={PARAKEET_SERVICE_NAME}')
+                        break
+                service_content = '\n'.join(lines)
         
         # Write substituted content to user directory
         with open(service_dest, 'w', encoding='utf-8') as f:
@@ -1118,9 +1215,13 @@ def setup_systemd(mode: str = 'install'):
     if mode in ('install', 'enable'):
         # Enable & start services
         run_command(['systemctl', '--user', 'enable', '--now', YDOTOOL_UNIT], check=False)
+        if is_parakeet:
+            run_command(['systemctl', '--user', 'enable', '--now', PARAKEET_SERVICE_NAME], check=False)
         run_command(['systemctl', '--user', 'enable', '--now', SERVICE_NAME], check=False)
         log_success("Systemd user services enabled and started")
     elif mode == 'disable':
+        if is_parakeet:
+            run_command(['systemctl', '--user', 'disable', '--now', PARAKEET_SERVICE_NAME], check=False)
         run_command(['systemctl', '--user', 'disable', '--now', SERVICE_NAME], check=False)
         log_success("Systemd user service disabled")
     
@@ -1129,18 +1230,43 @@ def setup_systemd(mode: str = 'install'):
 
 def systemd_status():
     """Show systemd service status"""
+    # Check if Parakeet backend is configured
+    current_backend = _detect_current_backend()
+    is_parakeet = current_backend == 'parakeet'
+    
     try:
-        run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
+        if is_parakeet:
+            # Show status for both services
+            log_info("Parakeet service status:")
+            run_command(['systemctl', '--user', 'status', PARAKEET_SERVICE_NAME], check=False)
+            print()  # Add spacing
+            log_info("hyprwhspr service status:")
+            run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
+        else:
+            # Show status for hyprwhspr only
+            run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to get status: {e}")
 
 
 def systemd_restart():
     """Restart systemd service"""
+    # Check if Parakeet backend is configured
+    current_backend = _detect_current_backend()
+    is_parakeet = current_backend == 'parakeet'
+    
     log_info("Restarting service...")
     try:
-        run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
-        log_success("Service restarted")
+        if is_parakeet:
+            # Restart both services
+            run_command(['systemctl', '--user', 'restart', PARAKEET_SERVICE_NAME], check=False)
+            log_success("Parakeet service restarted")
+            run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
+            log_success("hyprwhspr service restarted")
+        else:
+            # Restart hyprwhspr only
+            run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
+            log_success("Service restarted")
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to restart service: {e}")
 

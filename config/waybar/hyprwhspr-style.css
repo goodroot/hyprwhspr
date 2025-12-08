@@ -18,7 +18,8 @@
 #custom-hyprwhspr.recording {
   color: #dc2626;            /* red-600 - darker red for better contrast */
   border-bottom-color: #dc2626;
-  font-family: monospace;    /* Better rendering of block characters */
+  font-family: monospace;    /* Better rendering of dot characters */
+  letter-spacing: 0.5px;     /* Slight spacing for better dot visibility */
 }
 
 #custom-hyprwhspr.error {
