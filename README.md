@@ -58,6 +58,7 @@ If AMD card with ROCm, VERY fast for any model:
 ```
 yay -S python-pywhispercpp-rocm  
 ````
+
 Or, proceed to installer if going remote (Cloud APIs, Parakeet).
 
 Now, install:
@@ -68,7 +69,6 @@ yay -S hyprwhspr
 
 # Run interactive setup
 hyprwhspr setup
-```
 ```
 
 **The setup will:**
