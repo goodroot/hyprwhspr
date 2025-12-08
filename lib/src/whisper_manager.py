@@ -104,7 +104,12 @@ class WhisperManager:
             gpu_backend = self._detect_gpu_backend()
 
             try:
-                from pywhispercpp.model import Model
+                # Try modern layout first
+                try:
+                    from pywhispercpp.model import Model
+                except ImportError:
+                    # Fallback for flat layout (or older versions)
+                    from pywhispercpp import Model
 
                 print(f"[pywhispercpp] Initializing model: {self.current_model}")
                 print(f"[pywhispercpp] Detected GPU backend: {gpu_backend}")
@@ -123,9 +128,10 @@ class WhisperManager:
                 self.ready = True
                 return True
 
-            except ImportError:
+            except ImportError as e:
                 print("")
-                print("ERROR: pywhispercpp is not installed.")
+                print("ERROR: pywhispercpp is not installed or incompatible.")
+                print(f"Import error: {e}")
                 print("")
                 print("To use local transcription, install one of the following AUR packages:")
                 print("  • python-pywhispercpp-cpu    - CPU-only (works on all systems)")
@@ -471,7 +477,12 @@ class WhisperManager:
                 self._cleanup_model()
 
                 # Load model with new thread count
-                from pywhispercpp.model import Model
+                # Try modern layout first
+                try:
+                    from pywhispercpp.model import Model
+                except ImportError:
+                    # Fallback for flat layout (or older versions)
+                    from pywhispercpp import Model
                 self._pywhisper_model = Model(
                     model=self.current_model,
                     n_threads=int(num_threads),
@@ -519,7 +530,12 @@ class WhisperManager:
                 self._cleanup_model()
 
                 # Load new model
-                from pywhispercpp.model import Model
+                # Try modern layout first
+                try:
+                    from pywhispercpp.model import Model
+                except ImportError:
+                    # Fallback for flat layout (or older versions)
+                    from pywhispercpp import Model
                 self._pywhisper_model = Model(
                     model=model_name,
                     n_threads=self.config.get_setting('threads', 4),

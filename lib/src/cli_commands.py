@@ -5,12 +5,19 @@ CLI command implementations for hyprwhspr
 import os
 import sys
 import json
-import shutil
 import subprocess
 import urllib.error
 import getpass
 from pathlib import Path
 from typing import Optional
+
+try:
+    from rich.prompt import Prompt, Confirm
+except ImportError:
+    # Fallback if rich is not available (shouldn't happen in production)
+    # This would cause errors, but rich is in requirements.txt
+    Prompt = None
+    Confirm = None
 
 try:
     from .config_manager import ConfigManager
@@ -199,44 +206,258 @@ def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] 
 
 # ==================== Setup Command ====================
 
-def setup_command():
-    """Full initial setup"""
-    log_info("Running full setup...")
+def _prompt_backend_selection():
+    """Prompt user for backend selection (local or remote)"""
+    # Check which pywhispercpp variants are available
+    available_backends = []
     
-    setup_config()
-    setup_systemd('install')
-    setup_waybar('install')
-    setup_permissions()
-    
-    # Conditionally download model
-    config = ConfigManager()
-    backend = config.get_setting('transcription_backend', 'local')
+    # Try importing pywhispercpp to see if any variant is installed
     try:
-        import pywhispercpp
-        pywhispercpp_available = True
+        # Try modern layout first
+        try:
+            from pywhispercpp.model import Model  # noqa: F401
+            pywhispercpp_available = True
+        except ImportError:
+            # Fallback for flat layout
+            try:
+                from pywhispercpp import Model  # noqa: F401
+                pywhispercpp_available = True
+            except ImportError:
+                pywhispercpp_available = False
     except ImportError:
         pywhispercpp_available = False
     
-    if backend == 'remote':
-        if not pywhispercpp_available:
-            log_info("Skipping model download (remote backend, no local pywhispercpp)")
-        else:
-            log_info("Skipping model download (remote backend configured)")
-    elif backend == 'local':
-        if not pywhispercpp_available:
-            log_warning("Local backend configured but pywhispercpp not available")
-            log_warning("Install a backend package first: python-pywhispercpp-cpu/cuda/rocm")
-            log_info("Skipping model download until backend is installed")
-        else:
-            download_model('base.en')
+    if pywhispercpp_available:
+        available_backends.append('local')
+    available_backends.append('remote')
+    
+    if not available_backends:
+        log_error("No backends available. Please install python-pywhispercpp-cpu/cuda/rocm or configure remote backend.")
+        return None
+    
+    print("\n" + "="*60)
+    print("Backend Selection")
+    print("="*60)
+    print("\nChoose your transcription backend:")
+    print()
+    
+    choices = []
+    if 'local' in available_backends:
+        print("  [1] Local (pywhispercpp) - CPU/GPU acceleration, works offline")
+        choices.append('local')
+    print("  [2] Remote - Use external API/backend (requires network)")
+    choices.append('remote')
+    print()
+    
+    while True:
+        try:
+            if 'local' in available_backends:
+                choice = Prompt.ask("Select backend", choices=['1', '2'], default='1')
+                selected = choices[int(choice) - 1]
+            else:
+                choice = Prompt.ask("Select backend", choices=['2'], default='2')
+                selected = 'remote'
+            
+            if selected == 'local':
+                print("\n✓ Selected: Local backend (pywhispercpp)")
+            else:
+                print("\n✓ Selected: Remote backend")
+            return selected
+        except (ValueError, IndexError, KeyboardInterrupt):
+            print("\nInvalid selection. Please try again.")
+            continue
+
+
+def _prompt_model_selection():
+    """Prompt user for model selection"""
+    multilingual_models = [
+        ('tiny', 'Fastest, least accurate'),
+        ('base', 'Good balance (recommended)'),
+        ('small', 'Better accuracy'),
+        ('medium', 'High accuracy'),
+        ('large', 'Best accuracy, requires GPU'),
+        ('large-v3', 'Latest large model, requires GPU')
+    ]
+    
+    english_only_models = [
+        ('tiny.en', 'Fastest, least accurate (English only)'),
+        ('base.en', 'Good balance (English only, recommended)'),
+        ('small.en', 'Better accuracy (English only)'),
+        ('medium.en', 'High accuracy (English only)')
+    ]
+    
+    print("\n" + "="*60)
+    print("Model Selection")
+    print("="*60)
+    print("\nChoose your default Whisper model:")
+    print()
+    print("Multilingual models (support all languages, auto-detect):")
+    for i, (model, desc) in enumerate(multilingual_models, 1):
+        print(f"  [{i}] {model:12} - {desc}")
+    
+    print("\nEnglish-only models (smaller, faster, English only):")
+    for i, (model, desc) in enumerate(english_only_models, len(multilingual_models) + 1):
+        print(f"  [{i}] {model:12} - {desc}")
+    print()
+    
+    all_models = [m[0] for m in multilingual_models] + [m[0] for m in english_only_models]
+    choices = [str(i) for i in range(1, len(all_models) + 1)]
+    
+    while True:
+        try:
+            choice = Prompt.ask("Select model", choices=choices, default='2')  # default to base
+            selected_model = all_models[int(choice) - 1]
+            print(f"\n✓ Selected: {selected_model}")
+            return selected_model
+        except (ValueError, IndexError, KeyboardInterrupt):
+            print("\nInvalid selection. Please try again.")
+            continue
+
+
+def setup_command():
+    """Interactive full initial setup"""
+    print("\n" + "="*60)
+    print("hyprwhspr setup")
+    print("="*60)
+    print("\nThis setup will guide you through configuring hyprwhspr.")
+    print("Skip any step by answering 'no'.\n")
+    
+    # Step 1: Backend selection
+    backend = _prompt_backend_selection()
+    if not backend:
+        log_error("Backend selection is required. Exiting.")
+        return
+    
+    # Step 2: Model selection (if local backend)
+    selected_model = None
+    if backend == 'local':
+        selected_model = _prompt_model_selection()
+    
+    # Step 3: Waybar integration
+    print("\n" + "="*60)
+    print("Waybar Integration")
+    print("="*60)
+    waybar_config_path = Path.home() / '.config' / 'waybar' / 'config.jsonc'
+    waybar_style_path = Path.home() / '.config' / 'waybar' / 'style.css'
+    waybar_installed = waybar_config_path.exists() or waybar_style_path.exists()
+    
+    if waybar_installed:
+        print(f"\nWaybar configuration detected at: {waybar_config_path.parent}")
+        setup_waybar_choice = Confirm.ask("Configure Waybar integration?", default=True)
     else:
-        # Unknown backend, try to download anyway (backward compatibility)
-        log_warning(f"Unknown backend '{backend}', attempting model download")
-        download_model('base.en')
+        print("\nWaybar configuration not found.")
+        setup_waybar_choice = Confirm.ask("Set up Waybar integration anyway?", default=False)
     
-    validate_command()
+    # Step 4: Systemd setup
+    print("\n" + "="*60)
+    print("Systemd Service")
+    print("="*60)
+    print("\nSystemd user service will run hyprwhspr in the background.")
+    setup_systemd_choice = Confirm.ask("Set up systemd user service?", default=True)
     
-    log_success("Setup completed!")
+    # Step 5: Permissions setup
+    print("\n" + "="*60)
+    print("Permissions Setup")
+    print("="*60)
+    print("\nAdds you to required groups (input, audio, tty)")
+    print("and configures uinput device permissions.")
+    print("Note: Requires sudo access.")
+    setup_permissions_choice = Confirm.ask("Set up permissions?", default=True)
+    
+    # Summary
+    print("\n" + "="*60)
+    print("Setup Summary")
+    print("="*60)
+    print(f"\nBackend: {backend}")
+    if selected_model:
+        print(f"Model: {selected_model}")
+    print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
+    print(f"Systemd service: {'Yes' if setup_systemd_choice else 'No'}")
+    print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
+    print()
+    
+    # Final confirmation
+    if not Confirm.ask("Proceed with setup?", default=True):
+        print("\nSetup cancelled.")
+        return
+    
+    print("\n" + "="*60)
+    print("Running Setup")
+    print("="*60 + "\n")
+    
+    # Execute selected steps
+    try:
+        # Step 1: Config
+        setup_config(backend=backend, model=selected_model)
+        
+        # Step 2: Waybar
+        if setup_waybar_choice:
+            setup_waybar('install')
+        else:
+            log_info("Skipping Waybar integration")
+        
+        # Step 3: Systemd
+        if setup_systemd_choice:
+            setup_systemd('install')
+        else:
+            log_info("Skipping systemd setup")
+        
+        # Step 4: Permissions
+        if setup_permissions_choice:
+            setup_permissions()
+        else:
+            log_info("Skipping permissions setup")
+        
+        # Step 5: Model download (if local backend)
+        if backend == 'local' and selected_model:
+            try:
+                # Try modern layout first
+                try:
+                    from pywhispercpp.model import Model  # noqa: F401
+                    pywhispercpp_available = True
+                except ImportError:
+                    # Fallback for flat layout
+                    try:
+                        from pywhispercpp import Model  # noqa: F401
+                        pywhispercpp_available = True
+                    except ImportError:
+                        pywhispercpp_available = False
+            except ImportError:
+                pywhispercpp_available = False
+            
+            if pywhispercpp_available:
+                print(f"\nDownloading model: {selected_model}")
+                download_model(selected_model)
+            else:
+                log_warning("Local backend selected but pywhispercpp not available")
+                log_warning("Install a backend package first: python-pywhispercpp-cpu/cuda/rocm")
+                log_info("You can download the model later with: hyprwhspr model download")
+        
+        # Step 6: Validation
+        print("\n" + "="*60)
+        print("Validation")
+        print("="*60 + "\n")
+        validate_command()
+        
+        print("\n" + "="*60)
+        log_success("Setup completed!")
+        print("="*60)
+        print("\nNext steps:")
+        if setup_systemd_choice:
+            print("  1. Log out and back in (for group permissions to take effect)")
+            print("  2. Enable and start the service: systemctl --user enable --now hyprwhspr")
+        else:
+            print("  1. Log out and back in (if permissions were set up)")
+            print("  2. Run hyprwhspr manually or set up systemd service later")
+        print("  3. Press Super+Alt+D to start dictation!")
+        print()
+        
+    except KeyboardInterrupt:
+        print("\n\nSetup interrupted by user.")
+        sys.exit(1)
+    except Exception as e:
+        log_error(f"Setup failed: {e}")
+        sys.exit(1)
 
 
 # ==================== Config Commands ====================
@@ -253,7 +474,7 @@ def config_command(action: str):
         log_error(f"Unknown config action: {action}")
 
 
-def setup_config():
+def setup_config(backend: Optional[str] = None, model: Optional[str] = None):
     """Create or update user config"""
     log_info("Setting up user config...")
     
@@ -263,17 +484,28 @@ def setup_config():
     if not config_file.exists():
         # Create default config using ConfigManager
         config = ConfigManager()
+        # Override with user selections if provided
+        if backend:
+            config.set_setting('transcription_backend', backend)
+        if model:
+            config.set_setting('model', model)
         config.save_config()
         log_success(f"Created {config_file}")
     else:
         log_info(f"Config already exists at {config_file}")
         # Update existing config if needed
         try:
-            with open(config_file, 'r') as f:
+            with open(config_file, 'r', encoding='utf-8') as f:
                 existing_config = json.load(f)
             
-            # Update model to base.en if needed
-            if 'model' in existing_config:
+            # Update backend if provided
+            if backend:
+                existing_config['transcription_backend'] = backend
+            
+            # Update model if provided, otherwise default to base.en if missing
+            if model:
+                existing_config['model'] = model
+            elif 'model' not in existing_config:
                 existing_config['model'] = 'base.en'
             
             # Add audio_feedback if missing
@@ -284,7 +516,7 @@ def setup_config():
                 existing_config['start_sound_path'] = 'ping-up.ogg'
                 existing_config['stop_sound_path'] = 'ping-down.ogg'
             
-            with open(config_file, 'w') as f:
+            with open(config_file, 'w', encoding='utf-8') as f:
                 json.dump(existing_config, f, indent=2)
             
             log_success("Updated existing config")
