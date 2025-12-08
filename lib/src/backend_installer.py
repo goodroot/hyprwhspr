@@ -407,13 +407,29 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
         log_info("Cleaning existing build artifacts...")
         import shutil
         # Remove common build directories
-        for build_dir in ['build', 'dist', '*.egg-info', 'whisper.cpp/build', 'whisper.cpp/ggml/build']:
-            for path in PYWHISPERCPP_SRC_DIR.glob(build_dir):
-                if path.is_dir():
-                    shutil.rmtree(path, ignore_errors=True)
-                elif path.is_file():
-                    path.unlink(missing_ok=True)
-        # Also clean any __pycache__ directories
+        build_dirs = [
+            PYWHISPERCPP_SRC_DIR / 'build',
+            PYWHISPERCPP_SRC_DIR / 'dist',
+            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'build',
+            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'ggml' / 'build',
+        ]
+        for build_dir in build_dirs:
+            if build_dir.exists():
+                shutil.rmtree(build_dir, ignore_errors=True)
+        
+        # Remove egg-info directories
+        for egg_info in PYWHISPERCPP_SRC_DIR.glob('*.egg-info'):
+            if egg_info.is_dir():
+                shutil.rmtree(egg_info, ignore_errors=True)
+        
+        # Remove CMake cache files (these can cache Python version)
+        for cmake_cache in PYWHISPERCPP_SRC_DIR.rglob('CMakeCache.txt'):
+            cmake_cache.unlink(missing_ok=True)
+        for cmake_files in PYWHISPERCPP_SRC_DIR.rglob('CMakeFiles'):
+            if cmake_files.is_dir():
+                shutil.rmtree(cmake_files, ignore_errors=True)
+        
+        # Clean __pycache__ directories
         for pycache in PYWHISPERCPP_SRC_DIR.rglob('__pycache__'):
             if pycache.is_dir():
                 shutil.rmtree(pycache, ignore_errors=True)
@@ -473,13 +489,29 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
         log_info("Cleaning existing build artifacts...")
         import shutil
         # Remove common build directories
-        for build_dir in ['build', 'dist', '*.egg-info', 'whisper.cpp/build', 'whisper.cpp/ggml/build']:
-            for path in PYWHISPERCPP_SRC_DIR.glob(build_dir):
-                if path.is_dir():
-                    shutil.rmtree(path, ignore_errors=True)
-                elif path.is_file():
-                    path.unlink(missing_ok=True)
-        # Also clean any __pycache__ directories
+        build_dirs = [
+            PYWHISPERCPP_SRC_DIR / 'build',
+            PYWHISPERCPP_SRC_DIR / 'dist',
+            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'build',
+            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'ggml' / 'build',
+        ]
+        for build_dir in build_dirs:
+            if build_dir.exists():
+                shutil.rmtree(build_dir, ignore_errors=True)
+        
+        # Remove egg-info directories
+        for egg_info in PYWHISPERCPP_SRC_DIR.glob('*.egg-info'):
+            if egg_info.is_dir():
+                shutil.rmtree(egg_info, ignore_errors=True)
+        
+        # Remove CMake cache files (these can cache Python version)
+        for cmake_cache in PYWHISPERCPP_SRC_DIR.rglob('CMakeCache.txt'):
+            cmake_cache.unlink(missing_ok=True)
+        for cmake_files in PYWHISPERCPP_SRC_DIR.rglob('CMakeFiles'):
+            if cmake_files.is_dir():
+                shutil.rmtree(cmake_files, ignore_errors=True)
+        
+        # Clean __pycache__ directories
         for pycache in PYWHISPERCPP_SRC_DIR.rglob('__pycache__'):
             if pycache.is_dir():
                 shutil.rmtree(pycache, ignore_errors=True)
