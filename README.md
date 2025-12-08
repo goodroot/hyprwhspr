@@ -324,24 +324,15 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 - **Right-click**: Start Hyprwhspr (if not running)
 - **Middle-click**: Restart Hyprwhspr
 
-> **Note:** If you're using `hyprwhspr waybar install` and your Waybar config contains comments (JSONC format), you may encounter parsing errors. The CLI uses Python's `json` module which doesn't support comments. To resolve this, either:
-> - Remove comments from your `config.jsonc` before running the command, or
-> - Manually add the module configuration as shown above
-
-Increase for more CPU parallelism when using CPU; on GPU, modest values are fine.
-
 ## Whisper (OpenAI)
 
 **Default model installed:** `ggml-base.en.bin` (~148MB) to `~/.local/share/pywhispercpp/models/`
 
 **GPU Acceleration (NVIDIA & AMD):**
 
-- NVIDIA (CUDA) and AMD (ROCm) are detected automatically; pywhispercpp will use GPU when available
-- No manual build steps required. 
-    - If toolchains are present, installer can build pywhispercpp with GPU support; otherwise CPU wheel is used.
+- NVIDIA (CUDA) and AMD (ROCm) are detected automatically; pywhispercpp will use GPU when selected
 
-> **⚠️ AMD ROCm 7.x / HIPBLAS**
-> ROCm 7.0+ introduced breaking changes to hipBLAS datatype signatures. As of now, ggml’s HIP backend is compatible with ROCm 6.x, but ROCm 7.x will fail to build with errors and fallback to CPU.
+- **⚠️ AMD ROCm 7.x / HIPBLAS** ROCm 7.0+ introduced breaking changes to hipBLAS datatype signatures. As of now, ggml’s HIP backend is compatible with ROCm 6.x, but ROCm 7.x will fail to build with errors and fallback to CPU.
 
 **CPU performance options** - improve cpu transcription speed:
 
@@ -570,26 +561,6 @@ systemctl --user restart hyprwhspr.service
 # Check service status
 systemctl --user status hyprwhspr.service
 ```
-
-## Architecture
-
-**hyprwhspr is designed as a system package:**
-
-- **`/usr/lib/hyprwhspr/`** - Main installation directory
-- **`/usr/lib/hyprwhspr/lib/`** - Python application
-- **`~/.local/share/pywhispercpp/models/`** - Whisper models (user space)
-- **`~/.config/hyprwhspr/`** - User configuration
-- **`~/.config/systemd/user/`** - Systemd service
-
-### Systemd integration
-
-**hyprwhspr uses systemd for reliable service management:**
-
-- **`hyprwhspr.service`** - Main application service with auto-restart
-- **`ydotool.service`** - Input injection daemon service
-- **Tray integration** - All tray operations use systemd commands
-- **Process management** - No manual process killing or starting
-- **Service dependencies** - Proper startup/shutdown ordering
 
 ## Getting help
 
