@@ -571,22 +571,27 @@ def install_backend(backend_type: str) -> bool:
         if enable_cuda or enable_rocm:
             # GPU build path: install everything except pywhispercpp first
             log_info("Installing base Python dependencies (excluding pywhispercpp)...")
-            temp_req = requirements_file.parent / 'requirements.tmp'
-            try:
-                with open(requirements_file, 'r', encoding='utf-8') as f_in:
-                    with open(temp_req, 'w', encoding='utf-8') as f_out:
+            # Use a writable temp directory instead of system directory
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:
+                temp_req_path = Path(temp_req.name)
+                try:
+                    with open(requirements_file, 'r', encoding='utf-8') as f_in:
                         for line in f_in:
                             if not line.strip().startswith('pywhispercpp'):
-                                f_out.write(line)
-                
-                if temp_req.stat().st_size > 0:
-                    run_command([str(pip_bin), 'install', '-r', str(temp_req)], check=True)
-                temp_req.unlink()
-            except Exception as e:
-                log_error(f"Failed to install base Python dependencies: {e}")
-                if temp_req.exists():
-                    temp_req.unlink()
-                return False
+                                temp_req.write(line)
+                    
+                    temp_req.flush()
+                    
+                    if temp_req_path.stat().st_size > 0:
+                        run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
+                except Exception as e:
+                    log_error(f"Failed to install base Python dependencies: {e}")
+                    return False
+                finally:
+                    # Clean up temp file
+                    if temp_req_path.exists():
+                        temp_req_path.unlink()
             
             # Remove any pre-existing pywhispercpp
             run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'], check=False, capture_output=True)
