@@ -11,65 +11,26 @@ import hashlib
 import shutil
 import urllib.request
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
-# Define logging functions locally to avoid circular imports
-def log_info(msg: str):
-    """Print info message"""
-    print(f"[INFO] {msg}")
-
-
-def log_success(msg: str):
-    """Print success message"""
-    print(f"[SUCCESS] {msg}")
-
-
-def log_warning(msg: str):
-    """Print warning message"""
-    print(f"[WARNING] {msg}")
+# Import output control system
+try:
+    from .output_control import (
+        log_info, log_success, log_warning, log_error, log_debug, log_verbose,
+        run_command, OutputController, VerbosityLevel
+    )
+except ImportError:
+    from output_control import (
+        log_info, log_success, log_warning, log_error, log_debug, log_verbose,
+        run_command, OutputController, VerbosityLevel
+    )
 
 
-def log_error(msg: str):
-    """Print error message"""
-    print(f"[ERROR] {msg}", file=sys.stderr)
-
-
-def run_command(cmd: list, check: bool = True, capture_output: bool = False, env: Optional[dict] = None) -> subprocess.CompletedProcess:
-    """Run a shell command"""
-    try:
-        result = subprocess.run(
-            cmd,
-            check=check,
-            capture_output=capture_output,
-            text=True,
-            env=env
-        )
-        return result
-    except subprocess.CalledProcessError:
-        log_error(f"Command failed: {' '.join(cmd)}")
-        raise
-    except FileNotFoundError:
-        log_error(f"Command not found: {cmd[0]}")
-        raise
-
-
-def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None) -> subprocess.CompletedProcess:
+def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None,
+                     verbose: Optional[bool] = None) -> subprocess.CompletedProcess:
     """Run a command with sudo"""
     sudo_cmd = ['sudo'] + cmd
-    try:
-        result = subprocess.run(
-            sudo_cmd,
-            check=check,
-            input=input_data,
-            text=False if input_data else True
-        )
-        return result
-    except subprocess.CalledProcessError:
-        log_error(f"Command failed: {' '.join(sudo_cmd)}")
-        raise
-    except FileNotFoundError:
-        log_error(f"Command not found: {sudo_cmd[0]}")
-        raise
+    return run_command(sudo_cmd, check=check, verbose=verbose, env=None)
 
 
 # Constants
@@ -116,8 +77,60 @@ def set_state(key: str, value: str):
         data[key] = value
         with open(STATE_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
-    except (json.JSONDecodeError, IOError):
-        pass
+    except (json.JSONDecodeError, IOError) as e:
+        log_debug(f"Error writing state file: {e}")
+
+
+def get_all_state() -> Dict:
+    """Get all state data"""
+    if STATE_FILE.exists():
+        try:
+            with open(STATE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            log_debug(f"Error reading state file: {e}")
+            # Try to recover by creating a new state file
+            try:
+                STATE_FILE.unlink()
+                init_state()
+            except Exception:
+                pass
+            return {}
+    return {}
+
+
+def set_install_state(state: str, error: Optional[str] = None):
+    """
+    Set installation state with optional error message.
+    
+    Args:
+        state: One of 'not_started', 'in_progress', 'completed', 'failed'
+        error: Optional error message if state is 'failed'
+    """
+    init_state()
+    data = get_all_state()
+    data['install_state'] = state
+    if error:
+        data['last_error'] = error
+        data['last_error_time'] = str(Path(__file__).stat().st_mtime)  # Simple timestamp
+    elif state == 'completed':
+        # Clear error on success
+        data.pop('last_error', None)
+        data.pop('last_error_time', None)
+    
+    try:
+        with open(STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+    except IOError as e:
+        log_error(f"Failed to write state file: {e}")
+
+
+def get_install_state() -> Tuple[str, Optional[str]]:
+    """Get installation state and last error if any"""
+    data = get_all_state()
+    state = data.get('install_state', 'not_started')
+    error = data.get('last_error')
+    return state, error
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -438,27 +451,34 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
         log_info(f"Cloning pywhispercpp sources (v1.4.0) → {PYWHISPERCPP_SRC_DIR}")
         PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
+        verbosity = OutputController.get_verbosity()
+        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         run_command([
             'git', 'clone', '--recurse-submodules',
             'https://github.com/Absadiki/pywhispercpp.git',
             str(PYWHISPERCPP_SRC_DIR)
-        ], check=True)
+        ], check=True, verbose=verbose)
         run_command([
             'git', '-C', str(PYWHISPERCPP_SRC_DIR),
             'checkout', PYWHISPERCPP_PINNED_COMMIT
-        ], check=True)
+        ], check=True, verbose=verbose)
         run_command([
             'git', '-C', str(PYWHISPERCPP_SRC_DIR),
             'submodule', 'update', '--init', '--recursive'
-        ], check=True)
+        ], check=True, verbose=verbose)
     else:
         log_info(f"Updating pywhispercpp sources to v1.4.0 in {PYWHISPERCPP_SRC_DIR}")
+        verbosity = OutputController.get_verbosity()
+        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         try:
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'], check=False)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT], check=False)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'], check=False)
-        except Exception:
-            log_warning("Could not update pywhispercpp repository to v1.4.0")
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'], 
+                       check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT], 
+                       check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'], 
+                       check=False, verbose=verbose)
+        except Exception as e:
+            log_warning(f"Could not update pywhispercpp repository to v1.4.0: {e}")
     
     # Build with CUDA support
     log_info("Building pywhispercpp with CUDA (ggml CUDA) via pip")
@@ -475,13 +495,18 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     env['PATH'] = f"{venv_bin}:{env.get('PATH', '')}"
     
     try:
-        run_command([
+        # Only use -v flag if verbose mode is enabled
+        verbosity = OutputController.get_verbosity()
+        pip_args = [
             str(pip_bin), 'install',
             '-e', str(PYWHISPERCPP_SRC_DIR),
             '--no-cache-dir',
-            '--force-reinstall',
-            '-v'
-        ], check=True, env=env)
+            '--force-reinstall'
+        ]
+        if verbosity.value >= VerbosityLevel.VERBOSE.value:
+            pip_args.append('-v')
+        
+        run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
         log_success("pywhispercpp installed with CUDA acceleration via pip")
         return True
     except subprocess.CalledProcessError as e:
@@ -529,27 +554,34 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
     if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
         log_info(f"Cloning pywhispercpp sources (v1.4.0) → {PYWHISPERCPP_SRC_DIR}")
         PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
+        verbosity = OutputController.get_verbosity()
+        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         run_command([
             'git', 'clone', '--recurse-submodules',
             'https://github.com/Absadiki/pywhispercpp.git',
             str(PYWHISPERCPP_SRC_DIR)
-        ], check=True)
+        ], check=True, verbose=verbose)
         run_command([
             'git', '-C', str(PYWHISPERCPP_SRC_DIR),
             'checkout', PYWHISPERCPP_PINNED_COMMIT
-        ], check=True)
+        ], check=True, verbose=verbose)
         run_command([
             'git', '-C', str(PYWHISPERCPP_SRC_DIR),
             'submodule', 'update', '--init', '--recursive'
-        ], check=True)
+        ], check=True, verbose=verbose)
     else:
         log_info(f"Updating pywhispercpp sources to v1.4.0 in {PYWHISPERCPP_SRC_DIR}")
+        verbosity = OutputController.get_verbosity()
+        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         try:
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'], check=False)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT], check=False)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'], check=False)
-        except Exception:
-            log_warning("Could not update pywhispercpp repository to v1.4.0")
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'], 
+                       check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT], 
+                       check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'], 
+                       check=False, verbose=verbose)
+        except Exception as e:
+            log_warning(f"Could not update pywhispercpp repository to v1.4.0: {e}")
     
     # Set up ROCm environment
     rocm_path = os.environ.get('ROCM_PATH', '/opt/rocm')
@@ -573,13 +605,18 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
     # Build with ROCm support
     log_info("Building pywhispercpp with ROCm (ggml HIPBLAS) via pip")
     try:
-        run_command([
+        # Only use -v flag if verbose mode is enabled
+        verbosity = OutputController.get_verbosity()
+        pip_args = [
             str(pip_bin), 'install',
             '-e', str(PYWHISPERCPP_SRC_DIR),
             '--no-cache-dir',
-            '--force-reinstall',
-            '-v'
-        ], check=True, env=env)
+            '--force-reinstall'
+        ]
+        if verbosity.value >= VerbosityLevel.VERBOSE.value:
+            pip_args.append('-v')
+        
+        run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
         log_success("pywhispercpp installed with ROCm acceleration via pip")
         return True, False
     except subprocess.CalledProcessError:
@@ -609,17 +646,20 @@ def download_pywhispercpp_model(model_name: str = 'base.en') -> bool:
     try:
         def show_progress(block_num, block_size, total_size):
             """Callback to show download progress"""
+            if not OutputController.is_progress_enabled():
+                return
+            
             downloaded = block_num * block_size
             percent = min(100, (downloaded * 100) // total_size) if total_size > 0 else 0
             size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
             downloaded_mb = downloaded / (1024 * 1024)
             
             # Show progress on same line
-            sys.stdout.write(f"\r[INFO] Downloading: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)")
-            sys.stdout.flush()
+            progress_msg = f"\r[INFO] Downloading: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)"
+            OutputController.write(progress_msg, VerbosityLevel.NORMAL, flush=True)
             
             if downloaded >= total_size and total_size > 0:
-                sys.stdout.write("\n")  # New line when complete
+                OutputController.write("\n", VerbosityLevel.NORMAL, flush=True)  # New line when complete
         
         urllib.request.urlretrieve(model_url, model_file, reporthook=show_progress)
         
@@ -636,138 +676,233 @@ def download_pywhispercpp_model(model_name: str = 'base.en') -> bool:
 
 # ==================== Main Installation Function ====================
 
-def install_backend(backend_type: str) -> bool:
+def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
     """
     Main function to install backend.
     
     Args:
         backend_type: One of 'cpu', 'nvidia', 'amd'
+        cleanup_on_failure: Whether to clean up partial installations on failure
     
     Returns:
         True if installation succeeded, False otherwise
     """
+    init_state()
+    set_install_state('in_progress')
+    
     log_info(f"Installing {backend_type.upper()} backend...")
     
     # Validate backend type
     if backend_type not in ['cpu', 'nvidia', 'amd']:
-        log_error(f"Invalid backend type: {backend_type}")
+        error_msg = f"Invalid backend type: {backend_type}"
+        log_error(error_msg)
+        set_install_state('failed', error_msg)
         return False
     
-    # Install system dependencies
-    install_system_dependencies()
+    # Track what we've created for cleanup
+    created_items = {
+        'venv_created': False,
+        'venv_path': None,
+        'git_clone_created': False,
+        'git_clone_path': None,
+        'packages_installed': []
+    }
     
-    # Setup GPU support if needed
-    enable_cuda = False
-    enable_rocm = False
-    
-    if backend_type == 'nvidia':
-        enable_cuda = setup_nvidia_support()
-        if not enable_cuda:
-            log_warning("NVIDIA backend selected but CUDA not available, falling back to CPU")
-            backend_type = 'cpu'
-    elif backend_type == 'amd':
-        enable_rocm = setup_amd_support()
-        if not enable_rocm:
-            log_warning("AMD backend selected but ROCm not available, falling back to CPU")
-            backend_type = 'cpu'
-    
-    # Setup Python venv
     try:
+        # Install system dependencies
+        install_system_dependencies()
+        
+        # Setup GPU support if needed
+        enable_cuda = False
+        enable_rocm = False
+        
+        if backend_type == 'nvidia':
+            enable_cuda = setup_nvidia_support()
+            if not enable_cuda:
+                log_warning("NVIDIA backend selected but CUDA not available, falling back to CPU")
+                backend_type = 'cpu'
+        elif backend_type == 'amd':
+            enable_rocm = setup_amd_support()
+            if not enable_rocm:
+                log_warning("AMD backend selected but ROCm not available, falling back to CPU")
+                backend_type = 'cpu'
+        
+        # Setup Python venv
+        venv_existed = VENV_DIR.exists()
         pip_bin = setup_python_venv()
-    except Exception as e:
-        log_error(f"Failed to setup Python venv: {e}")
-        return False
-    
-    # Check if dependencies are already installed
-    requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
-    cur_req_hash = compute_file_hash(requirements_file)
-    stored_req_hash = get_state("requirements_hash")
-    
-    deps_installed = False
-    try:
-        python_bin = VENV_DIR / 'bin' / 'python'
-        result = run_command([
-            'timeout', '5s', str(python_bin), '-c',
-            'import sounddevice, pywhispercpp'
-        ], check=False, capture_output=True)
-        deps_installed = result.returncode == 0
-    except Exception:
-        pass
-    
-    # Install pywhispercpp if needed
-    if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed:
-        log_info("Installing Python dependencies (requirements.txt changed or deps missing)")
+        if not venv_existed and VENV_DIR.exists():
+            created_items['venv_created'] = True
+            created_items['venv_path'] = str(VENV_DIR)
         
-        if enable_cuda or enable_rocm:
-            # GPU build path: install everything except pywhispercpp first
-            log_info("Installing base Python dependencies (excluding pywhispercpp)...")
-            # Use a writable temp directory instead of system directory
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:
-                temp_req_path = Path(temp_req.name)
-                try:
-                    with open(requirements_file, 'r', encoding='utf-8') as f_in:
-                        for line in f_in:
-                            if not line.strip().startswith('pywhispercpp'):
-                                temp_req.write(line)
-                    
-                    temp_req.flush()
-                    
-                    if temp_req_path.stat().st_size > 0:
-                        run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
-                except Exception as e:
-                    log_error(f"Failed to install base Python dependencies: {e}")
-                    return False
-                finally:
-                    # Clean up temp file
-                    if temp_req_path.exists():
-                        temp_req_path.unlink()
+        # Check if dependencies are already installed
+        requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
+        cur_req_hash = compute_file_hash(requirements_file)
+        stored_req_hash = get_state("requirements_hash")
+        
+        deps_installed = False
+        try:
+            python_bin = VENV_DIR / 'bin' / 'python'
+            result = run_command([
+                'timeout', '5s', str(python_bin), '-c',
+                'import sounddevice, pywhispercpp'
+            ], check=False, capture_output=True)
+            deps_installed = result.returncode == 0
+        except Exception:
+            pass
+        
+        # Install pywhispercpp if needed
+        if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed:
+            log_info("Installing Python dependencies (requirements.txt changed or deps missing)")
             
-            # Remove any pre-existing pywhispercpp
-            run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'], check=False, capture_output=True)
-            
-            # Build pywhispercpp with GPU support
-            if enable_cuda:
-                if not install_pywhispercpp_cuda(pip_bin):
-                    log_error("Failed to install pywhispercpp with CUDA support")
-                    return False
-            elif enable_rocm:
-                success, should_fallback = install_pywhispercpp_rocm(pip_bin)
-                if not success:
-                    if should_fallback:
-                        # ROCm build failed - fall back to CPU-only
-                        log_warning("ROCm build failed - falling back to CPU-only installation")
-                        log_warning("")
-                        log_warning("ROCm 7.x has known compatibility issues with pywhispercpp v1.4.0")
-                        log_warning("See: https://github.com/ggml-org/whisper.cpp/issues/3553")
-                        log_warning("")
-                        log_warning("Alternatives:")
-                        log_warning("  • Use CPU mode (current fallback)")
-                        log_warning("  • Use remote transcription backend (see README)")
-                        log_warning("")
-                        log_info("Installing pywhispercpp with CPU-only support...")
-                        if not install_pywhispercpp_cpu(pip_bin, requirements_file):
-                            log_error("Failed to install pywhispercpp (CPU-only fallback)")
-                            return False
-                        log_success("pywhispercpp installed (CPU-only mode)")
-                    else:
-                        log_error("Failed to install pywhispercpp with ROCm support")
+            if enable_cuda or enable_rocm:
+                # GPU build path: install everything except pywhispercpp first
+                log_info("Installing base Python dependencies (excluding pywhispercpp)...")
+                # Use a writable temp directory instead of system directory
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:
+                    temp_req_path = Path(temp_req.name)
+                    try:
+                        with open(requirements_file, 'r', encoding='utf-8') as f_in:
+                            for line in f_in:
+                                if not line.strip().startswith('pywhispercpp'):
+                                    temp_req.write(line)
+                        
+                        temp_req.flush()
+                        
+                        if temp_req_path.stat().st_size > 0:
+                            run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], 
+                                       check=True, verbose=OutputController.get_verbosity().value >= VerbosityLevel.VERBOSE.value)
+                    except Exception as e:
+                        error_msg = f"Failed to install base Python dependencies: {e}"
+                        log_error(error_msg)
+                        if cleanup_on_failure:
+                            log_info("Cleaning up partial installation...")
+                            # Uninstall any partially installed packages
+                            try:
+                                run_command([str(pip_bin), 'uninstall', '-y'] + created_items['packages_installed'], 
+                                          check=False, capture_output=True)
+                            except Exception:
+                                pass
+                        set_install_state('failed', error_msg)
                         return False
+                    finally:
+                        # Clean up temp file
+                        if temp_req_path.exists():
+                            temp_req_path.unlink()
+                
+                # Remove any pre-existing pywhispercpp
+                run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'], check=False, capture_output=True)
+                
+                # Build pywhispercpp with GPU support
+                if enable_cuda:
+                    if not install_pywhispercpp_cuda(pip_bin):
+                        error_msg = "Failed to install pywhispercpp with CUDA support"
+                        log_error(error_msg)
+                        if cleanup_on_failure:
+                            log_info("Cleaning up partial installation...")
+                            try:
+                                run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'], 
+                                          check=False, capture_output=True)
+                            except Exception:
+                                pass
+                        set_install_state('failed', error_msg)
+                        return False
+                elif enable_rocm:
+                    success, should_fallback = install_pywhispercpp_rocm(pip_bin)
+                    if not success:
+                        if should_fallback:
+                            # ROCm build failed - fall back to CPU-only
+                            log_warning("ROCm build failed - falling back to CPU-only installation")
+                            log_warning("")
+                            log_warning("ROCm 7.x has known compatibility issues with pywhispercpp v1.4.0")
+                            log_warning("See: https://github.com/ggml-org/whisper.cpp/issues/3553")
+                            log_warning("")
+                            log_warning("Alternatives:")
+                            log_warning("  • Use CPU mode (current fallback)")
+                            log_warning("  • Use REST API transcription backend (see README)")
+                            log_warning("")
+                            log_info("Installing pywhispercpp with CPU-only support...")
+                            if not install_pywhispercpp_cpu(pip_bin, requirements_file):
+                                error_msg = "Failed to install pywhispercpp (CPU-only fallback)"
+                                log_error(error_msg)
+                                set_install_state('failed', error_msg)
+                                return False
+                            log_success("pywhispercpp installed (CPU-only mode)")
+                        else:
+                            error_msg = "Failed to install pywhispercpp with ROCm support"
+                            log_error(error_msg)
+                            if cleanup_on_failure:
+                                log_info("Cleaning up partial installation...")
+                                try:
+                                    run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'], 
+                                              check=False, capture_output=True)
+                                except Exception:
+                                    pass
+                            set_install_state('failed', error_msg)
+                            return False
+            else:
+                # CPU-only path: install everything normally
+                if not install_pywhispercpp_cpu(pip_bin, requirements_file):
+                    error_msg = "Failed to install pywhispercpp (CPU-only)"
+                    log_error(error_msg)
+                    set_install_state('failed', error_msg)
+                    return False
+            
+            set_state("requirements_hash", cur_req_hash)
+            log_success("Python dependencies installed")
         else:
-            # CPU-only path: install everything normally
-            if not install_pywhispercpp_cpu(pip_bin, requirements_file):
-                return False
+            log_info("Python dependencies up to date (skipping pip install)")
         
-        set_state("requirements_hash", cur_req_hash)
-        log_success("Python dependencies installed")
-    else:
-        log_info("Python dependencies up to date (skipping pip install)")
+        # Download base model
+        if not download_pywhispercpp_model('base.en'):
+            log_warning("Model download failed, but backend installation succeeded")
+            # Don't fail the whole installation if model download fails
+        
+        # Installation successful
+        set_install_state('completed')
+        log_success(f"{backend_type.upper()} backend installation completed!")
+        return True
+        
+    except KeyboardInterrupt:
+        error_msg = "Installation interrupted by user"
+        log_error(error_msg)
+        set_install_state('failed', error_msg)
+        if cleanup_on_failure:
+            log_info("Cleaning up partial installation...")
+            _cleanup_partial_installation(created_items, pip_bin if 'pip_bin' in locals() else None)
+        raise
+    except Exception as e:
+        error_msg = f"Unexpected error during installation: {e}"
+        log_error(error_msg)
+        log_debug(f"Full error traceback: {sys.exc_info()}")
+        set_install_state('failed', error_msg)
+        if cleanup_on_failure:
+            log_info("Cleaning up partial installation...")
+            _cleanup_partial_installation(created_items, pip_bin if 'pip_bin' in locals() else None)
+        return False
+
+
+def _cleanup_partial_installation(created_items: dict, pip_bin: Optional[Path]):
+    """Clean up partial installation on failure"""
+    if created_items.get('venv_created') and created_items.get('venv_path'):
+        log_info(f"Removing venv at {created_items['venv_path']}")
+        try:
+            shutil.rmtree(Path(created_items['venv_path']), ignore_errors=True)
+        except Exception:
+            pass
     
-    # Download base model
-    if not download_pywhispercpp_model('base.en'):
-        log_warning("Model download failed, but backend installation succeeded")
-        # Don't fail the whole installation if model download fails
+    if created_items.get('git_clone_created') and created_items.get('git_clone_path'):
+        log_info(f"Removing git clone at {created_items['git_clone_path']}")
+        try:
+            shutil.rmtree(Path(created_items['git_clone_path']), ignore_errors=True)
+        except Exception:
+            pass
     
-    log_success(f"{backend_type.upper()} backend installation completed!")
-    return True
+    if pip_bin and created_items.get('packages_installed'):
+        log_info("Uninstalling partially installed packages...")
+        try:
+            run_command([str(pip_bin), 'uninstall', '-y'] + created_items['packages_installed'],
+                       check=False, capture_output=True)
+        except Exception:
+            pass
 

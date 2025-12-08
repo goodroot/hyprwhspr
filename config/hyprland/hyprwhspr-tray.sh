@@ -78,20 +78,32 @@ from pathlib import Path
 path = Path(sys.argv[1])
 try:
     data = json.loads(path.read_text())
-    print(data.get("transcription_backend", "local"))
+    backend = data.get("transcription_backend", "pywhispercpp")
+    # Backward compatibility
+    if backend == "local":
+        backend = "pywhispercpp"
+    elif backend == "remote":
+        backend = "rest-api"
+    print(backend)
 except Exception:
-    print("local")
+    print("pywhispercpp")
 PY
     )
 
-    backend="${backend:-local}"
+    # Backward compatibility: map old values
+    if [[ "$backend" == "local" ]]; then
+        backend="pywhispercpp"
+    elif [[ "$backend" == "remote" ]]; then
+        backend="rest-api"
+    fi
+    backend="${backend:-pywhispercpp}"
 
-    # Remote backends don't require a local model file
-    if [[ "$backend" == "remote" ]]; then
+    # REST API backends don't require a local model file
+    if [[ "$backend" == "rest-api" ]] || [[ "$backend" == "remote" ]]; then
         return 0
     fi
 
-    # Only read model setting for local backends
+    # Only read model setting for pywhispercpp backends
     local model_path
     model_path=$(python3 - <<'PY' "$cfg" 2>/dev/null
 import json, sys

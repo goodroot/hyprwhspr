@@ -1,5 +1,5 @@
 [Unit]
-Description=hyprwhspr Voice Dictation Service
+Description=hyprwhspr tts
 Documentation=https://github.com/goodroot/hyprwhspr
 After=graphical-session.target pipewire.service ydotool.service
 Requires=ydotool.service

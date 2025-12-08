@@ -24,9 +24,48 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
-    from .backend_installer import install_backend
+    from .backend_installer import (
+        install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
+        get_install_state, set_install_state, get_all_state,
+        init_state, _cleanup_partial_installation
+    )
 except ImportError:
-    from backend_installer import install_backend
+    from backend_installer import (
+        install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
+        get_install_state, set_install_state, get_all_state,
+        init_state, _cleanup_partial_installation
+    )
+
+try:
+    from .provider_registry import (
+        PROVIDERS, get_provider, list_providers, get_provider_models,
+        get_model_config, validate_api_key
+    )
+except ImportError:
+    from provider_registry import (
+        PROVIDERS, get_provider, list_providers, get_provider_models,
+        get_model_config, validate_api_key
+    )
+
+try:
+    from .credential_manager import (
+        save_credential, get_credential, mask_api_key
+    )
+except ImportError:
+    from credential_manager import (
+        save_credential, get_credential, mask_api_key
+    )
+
+try:
+    from .output_control import (
+        log_info, log_success, log_warning, log_error, log_debug, log_verbose,
+        run_command, run_sudo_command, OutputController, VerbosityLevel
+    )
+except ImportError:
+    from output_control import (
+        log_info, log_success, log_warning, log_error, log_debug, log_verbose,
+        run_command, run_sudo_command, OutputController, VerbosityLevel
+    )
 
 
 # Constants
@@ -151,76 +190,144 @@ def _validate_hyprwhspr_root() -> bool:
     return True
 
 
-def log_info(msg: str):
-    """Print info message"""
-    print(f"[INFO] {msg}")
-
-
-def log_success(msg: str):
-    """Print success message"""
-    print(f"[SUCCESS] {msg}")
-
-
-def log_warning(msg: str):
-    """Print warning message"""
-    print(f"[WARNING] {msg}")
-
-
-def log_error(msg: str):
-    """Print error message"""
-    print(f"[ERROR] {msg}", file=sys.stderr)
-
-
-def run_command(cmd: list, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess:
-    """Run a shell command"""
-    try:
-        result = subprocess.run(
-            cmd,
-            check=check,
-            capture_output=capture_output,
-            text=True
-        )
-        return result
-    except subprocess.CalledProcessError:
-        log_error(f"Command failed: {' '.join(cmd)}")
-        raise
-    except FileNotFoundError:
-        log_error(f"Command not found: {cmd[0]}")
-        raise
-
-
-def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None) -> subprocess.CompletedProcess:
-    """Run a command with sudo"""
-    sudo_cmd = ['sudo'] + cmd
-    try:
-        result = subprocess.run(
-            sudo_cmd,
-            check=check,
-            input=input_data,
-            text=False if input_data else True
-        )
-        return result
-    except subprocess.CalledProcessError:
-        log_error(f"Command failed: {' '.join(sudo_cmd)}")
-        raise
-    except FileNotFoundError:
-        log_error(f"Command not found: {sudo_cmd[0]}")
-        raise
-
-
 # ==================== Setup Command ====================
 
+def _detect_current_backend() -> Optional[str]:
+    """
+    Detect currently installed backend.
+    
+    Returns:
+        'cpu', 'nvidia', 'amd', 'rest-api', or None if not detected
+    """
+    # First check config file
+    try:
+        config_manager = ConfigManager()
+        backend = config_manager.get_setting('transcription_backend', None)
+        
+        # Backward compatibility: map old values
+        if backend == 'remote':
+            return 'rest-api'
+        if backend == 'local':
+            # Old 'local' - try to detect from venv or default to 'cpu'
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'import pywhispercpp; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'cpu'  # Default to cpu for old 'local'
+                except Exception:
+                    pass
+            return 'cpu'  # Fallback
+        
+        if backend == 'rest-api':
+            return 'rest-api'
+        if backend in ['cpu', 'nvidia', 'amd', 'pywhispercpp']:
+            # Verify it's actually installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'import pywhispercpp; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        # Try to detect which variant by checking build artifacts or imports
+                        # For now, trust config - could enhance later
+                        return backend
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    
+    # Fallback: check if venv exists and has pywhispercpp
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if venv_python.exists():
+        try:
+            result = subprocess.run(
+                [str(venv_python), '-c', 'import pywhispercpp; print("ok")'],
+                check=False,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                # Venv has pywhispercpp but no config - assume CPU (safest)
+                return 'cpu'
+        except Exception:
+            pass
+    
+    return None
+
+
+def _cleanup_backend(backend_type: str) -> bool:
+    """
+    Clean up an installed backend.
+    
+    Args:
+        backend_type: 'cpu', 'nvidia', 'amd', or 'remote'
+    
+    Returns:
+        True if cleanup succeeded
+    """
+    if backend_type in ['rest-api', 'remote']:
+        # REST API doesn't have venv, nothing to clean
+        return True
+    
+    log_info(f"Cleaning up {backend_type.upper()} backend...")
+    
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        log_info("No venv found, nothing to clean")
+        return True
+    
+    try:
+        pip_bin = VENV_DIR / 'bin' / 'pip'
+        if pip_bin.exists():
+            # Uninstall pywhispercpp
+            subprocess.run(
+                [str(pip_bin), 'uninstall', '-y', 'pywhispercpp'],
+                check=False,
+                capture_output=True
+            )
+            log_success("Backend cleaned up")
+        return True
+    except Exception as e:
+        log_warning(f"Cleanup warning: {e}")
+        return True  # Don't fail on cleanup errors
+
+
 def _prompt_backend_selection():
-    """Prompt user for backend selection (CPU, NVIDIA, AMD, or Remote)"""
+    """Prompt user for backend selection with current state detection"""
+    current_backend = _detect_current_backend()
+    
     print("\n" + "="*60)
     print("Backend Selection")
     print("="*60)
+    
+    if current_backend:
+        backend_names = {
+            'cpu': 'CPU',
+            'nvidia': 'NVIDIA (CUDA)',
+            'amd': 'AMD (ROCm)',
+            'rest-api': 'REST API',
+            'pywhispercpp': 'pywhispercpp'
+        }
+        print(f"\nCurrent backend: {backend_names.get(current_backend, current_backend)}")
+    else:
+        print("\nNo backend currently configured.")
+    
     print("\nChoose your transcription backend:")
     print()
     print("  [1] CPU - CPU-only, works on all systems")
     print("  [2] NVIDIA - NVIDIA GPU acceleration (CUDA)")
     print("  [3] AMD - AMD GPU acceleration (ROCm)")
-    print("  [4] Remote - Use external API/backend (requires network)")
+    print("  [4] REST API - Use external API/backend (localhost or remote, requires network)")
     print()
     
     while True:
@@ -230,18 +337,59 @@ def _prompt_backend_selection():
                 '1': 'cpu',
                 '2': 'nvidia',
                 '3': 'amd',
-                '4': 'remote'
+                '4': 'rest-api'
             }
             selected = backend_map[choice]
+            
+            # Warn if switching to different backend
+            if current_backend and current_backend != selected:
+                backend_names = {
+                    'cpu': 'CPU',
+                    'nvidia': 'NVIDIA (CUDA)',
+                    'amd': 'AMD (ROCm)',
+                    'rest-api': 'REST API',
+                    'pywhispercpp': 'pywhispercpp'
+                }
+                print(f"\n⚠️  Switching from {backend_names.get(current_backend)} to {backend_names.get(selected)}")
+                
+                if current_backend not in ['rest-api', 'remote'] and selected not in ['rest-api', 'remote']:
+                    print("This will uninstall the current backend and install the new one.")
+                    if not Confirm.ask("Continue?", default=True):
+                        continue
+                elif selected == 'rest-api':
+                    print("Switching to REST API backend.")
+                    print("The local backend venv will no longer be needed.")
+                    cleanup_venv = Confirm.ask("Remove the venv to free up space?", default=False)
+                    backend_names = {
+                        'cpu': 'CPU',
+                        'nvidia': 'NVIDIA (CUDA)',
+                        'amd': 'AMD (ROCm)',
+                        'rest-api': 'REST API'
+                    }
+                    print(f"\n✓ Selected: {backend_names[selected]}")
+                    return (selected, cleanup_venv)  # Return tuple: (backend, cleanup_venv)
+            
+            # If re-selecting same backend, offer reinstall option
+            if current_backend == selected and selected not in ['rest-api', 'remote']:
+                backend_names = {
+                    'cpu': 'CPU',
+                    'nvidia': 'NVIDIA (CUDA)',
+                    'amd': 'AMD (ROCm)'
+                }
+                print(f"\n{backend_names.get(selected)} backend is already installed.")
+                reinstall = Confirm.ask("Reinstall backend?", default=False)
+                if not reinstall:
+                    print("Keeping existing installation.")
+                    return (selected, False)
             
             backend_names = {
                 'cpu': 'CPU',
                 'nvidia': 'NVIDIA (CUDA)',
                 'amd': 'AMD (ROCm)',
-                'remote': 'Remote'
+                'rest-api': 'REST API'
             }
             print(f"\n✓ Selected: {backend_names[selected]}")
-            return selected
+            return (selected, False)  # Return tuple: (backend, cleanup_venv)
         except (ValueError, IndexError, KeyboardInterrupt):
             print("\nInvalid selection. Please try again.")
             continue
@@ -293,6 +441,206 @@ def _prompt_model_selection():
             continue
 
 
+def _prompt_remote_provider_selection():
+    """
+    Prompt user for remote provider and model selection.
+    
+    Returns:
+        Tuple of (provider_id, model_id, api_key, custom_config) or None if cancelled.
+        custom_config is a dict with custom endpoint/headers/body if custom backend selected.
+    """
+    print("\n" + "="*60)
+    print("Remote Provider Selection")
+    print("="*60)
+    print("\nChoose a cloud transcription provider:")
+    print()
+    
+    # Build provider list
+    providers_list = list_providers()
+    provider_choices = []
+    
+    for i, (provider_id, provider_name, model_ids) in enumerate(providers_list, 1):
+        model_list = ', '.join(model_ids)
+        print(f"  [{i}] {provider_name} ({model_list})")
+        provider_choices.append((str(i), provider_id))
+    
+    print(f"  [{len(providers_list) + 1}] Custom/Arbitrary Backend")
+    provider_choices.append((str(len(providers_list) + 1), 'custom'))
+    
+    print()
+    
+    choices = [str(i) for i in range(1, len(providers_list) + 2)]
+    
+    while True:
+        try:
+            choice = Prompt.ask("Select provider", choices=choices, default='1')
+            choice_num = int(choice)
+            
+            if choice_num <= len(providers_list):
+                # Known provider selected
+                _, provider_id = provider_choices[choice_num - 1]
+                provider = get_provider(provider_id)
+                
+                # Show models for this provider
+                print("\n" + "="*60)
+                print(f"{provider['name']} Models")
+                print("="*60)
+                print()
+                
+                models = get_provider_models(provider_id)
+                model_list = []
+                for model_id, model_data in models.items():
+                    model_list.append((model_id, model_data))
+                    print(f"  [{len(model_list)}] {model_data['name']} - {model_data['description']}")
+                
+                print()
+                model_choices = [str(i) for i in range(1, len(model_list) + 1)]
+                model_choice = Prompt.ask("Select model", choices=model_choices, default='1')
+                selected_model_id, selected_model_data = model_list[int(model_choice) - 1]
+                
+                print(f"\n✓ Selected: {selected_model_data['name']}")
+                
+                # Check for existing credential
+                existing_key = get_credential(provider_id)
+                if existing_key:
+                    masked = mask_api_key(existing_key)
+                    print(f"\nFound existing API key: {masked}")
+                    use_existing = Confirm.ask("Use existing API key?", default=True)
+                    if use_existing:
+                        api_key = existing_key
+                    else:
+                        # Use getpass for secure password input (masks input, doesn't echo)
+                        api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
+                else:
+                    # Use getpass for secure password input (masks input, doesn't echo)
+                    api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
+                
+                # Validate API key
+                is_valid, error_msg = validate_api_key(provider_id, api_key)
+                if not is_valid:
+                    log_warning(f"API key validation: {error_msg}")
+                    if not Confirm.ask("Continue anyway?", default=True):
+                        continue
+                
+                # Save credential
+                if save_credential(provider_id, api_key):
+                    log_success("API key saved securely")
+                else:
+                    log_warning("Failed to save API key, but continuing with configuration")
+                
+                return (provider_id, selected_model_id, api_key, None)
+            
+            else:
+                # Custom backend selected
+                print("\n" + "="*60)
+                print("Custom Backend Configuration")
+                print("="*60)
+                print("\nConfigure a custom REST API backend.")
+                print()
+                
+                endpoint_url = Prompt.ask("Endpoint URL", default="")
+                if not endpoint_url:
+                    log_error("Endpoint URL is required")
+                    if not Confirm.ask("Try again?", default=True):
+                        return None
+                    continue
+                
+                # Validate URL format
+                if not endpoint_url.startswith('http://') and not endpoint_url.startswith('https://'):
+                    log_warning("URL should start with http:// or https://")
+                    if not Confirm.ask("Continue anyway?", default=True):
+                        continue
+                
+                # Optional API key
+                has_api_key = Confirm.ask("Do you have an API key?", default=False)
+                api_key = None
+                if has_api_key:
+                    # Use getpass for secure password input (masks input, doesn't echo to terminal)
+                    api_key = getpass.getpass("Enter API key: ")
+                    # Save as 'custom' provider
+                    if api_key:
+                        save_credential('custom', api_key)
+                
+                # Optional custom headers
+                has_headers = Confirm.ask("Add custom HTTP headers?", default=False)
+                custom_headers = {}
+                if has_headers:
+                    headers_json = Prompt.ask("Enter headers as JSON (e.g., {\"authorization\": \"Bearer token\"})", default="{}")
+                    try:
+                        custom_headers = json.loads(headers_json)
+                        if not isinstance(custom_headers, dict):
+                            log_error("Headers must be a JSON object")
+                            custom_headers = {}
+                    except json.JSONDecodeError as e:
+                        log_error(f"Invalid JSON: {e}")
+                        custom_headers = {}
+                
+                # Optional custom body fields
+                has_body = Confirm.ask("Add custom body fields?", default=False)
+                custom_body = {}
+                if has_body:
+                    body_json = Prompt.ask("Enter body fields as JSON (e.g., {\"model\": \"custom-model\"})", default="{}")
+                    try:
+                        custom_body = json.loads(body_json)
+                        if not isinstance(custom_body, dict):
+                            log_error("Body fields must be a JSON object")
+                            custom_body = {}
+                    except json.JSONDecodeError as e:
+                        log_error(f"Invalid JSON: {e}")
+                        custom_body = {}
+                
+                custom_config = {
+                    'endpoint': endpoint_url,
+                    'headers': custom_headers,
+                    'body': custom_body
+                }
+                
+                return ('custom', None, api_key, custom_config)
+                
+        except (ValueError, IndexError, KeyboardInterrupt):
+            print("\nInvalid selection. Please try again.")
+            continue
+
+
+def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: str, custom_config: Optional[dict] = None) -> dict:
+    """
+    Generate REST API configuration based on provider/model selection.
+    
+    Args:
+        provider_id: Provider identifier (e.g., 'openai', 'groq', 'custom')
+        model_id: Model identifier (None for custom backends)
+        api_key: API key to use
+        custom_config: Custom config dict for custom backends
+    
+    Returns:
+        Configuration dictionary ready to be saved
+    """
+    config = {
+        'transcription_backend': 'rest-api'
+    }
+    
+    if custom_config:
+        # Custom backend
+        config['rest_endpoint_url'] = custom_config['endpoint']
+        if api_key:
+            config['rest_api_key'] = api_key
+        if custom_config.get('headers'):
+            config['rest_headers'] = custom_config['headers']
+        if custom_config.get('body'):
+            config['rest_body'] = custom_config['body']
+    else:
+        # Known provider
+        model_config = get_model_config(provider_id, model_id)
+        if not model_config:
+            raise ValueError(f"Invalid provider/model combination: {provider_id}/{model_id}")
+        
+        config['rest_endpoint_url'] = model_config['endpoint']
+        config['rest_api_key'] = api_key
+        config['rest_body'] = model_config['body'].copy()
+    
+    return config
+
+
 def setup_command():
     """Interactive full initial setup"""
     print("\n" + "="*60)
@@ -301,14 +649,38 @@ def setup_command():
     print("\nThis setup will guide you through configuring hyprwhspr.")
     print("Skip any step by answering 'no'.\n")
     
-    # Step 1: Backend selection
-    backend = _prompt_backend_selection()
-    if not backend:
+    # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
+    backend_result = _prompt_backend_selection()
+    if not backend_result:
         log_error("Backend selection is required. Exiting.")
         return
     
-    # Step 1.5: Backend installation (if not remote)
-    if backend != 'remote':
+    # Handle tuple or string return (backward compatibility)
+    if isinstance(backend_result, tuple):
+        backend, cleanup_venv = backend_result
+    else:
+        backend = backend_result
+        cleanup_venv = False
+    
+    current_backend = _detect_current_backend()
+    
+    # Handle backend switching
+    if current_backend and current_backend != backend:
+        if current_backend not in ['rest-api', 'remote']:
+            # Switching from local to something else
+            if not _cleanup_backend(current_backend):
+                log_warning("Failed to clean up old backend, continuing anyway...")
+        
+        if cleanup_venv and backend in ['rest-api', 'remote']:
+            # User wants to remove venv when switching to REST API
+            if VENV_DIR.exists():
+                log_info("Removing venv as requested...")
+                import shutil
+                shutil.rmtree(VENV_DIR)
+                log_success("Venv removed")
+    
+    # Step 1.5: Backend installation (if not REST API)
+    if backend not in ['rest-api', 'remote']:
         print("\n" + "="*60)
         print("Backend Installation")
         print("="*60)
@@ -322,9 +694,27 @@ def setup_command():
                 log_error("Backend installation failed. Setup cannot continue.")
                 return
     
-    # Step 2: Model selection (if local backend)
+    # Step 2: Provider/model selection (if REST API backend)
+    remote_config = None
     selected_model = None
-    if backend != 'remote':
+    if backend in ['rest-api', 'remote']:
+        # Prompt for remote provider selection
+        provider_result = _prompt_remote_provider_selection()
+        if not provider_result:
+            log_error("Provider selection cancelled. Exiting.")
+            return
+        
+        provider_id, model_id, api_key, custom_config = provider_result
+        
+        # Generate remote configuration
+        try:
+            remote_config = _generate_remote_config(provider_id, model_id, api_key, custom_config)
+            log_success("Remote configuration generated")
+        except Exception as e:
+            log_error(f"Failed to generate remote configuration: {e}")
+            return
+    elif backend not in ['rest-api', 'remote']:
+        # Local backend - prompt for model selection
         selected_model = _prompt_model_selection()
     
     # Step 3: Waybar integration
@@ -363,7 +753,16 @@ def setup_command():
     print("Setup Summary")
     print("="*60)
     print(f"\nBackend: {backend}")
-    if selected_model:
+    if remote_config:
+        print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
+        if remote_config.get('rest_body'):
+            model_name = remote_config['rest_body'].get('model', 'N/A')
+            print(f"Model: {model_name}")
+        api_key = remote_config.get('rest_api_key')
+        if api_key:
+            masked = mask_api_key(api_key)
+            print(f"API Key: {masked}")
+    elif selected_model:
         print(f"Model: {selected_model}")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     print(f"Systemd service: {'Yes' if setup_systemd_choice else 'No'}")
@@ -382,7 +781,10 @@ def setup_command():
     # Execute selected steps
     try:
         # Step 1: Config
-        setup_config(backend=backend, model=selected_model)
+        if remote_config:
+            setup_config(backend=backend, remote_config=remote_config)
+        else:
+            setup_config(backend=backend, model=selected_model)
         
         # Step 2: Waybar
         if setup_waybar_choice:
@@ -403,7 +805,7 @@ def setup_command():
             log_info("Skipping permissions setup")
         
         # Step 5: Model download (if local backend)
-        if backend != 'remote' and selected_model:
+        if backend not in ['rest-api', 'remote'] and selected_model:
             # If we got here and backend != 'remote', backend installation succeeded
             # (or was skipped, but user selected a model, so they want to use it)
             # Just download the model - we don't need to check if pywhispercpp is importable
@@ -431,14 +833,23 @@ def setup_command():
         else:
             print("  1. Log out and back in (if permissions were set up)")
             print("  2. Run hyprwhspr manually or set up systemd service later")
-        print("  3. Press Super+Alt+D to start dictation!")
+        
+        # If backend was changed, suggest restarting service
+        if current_backend and current_backend != backend:
+            print("  3. Backend changed. Restart service with: systemctl --user restart hyprwhspr")
+            print("  4. Press hotkey to start dictation!")
+        else:
+            print("  3. Press hotkey to start dictation!")
         print()
         
     except KeyboardInterrupt:
         print("\n\nSetup interrupted by user.")
+        log_info("Partial setup completed. You can resume by running 'hyprwhspr setup' again.")
         sys.exit(1)
     except Exception as e:
         log_error(f"Setup failed: {e}")
+        log_debug(f"Full error traceback: {sys.exc_info()}")
+        log_info("You can try running 'hyprwhspr backend repair' to fix issues, or 'hyprwhspr state reset' to start fresh.")
         sys.exit(1)
 
 
@@ -456,7 +867,7 @@ def config_command(action: str):
         log_error(f"Unknown config action: {action}")
 
 
-def setup_config(backend: Optional[str] = None, model: Optional[str] = None):
+def setup_config(backend: Optional[str] = None, model: Optional[str] = None, remote_config: Optional[dict] = None):
     """Create or update user config"""
     log_info("Setting up user config...")
     
@@ -471,6 +882,12 @@ def setup_config(backend: Optional[str] = None, model: Optional[str] = None):
             config.set_setting('transcription_backend', backend)
         if model:
             config.set_setting('model', model)
+        
+        # Apply remote configuration if provided
+        if remote_config:
+            for key, value in remote_config.items():
+                config.set_setting(key, value)
+        
         config.save_config()
         log_success(f"Created {config_file}")
     else:
@@ -480,17 +897,25 @@ def setup_config(backend: Optional[str] = None, model: Optional[str] = None):
             with open(config_file, 'r', encoding='utf-8') as f:
                 existing_config = json.load(f)
             
-            # Update backend if provided (accept both old 'local' and new backend types)
+            # Update backend if provided (accept both old 'local'/'remote' and new backend types)
             if backend:
-                # Map old 'local' to 'cpu' for backward compatibility
+                # Map old values for backward compatibility
                 if backend == 'local':
-                    backend = 'cpu'
+                    backend = 'cpu'  # Map old 'local' to 'cpu'
+                elif backend == 'remote':
+                    backend = 'rest-api'  # Map old 'remote' to 'rest-api'
                 existing_config['transcription_backend'] = backend
+            
+            # Apply remote configuration if provided
+            if remote_config:
+                for key, value in remote_config.items():
+                    existing_config[key] = value
             
             # Update model if provided, otherwise default to base.en if missing
             if model:
                 existing_config['model'] = model
-            elif 'model' not in existing_config:
+            elif 'model' not in existing_config and not remote_config:
+                # Only set default model if not using remote backend
                 existing_config['model'] = 'base.en'
             
             # Add audio_feedback if missing
@@ -887,17 +1312,20 @@ def download_model(model_name: str = 'base.en'):
         
         def show_progress(block_num, block_size, total_size):
             """Callback to show download progress"""
+            if not OutputController.is_progress_enabled():
+                return
+            
             downloaded = block_num * block_size
             percent = min(100, (downloaded * 100) // total_size) if total_size > 0 else 0
             size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
             downloaded_mb = downloaded / (1024 * 1024)
             
             # Show progress on same line
-            sys.stdout.write(f"\r[INFO] Downloading: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)")
-            sys.stdout.flush()
+            progress_msg = f"\r[INFO] Downloading: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)"
+            OutputController.write(progress_msg, VerbosityLevel.NORMAL, flush=True)
             
             if downloaded >= total_size and total_size > 0:
-                sys.stdout.write("\n")  # New line when complete
+                OutputController.write("\n", VerbosityLevel.NORMAL, flush=True)  # New line when complete
         
         urllib.request.urlretrieve(model_url, model_file, reporthook=show_progress)
         log_success(f"Model downloaded: {model_file}")
@@ -1086,6 +1514,285 @@ def setup_permissions():
 
 # ==================== Validate Command ====================
 
+def cleanup_venv_command():
+    """Remove the venv directory completely"""
+    if not VENV_DIR.exists():
+        log_info("No venv found")
+        return True
+    
+    log_warning("This will remove the entire Python virtual environment.")
+    log_warning("All installed packages (including pywhispercpp) will be deleted.")
+    if not Confirm.ask("Are you sure?", default=False):
+        log_info("Cleanup cancelled")
+        return False
+    
+    try:
+        import shutil
+        shutil.rmtree(VENV_DIR)
+        log_success("Venv removed successfully")
+        return True
+    except Exception as e:
+        log_error(f"Failed to remove venv: {e}")
+        return False
+
+
+# ==================== Backend Management Commands ====================
+
+def backend_repair_command():
+    """Repair corrupted installation"""
+    log_info("Checking for installation issues...")
+    
+    # Check venv
+    venv_python = VENV_DIR / 'bin' / 'python'
+    venv_corrupted = False
+    
+    if VENV_DIR.exists():
+        if not venv_python.exists():
+            log_warning("Venv exists but Python binary is missing")
+            venv_corrupted = True
+        else:
+            # Test if Python works
+            try:
+                result = subprocess.run(
+                    [str(venv_python), '--version'],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode != 0:
+                    log_warning("Venv Python binary is not working")
+                    venv_corrupted = True
+            except Exception:
+                log_warning("Venv Python binary cannot be executed")
+                venv_corrupted = True
+    
+    # Check pywhispercpp installation
+    pywhispercpp_missing = False
+    if venv_python.exists() and not venv_corrupted:
+        try:
+            result = subprocess.run(
+                [str(venv_python), '-c', 'import pywhispercpp'],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode != 0:
+                log_warning("pywhispercpp is not installed in venv")
+                pywhispercpp_missing = True
+        except Exception:
+            pass
+    
+    if not venv_corrupted and not pywhispercpp_missing:
+        log_success("No issues detected")
+        return True
+    
+    print("\n" + "="*60)
+    print("Repair Options")
+    print("="*60)
+    
+    if venv_corrupted:
+        print("\nIssues found:")
+        print("  • Virtual environment is corrupted")
+        print("\nOptions:")
+        print("  [1] Recreate venv (recommended)")
+        print("  [2] Skip (manual repair required)")
+        
+        choice = Prompt.ask("Select option", choices=['1', '2'], default='1')
+        if choice == '1':
+            log_info("Recreating venv...")
+            import shutil
+            shutil.rmtree(VENV_DIR, ignore_errors=True)
+            # Recreate by calling setup_python_venv
+            try:
+                from .backend_installer import setup_python_venv
+            except ImportError:
+                from backend_installer import setup_python_venv
+            setup_python_venv()
+            log_success("Venv recreated")
+    
+    if pywhispercpp_missing:
+        print("\nIssues found:")
+        print("  • pywhispercpp is not installed")
+        print("\nOptions:")
+        print("  [1] Reinstall backend (detect and install)")
+        print("  [2] Skip (manual repair required)")
+        
+        choice = Prompt.ask("Select option", choices=['1', '2'], default='1')
+        if choice == '1':
+            # Detect backend type from config
+            current_backend = _detect_current_backend()
+            if current_backend and current_backend in ['cpu', 'nvidia', 'amd']:
+                log_info(f"Reinstalling {current_backend.upper()} backend...")
+                if install_backend(current_backend):
+                    log_success("Backend reinstalled successfully")
+                else:
+                    log_error("Backend reinstallation failed")
+                    return False
+            else:
+                log_warning("Could not detect backend type. Please run 'hyprwhspr setup'")
+                return False
+    
+    log_success("Repair completed")
+    return True
+
+
+def backend_reset_command():
+    """Reset installation state"""
+    log_warning("This will reset the installation state.")
+    log_warning("This does NOT remove installed files, only state tracking.")
+    if not Confirm.ask("Are you sure?", default=False):
+        log_info("Reset cancelled")
+        return False
+    
+    init_state()
+    set_install_state('not_started')
+    log_success("Installation state reset")
+    return True
+
+
+# ==================== State Management Commands ====================
+
+def state_show_command():
+    """Show current installation state"""
+    init_state()
+    state, error = get_install_state()
+    all_state = get_all_state()
+    
+    print("\n" + "="*60)
+    print("Installation State")
+    print("="*60)
+    print(f"\nStatus: {state}")
+    
+    if error:
+        print(f"Last error: {error}")
+        error_time = all_state.get('last_error_time')
+        if error_time:
+            print(f"Error time: {error_time}")
+    
+    # Show other state info
+    if all_state:
+        print("\nState details:")
+        for key, value in all_state.items():
+            if key not in ['install_state', 'last_error', 'last_error_time']:
+                print(f"  {key}: {value}")
+    
+    # Check actual installation
+    print("\nActual installation status:")
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if venv_python.exists():
+        log_success("Venv exists")
+        try:
+            result = subprocess.run(
+                [str(venv_python), '-c', 'import pywhispercpp'],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                log_success("pywhispercpp is installed")
+            else:
+                log_warning("pywhispercpp is NOT installed")
+        except Exception:
+            log_warning("Could not check pywhispercpp installation")
+    else:
+        log_warning("Venv does not exist")
+    
+    print()
+
+
+def state_validate_command():
+    """Validate state consistency"""
+    log_info("Validating state consistency...")
+    init_state()
+    
+    issues = []
+    
+    # Check state file is valid JSON
+    try:
+        all_state = get_all_state()
+    except Exception as e:
+        log_error(f"State file is corrupted: {e}")
+        issues.append("State file corruption")
+        print("\nTo fix: Run 'hyprwhspr state reset'")
+        return False
+    
+    # Check if state matches actual installation
+    state, _ = get_install_state()
+    venv_python = VENV_DIR / 'bin' / 'python'
+    
+    if state == 'completed':
+        if not venv_python.exists():
+            issues.append("State says 'completed' but venv does not exist")
+        else:
+            try:
+                result = subprocess.run(
+                    [str(venv_python), '-c', 'import pywhispercpp'],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode != 0:
+                    issues.append("State says 'completed' but pywhispercpp is not installed")
+            except Exception:
+                pass
+    
+    if issues:
+        log_warning("State validation found issues:")
+        for issue in issues:
+            log_warning(f"  • {issue}")
+        print("\nTo fix: Run 'hyprwhspr backend repair' or 'hyprwhspr state reset'")
+        return False
+    else:
+        log_success("State is consistent")
+        return True
+
+
+def state_reset_command(remove_all: bool = False):
+    """Reset state file"""
+    if remove_all:
+        log_warning("This will:")
+        log_warning("  • Clear state file")
+        log_warning("  • Remove venv directory")
+        log_warning("  • Remove pywhispercpp source directory")
+        if not Confirm.ask("Are you sure? This cannot be undone!", default=False):
+            log_info("Reset cancelled")
+            return False
+        
+        # Remove venv
+        if VENV_DIR.exists():
+            log_info("Removing venv...")
+            import shutil
+            shutil.rmtree(VENV_DIR, ignore_errors=True)
+            log_success("Venv removed")
+        
+        # Remove pywhispercpp source
+        try:
+            from .backend_installer import PYWHISPERCPP_SRC_DIR
+        except ImportError:
+            from backend_installer import PYWHISPERCPP_SRC_DIR
+        
+        if PYWHISPERCPP_SRC_DIR.exists():
+            log_info("Removing pywhispercpp source...")
+            import shutil
+            shutil.rmtree(PYWHISPERCPP_SRC_DIR, ignore_errors=True)
+            log_success("Source directory removed")
+    else:
+        log_warning("This will clear the state file (installations will remain)")
+        if not Confirm.ask("Are you sure?", default=False):
+            log_info("Reset cancelled")
+            return False
+    
+    # Reset state file
+    init_state()
+    set_install_state('not_started')
+    log_success("State reset complete")
+    return True
+
+
 def validate_command():
     """Validate installation"""
     log_info("Validating installation...")
@@ -1142,7 +1849,7 @@ def validate_command():
         print("")
         print("To use local transcription, run: hyprwhspr setup")
         print("This will install the backend (CPU/NVIDIA/AMD) of your choice.")
-        print("(or use remote backend by setting 'transcription_backend': 'remote' in config.json)")
+        print("(or use REST API backend by setting 'transcription_backend': 'rest-api' in config.json)")
         print("")
     
     # Check base model

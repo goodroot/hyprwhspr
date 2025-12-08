@@ -48,10 +48,16 @@ class WhisperManager:
             self.temp_dir = self.config.get_temp_directory()
 
             # Check which backend is configured
-            backend = self.config.get_setting('transcription_backend', 'local')
+            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+            
+            # Backward compatibility: map old values
+            if backend == 'local':
+                backend = 'pywhispercpp'
+            elif backend == 'remote':
+                backend = 'rest-api'
 
-            # Configure remote API backend and return early
-            if backend == 'remote':
+            # Configure REST API backend and return early
+            if backend == 'rest-api':
                 # Validate REST configuration
                 endpoint_url = self.config.get_setting('rest_endpoint_url')
 
@@ -67,7 +73,7 @@ class WhisperManager:
                 if timeout < 1 or timeout > 300:
                     print(f'WARNING: REST timeout should be between 1-300 seconds, got {timeout}')
 
-                print(f'[BACKEND] Using remote REST API: {endpoint_url}')
+                print(f'[BACKEND] Using REST API: {endpoint_url}')
                 print(f'[REST] Timeout configured: {timeout}s')
 
                 # Log user-defined config objects (sanitized)
@@ -149,8 +155,8 @@ class WhisperManager:
                 print("Install with: yay -S python-pywhispercpp-cpu")
                 print("(or python-pywhispercpp-cuda / python-pywhispercpp-rocm for GPU support)")
                 print("")
-                print("Alternatively, configure a remote transcription backend in config.json")
-                print("by setting 'transcription_backend': 'remote'")
+                print("Alternatively, configure a REST API transcription backend in config.json")
+                print("by setting 'transcription_backend': 'rest-api'")
                 print("")
                 return False
             except Exception as e:
@@ -487,9 +493,15 @@ class WhisperManager:
             return ""
 
         # Route to appropriate backend
-        backend = self.config.get_setting('transcription_backend', 'local')
+        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        
+        # Backward compatibility
+        if backend == 'local':
+            backend = 'pywhispercpp'
+        elif backend == 'remote':
+            backend = 'rest-api'
 
-        if backend == 'remote':
+        if backend == 'rest-api':
             # Use REST API transcription
             return self._transcribe_rest(audio_data, sample_rate)
 
@@ -591,11 +603,18 @@ class WhisperManager:
         Returns:
             True if successful, False otherwise
         """
-        # Check if using remote backend - model changes don't apply
-        backend = self.config.get_setting('transcription_backend', 'local')
-        if backend == 'remote':
-            print("ERROR: Cannot change model when using remote backend - switch to local")
-            print("Model selection is handled by the remote API endpoint")
+        # Check if using REST API backend - model changes don't apply
+        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        
+        # Backward compatibility
+        if backend == 'local':
+            backend = 'pywhispercpp'
+        elif backend == 'remote':
+            backend = 'rest-api'
+        
+        if backend == 'rest-api':
+            print("ERROR: Cannot change model when using REST API backend - switch to pywhispercpp")
+            print("Model selection is handled by the REST API endpoint")
             return False
 
         with self._model_lock:
@@ -635,10 +654,17 @@ class WhisperManager:
 
     def get_current_model(self) -> str:
         """Get the current model name"""
-        # For remote backends, return empty string or None
+        # For REST API backends, return empty string or None
         if self.current_model is None:
-            backend = self.config.get_setting('transcription_backend', 'local')
-            if backend == 'remote':
+            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+            
+            # Backward compatibility
+            if backend == 'local':
+                backend = 'pywhispercpp'
+            elif backend == 'remote':
+                backend = 'rest-api'
+            
+            if backend == 'rest-api':
                 return ''
         return self.current_model or ''
 
@@ -675,9 +701,16 @@ class WhisperManager:
 
     def get_backend_info(self) -> str:
         """Get information about the current backend"""
-        backend = self.config.get_setting('transcription_backend', 'local')
-        if backend == 'remote':
+        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        
+        # Backward compatibility
+        if backend == 'local':
+            backend = 'pywhispercpp'
+        elif backend == 'remote':
+            backend = 'rest-api'
+        
+        if backend == 'rest-api':
             endpoint_url = self.config.get_setting('rest_endpoint_url', 'not configured')
-            return f"remote REST API ({endpoint_url})"
+            return f"REST API ({endpoint_url})"
         else:
             return f"pywhispercpp (in-process, model: {self.current_model})"

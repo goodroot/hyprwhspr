@@ -11,6 +11,12 @@ from pathlib import Path
 src_path = Path(__file__).parent / 'src'
 sys.path.insert(0, str(src_path))
 
+# Import output control early to set verbosity
+try:
+    from src.output_control import OutputController, VerbosityLevel
+except ImportError:
+    from output_control import OutputController, VerbosityLevel
+
 from cli_commands import (
     setup_command,
     config_command,
@@ -19,6 +25,11 @@ from cli_commands import (
     model_command,
     status_command,
     validate_command,
+    backend_repair_command,
+    backend_reset_command,
+    state_show_command,
+    state_validate_command,
+    state_reset_command,
 )
 
 
@@ -28,6 +39,18 @@ def main():
         prog='hyprwhspr',
         description='hyprwhspr - Voice dictation service for Hyprland',
     )
+    
+    # Global verbosity flags
+    parser.add_argument('-q', '--quiet', action='store_true',
+                       help='Quiet mode: only show errors')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Verbose mode: show detailed output')
+    parser.add_argument('--debug', action='store_true',
+                       help='Debug mode: show all output including debug messages')
+    parser.add_argument('--no-progress', action='store_true',
+                       help='Disable progress indicators')
+    parser.add_argument('--log-file', type=str, metavar='PATH',
+                       help='Write all output to log file')
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
@@ -71,7 +94,39 @@ def main():
     # validate command
     subparsers.add_parser('validate', help='Validate installation')
     
+    # backend command
+    backend_parser = subparsers.add_parser('backend', help='Backend management')
+    backend_subparsers = backend_parser.add_subparsers(dest='backend_action', help='Backend actions')
+    backend_subparsers.add_parser('repair', help='Repair corrupted installation')
+    backend_subparsers.add_parser('reset', help='Reset installation state')
+    
+    # state command
+    state_parser = subparsers.add_parser('state', help='State management')
+    state_subparsers = state_parser.add_subparsers(dest='state_action', help='State actions')
+    state_subparsers.add_parser('show', help='Show current state')
+    state_validate_parser = state_subparsers.add_parser('validate', help='Validate state consistency')
+    state_reset_parser = state_subparsers.add_parser('reset', help='Reset state file')
+    state_reset_parser.add_argument('--all', action='store_true', help='Also remove installations')
+    
     args = parser.parse_args()
+    
+    # Set verbosity level
+    if args.quiet:
+        OutputController.set_verbosity(VerbosityLevel.QUIET)
+    elif args.debug:
+        OutputController.set_verbosity(VerbosityLevel.DEBUG)
+    elif args.verbose:
+        OutputController.set_verbosity(VerbosityLevel.VERBOSE)
+    else:
+        OutputController.set_verbosity(VerbosityLevel.NORMAL)
+    
+    # Set progress enabled
+    if args.no_progress:
+        OutputController.set_progress_enabled(False)
+    
+    # Set log file if specified
+    if args.log_file:
+        OutputController.set_log_file(Path(args.log_file))
     
     if not args.command:
         parser.print_help()
@@ -106,6 +161,24 @@ def main():
             status_command()
         elif args.command == 'validate':
             validate_command()
+        elif args.command == 'backend':
+            if not args.backend_action:
+                backend_parser.print_help()
+                sys.exit(1)
+            if args.backend_action == 'repair':
+                backend_repair_command()
+            elif args.backend_action == 'reset':
+                backend_reset_command()
+        elif args.command == 'state':
+            if not args.state_action:
+                state_parser.print_help()
+                sys.exit(1)
+            if args.state_action == 'show':
+                state_show_command()
+            elif args.state_action == 'validate':
+                state_validate_command()
+            elif args.state_action == 'reset':
+                state_reset_command(getattr(args, 'all', False))
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
         sys.exit(1)

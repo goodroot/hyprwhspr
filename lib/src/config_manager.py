@@ -29,7 +29,7 @@ class ConfigManager:
             # Back-compat for older configs (used only if paste_mode is absent):
             'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
             # Transcription backend settings
-            'transcription_backend': 'local',  # "local" or "remote"
+            'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"amd") or "rest-api"
             'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
             'rest_api_key': None,              # Optional API key for authentication
             'rest_headers': {},                # Additional HTTP headers for remote transcription
