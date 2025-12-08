@@ -11,6 +11,15 @@ PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
 export PYTHONPATH="$PACKAGE_ROOT/lib:$PYTHONPATH"
 
+# Find venv Python (for main app execution)
+VENV_PYTHON="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
+if [ -f "$VENV_PYTHON" ]; then
+    PYTHON_CMD="$VENV_PYTHON"
+else
+    # Fallback to system Python if venv doesn't exist
+    PYTHON_CMD="python3"
+fi
+
 # Help handling: route any -h/--help or leading "help" to CLI help
 for arg in "$@"; do
   if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
@@ -49,5 +58,5 @@ if [ -d "/opt/rocm" ]; then
   fi
 fi
 
-# Default: run main application
-exec python3 "$PACKAGE_ROOT/lib/main.py" "$@"
+# Default: run main application with venv Python
+exec "$PYTHON_CMD" "$PACKAGE_ROOT/lib/main.py" "$@"
