@@ -48,7 +48,7 @@ hyprwhspr setup
 
 **The setup will:**
 
-1. ✅ Configure transcription backend (pywhispercpp or REST API)
+1. ✅ Configure transcription backend (pywhispercpp, Parakeet-v3 or REST API)
 2. ✅ Set up systemd user services
 3. ✅ Configure Waybar integration (if Waybar is installed)
 4. ✅ Download models (if using pywhispercpp backend)
@@ -130,20 +130,24 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 **REST API backends** - use any ASR backend via HTTP API (can run locally or remotely):
 
-The installer will walk you through remote / Cloud endpoints.
+The installer will walk you through remote / Cloud endpoints:
 
-### OpenAI
+**Parakeet v3**
+
+Fastest, latest, and apparently the best! GPU accel rcommended, not required.
+
+**OpenAI**
 
 - **GPT-4o Transcribe** - Latest model with best accuracy
 - **GPT-4o Mini Transcribe** - Faster, lighter model
 - **Whisper 1** - Legacy Whisper model
 
-### Groq
+**Groq**
 
 - **Whisper Large V3** - High accuracy processing
 - **Whisper Large V3 Turbo** - Fastest transcription speed
 
-Or setup any arbitrary backend:
+**Any arbitrary backend:**
 
 ```jsonc
 {
