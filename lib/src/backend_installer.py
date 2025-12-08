@@ -42,6 +42,10 @@ STATE_DIR = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'stat
 STATE_FILE = STATE_DIR / 'install-state.json'
 PYWHISPERCPP_SRC_DIR = USER_BASE / 'pywhispercpp-src'
 PYWHISPERCPP_PINNED_COMMIT = "4ab96165f84e8eb579077dfc3d0476fa5606affe"
+PARAKEET_VENV_DIR = USER_BASE / 'parakeet-venv'
+PARAKEET_DIR = Path(HYPRWHSPR_ROOT) / 'lib' / 'backends' / 'parakeet'
+PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
+PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
 
 
 # ==================== State Management ====================
@@ -674,6 +678,121 @@ def download_pywhispercpp_model(model_name: str = 'base.en') -> bool:
         return False
 
 
+# ==================== Parakeet Installation ====================
+
+def setup_parakeet_venv() -> Path:
+    """Create or update Parakeet Python virtual environment. Returns path to pip binary."""
+    log_info("Setting up Parakeet Python virtual environment…")
+    
+    # Validate requirements.txt exists
+    if not PARAKEET_REQUIREMENTS.exists():
+        log_error(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
+        raise FileNotFoundError(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
+    
+    # Check if venv exists and if Python version matches
+    venv_needs_recreation = False
+    if PARAKEET_VENV_DIR.exists():
+        venv_python = PARAKEET_VENV_DIR / 'bin' / 'python'
+        if venv_python.exists():
+            try:
+                # Check Python version in venv
+                result = run_command([str(venv_python), '--version'], check=False, capture_output=True)
+                venv_version = result.stdout.strip() if result.returncode == 0 else ""
+                current_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+                
+                # Extract major.minor from venv version string (e.g., "Python 3.11.5" -> "3.11")
+                venv_major_minor = ""
+                if venv_version:
+                    import re
+                    match = re.search(r'(\d+)\.(\d+)', venv_version)
+                    if match:
+                        venv_major_minor = f"{match.group(1)}.{match.group(2)}"
+                
+                # Check if versions match (major.minor)
+                if venv_major_minor and venv_major_minor != current_version:
+                    log_warning(f"Parakeet venv Python version mismatch: venv has {venv_version}, current is Python {current_version}")
+                    log_info("Recreating venv to match current Python version...")
+                    venv_needs_recreation = True
+            except Exception:
+                # If we can't check, assume it's fine
+                pass
+        else:
+            venv_needs_recreation = True
+    
+    # Recreate venv if needed
+    if venv_needs_recreation or not PARAKEET_VENV_DIR.exists():
+        if PARAKEET_VENV_DIR.exists():
+            log_info(f"Removing existing Parakeet venv at {PARAKEET_VENV_DIR}")
+            import shutil
+            shutil.rmtree(PARAKEET_VENV_DIR)
+        log_info(f"Creating Parakeet venv at {PARAKEET_VENV_DIR}")
+        PARAKEET_VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
+        run_command([sys.executable, '-m', 'venv', str(PARAKEET_VENV_DIR)], check=True)
+    else:
+        log_info(f"Parakeet venv already exists at {PARAKEET_VENV_DIR}")
+    
+    # Get pip binary
+    pip_bin = PARAKEET_VENV_DIR / 'bin' / 'pip'
+    if not pip_bin.exists():
+        log_error(f"pip not found in Parakeet venv at {PARAKEET_VENV_DIR}")
+        raise FileNotFoundError(f"pip not found in Parakeet venv")
+    
+    # Upgrade pip and wheel
+    run_command([str(pip_bin), 'install', '--upgrade', 'pip', 'wheel'], check=True)
+    
+    return pip_bin
+
+
+def install_parakeet_dependencies(pip_bin: Path) -> bool:
+    """Install Parakeet backend dependencies"""
+    log_info("Installing Parakeet dependencies...")
+    
+    # Check for CUDA availability
+    enable_cuda = False
+    if shutil.which('nvidia-smi'):
+        try:
+            result = run_command(['timeout', '2s', 'nvidia-smi', '-L'], check=False, capture_output=True)
+            if result.returncode == 0:
+                enable_cuda = True
+                log_info("CUDA detected - will install PyTorch with CUDA support")
+        except Exception:
+            pass
+    
+    try:
+        # Install base dependencies first (excluding torch)
+        log_info("Installing base dependencies...")
+        base_deps = [
+            'nemo_toolkit[asr]',
+            'fastapi',
+            'uvicorn[standard]',
+            'soundfile',
+            'python-multipart',
+        ]
+        
+        if enable_cuda:
+            base_deps.append('cuda-python>=12.3')
+        
+        run_command([str(pip_bin), 'install'] + base_deps, check=True)
+        
+        # Install torch with appropriate CUDA support
+        if enable_cuda:
+            log_info("Installing PyTorch with CUDA 12.1 support...")
+            # Use PyTorch CUDA index
+            run_command([
+                str(pip_bin), 'install', 'torch',
+                '--index-url', 'https://download.pytorch.org/whl/cu121'
+            ], check=True)
+        else:
+            log_info("Installing PyTorch (CPU-only)...")
+            run_command([str(pip_bin), 'install', 'torch'], check=True)
+        
+        log_success("Parakeet dependencies installed")
+        return True
+    except subprocess.CalledProcessError as e:
+        log_error(f"Failed to install Parakeet dependencies: {e}")
+        return False
+
+
 # ==================== Main Installation Function ====================
 
 def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
@@ -681,7 +800,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
     Main function to install backend.
     
     Args:
-        backend_type: One of 'cpu', 'nvidia', 'amd'
+        backend_type: One of 'cpu', 'nvidia', 'amd', 'parakeet'
         cleanup_on_failure: Whether to clean up partial installations on failure
     
     Returns:
@@ -693,7 +812,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
     log_info(f"Installing {backend_type.upper()} backend...")
     
     # Validate backend type
-    if backend_type not in ['cpu', 'nvidia', 'amd']:
+    if backend_type not in ['cpu', 'nvidia', 'amd', 'parakeet']:
         error_msg = f"Invalid backend type: {backend_type}"
         log_error(error_msg)
         set_install_state('failed', error_msg)
@@ -726,8 +845,39 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
             if not enable_rocm:
                 log_warning("AMD backend selected but ROCm not available, falling back to CPU")
                 backend_type = 'cpu'
+        elif backend_type == 'parakeet':
+            # Parakeet uses separate venv and REST API
+            if not PARAKEET_SCRIPT.exists():
+                error_msg = f"Parakeet script not found at {PARAKEET_SCRIPT}"
+                log_error(error_msg)
+                set_install_state('failed', error_msg)
+                return False
+            
+            # Setup Parakeet venv
+            parakeet_venv_existed = PARAKEET_VENV_DIR.exists()
+            parakeet_pip_bin = setup_parakeet_venv()
+            if not parakeet_venv_existed and PARAKEET_VENV_DIR.exists():
+                created_items['venv_created'] = True
+                created_items['venv_path'] = str(PARAKEET_VENV_DIR)
+            
+            # Install Parakeet dependencies
+            if not install_parakeet_dependencies(parakeet_pip_bin):
+                error_msg = "Failed to install Parakeet dependencies"
+                log_error(error_msg)
+                if cleanup_on_failure:
+                    log_info("Cleaning up partial installation...")
+                    _cleanup_partial_installation(created_items, parakeet_pip_bin)
+                set_install_state('failed', error_msg)
+                return False
+            
+            # Installation successful for Parakeet
+            set_install_state('completed')
+            log_success("Parakeet backend installation completed!")
+            log_info("Note: You need to start the Parakeet server manually:")
+            log_info(f"  {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
+            return True
         
-        # Setup Python venv
+        # Setup Python venv (for cpu/nvidia/amd backends)
         venv_existed = VENV_DIR.exists()
         pip_bin = setup_python_venv()
         if not venv_existed and VENV_DIR.exists():
@@ -887,7 +1037,9 @@ def _cleanup_partial_installation(created_items: dict, pip_bin: Optional[Path]):
     if created_items.get('venv_created') and created_items.get('venv_path'):
         log_info(f"Removing venv at {created_items['venv_path']}")
         try:
-            shutil.rmtree(Path(created_items['venv_path']), ignore_errors=True)
+            venv_path = Path(created_items['venv_path'])
+            if venv_path.exists():
+                shutil.rmtree(venv_path, ignore_errors=True)
         except Exception:
             pass
     

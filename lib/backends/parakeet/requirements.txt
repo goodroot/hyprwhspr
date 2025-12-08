@@ -1,0 +1,9 @@
+# Parakeet backend dependencies
+nemo_toolkit[asr]
+fastapi
+uvicorn[standard]
+soundfile
+python-multipart
+cuda-python>=12.3
+torch
+

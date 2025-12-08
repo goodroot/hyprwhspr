@@ -197,7 +197,7 @@ def _detect_current_backend() -> Optional[str]:
     Detect currently installed backend.
     
     Returns:
-        'cpu', 'nvidia', 'amd', 'rest-api', or None if not detected
+        'cpu', 'nvidia', 'amd', 'parakeet', 'rest-api', or None if not detected
     """
     # First check config file
     try:
@@ -225,6 +225,16 @@ def _detect_current_backend() -> Optional[str]:
             return 'cpu'  # Fallback
         
         if backend == 'rest-api':
+            # Check if it's parakeet by checking endpoint URL
+            endpoint = config_manager.get_setting('rest_endpoint_url', '')
+            if endpoint == 'http://127.0.0.1:8080/transcribe':
+                # Check if parakeet venv exists
+                try:
+                    from .backend_installer import PARAKEET_VENV_DIR
+                except ImportError:
+                    from backend_installer import PARAKEET_VENV_DIR
+                if PARAKEET_VENV_DIR.exists():
+                    return 'parakeet'
             return 'rest-api'
         if backend in ['cpu', 'nvidia', 'amd', 'pywhispercpp']:
             # Verify it's actually installed in venv
@@ -270,11 +280,27 @@ def _cleanup_backend(backend_type: str) -> bool:
     Clean up an installed backend.
     
     Args:
-        backend_type: 'cpu', 'nvidia', 'amd', or 'remote'
+        backend_type: 'cpu', 'nvidia', 'amd', 'parakeet', or 'remote'
     
     Returns:
         True if cleanup succeeded
     """
+    if backend_type == 'parakeet':
+        log_info("Cleaning up Parakeet backend...")
+        try:
+            from .backend_installer import PARAKEET_VENV_DIR
+        except ImportError:
+            from backend_installer import PARAKEET_VENV_DIR
+        
+        if PARAKEET_VENV_DIR.exists():
+            import shutil
+            try:
+                shutil.rmtree(PARAKEET_VENV_DIR, ignore_errors=True)
+                log_success("Parakeet backend cleaned up")
+            except Exception as e:
+                log_warning(f"Cleanup warning: {e}")
+        return True
+    
     if backend_type in ['rest-api', 'remote']:
         # REST API doesn't have venv, nothing to clean
         return True
@@ -315,6 +341,7 @@ def _prompt_backend_selection():
             'cpu': 'CPU',
             'nvidia': 'NVIDIA (CUDA)',
             'amd': 'AMD (ROCm)',
+            'parakeet': 'Parakeet',
             'rest-api': 'REST API',
             'pywhispercpp': 'pywhispercpp'
         }
@@ -328,16 +355,18 @@ def _prompt_backend_selection():
     print("  [2] NVIDIA - NVIDIA GPU acceleration (CUDA)")
     print("  [3] AMD - AMD GPU acceleration (ROCm)")
     print("  [4] REST API - Use external API/backend (localhost or remote, requires network)")
+    print("  [5] Parakeet - NVIDIA Parakeet model (local REST server)")
     print()
     
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5'], default='1')
             backend_map = {
                 '1': 'cpu',
                 '2': 'nvidia',
                 '3': 'amd',
-                '4': 'rest-api'
+                '4': 'rest-api',
+                '5': 'parakeet'
             }
             selected = backend_map[choice]
             
@@ -347,34 +376,55 @@ def _prompt_backend_selection():
                     'cpu': 'CPU',
                     'nvidia': 'NVIDIA (CUDA)',
                     'amd': 'AMD (ROCm)',
+                    'parakeet': 'Parakeet',
                     'rest-api': 'REST API',
                     'pywhispercpp': 'pywhispercpp'
                 }
                 print(f"\n⚠️  Switching from {backend_names.get(current_backend)} to {backend_names.get(selected)}")
                 
-                if current_backend not in ['rest-api', 'remote'] and selected not in ['rest-api', 'remote']:
+                if selected == 'parakeet':
+                    print("Parakeet uses a separate venv and runs as a local REST server.")
+                    if current_backend not in ['rest-api', 'remote', 'parakeet']:
+                        print("This will uninstall the current backend.")
+                        if not Confirm.ask("Continue?", default=True):
+                            continue
+                elif current_backend not in ['rest-api', 'remote', 'parakeet'] and selected not in ['rest-api', 'remote', 'parakeet']:
                     print("This will uninstall the current backend and install the new one.")
                     if not Confirm.ask("Continue?", default=True):
                         continue
                 elif selected == 'rest-api':
                     print("Switching to REST API backend.")
-                    print("The local backend venv will no longer be needed.")
-                    cleanup_venv = Confirm.ask("Remove the venv to free up space?", default=False)
+                    if current_backend == 'parakeet':
+                        print("The Parakeet venv will no longer be needed.")
+                        cleanup_venv = Confirm.ask("Remove the Parakeet venv to free up space?", default=False)
+                    else:
+                        print("The local backend venv will no longer be needed.")
+                        cleanup_venv = Confirm.ask("Remove the venv to free up space?", default=False)
                     backend_names = {
                         'cpu': 'CPU',
                         'nvidia': 'NVIDIA (CUDA)',
                         'amd': 'AMD (ROCm)',
+                        'parakeet': 'Parakeet',
                         'rest-api': 'REST API'
                     }
                     print(f"\n✓ Selected: {backend_names[selected]}")
                     return (selected, cleanup_venv)  # Return tuple: (backend, cleanup_venv)
             
             # If re-selecting same backend, offer reinstall option
-            if current_backend == selected and selected not in ['rest-api', 'remote']:
+            if current_backend == selected and selected not in ['rest-api', 'remote', 'parakeet']:
                 backend_names = {
                     'cpu': 'CPU',
                     'nvidia': 'NVIDIA (CUDA)',
                     'amd': 'AMD (ROCm)'
+                }
+                print(f"\n{backend_names.get(selected)} backend is already installed.")
+                reinstall = Confirm.ask("Reinstall backend?", default=False)
+                if not reinstall:
+                    print("Keeping existing installation.")
+                    return (selected, False)
+            elif current_backend == selected and selected == 'parakeet':
+                backend_names = {
+                    'parakeet': 'Parakeet'
                 }
                 print(f"\n{backend_names.get(selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
@@ -386,6 +436,7 @@ def _prompt_backend_selection():
                 'cpu': 'CPU',
                 'nvidia': 'NVIDIA (CUDA)',
                 'amd': 'AMD (ROCm)',
+                'parakeet': 'Parakeet',
                 'rest-api': 'REST API'
             }
             print(f"\n✓ Selected: {backend_names[selected]}")
@@ -689,12 +740,18 @@ def setup_command():
                 log_success("Venv removed")
     
     # Step 1.5: Backend installation (if not REST API)
+    parakeet_installed = False
     if backend not in ['rest-api', 'remote']:
         print("\n" + "="*60)
         print("Backend Installation")
         print("="*60)
-        print(f"\nThis will install the {backend.upper()} backend for pywhispercpp.")
-        print("This may take several minutes as it compiles from source.")
+        if backend == 'parakeet':
+            print(f"\nThis will install the Parakeet backend.")
+            print("This will create a separate virtual environment and install dependencies.")
+            print("The Parakeet server will need to be started manually after installation.")
+        else:
+            print(f"\nThis will install the {backend.upper()} backend for pywhispercpp.")
+            print("This may take several minutes as it compiles from source.")
         if not Confirm.ask("Proceed with backend installation?", default=True):
             log_warning("Skipping backend installation. You can install it later.")
             log_warning("Backend installation is required for local transcription to work.")
@@ -702,11 +759,30 @@ def setup_command():
             if not install_backend(backend):
                 log_error("Backend installation failed. Setup cannot continue.")
                 return
+            
+            if backend == 'parakeet':
+                parakeet_installed = True
     
-    # Step 2: Provider/model selection (if REST API backend)
+    # Step 2: Provider/model selection (if REST API backend or parakeet)
     remote_config = None
     selected_model = None
-    if backend in ['rest-api', 'remote']:
+    if backend == 'parakeet' and parakeet_installed:
+        # Auto-configure REST API for parakeet
+        log_info("Auto-configuring REST API for Parakeet...")
+        remote_config = {
+            'transcription_backend': 'rest-api',
+            'rest_endpoint_url': 'http://127.0.0.1:8080/transcribe',
+            'rest_headers': {},
+            'rest_body': {}
+        }
+        log_success("Parakeet REST API configuration ready")
+        log_info("Note: Start the Parakeet server with:")
+        try:
+            from .backend_installer import PARAKEET_VENV_DIR, PARAKEET_SCRIPT
+        except ImportError:
+            from backend_installer import PARAKEET_VENV_DIR, PARAKEET_SCRIPT
+        log_info(f"  {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
+    elif backend in ['rest-api', 'remote']:
         # Prompt for remote provider selection
         provider_result = _prompt_remote_provider_selection()
         if not provider_result:
@@ -762,7 +838,10 @@ def setup_command():
     print("Setup Summary")
     print("="*60)
     print(f"\nBackend: {backend}")
-    if remote_config:
+    if backend == 'parakeet' and remote_config:
+        print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
+        print("Model: parakeet-tdt-0.6b-v3")
+    elif remote_config:
         print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
         if remote_config.get('rest_body'):
             model_name = remote_config['rest_body'].get('model', 'N/A')
