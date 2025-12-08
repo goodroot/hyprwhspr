@@ -27,6 +27,17 @@ if [[ "$1" =~ ^(setup|config|waybar|systemd|status|model|validate)$ ]]; then
   exec python3 "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 
+# Set up CUDA library path if CUDA is installed
+if [ -d "/opt/cuda" ]; then
+  CUDA_LIB_DIRS=""
+  [ -d "/opt/cuda/lib" ] && CUDA_LIB_DIRS="/opt/cuda/lib"
+  [ -d "/opt/cuda/lib64" ] && CUDA_LIB_DIRS="${CUDA_LIB_DIRS:+$CUDA_LIB_DIRS:}/opt/cuda/lib64"
+  
+  if [ -n "$CUDA_LIB_DIRS" ]; then
+    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${CUDA_LIB_DIRS}"
+  fi
+fi
+
 # Set up ROCm library path if ROCm is installed
 if [ -d "/opt/rocm" ]; then
   ROCM_LIB_DIRS=""

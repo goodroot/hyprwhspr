@@ -111,8 +111,20 @@ class WhisperManager:
                     # Fallback for flat layout (or older versions)
                     from pywhispercpp import Model
 
-                print(f"[pywhispercpp] Initializing model: {self.current_model}")
-                print(f"[pywhispercpp] Detected GPU backend: {gpu_backend}")
+                # Validate model file exists before attempting to load
+                from pathlib import Path
+                models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
+                model_file = models_dir / f"ggml-{self.current_model}.bin"
+                
+                if not model_file.exists():
+                    # Try English-only variant
+                    if not self.current_model.endswith('.en'):
+                        model_file = models_dir / f"ggml-{self.current_model}.en.bin"
+                
+                if not model_file.exists():
+                    print(f"[ERROR] Model file not found: {model_file}")
+                    print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
+                    return False
 
                 self._pywhisper_model = Model(
                     model=self.current_model,
@@ -120,11 +132,7 @@ class WhisperManager:
                     redirect_whispercpp_logs_to=None
                 )
 
-                print("[pywhispercpp] Model loaded successfully", flush=True)
-                print(f"[BACKEND] Using pywhispercpp (in-process) with {gpu_backend} acceleration", flush=True)
-                import sys
-                sys.stdout.flush()
-                sys.stderr.flush()
+                print(f"[BACKEND] pywhispercpp ({gpu_backend}) - model: {self.current_model}")
                 self.ready = True
                 return True
 
@@ -146,7 +154,9 @@ class WhisperManager:
                 print("")
                 return False
             except Exception as e:
-                print(f"[pywhispercpp] Initialization failed: {e}")
+                print(f"[ERROR] pywhispercpp initialization failed: {e}")
+                import traceback
+                traceback.print_exc()
                 return False
 
         except Exception as e:
@@ -154,9 +164,88 @@ class WhisperManager:
             return False
 
     def _detect_gpu_backend(self) -> str:
-        """Detect available GPU backend for logging purposes"""
+        """Detect available GPU backend for logging purposes
+        
+        First checks which pywhispercpp package is installed via pacman,
+        then verifies hardware availability. Falls back to hardware-only
+        detection if package detection fails.
+        """
         import subprocess
 
+        # First, check which pywhispercpp package is actually installed
+        # This tells us what the package supports, not just what hardware exists
+        try:
+            # Check each package variant individually
+            # pacman -Q returns non-zero if package not found, so we use check=False
+            packages_to_check = [
+                'python-pywhispercpp-cuda',
+                'python-pywhispercpp-rocm',
+                'python-pywhispercpp-cpu'
+            ]
+            
+            installed_package = None
+            for pkg_name in packages_to_check:
+                try:
+                    result = subprocess.run(
+                        ['pacman', '-Q', pkg_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=2,
+                        check=False
+                    )
+                    if result.returncode == 0:
+                        installed_package = pkg_name
+                        break
+                except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                    # pacman not available or error - will fall back to hardware detection
+                    break
+            
+            # Handle detected package
+            if installed_package == 'python-pywhispercpp-cuda':
+                # CUDA package installed - verify hardware
+                if shutil.which('nvidia-smi'):
+                    try:
+                        hw_check = subprocess.run(
+                            ['nvidia-smi', '-L'],
+                            capture_output=True,
+                            timeout=2
+                        )
+                        if hw_check.returncode == 0:
+                            return "CUDA (NVIDIA)"
+                        else:
+                            return "CUDA (NVIDIA) - hardware unavailable"
+                    except (subprocess.TimeoutExpired, Exception):
+                        return "CUDA (NVIDIA) - hardware check failed"
+                else:
+                    return "CUDA (NVIDIA) - hardware not detected"
+            
+            elif installed_package == 'python-pywhispercpp-rocm':
+                # ROCm package installed - verify hardware
+                if shutil.which('rocm-smi') or os.path.exists('/opt/rocm'):
+                    try:
+                        hw_check = subprocess.run(
+                            ['rocm-smi', '--showproductname'],
+                            capture_output=True,
+                            timeout=2
+                        )
+                        if hw_check.returncode == 0:
+                            return "ROCm (AMD)"
+                        else:
+                            return "ROCm (AMD) - hardware unavailable"
+                    except (subprocess.TimeoutExpired, Exception):
+                        return "ROCm (AMD) - hardware check failed"
+                else:
+                    return "ROCm (AMD) - hardware not detected"
+            
+            elif installed_package == 'python-pywhispercpp-cpu':
+                # CPU package installed - always CPU, no hardware check needed
+                return "CPU"
+                
+        except Exception:
+            # Package detection failed - fall back to hardware-only detection
+            pass
+
+        # Fallback: hardware-only detection (for non-Arch systems or when pacman unavailable)
         # Check NVIDIA CUDA - verify it actually works
         if shutil.which('nvidia-smi'):
             try:
@@ -164,7 +253,7 @@ class WhisperManager:
                                        capture_output=True,
                                        timeout=2)
                 if result.returncode == 0:
-                    return "CUDA (NVIDIA)"
+                    return "CUDA (NVIDIA) - package unknown"
             except (subprocess.TimeoutExpired, Exception):
                 pass
 
@@ -175,13 +264,13 @@ class WhisperManager:
                                        capture_output=True,
                                        timeout=2)
                 if result.returncode == 0:
-                    return "ROCm (AMD)"
+                    return "ROCm (AMD) - package unknown"
             except (subprocess.TimeoutExpired, Exception):
                 pass
 
         # Check Vulkan
         if shutil.which('vulkaninfo'):
-            return "Vulkan"
+            return "Vulkan - package unknown"
 
         return "CPU"
 
@@ -404,25 +493,22 @@ class WhisperManager:
             # Use REST API transcription
             return self._transcribe_rest(audio_data, sample_rate)
 
-        print('[TRANSCRIBE] Using pywhispercpp backend', flush=True)
-        import sys
-
-        sys.stdout.flush()
-        sys.stderr.flush()
-
         try:
             # Get language setting from config (None = auto-detect)
             language = self.config.get_setting('language', None)
-
+            
             # Transcribe with language parameter if specified
             if language:
                 segments = self._pywhisper_model.transcribe(audio_data, language=language)
             else:
                 segments = self._pywhisper_model.transcribe(audio_data)
 
-            return ' '.join(seg.text for seg in segments).strip()
+            result = ' '.join(seg.text for seg in segments).strip()
+            return result
         except Exception as e:
-            print(f"ERROR: pywhispercpp transcription failed: {e}")
+            print(f"[ERROR] pywhispercpp transcription failed: {e}")
+            import traceback
+            traceback.print_exc()
             return ""
 
     def _validate_model_file(self, model_name: str) -> bool:
@@ -452,9 +538,8 @@ class WhisperManager:
                 # Just clear the reference and let Python handle cleanup
                 # Aggressive cleanup (del + gc.collect) corrupts CUDA contexts
                 self._pywhisper_model = None
-                print("[pywhispercpp] Model reference cleared (GPU-safe cleanup)")
             except Exception as e:
-                print(f"Warning: Failed to cleanup model reference: {e}")
+                print(f"[WARN] Failed to cleanup model reference: {e}")
 
     def set_threads(self, num_threads: int) -> bool:
         """Update the number of threads used by the backend."""
@@ -465,13 +550,11 @@ class WhisperManager:
                     try:
                         self._pywhisper_model.set_n_threads(int(num_threads))
                         self.config.set_setting('threads', int(num_threads))
-                        print(f"[pywhispercpp] Threads updated to {int(num_threads)}")
                         return True
                     except Exception:
                         pass
 
                 # Fallback: reload model with new thread count
-                print(f"[pywhispercpp] Reloading model with threads={int(num_threads)}")
 
                 # Clean up existing model (GPU-safe)
                 self._cleanup_model()
@@ -491,7 +574,6 @@ class WhisperManager:
 
                 # Only persist to config if successful
                 self.config.set_setting('threads', int(num_threads))
-                print(f"[pywhispercpp] Model reloaded with threads={int(num_threads)}")
                 return True
 
             except Exception as e:
@@ -524,8 +606,6 @@ class WhisperManager:
                     print("Please download the model to ~/.local/share/pywhispercpp/models/")
                     return False
 
-                print(f"[pywhispercpp] Switching to model: {model_name}")
-
                 # Clean up existing model (GPU-safe)
                 self._cleanup_model()
 
@@ -545,7 +625,6 @@ class WhisperManager:
                 # Only update state if model loading succeeded
                 self.current_model = model_name
                 self.config.set_setting('model', model_name)
-                print(f"[pywhispercpp] Successfully switched to model: {model_name}")
 
                 return True
 

@@ -72,18 +72,11 @@ class AudioCapture:
             if self.preferred_device_id is None:
                 self._set_system_default_device()
             
-            # Get and display detailed device information
+            # Get device information
             try:
                 # Get current input device info
                 current_device_id = sd.default.device[0] if sd.default.device[0] is not None else sd.default.device
                 device_info = sd.query_devices(device=current_device_id, kind='input')
-                host_api_info = sd.query_hostapis(device_info['hostapi'])
-                
-                print(f"Using audio input device: {device_info['name']}")
-                print(f"  Device ID: {current_device_id}")
-                print(f"  Sample Rate: {device_info['default_samplerate']:.0f} Hz")
-                print(f"  Max Input Channels: {device_info['max_input_channels']}")
-                print(f"  Host API: {host_api_info['name']}")
                 
                 # Store device info for later use
                 self.device_info = device_info
@@ -91,7 +84,6 @@ class AudioCapture:
                 
             except Exception as e:
                 print(f"⚠ Could not query device details: {e}")
-                print("Using default audio input device")
                 self.device_info = None
                 self.device_id = None
             
@@ -103,14 +95,8 @@ class AudioCapture:
     def _set_system_default_device(self):
         """Set system default device when no specific device is configured"""
         try:
-            devices = sd.query_devices()
-            print("Available audio devices:")
-            for i, device in enumerate(devices):
-                marker = "*" if i == sd.default.device[0] else " "
-                print(f"{marker} {i}: {device['name']} ({device['max_input_channels']} in, {device['max_output_channels']} out)")
-            
-            print(f"Using system default input device")
-            
+            # Use system default - no need to list all devices
+            pass
         except Exception as e:
             print(f"⚠ Could not query audio devices: {e}")
     
@@ -263,7 +249,6 @@ class AudioCapture:
             raise RuntimeError("Audio capture not available")
         
         if self.is_recording:
-            print("Already recording")
             return True
         
         try:
@@ -276,11 +261,10 @@ class AudioCapture:
             self.record_thread = threading.Thread(target=self._record_audio, daemon=True)
             self.record_thread.start()
             
-            print(f"Started recording at {self.sample_rate}Hz")
             return True
             
         except Exception as e:
-            print(f"ERROR: Failed to start recording: {e}")
+            print(f"[ERROR] Failed to start recording: {e}")
             self.is_recording = False
             return False
     
@@ -305,19 +289,22 @@ class AudioCapture:
             if self.audio_data:
                 # Concatenate all audio chunks
                 audio_array = np.concatenate(self.audio_data, axis=0)
-                print(f"Recording stopped, captured {len(audio_array)} samples")
+                duration = len(audio_array) / self.sample_rate
+                if duration < 0.5:
+                    print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio")
                 return audio_array
             else:
-                print("No audio data recorded")
                 return None
     
     def _record_audio(self):
         """Internal method to record audio in a separate thread"""
         try:
+            chunk_count = 0
             # Callback function for sounddevice
             def audio_callback(indata, frames, time_info, status):
+                nonlocal chunk_count
                 if status:
-                    print(f"Audio callback status: {status}")
+                    print(f"[WARN] Audio callback status: {status}")
                 
                 with self.lock:
                     if self.is_recording:
@@ -329,6 +316,7 @@ class AudioCapture:
                         
                         # Store audio data
                         self.audio_data.append(audio_chunk.copy())
+                        chunk_count += 1
             
             # Determine device to use for recording
             device_to_use = self.preferred_device_id if self.preferred_device_id is not None else None
@@ -347,9 +335,9 @@ class AudioCapture:
                     time.sleep(0.1)
                     
         except Exception as e:
-            print(f"Error in recording thread: {e}")
-        finally:
-            print("Recording thread finished")
+            print(f"[ERROR] Error in recording thread: {e}")
+            import traceback
+            traceback.print_exc()
     
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
         """Start monitoring audio levels without recording"""

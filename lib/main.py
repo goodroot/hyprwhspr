@@ -4,9 +4,6 @@ hyprwhspr - Voice dictation application for Hyprland (Headless Mode)
 Fast, reliable speech-to-text with instant text injection
 """
 
-print("🚀 HYPRWHSPR STARTING UP!")
-print("=" * 50)
-
 import sys
 import time
 from pathlib import Path
@@ -63,7 +60,6 @@ class hyprwhsprApp:
                     self._on_shortcut_released,
                     grab_keys=grab_keys,
                 )
-                print(f"🎯 Global shortcut configured (push-to-talk): {shortcut_key}")
             else:
                 # Toggle mode: only register press callback
                 self.global_shortcuts = GlobalShortcuts(
@@ -71,9 +67,8 @@ class hyprwhsprApp:
                     self._on_shortcut_triggered,
                     grab_keys=grab_keys,
                 )
-                print(f"🎯 Global shortcut configured (toggle): {shortcut_key}")
         except Exception as e:
-            print(f"❌ Failed to initialize global shortcuts: {e}")
+            print(f"[ERROR] Failed to initialize global shortcuts: {e}")
             self.global_shortcuts = None
 
     def _on_shortcut_triggered(self):
@@ -105,7 +100,6 @@ class hyprwhsprApp:
             return
 
         try:
-            print("🎤 Starting recording...")
             self.is_recording = True
             
             # Write recording status to file for tray script
@@ -117,10 +111,8 @@ class hyprwhsprApp:
             # Start audio capture
             self.audio_capture.start_recording()
             
-            print("✅ Recording started - speak now!")
-            
         except Exception as e:
-            print(f"❌ Failed to start recording: {e}")
+            print(f"[ERROR] Failed to start recording: {e}")
             self.is_recording = False
             self._write_recording_status(False)
 
@@ -130,7 +122,6 @@ class hyprwhsprApp:
             return
 
         try:
-            print("🛑 Stopping recording...")
             self.is_recording = False
             
             # Write recording status to file for tray script
@@ -145,10 +136,10 @@ class hyprwhsprApp:
             if audio_data is not None:
                 self._process_audio(audio_data)
             else:
-                print("⚠️ No audio data captured")
+                print("[WARN] No audio data captured")
                 
         except Exception as e:
-            print(f"❌ Error stopping recording: {e}")
+            print(f"[ERROR] Error stopping recording: {e}")
 
     def _process_audio(self, audio_data):
         """Process captured audio through Whisper"""
@@ -157,33 +148,29 @@ class hyprwhsprApp:
 
         try:
             self.is_processing = True
-            print("🧠 Processing audio with Whisper...")
             
             # Transcribe audio
             transcription = self.whisper_manager.transcribe_audio(audio_data)
             
             if transcription and transcription.strip():
                 self.current_transcription = transcription.strip()
-                print(f"📝 Transcription: {self.current_transcription}")
                 
                 # Inject text
                 self._inject_text(self.current_transcription)
             else:
-                print("⚠️ No transcription generated")
+                print("[WARN] No transcription generated")
                 
         except Exception as e:
-            print(f"❌ Error processing audio: {e}")
+            print(f"[ERROR] Error processing audio: {e}")
         finally:
             self.is_processing = False
 
     def _inject_text(self, text):
         """Inject transcribed text into active application"""
         try:
-            print(f"⌨️ Injecting text: {text}")
             self.text_injector.inject_text(text)
-            print("✅ Text injection completed")
         except Exception as e:
-            print(f"❌ Text injection failed: {e}")
+            print(f"[ERROR] Text injection failed: {e}")
 
     def _write_recording_status(self, is_recording):
         """Write recording status to file for tray script"""
@@ -199,34 +186,41 @@ class hyprwhsprApp:
                 if status_file.exists():
                     status_file.unlink()
         except Exception as e:
-            print(f"⚠️ Failed to write recording status: {e}")
+            print(f"[WARN] Failed to write recording status: {e}")
 
     def run(self):
         """Start the application"""
-        print("🚀 Starting hyprwhspr...")
+        # Check audio capture availability
+        if not self.audio_capture.is_available():
+            print("[ERROR] Audio capture not available!")
+            return False
 
         # Initialize whisper manager
         if not self.whisper_manager.initialize():
-            print("❌ Failed to initialize Whisper. Please ensure whisper.cpp is built.")
-            print("Run the build scripts first.")
+            print("[ERROR] Failed to initialize Whisper.")
             return False
-
-        print("✅ hyprwhspr initialized successfully")
-        print("🎤 Listening for global shortcuts...")
         
         # Start global shortcuts
         if self.global_shortcuts:
-            self.global_shortcuts.start()
+            if not self.global_shortcuts.start():
+                print("[ERROR] Failed to start global shortcuts!")
+                print("[ERROR] Check permissions: you may need to be in 'input' group")
+                return False
+        else:
+            print("[ERROR] Global shortcuts not initialized!")
+            return False
+        
+        print("\n[READY] hyprwhspr ready - press shortcut to start dictation")
         
         try:
             # Keep the application running
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("\n🛑 Shutting down hyprwhspr...")
+            print("\n[SHUTDOWN] Shutting down hyprwhspr...")
             self._cleanup()
         except Exception as e:
-            print(f"❌ Error in main loop: {e}")
+            print(f"[ERROR] Error in main loop: {e}")
             self._cleanup()
             return False
         
@@ -246,25 +240,24 @@ class hyprwhsprApp:
             # Save configuration
             self.config.save_config()
             
-            print("✅ Cleanup completed")
+            print("[CLEANUP] Cleanup completed")
             
         except Exception as e:
-            print(f"⚠️ Error during cleanup: {e}")
+            print(f"[WARN] Error during cleanup: {e}")
 
 
 def main():
     """Main entry point"""
-    print("🎤 hyprwhspr")
-    print("🚀 Starting hyprwhspr...")
-    
     try:
         app = hyprwhsprApp()
         app.run()
     except KeyboardInterrupt:
-        print("\n🛑 Stopping hyprwhspr...")
+        print("\n[SHUTDOWN] Stopping hyprwhspr...")
         app._cleanup()
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ERROR] Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 

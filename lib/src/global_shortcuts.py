@@ -152,11 +152,6 @@ class GlobalShortcuts:
 
         # Initialize keyboard devices
         self._discover_keyboards()
-
-        print(f"Global shortcuts initialized with key: {primary_key}")
-        print(f"Parsed keys: {[self._keycode_to_name(k) for k in self.target_keys]}")
-        print(f"Found {len(self.devices)} keyboard device(s)")
-        print(f"Key grabbing: {'enabled' if grab_keys else 'disabled'}")
         
     def _discover_keyboards(self):
         """Discover and initialize keyboard input devices"""
@@ -165,42 +160,50 @@ class GlobalShortcuts:
         
         try:
             # Find all input devices
-            devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+            all_device_paths = evdev.list_devices()
+            devices = [evdev.InputDevice(path) for path in all_device_paths]
             
             # If a specific device path is selected, only use that device
             if self.selected_device_path:
                 devices = [dev for dev in devices if dev.path == self.selected_device_path]
                 if not devices:
-                    print(f"Warning: Selected device {self.selected_device_path} not found!")
+                    print(f"[WARN] Selected device {self.selected_device_path} not found!")
                     # Fall back to auto-discovery
                     devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
             
+            keyboard_count = 0
             for device in devices:
                 # Check if device has keyboard capabilities
                 if self._is_keyboard_device(device):
+                    keyboard_count += 1
                     try:
-                        # Test if we can grab the device (requires root)
+                        # Test if we can grab the device (requires root or input group)
                         device.grab()
                         device.ungrab()
                         
                         self.devices.append(device)
                         self.device_fds[device.fd] = device
-                        print(f"Added keyboard device: {device.name} ({device.path})")
                         
                         # If we selected a specific device and found it, we can stop here
                         if self.selected_device_path and device.path == self.selected_device_path:
                             break
                         
                     except (OSError, IOError) as e:
-                        print(f"Cannot access device {device.name}: {e}")
+                        print(f"[WARN] Cannot access device {device.name}: {e}")
+                        print(f"[WARN]   This usually means you need root or input group membership")
                         device.close()
                         
         except Exception as e:
-            print(f"Error discovering keyboards: {e}")
+            print(f"[ERROR] Error discovering keyboards: {e}")
+            import traceback
+            traceback.print_exc()
             
         if not self.devices:
-            print("Warning: No accessible keyboard devices found!")
-            print("Make sure the application is running with root privileges.")
+            print("[ERROR] No accessible keyboard devices found!")
+            print("[ERROR] Solutions:")
+            print("[ERROR]   1. Add yourself to 'input' group: sudo usermod -aG input $USER")
+            print("[ERROR]   2. Run with sudo: sudo hyprwhspr")
+            print("[ERROR]   3. Disable key grabbing in config (grab_keys: false)")
     
     def _is_keyboard_device(self, device: InputDevice) -> bool:
         """Check if a device is a keyboard by testing for common keyboard keys"""
@@ -294,20 +297,26 @@ class GlobalShortcuts:
                 device_fds = [dev.fd for dev in self.devices]
                 ready_fds, _, _ = select.select(device_fds, [], [], 0.1)
                 
+                # Don't log every event batch - too verbose
+                # Only log if we're debugging a specific issue
+                
                 for fd in ready_fds:
                     if fd in self.device_fds:
                         device = self.device_fds[fd]
                         try:
-                            events = device.read()
+                            # device.read() returns a generator, convert to list
+                            events = list(device.read())
                             for event in events:
                                 self._process_event(event)
-                        except (OSError, IOError):
+                        except (OSError, IOError) as e:
                             # Device disconnected or error
-                            print(f"Lost connection to device: {device.name}")
+                            print(f"[ERROR] Lost connection to device: {device.name}: {e}")
                             self._remove_device(device)
                             
         except Exception as e:
-            print(f"Error in keyboard event loop: {e}")
+            print(f"[ERROR] Error in keyboard event loop: {e}")
+            import traceback
+            traceback.print_exc()
         
     def _remove_device(self, device: InputDevice):
         """Remove a disconnected device from monitoring"""
@@ -332,6 +341,7 @@ class GlobalShortcuts:
         """Process individual keyboard events"""
         if event.type == ecodes.EV_KEY:
             key_event = categorize(event)
+            key_name = self._keycode_to_name(event.code)
             should_suppress = False
 
             if key_event.keystate == key_event.key_down:
@@ -411,12 +421,13 @@ class GlobalShortcuts:
         """Trigger the callback function"""
         if self.callback:
             try:
-                print(f"Global shortcut triggered: {self.primary_key}")
                 # Run callback in a separate thread to avoid blocking the listener
                 callback_thread = threading.Thread(target=self.callback, daemon=True)
                 callback_thread.start()
             except Exception as e:
-                print(f"Error calling shortcut callback: {e}")
+                print(f"[ERROR] Error calling shortcut callback: {e}")
+                import traceback
+                traceback.print_exc()
 
     def _check_combination_release(self, was_combination_active: bool):
         """Check if combination was released and trigger release callback"""
@@ -433,12 +444,13 @@ class GlobalShortcuts:
         """Trigger the release callback function"""
         if self.release_callback:
             try:
-                print(f"Global shortcut released: {self.primary_key}")
                 # Run callback in a separate thread to avoid blocking the listener
                 callback_thread = threading.Thread(target=self.release_callback, daemon=True)
                 callback_thread.start()
             except Exception as e:
-                print(f"Error calling shortcut release callback: {e}")
+                print(f"[ERROR] Error calling shortcut release callback: {e}")
+                import traceback
+                traceback.print_exc()
     
     def start(self) -> bool:
         """Start listening for global shortcuts"""
@@ -464,11 +476,12 @@ class GlobalShortcuts:
             self.listener_thread.start()
             self.is_running = True
 
-            print(f"Global shortcuts started, listening for {self.primary_key}")
             return True
 
         except Exception as e:
-            print(f"Failed to start global shortcuts: {e}")
+            print(f"[ERROR] Failed to start global shortcuts: {e}")
+            import traceback
+            traceback.print_exc()
             self._cleanup_key_grabbing()
             return False
 
@@ -478,21 +491,27 @@ class GlobalShortcuts:
             # Create a virtual keyboard that can emit all key events
             # This will re-emit keys that aren't part of our shortcut
             self.uinput = UInput(name="hyprwhspr-virtual-keyboard")
-            print("Created virtual keyboard for key pass-through")
 
             # Grab all keyboard devices to intercept their events
+            grabbed_count = 0
             for device in self.devices:
                 try:
                     device.grab()
-                    print(f"Grabbed device: {device.name}")
+                    grabbed_count += 1
                 except Exception as e:
-                    print(f"Warning: Could not grab {device.name}: {e}")
+                    print(f"[ERROR] Could not grab {device.name}: {e}")
+
+            if grabbed_count == 0:
+                print("[ERROR] No devices were grabbed! Shortcuts will not work!")
+                print("[ERROR] Try running with sudo or check permissions")
 
             self.devices_grabbed = True
 
         except Exception as e:
-            print(f"Warning: Could not set up key grabbing: {e}")
-            print("Keys may leak through to applications")
+            print(f"[ERROR] Could not set up key grabbing: {e}")
+            print("[ERROR] Keys may leak through to applications")
+            import traceback
+            traceback.print_exc()
             self._cleanup_key_grabbing()
 
     def _cleanup_key_grabbing(self):
@@ -502,7 +521,6 @@ class GlobalShortcuts:
             for device in self.devices:
                 try:
                     device.ungrab()
-                    print(f"Ungrabbed device: {device.name}")
                 except:
                     pass
             self.devices_grabbed = False

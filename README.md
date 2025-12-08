@@ -55,7 +55,7 @@ yay -S python-pywhispercpp-cuda
 
 If AMD card with ROCm, VERY fast for any model:
 
-```
+```bash
 yay -S python-pywhispercpp-rocm  
 ````
 
