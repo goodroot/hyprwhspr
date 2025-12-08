@@ -238,7 +238,18 @@ def _prompt_backend_selection():
     print("\n" + "="*60)
     print("Backend Selection")
     print("="*60)
-    print("\nChoose your transcription backend:")
+    
+    # Inform user if local backend is not available
+    if 'local' not in available_backends:
+        print("\nNote: Local backend (pywhispercpp) is not available.")
+        print("      To enable local transcription, install one of:")
+        print("        • python-pywhispercpp-cpu    - CPU-only (works on all systems)")
+        print("        • python-pywhispercpp-cuda    - NVIDIA GPU acceleration")
+        print("        • python-pywhispercpp-rocm    - AMD GPU acceleration")
+        print("      Install with: yay -S python-pywhispercpp-cpu")
+        print()
+    
+    print("Choose your transcription backend:")
     print()
     
     choices = []
