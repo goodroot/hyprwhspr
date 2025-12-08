@@ -590,7 +590,7 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
 # ==================== Model Download ====================
 
 def download_pywhispercpp_model(model_name: str = 'base.en') -> bool:
-    """Download pywhispercpp model"""
+    """Download pywhispercpp model with progress feedback"""
     log_info(f"Downloading pywhispercpp model: {model_name}…")
     
     PYWHISPERCPP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -607,7 +607,21 @@ def download_pywhispercpp_model(model_name: str = 'base.en') -> bool:
     
     log_info(f"Fetching {model_url}")
     try:
-        urllib.request.urlretrieve(model_url, model_file)
+        def show_progress(block_num, block_size, total_size):
+            """Callback to show download progress"""
+            downloaded = block_num * block_size
+            percent = min(100, (downloaded * 100) // total_size) if total_size > 0 else 0
+            size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
+            downloaded_mb = downloaded / (1024 * 1024)
+            
+            # Show progress on same line
+            sys.stdout.write(f"\r[INFO] Downloading: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)")
+            sys.stdout.flush()
+            
+            if downloaded >= total_size and total_size > 0:
+                sys.stdout.write("\n")  # New line when complete
+        
+        urllib.request.urlretrieve(model_url, model_file, reporthook=show_progress)
         
         # Store hash for future validation
         model_hash = compute_file_hash(model_file)

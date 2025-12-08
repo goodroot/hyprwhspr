@@ -404,28 +404,16 @@ def setup_command():
         
         # Step 5: Model download (if local backend)
         if backend != 'remote' and selected_model:
-            try:
-                # Try modern layout first
-                try:
-                    from pywhispercpp.model import Model  # noqa: F401
-                    pywhispercpp_available = True
-                except ImportError:
-                    # Fallback for flat layout
-                    try:
-                        from pywhispercpp import Model  # noqa: F401
-                        pywhispercpp_available = True
-                    except ImportError:
-                        pywhispercpp_available = False
-            except ImportError:
-                pywhispercpp_available = False
-            
-            if pywhispercpp_available:
-                print(f"\nDownloading model: {selected_model}")
-                download_model(selected_model)
+            # If we got here and backend != 'remote', backend installation succeeded
+            # (or was skipped, but user selected a model, so they want to use it)
+            # Just download the model - we don't need to check if pywhispercpp is importable
+            # (it's in the venv, and the service will use venv Python)
+            print(f"\nDownloading model: {selected_model}")
+            if download_model(selected_model):
+                log_success(f"Model {selected_model} downloaded successfully")
             else:
-                log_warning(f"{backend.upper()} backend selected but pywhispercpp not available")
-                log_warning("Backend installation may have failed or is incomplete")
-                log_info("You can download the model later with: hyprwhspr model download")
+                log_warning(f"Model download failed. You can download it later with:")
+                log_warning(f"  hyprwhspr model download {selected_model}")
         
         # Step 6: Validation
         print("\n" + "="*60)
@@ -876,7 +864,7 @@ def model_command(action: str, model_name: str = 'base.en'):
 
 
 def download_model(model_name: str = 'base.en'):
-    """Download pywhispercpp model"""
+    """Download pywhispercpp model with progress feedback"""
     log_info(f"Downloading pywhispercpp model: {model_name}")
     
     PYWHISPERCPP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -896,7 +884,22 @@ def download_model(model_name: str = 'base.en'):
     log_info(f"Fetching {model_url}")
     try:
         import urllib.request
-        urllib.request.urlretrieve(model_url, model_file)
+        
+        def show_progress(block_num, block_size, total_size):
+            """Callback to show download progress"""
+            downloaded = block_num * block_size
+            percent = min(100, (downloaded * 100) // total_size) if total_size > 0 else 0
+            size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
+            downloaded_mb = downloaded / (1024 * 1024)
+            
+            # Show progress on same line
+            sys.stdout.write(f"\r[INFO] Downloading: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)")
+            sys.stdout.flush()
+            
+            if downloaded >= total_size and total_size > 0:
+                sys.stdout.write("\n")  # New line when complete
+        
+        urllib.request.urlretrieve(model_url, model_file, reporthook=show_progress)
         log_success(f"Model downloaded: {model_file}")
         return True
     except (urllib.error.URLError, IOError) as e:
