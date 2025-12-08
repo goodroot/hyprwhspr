@@ -390,7 +390,10 @@ def _prompt_backend_selection():
             }
             print(f"\n✓ Selected: {backend_names[selected]}")
             return (selected, False)  # Return tuple: (backend, cleanup_venv)
-        except (ValueError, IndexError, KeyboardInterrupt):
+        except KeyboardInterrupt:
+            print("\n\nCancelled by user.")
+            raise
+        except (ValueError, IndexError):
             print("\nInvalid selection. Please try again.")
             continue
 
@@ -436,7 +439,10 @@ def _prompt_model_selection():
             selected_model = all_models[int(choice) - 1]
             print(f"\n✓ Selected: {selected_model}")
             return selected_model
-        except (ValueError, IndexError, KeyboardInterrupt):
+        except KeyboardInterrupt:
+            print("\n\nCancelled by user.")
+            raise
+        except (ValueError, IndexError):
             print("\nInvalid selection. Please try again.")
             continue
 
@@ -597,7 +603,10 @@ def _prompt_remote_provider_selection():
                 
                 return ('custom', None, api_key, custom_config)
                 
-        except (ValueError, IndexError, KeyboardInterrupt):
+        except KeyboardInterrupt:
+            print("\n\nCancelled by user.")
+            raise
+        except (ValueError, IndexError):
             print("\nInvalid selection. Please try again.")
             continue
 
@@ -829,15 +838,13 @@ def setup_command():
         print("\nNext steps:")
         if setup_systemd_choice:
             print("  1. Log out and back in (for group permissions to take effect)")
-            print("  2. Enable and start the service: systemctl --user enable --now hyprwhspr")
         else:
             print("  1. Log out and back in (if permissions were set up)")
             print("  2. Run hyprwhspr manually or set up systemd service later")
         
         # If backend was changed, suggest restarting service
         if current_backend and current_backend != backend:
-            print("  3. Backend changed. Restart service with: systemctl --user restart hyprwhspr")
-            print("  4. Press hotkey to start dictation!")
+            print("  3. Press hotkey to start dictation!")
         else:
             print("  3. Press hotkey to start dictation!")
         print()

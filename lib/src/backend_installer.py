@@ -481,7 +481,7 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
             log_warning(f"Could not update pywhispercpp repository to v1.4.0: {e}")
     
     # Build with CUDA support
-    log_info("Building pywhispercpp with CUDA (ggml CUDA) via pip")
+    log_info("Building pywhispercpp with CUDA (ggml CUDA) via pip - may take several minutes")
     env = os.environ.copy()
     env['GGML_CUDA'] = 'ON'
     
@@ -745,7 +745,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
             result = run_command([
                 'timeout', '5s', str(python_bin), '-c',
                 'import sounddevice, pywhispercpp'
-            ], check=False, capture_output=True)
+            ], check=False, capture_output=True, show_output_on_error=False)
             deps_installed = result.returncode == 0
         except Exception:
             pass
