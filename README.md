@@ -38,23 +38,37 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 ### Quick start
 
-For Arch Linux and Omarchy users, `hyprwhspr` is available via the AUR:
+For Arch Linux and Omarchy users, `hyprwhspr` is available via the AUR.
+
+First, choose a local backend (pick one):
 
 ```bash
+# CPU only. Fast and accurate, smaller models only
+yay -S python-pywhispercpp-cpu 
+```
+
+If NVIDIA card with CUDA, VERY fast for any model:
+
+```bash
+yay -S python-pywhispercpp-cuda
+```
+
+If AMD card with ROCm, VERY fast for any model:
+
+```
+yay -S python-pywhispercpp-rocm  
+````
+Or, proceed to installer if going remote (Cloud APIs, Parakeet).
+
+Now, install:
+
+```
 # Install hyprwhspr
 yay -S hyprwhspr
 
-# Choose a local backend (pick one):
-yay -S python-pywhispercpp-cpu    # CPU-only
-# OR
-yay -S python-pywhispercpp-cuda   # NVIDIA GPU
-# OR
-yay -S python-pywhispercpp-rocm   # AMD GPU
-# OR
-# None if going remote (Cloud APIs, Parakeet, etc.)
-
 # Run interactive setup
 hyprwhspr setup
+```
 ```
 
 **The setup will:**
