@@ -431,27 +431,7 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 
 Whisper is the default, but any model works via API.
 
-See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for the [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3) example.
-
-After that, setup the following to match your backend, and then restart hyprwhspr:
-
-```jsonc
-{
-    "transcription_backend": "rest-api",
-    "rest_endpoint_url": "https://127.0.0.1:8080/transcribe",
-    "rest_headers": {
-        "authorization": "Bearer your-api-key-here",
-        "x-model": "parakeet-tdt-0.6b-v3"
-    },
-    "rest_body": {
-        "temperature": "0.0"
-    },
-    "rest_api_key": "your-api-key-here",  // optional, equivalent to rest_headers: { authorization: Bearer your-api-key-here }
-    "rest_timeout": 60                    // optional, default: 30
-}
-```
-
-Uses local Python and optionally systemd. Works great with GPU, or set the CPU flag.
+Select Parakeet within `hyprwhspr setup`.
 
 ## Troubleshooting
 
