@@ -465,6 +465,15 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     env = os.environ.copy()
     env['GGML_CUDA'] = 'ON'
     
+    # Force CMake to use venv's Python (critical for correct Python version detection)
+    venv_python = VENV_DIR / 'bin' / 'python'
+    env['CMAKE_ARGS'] = f"-DPython3_EXECUTABLE={venv_python}"
+    env['PYTHON_EXECUTABLE'] = str(venv_python)
+    
+    # Also ensure venv's bin is first in PATH so CMake finds the right tools
+    venv_bin = str(VENV_DIR / 'bin')
+    env['PATH'] = f"{venv_bin}:{env.get('PATH', '')}"
+    
     try:
         run_command([
             str(pip_bin), 'install',
@@ -551,6 +560,15 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
     env['GGML_HIP'] = 'ON'
     env['GGML_ROCM'] = '1'
     env['CMAKE_PREFIX_PATH'] = rocm_path
+    
+    # Force CMake to use venv's Python (critical for correct Python version detection)
+    venv_python = VENV_DIR / 'bin' / 'python'
+    env['CMAKE_ARGS'] = f"-DPython3_EXECUTABLE={venv_python}"
+    env['PYTHON_EXECUTABLE'] = str(venv_python)
+    
+    # Ensure venv's bin is first in PATH (after ROCm) so CMake finds the right tools
+    venv_bin = str(VENV_DIR / 'bin')
+    env['PATH'] = f"{venv_bin}:{env.get('PATH', '')}"
     
     # Build with ROCm support
     log_info("Building pywhispercpp with ROCm (ggml HIPBLAS) via pip")
