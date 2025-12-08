@@ -40,29 +40,6 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 For Arch Linux and Omarchy users, `hyprwhspr` is available via the AUR.
 
-First, choose a local backend (pick one):
-
-```bash
-# CPU only. Fast and accurate, smaller models only
-yay -S python-pywhispercpp-cpu 
-```
-
-If NVIDIA card with CUDA, VERY fast for any model:
-
-```bash
-yay -S python-pywhispercpp-cuda
-```
-
-If AMD card with ROCm, VERY fast for any model:
-
-```bash
-yay -S python-pywhispercpp-rocm  
-````
-
-Or, proceed to installer if going remote (Cloud APIs, Parakeet).
-
-Now, install:
-
 ```
 # Install hyprwhspr
 yay -S hyprwhspr
@@ -73,10 +50,10 @@ hyprwhspr setup
 
 **The setup will:**
 
-1. ✅ Configure transcription backend (local or remote)
+1. ✅ Configure transcription backend (pywhispercpp or REST API)
 2. ✅ Set up systemd user services
 3. ✅ Configure Waybar integration (if Waybar is installed)
-4. ✅ Download models (if using local backend)
+4. ✅ Download models (if using pywhispercpp backend)
 5. ✅ Set up permissions
 6. ✅ Validate installation
 
@@ -101,64 +78,6 @@ yay -Syu hyprwhspr
 # If needed, re-run setup (idempotent)
 hyprwhspr setup
 ```
-
----
-
-> **Migrating from the old installation method?** If you previously installed via `./scripts/install-omarchy.sh`, you can migrate to the AUR package by:
-> 1. Installing the AUR package: `yay -S hyprwhspr`
-> 2. Installing your preferred backend: `yay -S python-pywhispercpp-cpu` (or cuda/rocm)
-> 3. Running setup: `hyprwhspr setup`
-> 
-> Your existing configuration and models will be preserved. The old venv-based installation is no longer needed.
-
----
-
-## Installation
-
-**1. Install hyprwhspr:**
-
-```bash
-# Using yay (or your preferred AUR helper)
-yay -S hyprwhspr
-```
-
-**2. Choose a backend (pick exactly one):**
-
-For **CPU-only** (works on all systems):
-```bash
-yay -S python-pywhispercpp-cpu
-```
-
-For **NVIDIA GPU acceleration**:
-```bash
-yay -S python-pywhispercpp-cuda
-```
-
-For **AMD GPU acceleration** (ROCm):
-```bash
-yay -S python-pywhispercpp-rocm
-```
-
-> **Note:** Only install **one** `python-pywhispercpp-*` variant at a time. They conflict with each other by design.
-> 
-> **ROCm users:** The `python-pywhispercpp-rocm` package requires ROCm <7 due to compatibility constraints with pywhispercpp v1.4.0.
-
-**3. Run interactive setup:**
-
-```bash
-hyprwhspr setup
-```
-
-The setup command will guide you through:
-- Backend selection (local CPU/CUDA/ROCm or remote)
-- Waybar integration (auto-detected if Waybar is installed)
-- Systemd user services
-- Model download (if using local backend)
-- Permissions setup
-
-**4. For remote-only setups** (no local backend):
-
-If you're using a remote transcription backend, you can skip installing any `python-pywhispercpp-*` package. The setup will automatically skip model download when configured for remote backend.
 
 ### CLI Commands
 
@@ -211,13 +130,13 @@ Edit `~/.config/hyprwhspr/config.json`:
 - **`push_to_talk: false`** (default) - Toggle mode: press to start, press again to stop
 - **`push_to_talk: true`** - Push-to-talk mode: hold to record, release to stop
 
-**Remote backends** - use any ASR backend via HTTP API:
+**REST API backends** - use any ASR backend via HTTP API (can run locally or remotely):
 
-See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for backend examples, such as [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3).
+See [hyprwhspr-backends](https://github.com/goodroot/hyprwhspr-backends) for backend examples, such as [Parakeet-tdt-0.6b-v3](https://github.com/goodroot/hyprwhspr-backends/tree/main/backends/parakeet-tdt-0.6b-v3) which runs locally but uses REST API interface.
 
 ```jsonc
 {
-    "transcription_backend": "remote",
+    "transcription_backend": "rest-api",
     "rest_endpoint_url": "https://your-server.example.com/transcribe",
     "rest_headers": {                     // optional arbitrary headers
         "authorization": "Bearer your-api-key-here"
@@ -518,7 +437,7 @@ After that, setup the following to match your backend, and then restart hyprwhsp
 
 ```jsonc
 {
-    "transcription_backend": "remote",
+    "transcription_backend": "rest-api",
     "rest_endpoint_url": "https://127.0.0.1:8080/transcribe",
     "rest_headers": {
         "authorization": "Bearer your-api-key-here",
