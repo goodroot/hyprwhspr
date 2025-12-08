@@ -6,6 +6,7 @@ Fast, reliable speech-to-text with instant text injection
 
 import sys
 import time
+import threading
 from pathlib import Path
 
 # Add the src directory to the Python path
@@ -41,6 +42,7 @@ class hyprwhsprApp:
         self.is_recording = False
         self.is_processing = False
         self.current_transcription = ""
+        self.audio_level_thread = None
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -111,6 +113,9 @@ class hyprwhsprApp:
             # Start audio capture
             self.audio_capture.start_recording()
             
+            # Start audio level monitoring thread
+            self._start_audio_level_monitoring()
+            
         except Exception as e:
             print(f"[ERROR] Failed to start recording: {e}")
             self.is_recording = False
@@ -123,6 +128,9 @@ class hyprwhsprApp:
 
         try:
             self.is_recording = False
+            
+            # Stop audio level monitoring
+            self._stop_audio_level_monitoring()
             
             # Write recording status to file for tray script
             self._write_recording_status(False)
@@ -187,6 +195,41 @@ class hyprwhsprApp:
                     status_file.unlink()
         except Exception as e:
             print(f"[WARN] Failed to write recording status: {e}")
+
+    def _start_audio_level_monitoring(self):
+        """Start monitoring and writing audio levels to file"""
+        if self.audio_level_thread and self.audio_level_thread.is_alive():
+            return
+        
+        def monitor_audio_level():
+            level_file = Path.home() / '.config' / 'hyprwhspr' / 'audio_level'
+            level_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            while self.is_recording:
+                try:
+                    level = self.audio_capture.get_audio_level()
+                    with open(level_file, 'w') as f:
+                        f.write(f'{level:.3f}')
+                except Exception as e:
+                    # Silently fail - don't spam errors
+                    pass
+                time.sleep(0.1)  # Update 10 times per second
+            
+            # Clean up file when not recording
+            try:
+                if level_file.exists():
+                    level_file.unlink()
+            except:
+                pass
+        
+        self.audio_level_thread = threading.Thread(target=monitor_audio_level, daemon=True)
+        self.audio_level_thread.start()
+
+    def _stop_audio_level_monitoring(self):
+        """Stop audio level monitoring"""
+        if self.audio_level_thread and self.audio_level_thread.is_alive():
+            # Thread will exit when is_recording becomes False
+            pass
 
     def run(self):
         """Start the application"""

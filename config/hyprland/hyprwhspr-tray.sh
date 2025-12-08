@@ -294,15 +294,50 @@ check_service_health() {
     return 0
 }
 
+# Function to get audio level visualization
+get_audio_level_viz() {
+    local level_file="$HOME/.config/hyprwhspr/audio_level"
+    
+    if [[ ! -f "$level_file" ]]; then
+        echo ""
+        return
+    fi
+    
+    local level
+    level=$(cat "$level_file" 2>/dev/null || echo "0")
+    
+    # Convert level (0.0-1.0) to 8-bar visualization
+    # Using Unicode block characters: ▁▂▃▄▅▆▇█
+    local bars=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    local num_bars=${#bars[@]}
+    
+    # Scale level to number of bars (0-7)
+    local bar_index=$(awk -v l="$level" -v n="$num_bars" 'BEGIN {
+        idx = int(l * n)
+        if (idx >= n) idx = n - 1
+        if (idx < 0) idx = 0
+        print idx
+    }')
+    
+    echo "${bars[$bar_index]}"
+}
+
 # Function to emit JSON output for waybar with granular error classes
 emit_json() {
     local state="$1" reason="${2:-}" custom_tooltip="${3:-}"
     local icon text tooltip class="$state"
+    local audio_viz=""
+    
+    # Get audio visualization if recording
+    if [[ "$state" == "recording" ]]; then
+        audio_viz=$(get_audio_level_viz)
+        [[ -n "$audio_viz" ]] && audio_viz=" $audio_viz"
+    fi
     
     case "$state" in
         "recording")
             icon="󰍬"
-            text="$icon REC"
+            text="$icon REC$audio_viz"
             tooltip="hyprwhspr: Currently recording\n\nLeft-click: Stop recording\nRight-click: Restart\nMiddle-click: Restart"
             ;;
         "error")

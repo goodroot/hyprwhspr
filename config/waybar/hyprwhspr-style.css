@@ -18,6 +18,7 @@
 #custom-hyprwhspr.recording {
   color: #dc2626;            /* red-600 - darker red for better contrast */
   border-bottom-color: #dc2626;
+  font-family: monospace;    /* Better rendering of block characters */
 }
 
 #custom-hyprwhspr.error {
