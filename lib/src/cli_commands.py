@@ -765,9 +765,9 @@ def setup_command():
         print("Backend Installation")
         print("="*60)
         if backend == 'parakeet':
-            print(f"\nThis will install the Parakeet backend.")
+            print("\nThis will install the Parakeet backend.")
             print("This will create a separate virtual environment and install dependencies.")
-            print("The Parakeet server will need to be started manually after installation.")
+            print("Parakeet runs as a local REST API server that hyprwhspr connects to.")
         else:
             print(f"\nThis will install the {backend.upper()} backend for pywhispercpp.")
             print("This may take several minutes as it compiles from source.")
@@ -795,8 +795,7 @@ def setup_command():
             'rest_body': {}
         }
         log_success("Parakeet REST API configuration ready")
-        log_info("Note: Start the Parakeet server with:")
-        log_info(f"  {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
+        # Note about manual start will be shown later if systemd is not set up
     elif backend in ['rest-api', 'remote']:
         # Prompt for remote provider selection
         provider_result = _prompt_remote_provider_selection()
@@ -836,8 +835,18 @@ def setup_command():
     print("\n" + "="*60)
     print("Systemd Service")
     print("="*60)
-    print("\nSystemd user service will run hyprwhspr in the background.")
-    setup_systemd_choice = Confirm.ask("Set up systemd user service?", default=True)
+    if backend == 'parakeet':
+        print("\nSystemd user services will run both hyprwhspr and the Parakeet server in the background.")
+        print("This will enable/configure:")
+        print("  • ydotool.service (required dependency, will be enabled)")
+        print("  • parakeet-tdt-0.6b-v3.service (Parakeet REST API server)")
+        print("  • hyprwhspr.service (main application)")
+    else:
+        print("\nSystemd user service will run hyprwhspr in the background.")
+        print("This will enable/configure:")
+        print("  • ydotool.service (required dependency, will be enabled)")
+        print("  • hyprwhspr.service (main application)")
+    setup_systemd_choice = Confirm.ask("Set up systemd user service" + ("s" if backend == 'parakeet' else ""), default=True)
     
     # Step 5: Permissions setup
     print("\n" + "="*60)
@@ -868,7 +877,16 @@ def setup_command():
     elif selected_model:
         print(f"Model: {selected_model}")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
-    print(f"Systemd service: {'Yes' if setup_systemd_choice else 'No'}")
+    if backend == 'parakeet':
+        if setup_systemd_choice:
+            print("Systemd services: Yes (ydotool + Parakeet + hyprwhspr)")
+        else:
+            print("Systemd services: No")
+    else:
+        if setup_systemd_choice:
+            print("Systemd services: Yes (ydotool + hyprwhspr)")
+        else:
+            print("Systemd service: No")
     print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
     print()
     
@@ -931,16 +949,17 @@ def setup_command():
         print("="*60)
         print("\nNext steps:")
         if setup_systemd_choice:
-            print("  Log out and back in (for group permissions to take effect)")
+            print("  1. Log out and back in (for group permissions to take effect)")
+            if backend == 'parakeet':
+                print("  2. Parakeet server will start automatically via systemd")
+            print("  3. Press hotkey to start dictation!")
         else:
-            print("  Log out and back in (if permissions were set up)")
-            print("  Run hyprwhspr manually or set up systemd service later")
-        
-        # If backend was changed, suggest restarting service
-        if current_backend and current_backend != backend:
-            print("  Press hotkey to start dictation!")
-        else:
-            print("  Press hotkey to start dictation!")
+            print("  1. Log out and back in (if permissions were set up)")
+            if backend == 'parakeet':
+                print("  2. Start the Parakeet server manually:")
+                print(f"     {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
+            print("  3. Run hyprwhspr manually or set up systemd service later")
+            print("  4. Press hotkey to start dictation!")
         print()
         
     except KeyboardInterrupt:
@@ -2021,6 +2040,10 @@ def validate_command():
         all_ok = False
         return all_ok
     
+    # Detect current backend to determine what to validate
+    current_backend = _detect_current_backend()
+    is_rest_api = current_backend in ['rest-api', 'parakeet', 'remote']
+    
     # Check static files
     required_files = [
         Path(HYPRWHSPR_ROOT) / 'bin' / 'hyprwhspr',
@@ -2039,7 +2062,7 @@ def validate_command():
     # Check packages in venv first, then fallback to current environment
     venv_python = VENV_DIR / 'bin' / 'python'
     
-    # Check sounddevice
+    # Check sounddevice (always needed)
     sounddevice_available = False
     if venv_python.exists():
         # Check in venv using subprocess
@@ -2070,27 +2093,16 @@ def validate_command():
         log_error("✗ sounddevice not available")
         all_ok = False
     
-    # Check pywhispercpp (optional)
-    # Check in venv first, then fallback to current environment
-    pywhispercpp_available = False
-    
-    if venv_python.exists():
-        # Check in venv using subprocess - try both import styles
-        try:
-            # Try modern layout first
-            result = subprocess.run(
-                [str(venv_python), '-c', 'from pywhispercpp.model import Model'],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                pywhispercpp_available = True
-            else:
-                # Fallback to flat layout
+    # Check pywhispercpp (only for local backends)
+    if not is_rest_api:
+        pywhispercpp_available = False
+        
+        if venv_python.exists():
+            # Check in venv using subprocess - try both import styles
+            try:
+                # Try modern layout first
                 result = subprocess.run(
-                    [str(venv_python), '-c', 'from pywhispercpp import Model'],
+                    [str(venv_python), '-c', 'from pywhispercpp.model import Model'],
                     check=False,
                     capture_output=True,
                     text=True,
@@ -2098,42 +2110,66 @@ def validate_command():
                 )
                 if result.returncode == 0:
                     pywhispercpp_available = True
-        except Exception:
-            pass
-    
-    # Fallback: check in current environment if not found in venv
-    if not pywhispercpp_available:
-        try:
-            # Try modern layout first
+                else:
+                    # Fallback to flat layout
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'from pywhispercpp import Model'],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        pywhispercpp_available = True
+            except Exception:
+                pass
+        
+        # Fallback: check in current environment if not found in venv
+        if not pywhispercpp_available:
             try:
-                from pywhispercpp.model import Model  # noqa: F401
-                pywhispercpp_available = True
-            except ImportError:
-                # Fallback for flat layout
+                # Try modern layout first
                 try:
-                    from pywhispercpp import Model  # noqa: F401
+                    from pywhispercpp.model import Model  # noqa: F401
                     pywhispercpp_available = True
                 except ImportError:
-                    pywhispercpp_available = False
-        except ImportError:
-            pywhispercpp_available = False
-    
-    if pywhispercpp_available:
-        log_success("✓ pywhispercpp available")
+                    # Fallback for flat layout
+                    try:
+                        from pywhispercpp import Model  # noqa: F401
+                        pywhispercpp_available = True
+                    except ImportError:
+                        pywhispercpp_available = False
+            except ImportError:
+                pywhispercpp_available = False
+        
+        if pywhispercpp_available:
+            log_success("✓ pywhispercpp available")
+        else:
+            log_warning("⚠ pywhispercpp not available")
+            print("")
+            print("To use local transcription, run: hyprwhspr setup")
+            print("This will install the backend (CPU/NVIDIA/AMD) of your choice.")
+            print("(or use REST API backend by setting 'transcription_backend': 'rest-api' in config.json)")
+            print("")
+        
+        # Check base model (only for local backends)
+        model_file = PYWHISPERCPP_MODELS_DIR / 'ggml-base.en.bin'
+        if model_file.exists():
+            log_success(f"✓ Base model exists: {model_file}")
+        else:
+            log_warning(f"⚠ Base model missing: {model_file}")
     else:
-        log_warning("⚠ pywhispercpp not available")
-        print("")
-        print("To use local transcription, run: hyprwhspr setup")
-        print("This will install the backend (CPU/NVIDIA/AMD) of your choice.")
-        print("(or use REST API backend by setting 'transcription_backend': 'rest-api' in config.json)")
-        print("")
-    
-    # Check base model
-    model_file = PYWHISPERCPP_MODELS_DIR / 'ggml-base.en.bin'
-    if model_file.exists():
-        log_success(f"✓ Base model exists: {model_file}")
-    else:
-        log_warning(f"⚠ Base model missing: {model_file}")
+        # For REST API backends, check Parakeet if applicable
+        if current_backend == 'parakeet':
+            if PARAKEET_VENV_DIR.exists():
+                log_success("✓ Parakeet venv exists")
+            else:
+                log_warning("⚠ Parakeet venv not found")
+            
+            if PARAKEET_SCRIPT.exists():
+                log_success("✓ Parakeet script exists")
+            else:
+                log_error("✗ Parakeet script missing")
+                all_ok = False
     
     if all_ok:
         log_success("Validation passed")

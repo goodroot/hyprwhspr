@@ -873,8 +873,6 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
             # Installation successful for Parakeet
             set_install_state('completed')
             log_success("Parakeet backend installation completed!")
-            log_info("Note: You need to start the Parakeet server manually:")
-            log_info(f"  {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
             return True
         
         # Setup Python venv (for cpu/nvidia/amd backends)
