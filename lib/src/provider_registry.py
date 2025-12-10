@@ -45,7 +45,7 @@ PROVIDERS: Dict[str, Dict] = {
             'groq-whisper-large-v3-turbo': {
                 'name': 'Whisper Large V3 Turbo',
                 'description': 'Fastest transcription speed',
-                'body': {'model': 'groq-whisper-large-v3-turbo'}
+                'body': {'model': 'whisper-large-v3-turbo'}
             }
         }
     }
