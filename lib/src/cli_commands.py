@@ -2031,28 +2031,87 @@ def validate_command():
             all_ok = False
     
     # Check Python imports
-    try:
-        import sounddevice  # noqa: F401
+    # Check packages in venv first, then fallback to current environment
+    venv_python = VENV_DIR / 'bin' / 'python'
+    
+    # Check sounddevice
+    sounddevice_available = False
+    if venv_python.exists():
+        # Check in venv using subprocess
+        try:
+            result = subprocess.run(
+                [str(venv_python), '-c', 'import sounddevice'],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                sounddevice_available = True
+        except Exception:
+            pass
+    
+    # Fallback: check in current environment if not found in venv
+    if not sounddevice_available:
+        try:
+            import sounddevice  # noqa: F401
+            sounddevice_available = True
+        except ImportError:
+            sounddevice_available = False
+    
+    if sounddevice_available:
         log_success("✓ sounddevice available")
-    except ImportError:
+    else:
         log_error("✗ sounddevice not available")
         all_ok = False
     
     # Check pywhispercpp (optional)
-    try:
-        # Try modern layout first
+    # Check in venv first, then fallback to current environment
+    pywhispercpp_available = False
+    
+    if venv_python.exists():
+        # Check in venv using subprocess - try both import styles
         try:
-            from pywhispercpp.model import Model  # noqa: F401
-            pywhispercpp_available = True
-        except ImportError:
-            # Fallback for flat layout
+            # Try modern layout first
+            result = subprocess.run(
+                [str(venv_python), '-c', 'from pywhispercpp.model import Model'],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                pywhispercpp_available = True
+            else:
+                # Fallback to flat layout
+                result = subprocess.run(
+                    [str(venv_python), '-c', 'from pywhispercpp import Model'],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    pywhispercpp_available = True
+        except Exception:
+            pass
+    
+    # Fallback: check in current environment if not found in venv
+    if not pywhispercpp_available:
+        try:
+            # Try modern layout first
             try:
-                from pywhispercpp import Model  # noqa: F401
+                from pywhispercpp.model import Model  # noqa: F401
                 pywhispercpp_available = True
             except ImportError:
-                pywhispercpp_available = False
-    except ImportError:
-        pywhispercpp_available = False
+                # Fallback for flat layout
+                try:
+                    from pywhispercpp import Model  # noqa: F401
+                    pywhispercpp_available = True
+                except ImportError:
+                    pywhispercpp_available = False
+        except ImportError:
+            pywhispercpp_available = False
     
     if pywhispercpp_available:
         log_success("✓ pywhispercpp available")
