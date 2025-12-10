@@ -759,6 +759,12 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
             pass
     
     try:
+        # Install ml_dtypes first with newer version to ensure compatibility with onnx
+        # onnx (transitive dep of nemo_toolkit) requires ml_dtypes with float4_e2m1fn support
+        # Version 0.5.4+ includes float4_e2m1fn
+        log_info("Installing ml_dtypes (required for onnx compatibility)...")
+        run_command([str(pip_bin), 'install', '--upgrade', 'ml_dtypes>=0.5.4'], check=True)
+        
         # Install base dependencies first (excluding torch)
         log_info("Installing base dependencies... May take a moment.")
         base_deps = [
@@ -767,7 +773,6 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
             'uvicorn[standard]',
             'soundfile',
             'python-multipart',
-            'ml_dtypes>=0.4.0',  # Required by onnx (transitive dep of nemo_toolkit)
         ]
         
         if enable_cuda:

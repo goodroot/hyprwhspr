@@ -1,10 +1,12 @@
 # Parakeet backend dependencies
+# Install ml_dtypes first to ensure compatibility with onnx
+# Version 0.5.4+ includes float4_e2m1fn required by onnx
+ml_dtypes>=0.5.4
 nemo_toolkit[asr]
 fastapi
 uvicorn[standard]
 soundfile
 python-multipart
-ml_dtypes>=0.4.0
 cuda-python>=12.3
 torch
 

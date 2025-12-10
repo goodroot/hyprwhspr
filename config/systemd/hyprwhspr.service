@@ -14,8 +14,6 @@ ExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr
 Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
 Restart=on-failure
 RestartSec=2
-StartLimitIntervalSec=10
-StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 
