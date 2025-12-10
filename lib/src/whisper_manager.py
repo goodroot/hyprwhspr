@@ -624,6 +624,9 @@ class WhisperManager:
 
         if backend == 'rest-api':
             # Use REST API transcription
+            # Debug: ensure we're not accidentally using pywhispercpp
+            if self._pywhisper_model is not None:
+                print(f"[WARN] REST API backend selected but pywhispercpp model is loaded - this should not happen", flush=True)
             return self._transcribe_rest(audio_data, sample_rate)
 
         try:

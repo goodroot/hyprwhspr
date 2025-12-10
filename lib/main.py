@@ -293,37 +293,110 @@ class hyprwhsprApp:
 
 def _is_hyprwhspr_running():
     """Check if hyprwhspr is already running"""
-    # Check systemd service first
+    # Check if we're running under systemd
+    # If we are, systemd already manages single instances - skip the check entirely
+    # This avoids race conditions during restarts where the old process might still be shutting down
+    running_under_systemd = False
+    try:
+        # Check if we're in a systemd service context
+        # Method 1: Check if we're a child of systemd
+        ppid = os.getppid()
+        try:
+            with open(f'/proc/{ppid}/comm', 'r', encoding='utf-8') as f:
+                parent_comm = f.read().strip()
+                if 'systemd' in parent_comm:
+                    running_under_systemd = True
+        except (FileNotFoundError, IOError):
+            pass
+        
+        # Method 2: Check environment variable (systemd sets this)
+        if os.environ.get('INVOCATION_ID') or os.environ.get('JOURNAL_STREAM'):
+            running_under_systemd = True
+    except Exception:
+        pass
+    
+    # If running under systemd, trust systemd to manage single instances
+    # Don't check for other processes (avoids race condition during restarts)
+    if running_under_systemd:
+        return False, None
+    
+    # We're running manually - check if systemd service is active
     try:
         result = subprocess.run(
             ['systemctl', '--user', 'is-active', 'hyprwhspr.service'],
             capture_output=True,
-            timeout=2
+            timeout=2,
+            check=False
         )
         if result.returncode == 0:
-            return True, "systemd service"
+            # Systemd service is active - check if there's actually a process
+            try:
+                current_pid = os.getpid()
+                pgrep_result = subprocess.run(
+                    ['pgrep', '-f', 'hyprwhspr.*main.py'],
+                    capture_output=True,
+                    timeout=2,
+                    check=False
+                )
+                if pgrep_result.returncode == 0:
+                    pids = [int(pid) for pid in pgrep_result.stdout.decode().strip().split('\n') if pid]
+                    other_pids = [pid for pid in pids if pid != current_pid]
+                    if other_pids:
+                        return True, "systemd service"
+            except Exception:
+                # If we can't check processes, trust systemd status
+                return True, "systemd service"
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
         pass
     
-    # Check for running processes (fallback for manual runs)
+    # Check for other manual processes
     try:
-        # Get current process PID to exclude ourselves
         current_pid = os.getpid()
-        
-        # Check for other hyprwhspr processes
         result = subprocess.run(
-            ['pgrep', '-f', 'hyprwhspr'],
+            ['pgrep', '-f', 'hyprwhspr.*main.py'],
             capture_output=True,
-            timeout=2
+            timeout=2,
+            check=False
         )
         
         if result.returncode == 0:
-            # Parse PIDs and exclude current process
             pids = [int(pid) for pid in result.stdout.decode().strip().split('\n') if pid]
             other_pids = [pid for pid in pids if pid != current_pid]
             
             if other_pids:
-                return True, f"process (PIDs: {', '.join(map(str, other_pids))})"
+                # Verify processes are actually running (not zombies)
+                valid_pids = []
+                for pid in other_pids:
+                    try:
+                        # Check if process exists
+                        os.kill(pid, 0)
+                        
+                        # Check process state - ignore zombies
+                        try:
+                            with open(f'/proc/{pid}/stat', 'r', encoding='utf-8') as f:
+                                stat_data = f.read().split()
+                                if len(stat_data) >= 3:
+                                    state = stat_data[2]  # Process state: R=running, S=sleeping, Z=zombie, etc.
+                                    if state == 'Z':  # Zombie
+                                        continue
+                        except (FileNotFoundError, IOError, IndexError):
+                            pass
+                        
+                        # Verify it's actually a hyprwhspr/python process
+                        try:
+                            with open(f'/proc/{pid}/comm', 'r', encoding='utf-8') as f:
+                                comm = f.read().strip()
+                                if 'hyprwhspr' in comm or 'python' in comm:
+                                    valid_pids.append(pid)
+                        except (FileNotFoundError, IOError):
+                            # If we can't read comm, assume it's valid if it passed other checks
+                            valid_pids.append(pid)
+                    except (ProcessLookupError, PermissionError):
+                        # Process doesn't exist or we can't access it - ignore
+                        continue
+                
+                if valid_pids:
+                    return True, f"process (PIDs: {', '.join(map(str, valid_pids))})"
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError, ValueError):
         pass
     

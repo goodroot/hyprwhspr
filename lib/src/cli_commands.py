@@ -374,7 +374,7 @@ def _prompt_backend_selection():
     print("  [3] AMD - AMD GPU acceleration (ROCm)")
     print()
     print("REST API (Remote - Cloud API or localhost):")
-    print("  [4] External API/backend (localhost or remote, requires network)")
+    print("  [4] Configure cloud provider or custom backend")
     print()
     print("Parakeet (Local REST Server - Latest NVIDIA Parakeet model):")
     print("  [5] NVIDIA Parakeet model")
@@ -841,13 +841,13 @@ def setup_command():
     if backend == 'parakeet':
         print("\nSystemd user services will run both hyprwhspr and the Parakeet server in the background.")
         print("This will enable/configure:")
-        print("  • ydotool.service (required dependency, will be enabled)")
+        print("  • ydotool.service (required dependency, provides paste)")
         print("  • parakeet-tdt-0.6b-v3.service (Parakeet REST API server)")
         print("  • hyprwhspr.service (main application)")
     else:
         print("\nSystemd user service will run hyprwhspr in the background.")
         print("This will enable/configure:")
-        print("  • ydotool.service (required dependency, will be enabled)")
+        print("  • ydotool.service (required dependency, provides paste)")
         print("  • hyprwhspr.service (main application)")
     setup_systemd_choice = Confirm.ask("Set up systemd user service" + ("s" if backend == 'parakeet' else ""), default=True)
     
@@ -952,17 +952,17 @@ def setup_command():
         print("="*60)
         print("\nNext steps:")
         if setup_systemd_choice:
-            print("  1. Log out and back in (for group permissions to take effect)")
+            print("  Log out and back in (for group permissions to take effect)")
             if backend == 'parakeet':
-                print("  2. Parakeet server will start automatically via systemd")
-            print("  3. Press hotkey to start dictation!")
+                print("  Parakeet server will start automatically via systemd")
+            print("  Press hotkey to start dictation!")
         else:
-            print("  1. Log out and back in (if permissions were set up)")
+            print("  Log out and back in (if permissions were set up)")
             if backend == 'parakeet':
-                print("  2. Start the Parakeet server manually:")
-                print(f"     {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
-            print("  3. Run hyprwhspr manually or set up systemd service later")
-            print("  4. Press hotkey to start dictation!")
+                print("  Start the Parakeet server manually:")
+                print(f"    {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
+            print("  Run hyprwhspr manually or set up systemd service later")
+            print("  Press hotkey to start dictation!")
         print()
         
     except KeyboardInterrupt:
