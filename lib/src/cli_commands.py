@@ -1364,35 +1364,45 @@ def systemd_status():
 def _is_service_running_via_systemd() -> bool:
     """Check if hyprwhspr service is running via systemd"""
     try:
-        result = subprocess.run(
-            ['systemctl', '--user', 'is-active', SERVICE_NAME],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
-        return False
+        from .instance_detection import is_service_active_via_systemd
+        return is_service_active_via_systemd(SERVICE_NAME)
+    except ImportError:
+        # Fallback if import fails
+        try:
+            result = subprocess.run(
+                ['systemctl', '--user', 'is-active', SERVICE_NAME],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            return False
 
 
 def _is_running_manually() -> bool:
     """Check if hyprwhspr is running manually (not via systemd)"""
-    # Check if there's a process but systemd service is not active
     try:
-        pgrep_result = subprocess.run(
-            ['pgrep', '-f', 'hyprwhspr.*main.py'],
-            capture_output=True,
-            timeout=2,
-            check=False
-        )
-        if pgrep_result.returncode == 0:
-            # Process exists, check if it's via systemd
-            if not _is_service_running_via_systemd():
-                return True
-    except Exception:
-        pass
-    return False
+        from .instance_detection import is_running_manually
+        return is_running_manually()
+    except ImportError:
+        # Fallback if import fails
+        # Check if there's a process but systemd service is not active
+        try:
+            pgrep_result = subprocess.run(
+                ['pgrep', '-f', 'hyprwhspr.*main.py'],
+                capture_output=True,
+                timeout=2,
+                check=False
+            )
+            if pgrep_result.returncode == 0:
+                # Process exists, check if it's via systemd
+                if not _is_service_running_via_systemd():
+                    return True
+        except Exception:
+            pass
+        return False
 
 
 def systemd_restart():

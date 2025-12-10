@@ -7,13 +7,18 @@ Fast, reliable speech-to-text with instant text injection
 import sys
 import time
 import threading
-import subprocess
 import os
+import fcntl
+import atexit
 from pathlib import Path
 
 # Add the src directory to the Python path
 src_path = Path(__file__).parent / 'src'
 sys.path.insert(0, str(src_path))
+
+# Lock file for preventing multiple instances
+_lock_file = None
+_lock_file_path = None
 
 from config_manager import ConfigManager
 from audio_capture import AudioCapture
@@ -289,17 +294,22 @@ class hyprwhsprApp:
             
         except Exception as e:
             print(f"[WARN] Error during cleanup: {e}")
+        finally:
+            # Release lock file
+            _release_lock_file()
 
 
-def _is_hyprwhspr_running():
-    """Check if hyprwhspr is already running"""
+def _acquire_lock_file():
+    """
+    Acquire a lock file to prevent multiple instances from running.
+    Returns (success: bool, message: str or None)
+    """
+    global _lock_file, _lock_file_path
+    
     # Check if we're running under systemd
-    # If we are, systemd already manages single instances - skip the check entirely
-    # This avoids race conditions during restarts where the old process might still be shutting down
+    # If we are, systemd already manages single instances - skip the lock file
     running_under_systemd = False
     try:
-        # Check if we're in a systemd service context
-        # Method 1: Check if we're a child of systemd
         ppid = os.getppid()
         try:
             with open(f'/proc/{ppid}/comm', 'r', encoding='utf-8') as f:
@@ -309,121 +319,155 @@ def _is_hyprwhspr_running():
         except (FileNotFoundError, IOError):
             pass
         
-        # Method 2: Check environment variable (systemd sets this)
         if os.environ.get('INVOCATION_ID') or os.environ.get('JOURNAL_STREAM'):
             running_under_systemd = True
     except Exception:
         pass
     
-    # If running under systemd, trust systemd to manage single instances
-    # Don't check for other processes (avoids race condition during restarts)
     if running_under_systemd:
-        return False, None
+        # Trust systemd to manage single instances
+        return True, None
     
-    # We're running manually - check if systemd service is active
-    try:
-        result = subprocess.run(
-            ['systemctl', '--user', 'is-active', 'hyprwhspr.service'],
-            capture_output=True,
-            timeout=2,
-            check=False
-        )
-        if result.returncode == 0:
-            # Systemd service is active - check if there's actually a process
-            try:
-                current_pid = os.getpid()
-                pgrep_result = subprocess.run(
-                    ['pgrep', '-f', 'hyprwhspr.*main.py'],
-                    capture_output=True,
-                    timeout=2,
-                    check=False
-                )
-                if pgrep_result.returncode == 0:
-                    pids = [int(pid) for pid in pgrep_result.stdout.decode().strip().split('\n') if pid]
-                    other_pids = [pid for pid in pids if pid != current_pid]
-                    if other_pids:
-                        return True, "systemd service"
-            except Exception:
-                # If we can't check processes, trust systemd status
-                return True, "systemd service"
-    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
-        pass
+    # Set up lock file path
+    config_dir = Path.home() / '.config' / 'hyprwhspr'
+    config_dir.mkdir(parents=True, exist_ok=True)
+    _lock_file_path = config_dir / 'hyprwhspr.lock'
     
-    # Check for other manual processes
     try:
-        current_pid = os.getpid()
-        result = subprocess.run(
-            ['pgrep', '-f', 'hyprwhspr.*main.py'],
-            capture_output=True,
-            timeout=2,
-            check=False
-        )
+        # Try to open/create the lock file
+        _lock_file = open(_lock_file_path, 'w')
         
-        if result.returncode == 0:
-            pids = [int(pid) for pid in result.stdout.decode().strip().split('\n') if pid]
-            other_pids = [pid for pid in pids if pid != current_pid]
+        # Try to acquire an exclusive non-blocking lock
+        try:
+            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             
-            if other_pids:
-                # Verify processes are actually running (not zombies)
-                valid_pids = []
-                for pid in other_pids:
-                    try:
-                        # Check if process exists
-                        os.kill(pid, 0)
-                        
-                        # Check process state - ignore zombies
+            # Lock acquired successfully - write our PID
+            _lock_file.write(str(os.getpid()))
+            _lock_file.flush()
+            
+            # Register cleanup handler
+            atexit.register(_release_lock_file)
+            
+            return True, None
+            
+        except (IOError, OSError):
+            # Lock is held by another process
+            _lock_file.close()
+            _lock_file = None
+            
+            # Check if the PID in the lock file is still valid
+            try:
+                with open(_lock_file_path, 'r') as f:
+                    lock_pid_str = f.read().strip()
+                    if lock_pid_str:
                         try:
-                            with open(f'/proc/{pid}/stat', 'r', encoding='utf-8') as f:
-                                stat_data = f.read().split()
-                                if len(stat_data) >= 3:
-                                    state = stat_data[2]  # Process state: R=running, S=sleeping, Z=zombie, etc.
-                                    if state == 'Z':  # Zombie
-                                        continue
-                        except (FileNotFoundError, IOError, IndexError):
-                            pass
-                        
-                        # Verify it's actually a hyprwhspr/python process
-                        try:
-                            with open(f'/proc/{pid}/comm', 'r', encoding='utf-8') as f:
-                                comm = f.read().strip()
-                                if 'hyprwhspr' in comm or 'python' in comm:
-                                    valid_pids.append(pid)
-                        except (FileNotFoundError, IOError):
-                            # If we can't read comm, assume it's valid if it passed other checks
-                            valid_pids.append(pid)
-                    except (ProcessLookupError, PermissionError):
-                        # Process doesn't exist or we can't access it - ignore
-                        continue
+                            lock_pid = int(lock_pid_str)
+                            # Check if process is still running
+                            os.kill(lock_pid, 0)
+                            # Process exists - another instance is running
+                            return False, f"lock file (PID: {lock_pid})"
+                        except (ValueError, ProcessLookupError, PermissionError):
+                            # Stale lock file - remove it and try again
+                            try:
+                                _lock_file_path.unlink()
+                                # Retry acquiring lock
+                                _lock_file = open(_lock_file_path, 'w')
+                                fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                                _lock_file.write(str(os.getpid()))
+                                _lock_file.flush()
+                                atexit.register(_release_lock_file)
+                                return True, None
+                            except (IOError, OSError):
+                                # Still can't acquire - another process got it
+                                if _lock_file:
+                                    _lock_file.close()
+                                    _lock_file = None
+                                return False, "lock file (another instance starting)"
+            except (FileNotFoundError, IOError):
+                # Can't read lock file - assume another instance is running
+                return False, "lock file"
                 
-                if valid_pids:
-                    return True, f"process (PIDs: {', '.join(map(str, valid_pids))})"
-    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError, ValueError):
-        pass
+    except (IOError, OSError, PermissionError) as e:
+        # Can't create or access lock file
+        if _lock_file:
+            _lock_file.close()
+            _lock_file = None
+        return False, f"lock file (error: {e})"
+
+
+def _release_lock_file():
+    """Release the lock file"""
+    global _lock_file, _lock_file_path
     
-    return False, None
+    if _lock_file:
+        try:
+            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)
+            _lock_file.close()
+        except Exception:
+            pass
+        _lock_file = None
+    
+    if _lock_file_path and _lock_file_path.exists():
+        try:
+            _lock_file_path.unlink()
+        except Exception:
+            pass
+
+
+def _is_hyprwhspr_running():
+    """Check if hyprwhspr is already running"""
+    try:
+        from instance_detection import is_hyprwhspr_running
+        return is_hyprwhspr_running()
+    except ImportError:
+        # Fallback if import fails (shouldn't happen in normal operation)
+        return False, None
 
 
 def main():
     """Main entry point"""
-    # Check if hyprwhspr is already running
+    # First, try to acquire lock file (primary detection method)
+    lock_acquired, lock_message = _acquire_lock_file()
+    if not lock_acquired:
+        print("[ERROR] hyprwhspr is already running!")
+        if lock_message:
+            print(f"[ERROR] Detected via: {lock_message}")
+        print("\n[INFO] To check the status of the running instance:")
+        print("  • Run: hyprwhspr status")
+        print("\n[INFO] To stop the running instance:")
+        print("  • If running via systemd: systemctl --user stop hyprwhspr")
+        print("  • If running manually: kill the process or press Ctrl+C in its terminal")
+        print("\n[INFO] For more information, run: hyprwhspr --help")
+        sys.exit(1)
+    
+    # Fallback: also check via process detection
     is_running, how = _is_hyprwhspr_running()
     if is_running:
-        print("[INFO] hyprwhspr is already running!")
-        print(f"[INFO] Detected via: {how}")
-        print("[INFO] Use 'hyprwhspr status' to check status, or 'systemctl --user restart hyprwhspr' to restart")
-        print("[INFO] Alternatively, type 'hyprwhspr --help' for more information")
-        sys.exit(0)
+        # Release lock since we detected another instance
+        _release_lock_file()
+        print("[ERROR] hyprwhspr is already running!")
+        print(f"[ERROR] Detected via: {how}")
+        print("\n[INFO] To check the status of the running instance:")
+        print("  • Run: hyprwhspr status")
+        print("\n[INFO] To stop the running instance:")
+        print("  • If running via systemd: systemctl --user stop hyprwhspr")
+        print("  • If running manually: kill the process or press Ctrl+C in its terminal")
+        print("\n[INFO] For more information, run: hyprwhspr --help")
+        sys.exit(1)
     
     try:
         app = hyprwhsprApp()
         app.run()
     except KeyboardInterrupt:
         print("\n[SHUTDOWN] Stopping hyprwhspr...")
-        app._cleanup()
+        if 'app' in locals():
+            app._cleanup()
+        _release_lock_file()
     except Exception as e:
         print(f"[ERROR] Error: {e}")
         import traceback
         traceback.print_exc()
+        _release_lock_file()
         sys.exit(1)
 
 
