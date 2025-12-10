@@ -5,9 +5,13 @@ PyWhisperCPP-only backend (in-process, model kept hot)
 
 import os
 import shutil
+import sys
 import threading
 import time
 import wave
+import re
+import io
+from contextlib import contextmanager
 from io import BytesIO
 from typing import Optional
 
@@ -280,6 +284,83 @@ class WhisperManager:
 
         return "CPU"
 
+    @contextmanager
+    def _intercept_progress_logs(self):
+        """Context manager to intercept and enhance progress messages from pywhispercpp"""
+        model_name = self.current_model or 'unknown'
+        context_str = f"[pywhispercpp/{model_name}]"
+        
+        # Create a custom file-like object to intercept writes
+        class ProgressInterceptor:
+            def __init__(self, original_stream, context):
+                self.original_stream = original_stream
+                self.context = context
+                self.buffer = ''
+            
+            def write(self, text):
+                # Check if this is a progress message
+                if 'Progress:' in text:
+                    # Extract percentage and spacing if present
+                    match = re.search(r'Progress:(\s+)(\d+)%', text)
+                    if match:
+                        spacing = match.group(1)  # Preserve original spacing
+                        percent = match.group(2)
+                        # Write enhanced message preserving original spacing
+                        # Preserve newline if present in original text
+                        has_newline = text.endswith('\n')
+                        enhanced = f"{self.context} Progress:{spacing}{percent}%"
+                        if has_newline:
+                            self.original_stream.write(enhanced + '\n')
+                        else:
+                            self.original_stream.write(enhanced)
+                        self.original_stream.flush()
+                    else:
+                        # Try without spacing (just in case)
+                        match = re.search(r'Progress:\s*(\d+)%', text)
+                        if match:
+                            percent = match.group(1)
+                            has_newline = text.endswith('\n')
+                            enhanced = f"{self.context} Progress: {percent:>3}%"
+                            if has_newline:
+                                self.original_stream.write(enhanced + '\n')
+                            else:
+                                self.original_stream.write(enhanced)
+                            self.original_stream.flush()
+                        else:
+                            # Just add context to any progress-related line
+                            has_newline = text.endswith('\n')
+                            enhanced = f"{self.context} {text.strip()}"
+                            if has_newline:
+                                self.original_stream.write(enhanced + '\n')
+                            else:
+                                self.original_stream.write(enhanced)
+                            self.original_stream.flush()
+                else:
+                    # Pass through other messages unchanged
+                    self.original_stream.write(text)
+                    self.original_stream.flush()
+            
+            def flush(self):
+                self.original_stream.flush()
+            
+            def __getattr__(self, name):
+                # Delegate all other attributes to the original stream
+                return getattr(self.original_stream, name)
+        
+        # Intercept both stdout and stderr (whisper.cpp may use either)
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        stdout_interceptor = ProgressInterceptor(original_stdout, context_str)
+        stderr_interceptor = ProgressInterceptor(original_stderr, context_str)
+        sys.stdout = stdout_interceptor
+        sys.stderr = stderr_interceptor
+        
+        try:
+            yield
+        finally:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+
     def _numpy_to_wav_bytes(self, audio_data: np.ndarray, sample_rate: int = 16000) -> bytes:
         """
         Convert numpy audio array to WAV format bytes (in-memory)
@@ -380,7 +461,32 @@ class WhisperManager:
             if not endpoint_url:
                 raise ValueError('REST endpoint URL not configured')
 
-            print(f'[TRANSCRIBE] Using remote REST API: {endpoint_url}', flush=True)
+            # Detect backend type and extract model info
+            # Note: We need to check rest_body before it's processed into extra_body
+            # to get the model info early for logging
+            backend_name = None
+            model_info = None
+            
+            # Check if this is parakeet backend
+            if endpoint_url in ('http://127.0.0.1:8080/transcribe', 'http://localhost:8080/transcribe'):
+                backend_name = 'parakeet-tdt-0.6b-v3'
+            else:
+                # Generic REST API - use endpoint URL
+                backend_name = endpoint_url
+            
+            # Extract model information from rest_body if available (before processing)
+            if isinstance(rest_body, dict):
+                model_info = rest_body.get('model')
+            
+            # Format the log message
+            if backend_name == 'parakeet-tdt-0.6b-v3':
+                log_msg = f'[REST API] {backend_name}'
+            elif model_info:
+                log_msg = f'[REST API] {backend_name} - model: {model_info}'
+            else:
+                log_msg = f'[REST API] {backend_name}'
+            
+            print(log_msg, flush=True)
 
             # Convert audio to WAV format
             wav_bytes = self._numpy_to_wav_bytes(audio_data, sample_rate)
@@ -509,11 +615,13 @@ class WhisperManager:
             # Get language setting from config (None = auto-detect)
             language = self.config.get_setting('language', None)
             
-            # Transcribe with language parameter if specified
-            if language:
-                segments = self._pywhisper_model.transcribe(audio_data, language=language)
-            else:
-                segments = self._pywhisper_model.transcribe(audio_data)
+            # Intercept progress logs and enhance them
+            with self._intercept_progress_logs():
+                # Transcribe with language parameter if specified
+                if language:
+                    segments = self._pywhisper_model.transcribe(audio_data, language=language)
+                else:
+                    segments = self._pywhisper_model.transcribe(audio_data)
 
             result = ' '.join(seg.text for seg in segments).strip()
             return result
