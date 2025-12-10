@@ -753,6 +753,19 @@ def setup_command():
             if not _cleanup_backend(current_backend):
                 log_warning("Failed to clean up old backend, continuing anyway...")
         
+        # Also handle cleanup when switching TO Parakeet FROM local
+        if backend == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd']:
+            if VENV_DIR.exists():
+                cleanup_main_venv = Confirm.ask(
+                    "Remove the old local backend venv to free up space?", 
+                    default=False
+                )
+                if cleanup_main_venv:
+                    import shutil
+                    log_info("Removing main venv...")
+                    shutil.rmtree(VENV_DIR)
+                    log_success("Main venv removed")
+        
         if cleanup_venv and backend in ['rest-api', 'remote']:
             # User wants to remove venv when switching to REST API
             if VENV_DIR.exists():
@@ -910,6 +923,11 @@ def setup_command():
         else:
             setup_config(backend=backend, model=selected_model)
         
+        # Check if running manually before systemd setup
+        if _is_running_manually():
+            log_warning("hyprwhspr appears to be running manually (not via systemd).")
+            log_warning("Please restart it manually for configuration changes to take effect.")
+        
         # Step 2: Waybar
         if setup_waybar_choice:
             setup_waybar('install')
@@ -919,8 +937,39 @@ def setup_command():
         # Step 3: Systemd
         if setup_systemd_choice:
             setup_systemd('install')
+            
+            # Check if service was already running and restart to pick up config changes
+            try:
+                result = subprocess.run(
+                    ['systemctl', '--user', 'is-active', SERVICE_NAME],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False
+                )
+                if result.returncode == 0:
+                    # Service was already running, restart it
+                    log_info("Restarting hyprwhspr service to apply configuration changes...")
+                    systemd_restart()
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                pass  # Service check failed, continue
         else:
             log_info("Skipping systemd setup")
+            # Check if service is running anyway and warn user
+            try:
+                result = subprocess.run(
+                    ['systemctl', '--user', 'is-active', SERVICE_NAME],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False
+                )
+                if result.returncode == 0:
+                    log_warning("Systemd service is running but setup was skipped.")
+                    log_warning("You may need to manually restart the service for changes to take effect:")
+                    log_warning("  systemctl --user restart hyprwhspr")
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                pass
         
         # Step 4: Permissions
         if setup_permissions_choice:
@@ -1244,8 +1293,29 @@ def setup_systemd(mode: str = 'install'):
         run_command(['systemctl', '--user', 'enable', '--now', YDOTOOL_UNIT], check=False)
         if is_parakeet:
             run_command(['systemctl', '--user', 'enable', '--now', PARAKEET_SERVICE_NAME], check=False)
+        
+        # Check if hyprwhspr service was already running before enabling
+        service_was_running = False
+        try:
+            result = subprocess.run(
+                ['systemctl', '--user', 'is-active', SERVICE_NAME],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False
+            )
+            service_was_running = result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            pass
+        
         run_command(['systemctl', '--user', 'enable', '--now', SERVICE_NAME], check=False)
-        log_success("Systemd user services enabled and started")
+        
+        # If service was already running, restart it to pick up any config changes
+        if service_was_running:
+            log_info("Service was already running, restarting to apply configuration changes...")
+            systemd_restart()
+        else:
+            log_success("Systemd user services enabled and started")
     elif mode == 'disable':
         if is_parakeet:
             run_command(['systemctl', '--user', 'disable', '--now', PARAKEET_SERVICE_NAME], check=False)
@@ -1274,6 +1344,40 @@ def systemd_status():
             run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to get status: {e}")
+
+
+def _is_service_running_via_systemd() -> bool:
+    """Check if hyprwhspr service is running via systemd"""
+    try:
+        result = subprocess.run(
+            ['systemctl', '--user', 'is-active', SERVICE_NAME],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        return False
+
+
+def _is_running_manually() -> bool:
+    """Check if hyprwhspr is running manually (not via systemd)"""
+    # Check if there's a process but systemd service is not active
+    try:
+        pgrep_result = subprocess.run(
+            ['pgrep', '-f', 'hyprwhspr.*main.py'],
+            capture_output=True,
+            timeout=2,
+            check=False
+        )
+        if pgrep_result.returncode == 0:
+            # Process exists, check if it's via systemd
+            if not _is_service_running_via_systemd():
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def systemd_restart():
