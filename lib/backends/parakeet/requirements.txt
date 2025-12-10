@@ -4,6 +4,7 @@ fastapi
 uvicorn[standard]
 soundfile
 python-multipart
+ml_dtypes>=0.4.0
 cuda-python>=12.3
 torch
 

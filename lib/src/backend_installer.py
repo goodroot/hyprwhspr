@@ -767,6 +767,7 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
             'uvicorn[standard]',
             'soundfile',
             'python-multipart',
+            'ml_dtypes>=0.4.0',  # Required by onnx (transitive dep of nemo_toolkit)
         ]
         
         if enable_cuda:
