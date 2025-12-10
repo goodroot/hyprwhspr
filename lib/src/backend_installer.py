@@ -778,10 +778,18 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
         if enable_cuda:
             log_info("Installing PyTorch with CUDA 12.1 support... May take a moment.")
             # Use PyTorch CUDA index
-            run_command([
-                str(pip_bin), 'install', 'torch',
-                '--index-url', 'https://download.pytorch.org/whl/cu121'
-            ], check=True)
+            try:
+                run_command([
+                    str(pip_bin), 'install', 'torch',
+                    '--index-url', 'https://download.pytorch.org/whl/cu121'
+                ], check=True)
+                log_success("PyTorch with CUDA support installed")
+            except subprocess.CalledProcessError as e:
+                log_warning(f"PyTorch CUDA installation failed: {e}")
+                log_warning("Falling back to CPU-only PyTorch installation...")
+                log_info("Installing PyTorch (CPU-only)...")
+                run_command([str(pip_bin), 'install', 'torch'], check=True)
+                log_success("PyTorch (CPU-only) installed as fallback")
         else:
             log_info("Installing PyTorch (CPU-only)...")
             run_command([str(pip_bin), 'install', 'torch'], check=True)
