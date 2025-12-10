@@ -48,19 +48,6 @@ PROVIDERS: Dict[str, Dict] = {
                 'body': {'model': 'groq-whisper-large-v3-turbo'}
             }
         }
-    },
-    'parakeet-local': {
-        'name': 'Parakeet (Local)',
-        'endpoint': 'http://127.0.0.1:8080/transcribe',
-        'api_key_prefix': None,
-        'api_key_description': None,
-        'models': {
-            'parakeet-tdt-0.6b-v3': {
-                'name': 'Parakeet TDT 0.6B v3',
-                'description': 'NVIDIA Parakeet model running locally',
-                'body': {}
-            }
-        }
     }
 }
 
@@ -122,7 +109,7 @@ def validate_api_key(provider_id: str, api_key: str) -> Tuple[bool, Optional[str
     if not provider:
         return False, f"Unknown provider: {provider_id}"
     
-    # Providers without API key requirement (like parakeet-local)
+    # Providers without API key requirement
     if provider.get('api_key_prefix') is None:
         return True, None
     

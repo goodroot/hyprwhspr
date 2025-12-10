@@ -543,7 +543,7 @@ def _prompt_remote_provider_selection():
         print(f"  [{i}] {provider_name} ({model_list})")
         provider_choices.append((str(i), provider_id))
     
-    print(f"  [{len(providers_list) + 1}] Custom/Arbitrary Backend")
+    print(f"  [{len(providers_list) + 1}] Customize your own backend")
     provider_choices.append((str(len(providers_list) + 1), 'custom'))
     
     print()
