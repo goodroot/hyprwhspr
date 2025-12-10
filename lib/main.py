@@ -338,6 +338,7 @@ def main():
         print("[INFO] hyprwhspr is already running!")
         print(f"[INFO] Detected via: {how}")
         print("[INFO] Use 'hyprwhspr status' to check status, or 'systemctl --user restart hyprwhspr' to restart")
+        print("[INFO] Alternatively, type 'hyprwhspr --help' for more information")
         sys.exit(0)
     
     try:

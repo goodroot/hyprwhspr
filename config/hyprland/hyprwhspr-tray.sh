@@ -72,7 +72,7 @@ model_exists() {
 
     # Check backend first - remote backends don't require local model validation
     local backend
-    backend=$(python3 - <<'PY' "$cfg" 2>/dev/null
+    backend=$(python - <<'PY' "$cfg" 2>/dev/null
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -105,7 +105,7 @@ PY
 
     # Only read model setting for pywhispercpp backends
     local model_path
-    model_path=$(python3 - <<'PY' "$cfg" 2>/dev/null
+    model_path=$(python - <<'PY' "$cfg" 2>/dev/null
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
