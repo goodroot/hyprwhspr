@@ -11,8 +11,6 @@ ExecStart=/home/USER/.local/share/hyprwhspr/parakeet-venv/bin/python /usr/lib/hy
 Environment=NEMO_CACHE_DIR=/home/USER/.local/share/hyprwhspr/.nemo_cache
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=10
-StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 

@@ -787,7 +787,7 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
                 log_success("PyTorch with CUDA support installed")
             except subprocess.CalledProcessError as e:
                 log_warning(f"PyTorch CUDA installation failed: {e}")
-                log_warning("Falling back to CPU-only PyTorch installation...")
+                log_warning("Falling back to CPU-only PyTorch installation... GPU preferred but it works.")
                 log_info("Installing PyTorch (CPU-only)...")
                 run_command([str(pip_bin), 'install', 'torch'], check=True)
                 log_success("PyTorch (CPU-only) installed as fallback")
