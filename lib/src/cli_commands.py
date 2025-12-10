@@ -365,11 +365,16 @@ def _prompt_backend_selection():
     
     print("\nChoose your transcription backend:")
     print()
+    print("PyWhisperCPP (Local in-memory default, very fast):")
     print("  [1] CPU - CPU-only, works on all systems")
     print("  [2] NVIDIA - NVIDIA GPU acceleration (CUDA)")
     print("  [3] AMD - AMD GPU acceleration (ROCm)")
-    print("  [4] REST API - Use external API/backend (localhost or remote, requires network)")
-    print("  [5] Parakeet - NVIDIA Parakeet model (local REST server)")
+    print()
+    print("REST API (Remote - Cloud API or localhost):")
+    print("  [4] External API/backend (localhost or remote, requires network)")
+    print()
+    print("Parakeet (Local REST Server - Latest NVIDIA Parakeet model):")
+    print("  [5] NVIDIA Parakeet model")
     print()
     
     while True:
@@ -926,16 +931,16 @@ def setup_command():
         print("="*60)
         print("\nNext steps:")
         if setup_systemd_choice:
-            print("  1. Log out and back in (for group permissions to take effect)")
+            print("  Log out and back in (for group permissions to take effect)")
         else:
-            print("  1. Log out and back in (if permissions were set up)")
-            print("  2. Run hyprwhspr manually or set up systemd service later")
+            print("  Log out and back in (if permissions were set up)")
+            print("  Run hyprwhspr manually or set up systemd service later")
         
         # If backend was changed, suggest restarting service
         if current_backend and current_backend != backend:
-            print("  3. Press hotkey to start dictation!")
+            print("  Press hotkey to start dictation!")
         else:
-            print("  3. Press hotkey to start dictation!")
+            print("  Press hotkey to start dictation!")
         print()
         
     except KeyboardInterrupt:

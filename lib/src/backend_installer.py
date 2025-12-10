@@ -760,7 +760,7 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
     
     try:
         # Install base dependencies first (excluding torch)
-        log_info("Installing base dependencies...")
+        log_info("Installing base dependencies... May take a moment.")
         base_deps = [
             'nemo_toolkit[asr]',
             'fastapi',
@@ -776,7 +776,7 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
         
         # Install torch with appropriate CUDA support
         if enable_cuda:
-            log_info("Installing PyTorch with CUDA 12.1 support...")
+            log_info("Installing PyTorch with CUDA 12.1 support... May take a moment.")
             # Use PyTorch CUDA index
             run_command([
                 str(pip_bin), 'install', 'torch',
