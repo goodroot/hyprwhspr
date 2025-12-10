@@ -7,6 +7,8 @@ Fast, reliable speech-to-text with instant text injection
 import sys
 import time
 import threading
+import subprocess
+import os
 from pathlib import Path
 
 # Add the src directory to the Python path
@@ -289,8 +291,55 @@ class hyprwhsprApp:
             print(f"[WARN] Error during cleanup: {e}")
 
 
+def _is_hyprwhspr_running():
+    """Check if hyprwhspr is already running"""
+    # Check systemd service first
+    try:
+        result = subprocess.run(
+            ['systemctl', '--user', 'is-active', 'hyprwhspr.service'],
+            capture_output=True,
+            timeout=2
+        )
+        if result.returncode == 0:
+            return True, "systemd service"
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        pass
+    
+    # Check for running processes (fallback for manual runs)
+    try:
+        # Get current process PID to exclude ourselves
+        current_pid = os.getpid()
+        
+        # Check for other hyprwhspr processes
+        result = subprocess.run(
+            ['pgrep', '-f', 'hyprwhspr'],
+            capture_output=True,
+            timeout=2
+        )
+        
+        if result.returncode == 0:
+            # Parse PIDs and exclude current process
+            pids = [int(pid) for pid in result.stdout.decode().strip().split('\n') if pid]
+            other_pids = [pid for pid in pids if pid != current_pid]
+            
+            if other_pids:
+                return True, f"process (PIDs: {', '.join(map(str, other_pids))})"
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError, ValueError):
+        pass
+    
+    return False, None
+
+
 def main():
     """Main entry point"""
+    # Check if hyprwhspr is already running
+    is_running, how = _is_hyprwhspr_running()
+    if is_running:
+        print("[INFO] hyprwhspr is already running!")
+        print(f"[INFO] Detected via: {how}")
+        print("[INFO] Use 'hyprwhspr status' to check status, or 'systemctl --user restart hyprwhspr' to restart")
+        sys.exit(0)
+    
     try:
         app = hyprwhsprApp()
         app.run()

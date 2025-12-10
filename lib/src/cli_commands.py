@@ -12,11 +12,14 @@ from typing import Optional
 
 try:
     from rich.prompt import Prompt, Confirm
-except ImportError:
-    # Fallback if rich is not available (shouldn't happen in production)
-    # This would cause errors, but rich is in requirements.txt
-    Prompt = None
-    Confirm = None
+except (ImportError, ModuleNotFoundError) as e:
+    # Hard fail – rich is required for the CLI
+    print("ERROR: python-rich is not available in this Python environment.", file=sys.stderr)
+    print(f"ImportError: {e}", file=sys.stderr)
+    print("\nTry installing it, for example:", file=sys.stderr)
+    print("  pacman -S python-rich    # system-wide on Arch", file=sys.stderr)
+    print("  pip install rich>=13.0.0  # or via pip", file=sys.stderr)
+    sys.exit(1)
 
 try:
     from .config_manager import ConfigManager
