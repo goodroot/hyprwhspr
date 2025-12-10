@@ -706,7 +706,9 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         # Custom backend
         config['rest_endpoint_url'] = custom_config['endpoint']
         if api_key:
-            config['rest_api_key'] = api_key
+            # Store provider identifier instead of API key
+            # API key is already saved securely via credential_manager
+            config['rest_api_provider'] = 'custom'
         if custom_config.get('headers'):
             config['rest_headers'] = custom_config['headers']
         if custom_config.get('body'):
@@ -718,7 +720,9 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
             raise ValueError(f"Invalid provider/model combination: {provider_id}/{model_id}")
         
         config['rest_endpoint_url'] = model_config['endpoint']
-        config['rest_api_key'] = api_key
+        # Store provider identifier instead of API key
+        # API key is already saved securely via credential_manager
+        config['rest_api_provider'] = provider_id
         config['rest_body'] = model_config['body'].copy()
     
     return config
@@ -887,10 +891,20 @@ def setup_command():
         if remote_config.get('rest_body'):
             model_name = remote_config['rest_body'].get('model', 'N/A')
             print(f"Model: {model_name}")
-        api_key = remote_config.get('rest_api_key')
-        if api_key:
+        provider_id = remote_config.get('rest_api_provider')
+        if provider_id:
+            # Retrieve and mask API key for display
+            api_key = get_credential(provider_id)
+            if api_key:
+                masked = mask_api_key(api_key)
+                print(f"Provider: {provider_id} (API Key: {masked})")
+            else:
+                print(f"Provider: {provider_id} (API Key: not found in credential store)")
+        # Backward compatibility: check for old rest_api_key
+        elif remote_config.get('rest_api_key'):
+            api_key = remote_config.get('rest_api_key')
             masked = mask_api_key(api_key)
-            print(f"API Key: {masked}")
+            print(f"API Key: {masked} (legacy - will be migrated)")
     elif selected_model:
         print(f"Model: {selected_model}")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
@@ -2517,6 +2531,7 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         errors.append(error_msg)
     
     # 9. Remove system permissions (if requested)
+    permissions_removed = False
     if not skip_permissions:
         log_info("Checking system permissions...")
         
@@ -2528,6 +2543,7 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             )
         
         if should_remove:
+            permissions_removed = True
             try:
                 username = os.environ.get('SUDO_USER') or os.environ.get('USER') or getpass.getuser()
                 if not username:
@@ -2578,7 +2594,7 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         print("="*60)
     
     print("\nAll hyprwhspr user data has been removed.")
-    if not skip_permissions and not remove_permissions:
+    if not skip_permissions and not permissions_removed:
         print("Note: System permissions (group memberships, udev rules) were not removed.")
         print("      You may want to remove them manually if needed.")
     print()

@@ -35,8 +35,10 @@ except (ImportError, ModuleNotFoundError) as e:
 
 try:
     from .config_manager import ConfigManager
+    from .credential_manager import get_credential
 except ImportError:
     from config_manager import ConfigManager
+    from credential_manager import get_credential
 
 
 class WhisperManager:
@@ -77,6 +79,9 @@ class WhisperManager:
 
             # Configure REST API backend and return early
             if backend == 'rest-api':
+                # Attempt migration of API key if needed (backup in case config was loaded before migration)
+                self.config.migrate_api_key_to_credential_manager()
+                
                 # Validate REST configuration
                 endpoint_url = self.config.get_setting('rest_endpoint_url')
 
@@ -98,7 +103,21 @@ class WhisperManager:
                 # Log user-defined config objects (sanitized)
                 rest_headers = self.config.get_setting('rest_headers', {})
                 rest_body = self.config.get_setting('rest_body', {})
-                api_key = self.config.get_setting('rest_api_key')
+                
+                # Retrieve API key: prefer credential manager, fall back to config for backward compatibility
+                api_key = None
+                provider_id = self.config.get_setting('rest_api_provider')
+                if provider_id:
+                    api_key = get_credential(provider_id)
+                    if api_key:
+                        print(f'[REST] API key configured (via credential manager, provider: {provider_id})')
+                    else:
+                        print(f'WARNING: [REST] Provider {provider_id} configured but API key not found in credential store')
+                else:
+                    # Backward compatibility: check for old rest_api_key in config
+                    api_key = self.config.get_setting('rest_api_key')
+                    if api_key:
+                        print('[REST] API key configured (via rest_api_key - deprecated, consider migrating)')
 
                 if rest_headers and isinstance(rest_headers, dict):
                     header_count = len([k for k in rest_headers.keys() if rest_headers.get(k) is not None])
@@ -109,9 +128,6 @@ class WhisperManager:
                     body_count = len([k for k in rest_body.keys() if rest_body.get(k) is not None])
                     if body_count > 0:
                         print(f'[REST] Custom body fields configured ({body_count} fields)')
-
-                if api_key:
-                    print('[REST] API key configured (via rest_api_key)')
 
                 language = self.config.get_setting('language', None)
                 if language:
@@ -420,7 +436,18 @@ class WhisperManager:
 
             # Get REST endpoint configuration
             endpoint_url = self.config.get_setting('rest_endpoint_url')
-            api_key = self.config.get_setting('rest_api_key')
+            
+            # Retrieve API key: prefer credential manager, fall back to config for backward compatibility
+            api_key = None
+            provider_id = self.config.get_setting('rest_api_provider')
+            if provider_id:
+                api_key = get_credential(provider_id)
+                if not api_key:
+                    print(f'WARNING: [REST] Provider {provider_id} configured but API key not found in credential store')
+            else:
+                # Backward compatibility: check for old rest_api_key in config
+                api_key = self.config.get_setting('rest_api_key')
+            
             timeout = self.config.get_setting('rest_timeout', 30)
             rest_headers = self.config.get_setting('rest_headers', {})
             rest_body = self.config.get_setting('rest_body', {})
