@@ -3,13 +3,22 @@ Global shortcuts handler for hyprwhspr
 Manages system-wide keyboard shortcuts for dictation control
 """
 
+import sys
 import threading
 import select
 import time
 from typing import Callable, Optional, List, Set, Dict
 from pathlib import Path
-import evdev
-from evdev import InputDevice, categorize, ecodes, UInput
+
+try:
+    import evdev
+    from evdev import InputDevice, categorize, ecodes, UInput
+except (ImportError, ModuleNotFoundError) as e:
+    print("ERROR: python-evdev is not available in this Python environment.", file=sys.stderr)
+    print(f"ImportError: {e}", file=sys.stderr)
+    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
+    print("  pacman -S python-evdev    # system-wide on Arch", file=sys.stderr)
+    sys.exit(1)
 
 
 # Key aliases mapping to evdev KEY_* constants

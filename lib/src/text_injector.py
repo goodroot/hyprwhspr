@@ -4,12 +4,21 @@ Handles injecting transcribed text into other applications using paste strategy
 """
 
 import os
+import sys
 import shutil
 import subprocess
 import time
 import threading
-import pyperclip
 from typing import Optional
+
+try:
+    import pyperclip
+except (ImportError, ModuleNotFoundError) as e:
+    print("ERROR: python-pyperclip is not available in this Python environment.", file=sys.stderr)
+    print(f"ImportError: {e}", file=sys.stderr)
+    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
+    print("  pacman -S python-pyperclip    # system-wide on Arch", file=sys.stderr)
+    sys.exit(1)
 
 
 class TextInjector:

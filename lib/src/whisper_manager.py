@@ -15,8 +15,23 @@ from contextlib import contextmanager
 from io import BytesIO
 from typing import Optional
 
-import numpy as np
-import requests
+try:
+    import numpy as np
+except (ImportError, ModuleNotFoundError) as e:
+    print("ERROR: python-numpy is not available in this Python environment.", file=sys.stderr)
+    print(f"ImportError: {e}", file=sys.stderr)
+    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
+    print("  pacman -S python-numpy    # system-wide on Arch", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import requests
+except (ImportError, ModuleNotFoundError) as e:
+    print("ERROR: python-requests is not available in this Python environment.", file=sys.stderr)
+    print(f"ImportError: {e}", file=sys.stderr)
+    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
+    print("  pacman -S python-requests    # system-wide on Arch", file=sys.stderr)
+    sys.exit(1)
 
 try:
     from .config_manager import ConfigManager

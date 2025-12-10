@@ -3,13 +3,30 @@ Audio capture module for hyprwhspr
 Handles real-time audio capture for speech recognition
 """
 
-import sounddevice as sd
-import numpy as np
+import sys
 import wave
 import threading
 import time
 from typing import Optional, Callable
 from io import BytesIO
+
+try:
+    import sounddevice as sd
+except (ImportError, ModuleNotFoundError) as e:
+    print("ERROR: python-sounddevice is not available in this Python environment.", file=sys.stderr)
+    print(f"ImportError: {e}", file=sys.stderr)
+    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
+    print("  pacman -S python-sounddevice    # system-wide on Arch", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import numpy as np
+except (ImportError, ModuleNotFoundError) as e:
+    print("ERROR: python-numpy is not available in this Python environment.", file=sys.stderr)
+    print(f"ImportError: {e}", file=sys.stderr)
+    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
+    print("  pacman -S python-numpy    # system-wide on Arch", file=sys.stderr)
+    sys.exit(1)
 
 
 class AudioCapture:
