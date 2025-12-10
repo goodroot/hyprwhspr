@@ -7,6 +7,7 @@ import sys
 import json
 import subprocess
 import getpass
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -31,14 +32,14 @@ try:
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
         init_state, _cleanup_partial_installation,
-        PARAKEET_VENV_DIR, PARAKEET_SCRIPT
+        PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR
     )
 except ImportError:
     from backend_installer import (
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
         init_state, _cleanup_partial_installation,
-        PARAKEET_VENV_DIR, PARAKEET_SCRIPT
+        PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR
     )
 
 try:
@@ -54,11 +55,11 @@ except ImportError:
 
 try:
     from .credential_manager import (
-        save_credential, get_credential, mask_api_key
+        save_credential, get_credential, mask_api_key, CREDENTIALS_FILE
     )
 except ImportError:
     from credential_manager import (
-        save_credential, get_credential, mask_api_key
+        save_credential, get_credential, mask_api_key, CREDENTIALS_FILE
     )
 
 try:
@@ -2284,4 +2285,301 @@ def validate_command():
         log_error("Validation failed - some components are missing")
     
     return all_ok
+
+
+# ==================== Uninstall Command ====================
+
+def uninstall_command(keep_models: bool = False, remove_permissions: bool = False, 
+                     skip_permissions: bool = False, yes: bool = False):
+    """Completely remove hyprwhspr and all user data"""
+    print("\n" + "="*60)
+    print("hyprwhspr Uninstall")
+    print("="*60)
+    
+    # Build summary of what will be removed
+    items_to_remove = []
+    
+    # Systemd services
+    if (USER_SYSTEMD_DIR / SERVICE_NAME).exists():
+        items_to_remove.append(f"Systemd service: {SERVICE_NAME}")
+    if (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).exists():
+        items_to_remove.append(f"Systemd service: {PARAKEET_SERVICE_NAME}")
+    
+    # Waybar integration
+    waybar_module = USER_HOME / '.config' / 'waybar' / 'hyprwhspr-module.jsonc'
+    if waybar_module.exists():
+        items_to_remove.append("Waybar integration")
+    
+    # User configuration
+    if USER_CONFIG_DIR.exists():
+        items_to_remove.append(f"User configuration: {USER_CONFIG_DIR}")
+    
+    # Backend installations
+    if VENV_DIR.exists():
+        items_to_remove.append(f"Main backend venv: {VENV_DIR}")
+    if PARAKEET_VENV_DIR.exists():
+        items_to_remove.append(f"Parakeet venv: {PARAKEET_VENV_DIR}")
+    if PYWHISPERCPP_SRC_DIR.exists():
+        items_to_remove.append(f"pywhispercpp source: {PYWHISPERCPP_SRC_DIR}")
+    
+    # Models
+    if not keep_models and PYWHISPERCPP_MODELS_DIR.exists():
+        models = list(PYWHISPERCPP_MODELS_DIR.glob('ggml-*.bin'))
+        if models:
+            items_to_remove.append(f"Whisper models: {len(models)} model(s) in {PYWHISPERCPP_MODELS_DIR}")
+    
+    # State files
+    if STATE_DIR.exists():
+        items_to_remove.append(f"State files: {STATE_DIR}")
+    
+    # Credentials
+    if CREDENTIALS_FILE.exists():
+        items_to_remove.append("Stored API credentials")
+    
+    # Temp files
+    temp_dir = USER_BASE / 'temp'
+    if temp_dir.exists():
+        items_to_remove.append(f"Temporary files: {temp_dir}")
+    
+    # Permissions (if not skipped)
+    if not skip_permissions:
+        items_to_remove.append("System permissions (groups, udev rules) - optional")
+    
+    if not items_to_remove:
+        log_info("Nothing to remove - hyprwhspr appears to be already uninstalled")
+        return
+    
+    # Show summary
+    print("\nThe following will be removed:")
+    for item in items_to_remove:
+        print(f"  • {item}")
+    print()
+    
+    # Confirmation
+    if not yes:
+        log_warning("This will permanently delete all hyprwhspr data and configuration.")
+        if not Confirm.ask("Are you sure you want to continue?", default=False):
+            print("\nUninstall cancelled.")
+            return
+    
+    print("\n" + "="*60)
+    print("Removing Components")
+    print("="*60 + "\n")
+    
+    errors = []
+    
+    # 1. Stop and remove systemd services
+    log_info("Stopping and removing systemd services...")
+    try:
+        # Stop and disable hyprwhspr service
+        if (USER_SYSTEMD_DIR / SERVICE_NAME).exists():
+            run_command(['systemctl', '--user', 'stop', SERVICE_NAME], check=False)
+            run_command(['systemctl', '--user', 'disable', SERVICE_NAME], check=False)
+            (USER_SYSTEMD_DIR / SERVICE_NAME).unlink(missing_ok=True)
+            log_success(f"Removed {SERVICE_NAME}")
+        
+        # Stop and disable Parakeet service
+        if (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).exists():
+            run_command(['systemctl', '--user', 'stop', PARAKEET_SERVICE_NAME], check=False)
+            run_command(['systemctl', '--user', 'disable', PARAKEET_SERVICE_NAME], check=False)
+            (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).unlink(missing_ok=True)
+            log_success(f"Removed {PARAKEET_SERVICE_NAME}")
+        
+        # Reload systemd daemon
+        run_command(['systemctl', '--user', 'daemon-reload'], check=False)
+    except Exception as e:
+        error_msg = f"Failed to remove systemd services: {e}"
+        log_warning(error_msg)
+        errors.append(error_msg)
+    
+    # 2. Remove Waybar integration
+    log_info("Removing Waybar integration...")
+    try:
+        setup_waybar('remove')
+    except Exception as e:
+        error_msg = f"Failed to remove Waybar integration: {e}"
+        log_warning(error_msg)
+        errors.append(error_msg)
+    
+    # 3. Remove user configuration
+    log_info("Removing user configuration...")
+    try:
+        if USER_CONFIG_DIR.exists():
+            shutil.rmtree(USER_CONFIG_DIR, ignore_errors=True)
+            log_success(f"Removed {USER_CONFIG_DIR}")
+    except Exception as e:
+        error_msg = f"Failed to remove user configuration: {e}"
+        log_warning(error_msg)
+        errors.append(error_msg)
+    
+    # 4. Remove backend installations
+    log_info("Removing backend installations...")
+    try:
+        # Detect current backend and cleanup
+        current_backend = _detect_current_backend()
+        if current_backend:
+            _cleanup_backend(current_backend)
+        
+        # Remove main venv
+        if VENV_DIR.exists():
+            shutil.rmtree(VENV_DIR, ignore_errors=True)
+            log_success(f"Removed {VENV_DIR}")
+        
+        # Remove Parakeet venv
+        if PARAKEET_VENV_DIR.exists():
+            shutil.rmtree(PARAKEET_VENV_DIR, ignore_errors=True)
+            log_success(f"Removed {PARAKEET_VENV_DIR}")
+        
+        # Remove pywhispercpp source
+        if PYWHISPERCPP_SRC_DIR.exists():
+            shutil.rmtree(PYWHISPERCPP_SRC_DIR, ignore_errors=True)
+            log_success(f"Removed {PYWHISPERCPP_SRC_DIR}")
+    except Exception as e:
+        error_msg = f"Failed to remove backend installations: {e}"
+        log_warning(error_msg)
+        errors.append(error_msg)
+    
+    # 5. Remove models (if not keeping)
+    if not keep_models:
+        log_info("Removing Whisper models...")
+        try:
+            if PYWHISPERCPP_MODELS_DIR.exists():
+                models = list(PYWHISPERCPP_MODELS_DIR.glob('ggml-*.bin'))
+                if models:
+                    shutil.rmtree(PYWHISPERCPP_MODELS_DIR, ignore_errors=True)
+                    log_success(f"Removed {len(models)} model(s) from {PYWHISPERCPP_MODELS_DIR}")
+                else:
+                    # Remove empty directory
+                    PYWHISPERCPP_MODELS_DIR.rmdir()
+        except Exception as e:
+            error_msg = f"Failed to remove models: {e}"
+            log_warning(error_msg)
+            errors.append(error_msg)
+    else:
+        log_info("Keeping Whisper models (--keep-models flag)")
+    
+    # 6. Remove state files
+    log_info("Removing state files...")
+    try:
+        if STATE_DIR.exists():
+            shutil.rmtree(STATE_DIR, ignore_errors=True)
+            log_success(f"Removed {STATE_DIR}")
+    except Exception as e:
+        error_msg = f"Failed to remove state files: {e}"
+        log_warning(error_msg)
+        errors.append(error_msg)
+    
+    # 7. Remove credentials
+    log_info("Removing stored credentials...")
+    try:
+        if CREDENTIALS_FILE.exists():
+            CREDENTIALS_FILE.unlink(missing_ok=True)
+            log_success("Removed stored API credentials")
+    except Exception as e:
+        error_msg = f"Failed to remove credentials: {e}"
+        log_warning(error_msg)
+        errors.append(error_msg)
+    
+    # 8. Remove temp files
+    log_info("Removing temporary files...")
+    try:
+        temp_dir = USER_BASE / 'temp'
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            log_success(f"Removed {temp_dir}")
+        
+        # Also try to remove the entire USER_BASE directory if it's empty or only contains empty dirs
+        if USER_BASE.exists():
+            try:
+                # Check if directory is empty or only contains empty subdirs
+                has_content = False
+                for item in USER_BASE.iterdir():
+                    if item.is_file():
+                        has_content = True
+                        break
+                    elif item.is_dir():
+                        # Check if subdirectory has content
+                        try:
+                            if any(item.iterdir()):
+                                has_content = True
+                                break
+                        except Exception:
+                            pass
+                
+                if not has_content:
+                    shutil.rmtree(USER_BASE, ignore_errors=True)
+                    log_success(f"Removed {USER_BASE}")
+            except Exception:
+                pass  # Ignore errors when trying to remove base directory
+    except Exception as e:
+        error_msg = f"Failed to remove temporary files: {e}"
+        log_warning(error_msg)
+        errors.append(error_msg)
+    
+    # 9. Remove system permissions (if requested)
+    if not skip_permissions:
+        log_info("Checking system permissions...")
+        
+        should_remove = remove_permissions
+        if not remove_permissions and not yes:
+            should_remove = Confirm.ask(
+                "Remove system permissions (remove user from input/audio/tty groups and udev rules)?",
+                default=False
+            )
+        
+        if should_remove:
+            try:
+                username = os.environ.get('SUDO_USER') or os.environ.get('USER') or getpass.getuser()
+                if not username:
+                    log_warning("Could not determine username for permission removal")
+                else:
+                    # Remove from groups
+                    groups_to_remove = ['input', 'audio', 'tty']
+                    for group in groups_to_remove:
+                        try:
+                            run_sudo_command(['gpasswd', '-d', username, group], check=False)
+                            log_success(f"Removed user from '{group}' group")
+                        except Exception as e:
+                            log_warning(f"Failed to remove user from '{group}' group: {e}")
+                    
+                    # Remove udev rule (only if it exists and was created by hyprwhspr)
+                    udev_rule = Path('/etc/udev/rules.d/99-uinput.rules')
+                    if udev_rule.exists():
+                        # Check if it's our rule by reading it
+                        try:
+                            with open(udev_rule, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                            if 'hyprwhspr' in content.lower() or 'input' in content.lower():
+                                run_sudo_command(['rm', str(udev_rule)], check=False)
+                                log_success("Removed udev rule")
+                                # Reload udev
+                                run_sudo_command(['udevadm', 'control', '--reload-rules'], check=False)
+                                run_sudo_command(['udevadm', 'trigger', '--name-match=uinput'], check=False)
+                        except Exception as e:
+                            log_warning(f"Failed to remove udev rule: {e}")
+            except Exception as e:
+                error_msg = f"Failed to remove system permissions: {e}"
+                log_warning(error_msg)
+                errors.append(error_msg)
+        else:
+            log_info("Skipping permission removal")
+    else:
+        log_info("Skipping permission removal (--skip-permissions flag)")
+    
+    # Summary
+    print("\n" + "="*60)
+    if errors:
+        log_warning("Uninstall completed with some errors:")
+        for error in errors:
+            log_warning(f"  • {error}")
+        print("="*60)
+    else:
+        log_success("Uninstall completed successfully!")
+        print("="*60)
+    
+    print("\nAll hyprwhspr user data has been removed.")
+    if not skip_permissions and not remove_permissions:
+        print("Note: System permissions (group memberships, udev rules) were not removed.")
+        print("      You may want to remove them manually if needed.")
+    print()
 

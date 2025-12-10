@@ -30,6 +30,7 @@ from cli_commands import (
     state_show_command,
     state_validate_command,
     state_reset_command,
+    uninstall_command,
 )
 
 
@@ -108,6 +109,17 @@ def main():
     state_reset_parser = state_subparsers.add_parser('reset', help='Reset state file')
     state_reset_parser.add_argument('--all', action='store_true', help='Also remove installations')
     
+    # uninstall command
+    uninstall_parser = subparsers.add_parser('uninstall', help='Completely remove hyprwhspr and all user data')
+    uninstall_parser.add_argument('--keep-models', action='store_true',
+                                 help='Keep downloaded Whisper models (faster reinstall)')
+    uninstall_parser.add_argument('--remove-permissions', action='store_true',
+                                 help='Automatically remove system permissions (groups, udev rules)')
+    uninstall_parser.add_argument('--skip-permissions', action='store_true',
+                                 help='Skip permission removal entirely')
+    uninstall_parser.add_argument('--yes', action='store_true',
+                                 help='Skip confirmation prompt (non-interactive)')
+    
     args = parser.parse_args()
     
     # Set verbosity level
@@ -179,6 +191,13 @@ def main():
                 state_validate_command()
             elif args.state_action == 'reset':
                 state_reset_command(getattr(args, 'all', False))
+        elif args.command == 'uninstall':
+            uninstall_command(
+                keep_models=getattr(args, 'keep_models', False),
+                remove_permissions=getattr(args, 'remove_permissions', False),
+                skip_permissions=getattr(args, 'skip_permissions', False),
+                yes=getattr(args, 'yes', False)
+            )
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
         sys.exit(1)

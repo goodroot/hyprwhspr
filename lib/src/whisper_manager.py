@@ -165,17 +165,8 @@ class WhisperManager:
                 print("")
                 print("ERROR: pywhispercpp is not installed or incompatible.")
                 print(f"Import error: {e}")
-                print("")
-                print("To use local transcription, install one of the following AUR packages:")
-                print("  • python-pywhispercpp-cpu    - CPU-only (works on all systems)")
-                print("  • python-pywhispercpp-cuda    - NVIDIA GPU acceleration")
-                print("  • python-pywhispercpp-rocm    - AMD GPU acceleration")
-                print("")
-                print("Install with: yay -S python-pywhispercpp-cpu")
-                print("(or python-pywhispercpp-cuda / python-pywhispercpp-rocm for GPU support)")
-                print("")
-                print("Alternatively, configure a REST API transcription backend in config.json")
-                print("by setting 'transcription_backend': 'rest-api'")
+                print("Run: hyprwhspr setup to configure a backend.")
+
                 print("")
                 return False
             except Exception as e:
