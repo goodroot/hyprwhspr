@@ -221,14 +221,36 @@ class GlobalShortcuts:
         # Check if device has EV_KEY events
         if ecodes.EV_KEY not in capabilities:
             return False
-            
-        # Check for common keyboard keys
+
+        # Exclude mice by name (most reliable method for Logitech unified receivers)
+        # Logitech unified receivers report the same capabilities for all devices,
+        # so we need to use the device name to distinguish keyboards from mice
+        device_name_lower = device.name.lower()
+        mouse_keywords = [
+            'mouse', 'trackball', 'pointer', 'touchpad',
+            # Logitech mouse model names that don't contain "mouse"
+            'mx master', 'mx anywhere', 'mx ergo', 'mx vertical',
+            'g502', 'g602', 'g604', 'g703', 'g903', 'gpro',  # Logitech G series mice
+        ]
+        if any(keyword in device_name_lower for keyword in mouse_keywords):
+            return False
+
         keys = capabilities[ecodes.EV_KEY]
-        
-        # Look for alphabetic keys (a good indicator of a keyboard)
+
+        # Also exclude devices with mouse buttons but NO keyboard keys
+        # (catches mice that don't have "mouse" in their name)
+        mouse_buttons = [ecodes.BTN_LEFT, ecodes.BTN_RIGHT, ecodes.BTN_MIDDLE]
         keyboard_keys = [ecodes.KEY_A, ecodes.KEY_S, ecodes.KEY_D, ecodes.KEY_F]
-        
-        return any(key in keys for key in keyboard_keys)
+
+        has_mouse_buttons = any(btn in keys for btn in mouse_buttons)
+        has_keyboard_keys = any(key in keys for key in keyboard_keys)
+
+        # If it has mouse buttons but no keyboard keys, it's definitely a mouse
+        if has_mouse_buttons and not has_keyboard_keys:
+            return False
+
+        # Must have keyboard keys to be considered a keyboard
+        return has_keyboard_keys
     
     def _parse_key_combination(self, key_string: str) -> Set[int]:
         """Parse a key combination string into a set of evdev key codes"""
@@ -659,6 +681,13 @@ def get_available_keyboards() -> List[Dict[str, str]]:
                 device.close()
                 continue
                 
+            # Exclude mice by name
+            device_name_lower = device.name.lower()
+            mouse_keywords = ['mouse', 'trackball', 'pointer', 'touchpad', 'mx master', 'mx anywhere', 'mx ergo', 'mx vertical']
+            if any(keyword in device_name_lower for keyword in mouse_keywords):
+                device.close()
+                continue
+
             # Check for common keyboard keys
             keys = capabilities[ecodes.EV_KEY]
             keyboard_keys = [ecodes.KEY_A, ecodes.KEY_S, ecodes.KEY_D, ecodes.KEY_F]
