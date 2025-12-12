@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    local or cloud | waybar integration | audio and visual feedback | any asr model! | gpu accel
+    instant performance | most accurate local models | or supports any cloud provider
 </p>
 
  <p align="center">
