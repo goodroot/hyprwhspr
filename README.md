@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 - **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
 - **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Latest local models with GPU support**: Whisper turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
-- **Supports any cloud ASR API** -  Want to use a tts service or localhost model? Done
+- **Supports any cloud ASR API** -  Use a cloud tts service or any custom localhost model
 - **Word overrides and multi-language** - Customize transcriptions, prompt and corrections, in your language
 - **Auto-paste anywhere** - Pastes in active buffer without additional keypresses
 
@@ -42,7 +42,7 @@ On the AUR:
 yay -S hyprwhspr
 
 # Install for bleeding edge
-yay -S hyprwhspr
+yay -S hyprwhspr-git
 ```
 
 And then run through interactive setup:
