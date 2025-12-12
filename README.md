@@ -18,13 +18,12 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 ---
 
-- **Optimized for Arch Linux / Omarchy** - Seamless integration with Arch Linux via the AUR
-- **Local, very fast defaults** - State-of-the-art, fast speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
-- **Cross-platform GPU support** - Automatic detection and acceleration for NVIDIA (CUDA) / AMD (ROCm) 
-- **Supports >any< ASR backend** - [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Cloud API? New-thing? Use the API and templates
-- **Word overrides** - Customize transcriptions, prompt and corrections
-- **Multi-lingual** - Use a multi-language model and speak your own language
-- **Paste anywhere** - Start record or push to talk, and paste in active buffer without additional keypresses
+- **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
+- **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
+- **Latest local models with GPU support**: Whisper turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
+- **Supports any cloud ASR API** -  Want to use a tts service or localhost model? Done
+- **Word overrides and multi-language** - Customize transcriptions, prompt and corrections, in your language
+- **Auto-paste anywhere** - Pastes in active buffer without additional keypresses
 
 ## Quick start
 
@@ -36,12 +35,19 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 
 ### Quick start
 
-For Arch Linux and Omarchy users, `hyprwhspr` is available via the AUR.
+On the AUR:
 
-```
-# Install hyprwhspr
+```bash
+# Install for stable
 yay -S hyprwhspr
 
+# Install for bleeding edge
+yay -S hyprwhspr
+```
+
+And then run through interactive setup:
+
+```bash
 # Run interactive setup
 hyprwhspr setup
 ```

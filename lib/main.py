@@ -60,6 +60,7 @@ class hyprwhsprApp:
             shortcut_key = self.config.get_setting("primary_shortcut", "Super+Alt+D")
             push_to_talk = self.config.get_setting("push_to_talk", False)
             grab_keys = self.config.get_setting("grab_keys", True)
+            selected_device_path = self.config.get_setting("selected_device_path", None)
 
             if push_to_talk:
                 # Push-to-talk mode: register both press and release callbacks
@@ -67,6 +68,7 @@ class hyprwhsprApp:
                     shortcut_key,
                     self._on_shortcut_triggered,
                     self._on_shortcut_released,
+                    device_path=selected_device_path,
                     grab_keys=grab_keys,
                 )
             else:
@@ -74,6 +76,7 @@ class hyprwhsprApp:
                 self.global_shortcuts = GlobalShortcuts(
                     shortcut_key,
                     self._on_shortcut_triggered,
+                    device_path=selected_device_path,
                     grab_keys=grab_keys,
                 )
         except Exception as e:
