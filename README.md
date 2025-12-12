@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 - **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
 - **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Latest local models with GPU support**: Whisper turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
-- **Supports any cloud ASR API** -  Use a cloud tts service or any custom localhost model
+- **Supports any cloud API** -  Use a cloud stt service or any custom localhost model
 - **Word overrides and multi-language** - Customize transcriptions, prompt and corrections, in your language
 - **Auto-paste anywhere** - Pastes in active buffer without additional keypresses
 
@@ -134,13 +134,11 @@ Edit `~/.config/hyprwhspr/config.json`:
 - **`push_to_talk: false`** (default) - Toggle mode: press to start, press again to stop
 - **`push_to_talk: true`** - Push-to-talk mode: hold to record, release to stop
 
-**REST API backends** - use any ASR backend via HTTP API (can run locally or remotely):
-
-The installer will walk you through remote / Cloud endpoints:
+**REST API backends** - use any ASR backend via HTTP API (local or cloud):
 
 **Local Parakeet v3**
 
-Fastest, latest, and apparently the best! GPU accel rcommended, not required.
+Fastest, latest, and apparently the best! GPU accel recommended, not required.
 
 **OpenAI**
 
@@ -159,7 +157,7 @@ Bring an API key from Grok, and choose from:
 
 **Any arbitrary backend:**
 
-Or connect to any backend, local of Cloud, via your own custom backend:
+Or connect to any backend, local or cloud, via your own custom backend:
 
 ```jsonc
 {
