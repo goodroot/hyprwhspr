@@ -41,11 +41,11 @@ On the AUR:
 # Install for stable
 yay -S hyprwhspr
 
-# Install for bleeding edge
+# Or install for bleeding edge
 yay -S hyprwhspr-git
 ```
 
-And then run through interactive setup:
+Then run through the interactive setup:
 
 ```bash
 # Run interactive setup
