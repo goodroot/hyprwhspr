@@ -124,9 +124,8 @@ class RealtimeClient:
                 print(f'[REALTIME] Connected successfully', flush=True)
                 self.reconnect_attempts = 0
                 
-                # Send session.update with instructions if provided
-                if self.instructions:
-                    self._send_session_update()
+                # Always send session.update with audio format configuration
+                self._send_session_update()
                 
                 return True
             else:
@@ -208,14 +207,29 @@ class RealtimeClient:
                 self.current_response_text += delta
         
         elif event_type == 'response.output_text.done':
-            # Final text is available
+            # Final text is available - check multiple possible locations
             text = event.get('text', '')
+            if not text:
+                # Try output.text structure
+                output = event.get('output', {})
+                if isinstance(output, dict):
+                    text = output.get('text', '')
+            if not text:
+                # Try delta (some events use delta for final text)
+                text = event.get('delta', '')
             if text:
                 self.current_response_text = text
             print(f'[REALTIME] Response text done ({len(self.current_response_text)} chars)', flush=True)
         
         elif event_type == 'response.done':
-            # Response is complete
+            # Response is complete - check if text is in response object
+            response_obj = event.get('response', {})
+            if isinstance(response_obj, dict):
+                output = response_obj.get('output', {})
+                if isinstance(output, dict) and not self.current_response_text:
+                    text = output.get('text', '')
+                    if text:
+                        self.current_response_text = text
             self.response_complete = True
             self.response_event.set()
             print(f'[REALTIME] Response done', flush=True)
@@ -234,6 +248,12 @@ class RealtimeClient:
         
         session_data = {
             'type': 'realtime',
+            'input_audio_format': {
+                'type': 'pcm',
+                'sample_rate': 16000,
+                'num_channels': 1,
+                'encoding': 'pcm_s16le'
+            }
         }
         
         if self.instructions:
@@ -263,9 +283,8 @@ class RealtimeClient:
         time.sleep(delay)
         
         if self._connect_internal():
-            # Re-send session.update after reconnect
-            if self.instructions:
-                self._send_session_update()
+            # Re-send session.update after reconnect (always needed for audio format)
+            self._send_session_update()
             return True
         
         return False
