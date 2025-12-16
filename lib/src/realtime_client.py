@@ -248,10 +248,9 @@ class RealtimeClient:
         if not self.connected or not self.ws:
             return
         
-        # Conversational session format - request text-only output
+        # Conversational session format
         session_data = {
             'type': 'realtime',
-            'modalities': ['text'],  # Text output only (no audio response)
             'input_audio_format': 'pcm16',
             'instructions': self.instructions or 'Transcribe the audio exactly as spoken. Output only the transcription, nothing else.'
         }
@@ -364,8 +363,13 @@ class RealtimeClient:
             self.ws.send(json.dumps(commit_event))
             print('[REALTIME] Committed audio buffer', flush=True)
             
-            # Send response.create to request transcription
-            response_event = {'type': 'response.create'}
+            # Send response.create to request text-only transcription
+            response_event = {
+                'type': 'response.create',
+                'response': {
+                    'output_modalities': ['text']  # Text only, no audio response
+                }
+            }
             self.ws.send(json.dumps(response_event))
             print('[REALTIME] Requested response, waiting...', flush=True)
             
