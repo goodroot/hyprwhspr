@@ -149,11 +149,18 @@ class WhisperManager:
                     return False
                 
                 # Set up streaming callback with resampling from 16kHz to 24kHz
+                self._chunk_count = 0
                 def _resample_and_send(audio_chunk: np.ndarray):
                     """Resample from 16kHz to 24kHz and send to realtime client"""
-                    from scipy import signal
-                    resampled = signal.resample(audio_chunk, int(len(audio_chunk) * 1.5))
-                    self._realtime_client.append_audio(resampled.astype(np.float32))
+                    try:
+                        from scipy import signal
+                        self._chunk_count += 1
+                        if self._chunk_count <= 3:
+                            print(f'[REALTIME] Streaming chunk #{self._chunk_count} ({len(audio_chunk)} samples)', flush=True)
+                        resampled = signal.resample(audio_chunk, int(len(audio_chunk) * 1.5))
+                        self._realtime_client.append_audio(resampled.astype(np.float32))
+                    except Exception as e:
+                        print(f'[REALTIME] Streaming callback error: {e}', flush=True)
                 
                 self._realtime_streaming_callback = _resample_and_send
                 
