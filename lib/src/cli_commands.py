@@ -408,22 +408,24 @@ def _prompt_backend_selection():
                     'amd': 'AMD (ROCm)',
                     'parakeet': 'Parakeet',
                     'rest-api': 'REST API',
+                    'realtime-ws': 'Realtime WebSocket',
                     'pywhispercpp': 'pywhispercpp'
                 }
-                print(f"\n⚠️  Switching from {backend_names.get(current_backend)} to {backend_names.get(selected)}")
+                print(f"\n⚠️  Switching from {backend_names.get(current_backend, current_backend)} to {backend_names.get(selected, selected)}")
                 
                 if selected == 'parakeet':
                     print("Parakeet uses a separate venv and runs as a local REST server.")
-                    if current_backend not in ['rest-api', 'remote', 'parakeet']:
+                    if current_backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
                         print("This will uninstall the current backend.")
                         if not Confirm.ask("Continue?", default=True):
                             continue
-                elif current_backend not in ['rest-api', 'remote', 'parakeet'] and selected not in ['rest-api', 'remote', 'parakeet']:
+                elif current_backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet'] and selected not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
                     print("This will uninstall the current backend and install the new one.")
                     if not Confirm.ask("Continue?", default=True):
                         continue
-                elif selected == 'rest-api':
-                    print("Switching to REST API backend.")
+                elif selected in ['rest-api', 'realtime-ws']:
+                    backend_type_name = 'REST API' if selected == 'rest-api' else 'Realtime WebSocket'
+                    print(f"Switching to {backend_type_name} backend.")
                     if current_backend == 'parakeet':
                         print("The Parakeet venv will no longer be needed.")
                         cleanup_venv = Confirm.ask("Remove the Parakeet venv to free up space?", default=False)
@@ -435,13 +437,14 @@ def _prompt_backend_selection():
                         'nvidia': 'NVIDIA (CUDA)',
                         'amd': 'AMD (ROCm)',
                         'parakeet': 'Parakeet',
-                        'rest-api': 'REST API'
+                        'rest-api': 'REST API',
+                        'realtime-ws': 'Realtime WebSocket'
                     }
                     print(f"\n✓ Selected: {backend_names[selected]}")
                     return (selected, cleanup_venv)  # Return tuple: (backend, cleanup_venv)
             
             # If re-selecting same backend, offer reinstall option
-            if current_backend == selected and selected not in ['rest-api', 'remote', 'parakeet']:
+            if current_backend == selected and selected not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
                 backend_names = {
                     'cpu': 'CPU',
                     'nvidia': 'NVIDIA (CUDA)',
@@ -793,7 +796,7 @@ def setup_command():
     
     # Handle backend switching
     if current_backend and current_backend != backend:
-        if current_backend not in ['rest-api', 'remote']:
+        if current_backend not in ['rest-api', 'remote', 'realtime-ws']:
             # Switching from local to something else
             if not _cleanup_backend(current_backend):
                 log_warning("Failed to clean up old backend, continuing anyway...")
@@ -811,17 +814,17 @@ def setup_command():
                     shutil.rmtree(VENV_DIR)
                     log_success("Main venv removed")
         
-        if cleanup_venv and backend in ['rest-api', 'remote']:
-            # User wants to remove venv when switching to REST API
+        if cleanup_venv and backend in ['rest-api', 'remote', 'realtime-ws']:
+            # User wants to remove venv when switching to cloud backend
             if VENV_DIR.exists():
                 log_info("Removing venv as requested...")
                 import shutil
                 shutil.rmtree(VENV_DIR)
                 log_success("Venv removed")
     
-    # Step 1.5: Backend installation (if not REST API)
+    # Step 1.5: Backend installation (if not cloud backend)
     parakeet_installed = False
-    if backend not in ['rest-api', 'remote']:
+    if backend not in ['rest-api', 'remote', 'realtime-ws']:
         print("\n" + "="*60)
         print("Backend Installation")
         print("="*60)
