@@ -122,8 +122,6 @@ class hyprwhsprApp:
             
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
-            if streaming_callback:
-                print(f'[DEBUG] Streaming callback obtained for realtime-ws', flush=True)
             
             # Start audio capture (with streaming callback for realtime-ws)
             self.audio_capture.start_recording(streaming_callback=streaming_callback)

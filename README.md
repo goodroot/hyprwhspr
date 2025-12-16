@@ -21,6 +21,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 - **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
 - **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Latest local models with GPU support**: Whisper turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
+- **Conversation mode** - Send text to Cloud API and receive LLM response in return
 - **Supports any cloud API** -  Use a cloud stt service or any custom localhost model
 - **Word overrides and multi-language** - Customize transcriptions, prompt and corrections, in your language
 - **Auto-paste anywhere** - Pastes in active buffer without additional keypresses
@@ -140,8 +141,9 @@ Edit `~/.config/hyprwhspr/config.json`:
 **Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
 
 Two modes available:
-- **transcribe** - Pure speech-to-text transcription
-- **converse** - Voice-to-AI: speak and get AI responses
+
+- **transcribe** (default) - Pure speech-to-text using `gpt-4o-mini-transcribe`
+- **converse** - Voice-to-AI: speak and get AI responses using `gpt-realtime-mini`
 
 ```jsonc
 {
@@ -153,31 +155,6 @@ Two modes available:
     "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
 }
 ```
-
-**Available models:**
-
-- **GPT Realtime Mini (2025-12-15)** - For both transcription and conversation modes
-
-**Custom realtime backends:**
-
-Configure via `hyprwhspr setup` - select "Realtime WebSocket" backend, then "Customize your own backend". 
-
-The setup will prompt for:
-
-- WebSocket URL (e.g., `wss://api.example.com/v1/realtime`)
-- Model identifier
-- API key (stored securely, not in config)
-
-```jsonc
-{
-    "transcription_backend": "realtime-ws",
-    "websocket_provider": "custom",
-    "websocket_model": "your-model-id",
-    "websocket_url": "wss://api.example.com/v1/realtime"
-}
-```
-
-> API keys for custom backends are stored securely in the credential store (not in `config.json`). Configure them during setup or use `hyprwhspr config` to manage credentials.
 
 **REST API** - use any ASR backend via HTTP API (local or cloud):
 

@@ -108,6 +108,10 @@ class WhisperManager:
                     print(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
                     return False
                 
+                # Initialize RealtimeClient with mode
+                realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+                self._realtime_client = RealtimeClient(mode=realtime_mode)
+                
                 # Get WebSocket URL
                 websocket_url = self.config.get_setting('websocket_url')
                 if not websocket_url:
@@ -118,7 +122,7 @@ class WhisperManager:
                     
                     # For known providers, derive from provider registry
                     try:
-                        websocket_url = self._get_websocket_url(provider_id, model_id)
+                        websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
                     except Exception as e:
                         print(f'ERROR: Failed to derive WebSocket URL: {e}')
                         return False
@@ -135,10 +139,6 @@ class WhisperManager:
                 
                 instructions = ' '.join(instructions_parts) if instructions_parts else None
                 
-                # Initialize RealtimeClient with mode
-                realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-                self._realtime_client = RealtimeClient(mode=realtime_mode)
-                
                 # Set buffer max seconds
                 buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
                 self._realtime_client.set_max_buffer_seconds(buffer_max)
@@ -150,18 +150,14 @@ class WhisperManager:
                     return False
                 
                 # Set up streaming callback with resampling from 16kHz to 24kHz
-                self._chunk_count = 0
                 def _resample_and_send(audio_chunk: np.ndarray):
                     """Resample from 16kHz to 24kHz and send to realtime client"""
                     try:
                         from scipy import signal
-                        self._chunk_count += 1
-                        if self._chunk_count <= 3:
-                            print(f'[REALTIME] Streaming chunk #{self._chunk_count} ({len(audio_chunk)} samples)', flush=True)
                         resampled = signal.resample(audio_chunk, int(len(audio_chunk) * 1.5))
                         self._realtime_client.append_audio(resampled.astype(np.float32))
                     except Exception as e:
-                        print(f'[REALTIME] Streaming callback error: {e}', flush=True)
+                        print(f'[REALTIME] Streaming error: {e}', flush=True)
                 
                 self._realtime_streaming_callback = _resample_and_send
                 
@@ -517,16 +513,17 @@ class WhisperManager:
             print(f'ERROR: Failed to convert audio to WAV: {e}')
             raise
 
-    def _get_websocket_url(self, provider_id: str, model_id: str) -> str:
+    def _get_websocket_url(self, provider_id: str, model_id: str, mode: str = 'transcribe') -> str:
         """
         Get WebSocket URL for a provider and model.
         
         Args:
             provider_id: Provider identifier (e.g., 'openai')
             model_id: Model identifier (e.g., 'gpt-realtime-mini')
+            mode: 'transcribe' or 'converse'
         
         Returns:
-            WebSocket URL with model query parameter
+            WebSocket URL with appropriate query parameters
         """
         provider = get_provider(provider_id)
         if not provider:
@@ -548,10 +545,12 @@ class WhisperManager:
             elif '/transcriptions' in base_url:
                 base_url = base_url.replace('/transcriptions', '/realtime')
         
-        # Append model query parameter
-        if '?' in base_url:
-            return f"{base_url}&model={model_id}"
+        # Build query parameters based on mode
+        if mode == 'transcribe':
+            # Transcription mode uses intent=transcription
+            return f"{base_url}?intent=transcription"
         else:
+            # Converse mode uses model parameter
             return f"{base_url}?model={model_id}"
 
     def _transcribe_rest(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:

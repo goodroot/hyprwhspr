@@ -256,7 +256,7 @@ class RealtimeClient:
             return
         
         if self.mode == 'transcribe':
-            # Transcription-only session (no LLM response)
+            # Transcription-only session
             session_data = {
                 'type': 'transcription',
                 'audio': {
@@ -268,6 +268,12 @@ class RealtimeClient:
                         'transcription': {
                             'model': 'gpt-4o-mini-transcribe',
                             'language': 'en'
+                        },
+                        'turn_detection': {
+                            'type': 'server_vad',
+                            'threshold': 0.5,
+                            'prefix_padding_ms': 300,
+                            'silence_duration_ms': 500
                         }
                     }
                 }
