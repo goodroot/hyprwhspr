@@ -549,7 +549,18 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
     print()
     
     # Build provider list
-    providers_list = list_providers()
+    all_providers_list = list_providers()
+    
+    # Filter providers if this is for realtime-ws (only show providers with websocket_endpoint)
+    if filter_realtime:
+        providers_list = []
+        for provider_id, provider_name, model_ids in all_providers_list:
+            provider = get_provider(provider_id)
+            if provider and provider.get('websocket_endpoint'):
+                providers_list.append((provider_id, provider_name, model_ids))
+    else:
+        providers_list = all_providers_list
+    
     provider_choices = []
     
     for i, (provider_id, provider_name, model_ids) in enumerate(providers_list, 1):
@@ -1193,13 +1204,13 @@ def setup_command():
         log_success("Setup completed!")
         print("="*60)
         print("\nNext steps:")
-        if setup_systemd_choice:
+        if setup_permissions_choice:
             print("  Log out and back in (for group permissions to take effect)")
+        if setup_systemd_choice:
             if backend == 'parakeet':
                 print("  Parakeet server will start automatically via systemd")
             print("  Press hotkey to start dictation!")
         else:
-            print("  Log out and back in (if permissions were set up)")
             if backend == 'parakeet':
                 print("  Start the Parakeet server manually:")
                 print(f"    {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
@@ -2352,7 +2363,7 @@ def validate_command():
     
     # Detect current backend to determine what to validate
     current_backend = _detect_current_backend()
-    is_rest_api = current_backend in ['rest-api', 'parakeet', 'remote']
+    is_rest_api = current_backend in ['rest-api', 'parakeet', 'remote', 'realtime-ws']
     
     # Check static files
     required_files = [
