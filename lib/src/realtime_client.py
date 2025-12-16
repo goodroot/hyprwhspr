@@ -55,7 +55,7 @@ class RealtimeClient:
         self.audio_chunks = deque()
         self.audio_buffer_seconds = 0.0
         self.max_buffer_seconds = 5.0
-        self.sample_rate = 16000
+        self.sample_rate = 24000  # OpenAI transcription API requires 24kHz
         
         # Reconnection
         self.reconnect_attempts = 0
@@ -193,46 +193,29 @@ class RealtimeClient:
         if event_type in ('session.created', 'session.updated'):
             print(f'[REALTIME] Session event: {event_type}', flush=True)
         
-        # Track response events
-        elif event_type == 'response.created':
-            print(f'[REALTIME] Response created', flush=True)
-            self.current_response_text = ""
-            self.response_complete = False
-            self.response_event.clear()
-        
-        elif event_type == 'response.output_text.delta':
-            # Track delta but don't use it (per plan: no preview mode)
+        # Transcription events
+        elif event_type == 'conversation.item.input_audio_transcription.delta':
+            # Partial transcript (streaming)
             delta = event.get('delta', '')
             if delta:
                 self.current_response_text += delta
         
-        elif event_type == 'response.output_text.done':
-            # Final text is available - check multiple possible locations
-            text = event.get('text', '')
-            if not text:
-                # Try output.text structure
-                output = event.get('output', {})
-                if isinstance(output, dict):
-                    text = output.get('text', '')
-            if not text:
-                # Try delta (some events use delta for final text)
-                text = event.get('delta', '')
-            if text:
-                self.current_response_text = text
-            print(f'[REALTIME] Response text done ({len(self.current_response_text)} chars)', flush=True)
-        
-        elif event_type == 'response.done':
-            # Response is complete - check if text is in response object
-            response_obj = event.get('response', {})
-            if isinstance(response_obj, dict):
-                output = response_obj.get('output', {})
-                if isinstance(output, dict) and not self.current_response_text:
-                    text = output.get('text', '')
-                    if text:
-                        self.current_response_text = text
+        elif event_type == 'conversation.item.input_audio_transcription.completed':
+            # Final transcript - always use this value (even if empty) to clear any partial deltas
+            transcript = event.get('transcript', '')
+            self.current_response_text = transcript
             self.response_complete = True
             self.response_event.set()
-            print(f'[REALTIME] Response done', flush=True)
+            print(f'[REALTIME] Transcription completed ({len(self.current_response_text)} chars)', flush=True)
+        
+        elif event_type == 'input_audio_buffer.committed':
+            print(f'[REALTIME] Audio buffer committed', flush=True)
+        
+        elif event_type == 'input_audio_buffer.speech_started':
+            print(f'[REALTIME] Speech detected', flush=True)
+        
+        elif event_type == 'input_audio_buffer.speech_stopped':
+            print(f'[REALTIME] Speech ended', flush=True)
         
         elif event_type == 'error':
             error = event.get('error', {})
@@ -242,22 +225,36 @@ class RealtimeClient:
             self.response_event.set()  # Unblock waiting thread
     
     def _send_session_update(self):
-        """Send session.update event with instructions"""
+        """Send session.update event for transcription mode"""
         if not self.connected or not self.ws:
             return
         
+        # Transcription session format per OpenAI docs
         session_data = {
-            'type': 'realtime',
-            'input_audio_format': {
-                'type': 'pcm',
-                'sample_rate': 16000,
-                'num_channels': 1,
-                'encoding': 'pcm_s16le'
+            'type': 'transcription',
+            'audio': {
+                'input': {
+                    'format': {
+                        'type': 'audio/pcm',
+                        'rate': 24000
+                    },
+                    'transcription': {
+                        'model': self.model,
+                        'language': 'en'
+                    },
+                    'turn_detection': {
+                        'type': 'server_vad',
+                        'threshold': 0.5,
+                        'prefix_padding_ms': 300,
+                        'silence_duration_ms': 500
+                    }
+                }
             }
         }
         
+        # Add prompt/instructions if provided
         if self.instructions:
-            session_data['instructions'] = self.instructions
+            session_data['audio']['input']['transcription']['prompt'] = self.instructions
         
         event = {
             'type': 'session.update',
@@ -266,7 +263,7 @@ class RealtimeClient:
         
         try:
             self.ws.send(json.dumps(event))
-            print(f'[REALTIME] Sent session.update', flush=True)
+            print(f'[REALTIME] Sent session.update (transcription mode)', flush=True)
         except Exception as e:
             print(f'[REALTIME] Failed to send session.update: {e}', flush=True)
     
@@ -343,8 +340,11 @@ class RealtimeClient:
         """
         Commit audio buffer and wait for transcription result.
         
+        With server VAD enabled, transcription happens automatically when speech ends.
+        This method commits any remaining audio and waits for the transcript.
+        
         Args:
-            timeout: Maximum time to wait for response (seconds)
+            timeout: Maximum time to wait for transcription (seconds)
         
         Returns:
             Final transcript text, or empty string on timeout/error
@@ -359,29 +359,24 @@ class RealtimeClient:
             self.response_complete = False
             self.response_event.clear()
             
-            # Send input_audio_buffer.commit
+            # Send input_audio_buffer.commit to finalize any remaining audio
             commit_event = {'type': 'input_audio_buffer.commit'}
             self.ws.send(json.dumps(commit_event))
-            print('[REALTIME] Committed audio buffer', flush=True)
+            print('[REALTIME] Committed audio buffer, waiting for transcription...', flush=True)
             
-            # Send response.create
-            response_event = {'type': 'response.create'}
-            self.ws.send(json.dumps(response_event))
-            print('[REALTIME] Requested response, waiting...', flush=True)
-            
-            # Wait for response.done event
+            # Wait for conversation.item.input_audio_transcription.completed event
             if self.response_event.wait(timeout=timeout):
                 if self.response_complete:
                     result = self.current_response_text.strip()
-                    print(f'[REALTIME] Response received ({len(result)} chars)', flush=True)
+                    print(f'[REALTIME] Transcription received ({len(result)} chars)', flush=True)
                     # Reset buffer tracking
                     self.audio_buffer_seconds = 0.0
                     return result
                 else:
-                    print('[REALTIME] Response event set but not complete', flush=True)
+                    print('[REALTIME] Event set but transcription not complete', flush=True)
                     return ""
             else:
-                print(f'[REALTIME] Timeout waiting for response ({timeout}s)', flush=True)
+                print(f'[REALTIME] Timeout waiting for transcription ({timeout}s)', flush=True)
                 return ""
                 
         except Exception as e:
