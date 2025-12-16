@@ -43,7 +43,7 @@ class ConfigManager:
             'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
             'realtime_timeout': 30,            # Completion timeout (seconds)
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
-            'realtime_mode': 'transcribe'      # 'transcribe' or 'converse' (LLM response mode)
+            'realtime_mode': 'transcribe'      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
         }
         
         # Set up config directory and file path

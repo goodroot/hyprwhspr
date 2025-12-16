@@ -137,11 +137,11 @@ Edit `~/.config/hyprwhspr/config.json`:
 - **`push_to_talk: false`** (default) - Toggle mode: press to start, press again to stop
 - **`push_to_talk: true`** - Push-to-talk mode: hold to record, release to stop
 
-**Realtime WebSockets** - low-latency streaming transcription:
+**Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
 
-Stream audio in real-time for the fastest possible cloud transcription. 
-
-Provider available for OpenAI, or create your own custom backend:
+Two modes available:
+- **transcribe** - Pure speech-to-text transcription
+- **converse** - Voice-to-AI: speak and get AI responses
 
 ```jsonc
 {
@@ -154,14 +154,9 @@ Provider available for OpenAI, or create your own custom backend:
 }
 ```
 
-**Realtime modes:**
+**Available models:**
 
-- **transcribe** (default) - Convert speech to text
-- **converse** - Send speech to LLM and paste its response (voice-to-AI)
-
-**Available realtime models:**
-
-- **GPT Realtime Mini (2025-12-15)** - Fastest realtime streaming transcription
+- **GPT Realtime Mini (2025-12-15)** - For both transcription and conversation modes
 
 **Custom realtime backends:**
 

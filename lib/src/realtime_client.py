@@ -34,15 +34,17 @@ class RealtimeClient:
     
     def __init__(self, mode: str = 'transcribe'):
         """
+        Realtime client for transcription or conversation.
+        
         Args:
-            mode: 'transcribe' for speech-to-text, 'converse' for LLM response mode
+            mode: 'transcribe' for speech-to-text, 'converse' for voice-to-AI
         """
         self.ws = None
         self.url = None
         self.api_key = None
         self.model = None
         self.instructions = None
-        self.mode = mode  # 'transcribe' or 'converse'
+        self.mode = mode
         
         # Connection state
         self.connected = False
@@ -249,29 +251,42 @@ class RealtimeClient:
             self.response_event.set()  # Unblock waiting thread
     
     def _send_session_update(self):
-        """Send session.update event for conversational realtime API"""
+        """Send session.update event based on mode"""
         if not self.connected or not self.ws:
             return
         
-        # Session config per OpenAI docs example
-        session_data = {
-            'type': 'realtime',
-            'output_modalities': ['text'],  # Text output only (no audio response)
-            'audio': {
-                'input': {
-                    'format': {
-                        'type': 'audio/pcm',
-                        'rate': 24000
+        if self.mode == 'transcribe':
+            # Transcription-only session (no LLM response)
+            session_data = {
+                'type': 'transcription',
+                'audio': {
+                    'input': {
+                        'format': {
+                            'type': 'audio/pcm',
+                            'rate': 24000
+                        },
+                        'transcription': {
+                            'model': 'gpt-4o-mini-transcribe',
+                            'language': 'en'
+                        }
                     }
                 }
             }
-        }
-        
-        if self.mode == 'transcribe':
-            session_data['instructions'] = self.instructions or 'Transcribe the audio exactly as spoken. Output only the transcription, nothing else.'
         else:
-            # Converse mode - LLM responds to speech
-            session_data['instructions'] = self.instructions or 'You are a helpful assistant. Respond to the user based on what they say.'
+            # Conversational session (voice-to-AI)
+            session_data = {
+                'type': 'realtime',
+                'output_modalities': ['text'],  # Text output only (no audio response)
+                'audio': {
+                    'input': {
+                        'format': {
+                            'type': 'audio/pcm',
+                            'rate': 24000
+                        }
+                    }
+                },
+                'instructions': self.instructions or 'You are a helpful assistant. Respond to the user based on what they say.'
+            }
         
         event = {
             'type': 'session.update',
@@ -381,15 +396,19 @@ class RealtimeClient:
             self.ws.send(json.dumps(commit_event))
             print('[REALTIME] Committed audio buffer', flush=True)
             
-            # Send response.create to request text-only transcription
-            response_event = {
-                'type': 'response.create',
-                'response': {
-                    'output_modalities': ['text']  # Text only, no audio response
+            # For converse mode, request a response from the model
+            # For transcribe mode, transcription happens automatically via VAD
+            if self.mode == 'converse':
+                response_event = {
+                    'type': 'response.create',
+                    'response': {
+                        'output_modalities': ['text']  # Text only, no audio response
+                    }
                 }
-            }
-            self.ws.send(json.dumps(response_event))
-            print('[REALTIME] Requested response, waiting...', flush=True)
+                self.ws.send(json.dumps(response_event))
+                print('[REALTIME] Requested response, waiting...', flush=True)
+            else:
+                print('[REALTIME] Waiting for transcription...', flush=True)
             
             # Wait for response.done event
             if self.response_event.wait(timeout=timeout):

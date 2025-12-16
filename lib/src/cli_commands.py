@@ -982,7 +982,7 @@ def setup_command():
         # Prompt for realtime mode
         print("\nRealtime Mode:")
         print("  1. Transcribe - Convert speech to text (default)")
-        print("  2. Converse - Send speech to LLM and get a response")
+        print("  2. Converse - Voice-to-AI: speak and get AI responses")
         mode_choice = Prompt.ask("Select mode", choices=['1', '2'], default='1')
         realtime_mode = 'transcribe' if mode_choice == '1' else 'converse'
         remote_config['realtime_mode'] = realtime_mode
