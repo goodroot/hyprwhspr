@@ -464,13 +464,33 @@ def _prompt_backend_selection():
                 if not reinstall:
                     print("Keeping existing installation.")
                     return (selected, False)
+            elif current_backend == selected and selected == 'realtime-ws':
+                backend_names = {
+                    'realtime-ws': 'Realtime WebSocket'
+                }
+                print(f"\n{backend_names.get(selected)} backend is already configured.")
+                reconfigure = Confirm.ask("Reconfigure backend?", default=False)
+                if not reconfigure:
+                    print("Keeping existing configuration.")
+                    return (selected, False)
+            elif current_backend == selected and selected in ['rest-api', 'remote']:
+                backend_names = {
+                    'rest-api': 'REST API',
+                    'remote': 'REST API'
+                }
+                print(f"\n{backend_names.get(selected)} backend is already configured.")
+                reconfigure = Confirm.ask("Reconfigure backend?", default=False)
+                if not reconfigure:
+                    print("Keeping existing configuration.")
+                    return (selected, False)
             
             backend_names = {
                 'cpu': 'CPU',
                 'nvidia': 'NVIDIA (CUDA)',
                 'amd': 'AMD (ROCm)',
                 'parakeet': 'Parakeet',
-                'rest-api': 'REST API'
+                'rest-api': 'REST API',
+                'realtime-ws': 'Realtime WebSocket'
             }
             print(f"\n✓ Selected: {backend_names[selected]}")
             return (selected, False)  # Return tuple: (backend, cleanup_venv)
