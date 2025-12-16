@@ -55,6 +55,7 @@ class AudioCapture:
         
         # Callbacks
         self.level_callback = None
+        self.streaming_callback = None  # For realtime streaming backends
         
         # Audio stream
         self.stream = None
@@ -260,8 +261,14 @@ class AudioCapture:
         except Exception:
             return False
     
-    def start_recording(self) -> bool:
-        """Start recording audio"""
+    def start_recording(self, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
+        """
+        Start recording audio
+        
+        Args:
+            streaming_callback: Optional callback function to receive audio chunks in real-time
+                                (for streaming backends like WebSocket)
+        """
         if not self.is_available():
             raise RuntimeError("Audio capture not available")
         
@@ -273,6 +280,7 @@ class AudioCapture:
             with self.lock:
                 self.audio_data = []
                 self.is_recording = True
+                self.streaming_callback = streaming_callback
             
             # Start recording thread
             self.record_thread = threading.Thread(target=self._record_audio, daemon=True)
@@ -333,6 +341,14 @@ class AudioCapture:
                         
                         # Store audio data
                         self.audio_data.append(audio_chunk.copy())
+                        
+                        # Call streaming callback if set (for realtime backends)
+                        if self.streaming_callback:
+                            try:
+                                self.streaming_callback(audio_chunk.copy())
+                            except Exception as e:
+                                print(f"[WARN] Streaming callback error: {e}")
+                        
                         chunk_count += 1
             
             # Determine device to use for recording

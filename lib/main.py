@@ -120,8 +120,11 @@ class hyprwhsprApp:
             # Play start sound
             self.audio_manager.play_start_sound()
             
-            # Start audio capture
-            self.audio_capture.start_recording()
+            # Check if using realtime-ws backend and get streaming callback
+            streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
+            
+            # Start audio capture (with streaming callback for realtime-ws)
+            self.audio_capture.start_recording(streaming_callback=streaming_callback)
             
             # Start audio level monitoring thread
             self._start_audio_level_monitoring()
@@ -145,16 +148,33 @@ class hyprwhsprApp:
             # Write recording status to file for tray script
             self._write_recording_status(False)
             
+            # Check backend type
+            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+            if backend == 'local':
+                backend = 'pywhispercpp'
+            elif backend == 'remote':
+                backend = 'rest-api'
+            
             # Stop audio capture
             audio_data = self.audio_capture.stop_recording()
             
             # Play stop sound
             self.audio_manager.play_stop_sound()
             
-            if audio_data is not None:
-                self._process_audio(audio_data)
+            # For realtime-ws, audio was already streamed via callback
+            # We still need audio_data for transcribe_audio (it will commit and wait)
+            if backend == 'realtime-ws':
+                if audio_data is not None:
+                    # Audio was streamed, now commit and get result
+                    self._process_audio(audio_data)
+                else:
+                    print("[WARN] No audio data captured")
             else:
-                print("[WARN] No audio data captured")
+                # For other backends, use existing flow
+                if audio_data is not None:
+                    self._process_audio(audio_data)
+                else:
+                    print("[WARN] No audio data captured")
                 
         except Exception as e:
             print(f"[ERROR] Error stopping recording: {e}")
@@ -289,6 +309,10 @@ class hyprwhsprApp:
             # Stop audio capture
             if self.is_recording:
                 self.audio_capture.stop_recording()
+
+            # Cleanup whisper manager (closes WebSocket connections, etc.)
+            if self.whisper_manager:
+                self.whisper_manager.cleanup()
 
             # Save configuration
             self.config.save_config()
