@@ -118,7 +118,7 @@ class WhisperManager:
                     
                     # For known providers, derive from provider registry
                     try:
-                        websocket_url = self._get_websocket_url(provider_id)
+                        websocket_url = self._get_websocket_url(provider_id, model_id)
                     except Exception as e:
                         print(f'ERROR: Failed to derive WebSocket URL: {e}')
                         return False
@@ -503,15 +503,16 @@ class WhisperManager:
             print(f'ERROR: Failed to convert audio to WAV: {e}')
             raise
 
-    def _get_websocket_url(self, provider_id: str) -> str:
+    def _get_websocket_url(self, provider_id: str, model_id: str) -> str:
         """
-        Get WebSocket URL for a provider (transcription mode).
+        Get WebSocket URL for a provider and model.
         
         Args:
             provider_id: Provider identifier (e.g., 'openai')
+            model_id: Model identifier (e.g., 'gpt-realtime-mini')
         
         Returns:
-            WebSocket URL with intent=transcription query parameter
+            WebSocket URL with model query parameter
         """
         provider = get_provider(provider_id)
         if not provider:
@@ -533,11 +534,11 @@ class WhisperManager:
             elif '/transcriptions' in base_url:
                 base_url = base_url.replace('/transcriptions', '/realtime')
         
-        # For transcription mode, use intent=transcription (model is sent in session update)
+        # Append model query parameter
         if '?' in base_url:
-            return f"{base_url}&intent=transcription"
+            return f"{base_url}&model={model_id}"
         else:
-            return f"{base_url}?intent=transcription"
+            return f"{base_url}?model={model_id}"
 
     def _transcribe_rest(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
         """

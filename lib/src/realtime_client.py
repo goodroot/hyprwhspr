@@ -190,18 +190,37 @@ class RealtimeClient:
         event_type = event.get('type', '')
         
         # Log session events
-        if event_type in ('session.created', 'session.updated', 'transcription_session.created', 'transcription_session.updated'):
+        if event_type in ('session.created', 'session.updated'):
             print(f'[REALTIME] Session event: {event_type}', flush=True)
         
-        # Transcription events
-        elif event_type == 'conversation.item.input_audio_transcription.delta':
-            # Partial transcript (streaming)
+        # Response events (conversational API)
+        elif event_type == 'response.created':
+            print(f'[REALTIME] Response created', flush=True)
+            self.current_response_text = ""
+            self.response_complete = False
+            self.response_event.clear()
+        
+        elif event_type == 'response.output_text.delta':
+            # Accumulate text deltas
             delta = event.get('delta', '')
             if delta:
                 self.current_response_text += delta
         
+        elif event_type == 'response.output_text.done':
+            # Final text available
+            text = event.get('text', '')
+            if text:
+                self.current_response_text = text
+            print(f'[REALTIME] Response text done ({len(self.current_response_text)} chars)', flush=True)
+        
+        elif event_type == 'response.done':
+            # Response complete
+            self.response_complete = True
+            self.response_event.set()
+            print(f'[REALTIME] Response done', flush=True)
+        
+        # Transcription events (fallback/alternative)
         elif event_type == 'conversation.item.input_audio_transcription.completed':
-            # Final transcript - always use this value (even if empty) to clear any partial deltas
             transcript = event.get('transcript', '')
             self.current_response_text = transcript
             self.response_complete = True
@@ -225,38 +244,27 @@ class RealtimeClient:
             self.response_event.set()  # Unblock waiting thread
     
     def _send_session_update(self):
-        """Send transcription_session.update event"""
+        """Send session.update event for conversational realtime API"""
         if not self.connected or not self.ws:
             return
         
-        # Transcription session format per OpenAI docs
-        event = {
-            'type': 'transcription_session.update',
+        # Conversational session format - request text-only output
+        session_data = {
+            'modalities': ['text'],  # Text output only (no audio response)
             'input_audio_format': 'pcm16',
-            'input_audio_transcription': {
-                'model': self.model,
-                'language': 'en'
-            },
-            'turn_detection': {
-                'type': 'server_vad',
-                'threshold': 0.5,
-                'prefix_padding_ms': 300,
-                'silence_duration_ms': 500
-            },
-            'input_audio_noise_reduction': {
-                'type': 'near_field'
-            }
+            'instructions': self.instructions or 'Transcribe the audio exactly as spoken. Output only the transcription, nothing else.'
         }
         
-        # Add prompt if provided
-        if self.instructions:
-            event['input_audio_transcription']['prompt'] = self.instructions
+        event = {
+            'type': 'session.update',
+            'session': session_data
+        }
         
         try:
             self.ws.send(json.dumps(event))
-            print(f'[REALTIME] Sent transcription_session.update', flush=True)
+            print(f'[REALTIME] Sent session.update', flush=True)
         except Exception as e:
-            print(f'[REALTIME] Failed to send transcription_session.update: {e}', flush=True)
+            print(f'[REALTIME] Failed to send session.update: {e}', flush=True)
     
     def _attempt_reconnect(self):
         """Attempt to reconnect with exponential backoff"""
@@ -350,24 +358,29 @@ class RealtimeClient:
             self.response_complete = False
             self.response_event.clear()
             
-            # Send input_audio_buffer.commit to finalize any remaining audio
+            # Send input_audio_buffer.commit
             commit_event = {'type': 'input_audio_buffer.commit'}
             self.ws.send(json.dumps(commit_event))
-            print('[REALTIME] Committed audio buffer, waiting for transcription...', flush=True)
+            print('[REALTIME] Committed audio buffer', flush=True)
             
-            # Wait for conversation.item.input_audio_transcription.completed event
+            # Send response.create to request transcription
+            response_event = {'type': 'response.create'}
+            self.ws.send(json.dumps(response_event))
+            print('[REALTIME] Requested response, waiting...', flush=True)
+            
+            # Wait for response.done event
             if self.response_event.wait(timeout=timeout):
                 if self.response_complete:
                     result = self.current_response_text.strip()
-                    print(f'[REALTIME] Transcription received ({len(result)} chars)', flush=True)
+                    print(f'[REALTIME] Response received ({len(result)} chars)', flush=True)
                     # Reset buffer tracking
                     self.audio_buffer_seconds = 0.0
                     return result
                 else:
-                    print('[REALTIME] Event set but transcription not complete', flush=True)
+                    print('[REALTIME] Event set but response not complete', flush=True)
                     return ""
             else:
-                print(f'[REALTIME] Timeout waiting for transcription ({timeout}s)', flush=True)
+                print(f'[REALTIME] Timeout waiting for response ({timeout}s)', flush=True)
                 return ""
                 
         except Exception as e:
