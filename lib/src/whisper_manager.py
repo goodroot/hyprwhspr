@@ -118,7 +118,7 @@ class WhisperManager:
                     
                     # For known providers, derive from provider registry
                     try:
-                        websocket_url = self._get_websocket_url(provider_id, model_id)
+                        websocket_url = self._get_websocket_url(provider_id)
                     except Exception as e:
                         print(f'ERROR: Failed to derive WebSocket URL: {e}')
                         return False
@@ -148,15 +148,8 @@ class WhisperManager:
                     self._realtime_client = None
                     return False
                 
-                # Set up streaming callback with resampling from 16kHz to 24kHz
-                def _resample_and_send(audio_chunk: np.ndarray):
-                    """Resample from 16kHz to 24kHz and send to realtime client"""
-                    # Simple linear interpolation resampling (16kHz -> 24kHz = 1.5x)
-                    from scipy import signal
-                    resampled = signal.resample(audio_chunk, int(len(audio_chunk) * 1.5))
-                    self._realtime_client.append_audio(resampled.astype(np.float32))
-                
-                self._realtime_streaming_callback = _resample_and_send
+                # Set up streaming callback (audio is already 16kHz mono, matching pcm16 format)
+                self._realtime_streaming_callback = self._realtime_client.append_audio
                 
                 print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
                 print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
@@ -510,16 +503,15 @@ class WhisperManager:
             print(f'ERROR: Failed to convert audio to WAV: {e}')
             raise
 
-    def _get_websocket_url(self, provider_id: str, model_id: str) -> str:
+    def _get_websocket_url(self, provider_id: str) -> str:
         """
-        Get WebSocket URL for a provider and model.
+        Get WebSocket URL for a provider (transcription mode).
         
         Args:
             provider_id: Provider identifier (e.g., 'openai')
-            model_id: Model identifier (e.g., 'gpt-realtime-mini-2025-12-15')
         
         Returns:
-            WebSocket URL with model query parameter
+            WebSocket URL with intent=transcription query parameter
         """
         provider = get_provider(provider_id)
         if not provider:
@@ -541,11 +533,11 @@ class WhisperManager:
             elif '/transcriptions' in base_url:
                 base_url = base_url.replace('/transcriptions', '/realtime')
         
-        # Append model query parameter
+        # For transcription mode, use intent=transcription (model is sent in session update)
         if '?' in base_url:
-            return f"{base_url}&model={model_id}"
+            return f"{base_url}&intent=transcription"
         else:
-            return f"{base_url}?model={model_id}"
+            return f"{base_url}?intent=transcription"
 
     def _transcribe_rest(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
         """

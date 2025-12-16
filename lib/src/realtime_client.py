@@ -55,7 +55,7 @@ class RealtimeClient:
         self.audio_chunks = deque()
         self.audio_buffer_seconds = 0.0
         self.max_buffer_seconds = 5.0
-        self.sample_rate = 24000  # OpenAI transcription API requires 24kHz
+        self.sample_rate = 16000  # PCM16 format
         
         # Reconnection
         self.reconnect_attempts = 0
@@ -190,7 +190,7 @@ class RealtimeClient:
         event_type = event.get('type', '')
         
         # Log session events
-        if event_type in ('session.created', 'session.updated'):
+        if event_type in ('session.created', 'session.updated', 'transcription_session.created', 'transcription_session.updated'):
             print(f'[REALTIME] Session event: {event_type}', flush=True)
         
         # Transcription events
@@ -225,47 +225,38 @@ class RealtimeClient:
             self.response_event.set()  # Unblock waiting thread
     
     def _send_session_update(self):
-        """Send session.update event for transcription mode"""
+        """Send transcription_session.update event"""
         if not self.connected or not self.ws:
             return
         
         # Transcription session format per OpenAI docs
-        session_data = {
-            'type': 'transcription',
-            'audio': {
-                'input': {
-                    'format': {
-                        'type': 'audio/pcm',
-                        'rate': 24000
-                    },
-                    'transcription': {
-                        'model': self.model,
-                        'language': 'en'
-                    },
-                    'turn_detection': {
-                        'type': 'server_vad',
-                        'threshold': 0.5,
-                        'prefix_padding_ms': 300,
-                        'silence_duration_ms': 500
-                    }
-                }
+        event = {
+            'type': 'transcription_session.update',
+            'input_audio_format': 'pcm16',
+            'input_audio_transcription': {
+                'model': self.model,
+                'language': 'en'
+            },
+            'turn_detection': {
+                'type': 'server_vad',
+                'threshold': 0.5,
+                'prefix_padding_ms': 300,
+                'silence_duration_ms': 500
+            },
+            'input_audio_noise_reduction': {
+                'type': 'near_field'
             }
         }
         
-        # Add prompt/instructions if provided
+        # Add prompt if provided
         if self.instructions:
-            session_data['audio']['input']['transcription']['prompt'] = self.instructions
-        
-        event = {
-            'type': 'session.update',
-            'session': session_data
-        }
+            event['input_audio_transcription']['prompt'] = self.instructions
         
         try:
             self.ws.send(json.dumps(event))
-            print(f'[REALTIME] Sent session.update (transcription mode)', flush=True)
+            print(f'[REALTIME] Sent transcription_session.update', flush=True)
         except Exception as e:
-            print(f'[REALTIME] Failed to send session.update: {e}', flush=True)
+            print(f'[REALTIME] Failed to send transcription_session.update: {e}', flush=True)
     
     def _attempt_reconnect(self):
         """Attempt to reconnect with exponential backoff"""
