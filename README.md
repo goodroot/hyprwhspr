@@ -94,6 +94,9 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr model` - Manage models (download/list/status)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation
+- `hyprwhspr backend` - Backend management (repair/reset)
+- `hyprwhspr state` - State management (show/validate/reset)
+- `hyprwhspr uninstall` - Completely remove hyprwhspr and all user data
 
 ## Usage
 
