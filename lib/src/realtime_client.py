@@ -250,6 +250,7 @@ class RealtimeClient:
         
         # Conversational session format - request text-only output
         session_data = {
+            'type': 'realtime',
             'modalities': ['text'],  # Text output only (no audio response)
             'input_audio_format': 'pcm16',
             'instructions': self.instructions or 'Transcribe the audio exactly as spoken. Output only the transcription, nothing else.'
