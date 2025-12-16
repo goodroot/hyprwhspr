@@ -36,7 +36,13 @@ class ConfigManager:
             'rest_headers': {},                # Additional HTTP headers for remote transcription
             'rest_body': {},                   # Additional body fields for remote transcription
             'rest_timeout': 30,                # Request timeout in seconds
-            'rest_audio_format': 'wav'         # Audio format for remote transcription
+            'rest_audio_format': 'wav',        # Audio format for remote transcription
+            # WebSocket realtime backend settings
+            'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai')
+            'websocket_model': None,           # Model identifier (e.g., 'gpt-realtime-mini-2025-12-15')
+            'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
+            'realtime_timeout': 30,            # Completion timeout (seconds)
+            'realtime_buffer_max_seconds': 5   # Max buffer before dropping chunks
         }
         
         # Set up config directory and file path

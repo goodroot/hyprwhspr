@@ -13,7 +13,7 @@ import re
 import io
 from contextlib import contextmanager
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Callable
 
 try:
     import numpy as np
@@ -36,9 +36,11 @@ except (ImportError, ModuleNotFoundError) as e:
 try:
     from .config_manager import ConfigManager
     from .credential_manager import get_credential
+    from .provider_registry import get_provider
 except ImportError:
     from config_manager import ConfigManager
     from credential_manager import get_credential
+    from provider_registry import get_provider
 
 
 class WhisperManager:
@@ -56,6 +58,10 @@ class WhisperManager:
         # Backend-specific attributes (pywhispercpp only)
         self._pywhisper_model = None
         self.temp_dir = None
+        
+        # Realtime WebSocket client
+        self._realtime_client = None
+        self._realtime_streaming_callback = None
 
         # Thread safety for model operations
         self._model_lock = threading.Lock()
@@ -76,6 +82,82 @@ class WhisperManager:
                 backend = 'pywhispercpp'
             elif backend == 'remote':
                 backend = 'rest-api'
+
+            # Configure Realtime WebSocket backend
+            if backend == 'realtime-ws':
+                try:
+                    from .realtime_client import RealtimeClient
+                except ImportError:
+                    from realtime_client import RealtimeClient
+                
+                # Validate WebSocket configuration
+                provider_id = self.config.get_setting('websocket_provider')
+                model_id = self.config.get_setting('websocket_model')
+                
+                if not provider_id:
+                    print('ERROR: Realtime WebSocket backend selected but websocket_provider not configured')
+                    return False
+                
+                if not model_id:
+                    print('ERROR: Realtime WebSocket backend selected but websocket_model not configured')
+                    return False
+                
+                # Get API key from credential manager
+                api_key = get_credential(provider_id)
+                if not api_key:
+                    print(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
+                    return False
+                
+                # Get WebSocket URL
+                websocket_url = self.config.get_setting('websocket_url')
+                if not websocket_url:
+                    # For custom providers, websocket_url must be explicitly set
+                    if provider_id == 'custom':
+                        print('ERROR: Custom realtime backend requires websocket_url to be configured')
+                        return False
+                    
+                    # For known providers, derive from provider registry
+                    try:
+                        websocket_url = self._get_websocket_url(provider_id, model_id)
+                    except Exception as e:
+                        print(f'ERROR: Failed to derive WebSocket URL: {e}')
+                        return False
+                
+                # Build instructions from whisper_prompt and language
+                instructions_parts = []
+                whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                if whisper_prompt:
+                    instructions_parts.append(whisper_prompt)
+                
+                language = self.config.get_setting('language', None)
+                if language:
+                    instructions_parts.append(f"Transcribe in {language} language.")
+                
+                instructions = ' '.join(instructions_parts) if instructions_parts else None
+                
+                # Initialize RealtimeClient
+                self._realtime_client = RealtimeClient()
+                
+                # Set buffer max seconds
+                buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+                self._realtime_client.set_max_buffer_seconds(buffer_max)
+                
+                # Connect
+                if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
+                    print('ERROR: Failed to connect to Realtime WebSocket')
+                    self._realtime_client = None
+                    return False
+                
+                # Set up streaming callback
+                self._realtime_streaming_callback = self._realtime_client.append_audio
+                
+                print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
+                print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
+                
+                # Explicitly set to None to avoid confusion with top-level model setting
+                self.current_model = None
+                self.ready = True
+                return True
 
             # Configure REST API backend and return early
             if backend == 'rest-api':
@@ -421,6 +503,43 @@ class WhisperManager:
             print(f'ERROR: Failed to convert audio to WAV: {e}')
             raise
 
+    def _get_websocket_url(self, provider_id: str, model_id: str) -> str:
+        """
+        Get WebSocket URL for a provider and model.
+        
+        Args:
+            provider_id: Provider identifier (e.g., 'openai')
+            model_id: Model identifier (e.g., 'gpt-realtime-mini-2025-12-15')
+        
+        Returns:
+            WebSocket URL with model query parameter
+        """
+        provider = get_provider(provider_id)
+        if not provider:
+            raise ValueError(f"Unknown provider: {provider_id}")
+        
+        # Check if provider has explicit websocket_endpoint
+        if 'websocket_endpoint' in provider:
+            base_url = provider['websocket_endpoint']
+        else:
+            # Derive from HTTP endpoint
+            endpoint = provider.get('endpoint', '')
+            if not endpoint:
+                raise ValueError(f"Provider {provider_id} has no endpoint or websocket_endpoint")
+            
+            # Transform: https:// -> wss://, replace /audio/transcriptions -> /realtime
+            base_url = endpoint.replace('https://', 'wss://').replace('http://', 'ws://')
+            if '/audio/transcriptions' in base_url:
+                base_url = base_url.replace('/audio/transcriptions', '/realtime')
+            elif '/transcriptions' in base_url:
+                base_url = base_url.replace('/transcriptions', '/realtime')
+        
+        # Append model query parameter
+        if '?' in base_url:
+            return f"{base_url}&model={model_id}"
+        else:
+            return f"{base_url}?model={model_id}"
+
     def _transcribe_rest(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
         """
         Transcribe audio using remote REST API endpoint
@@ -597,6 +716,58 @@ class WhisperManager:
             print(f'ERROR: REST transcription failed: {e}')
             return ''
 
+    def _transcribe_realtime(self, _audio_data: np.ndarray, _sample_rate: int = 16000) -> str:
+        """
+        Transcribe audio using Realtime WebSocket backend.
+        
+        Note: For realtime-ws backend, audio should be streamed during capture
+        via the streaming callback. This method handles the commit and wait.
+        
+        Args:
+            audio_data: NumPy array of audio samples (float32)
+            sample_rate: Sample rate of the audio data (should be 16000)
+        
+        Returns:
+            Transcribed text string
+        """
+        if not self._realtime_client:
+            print('[REALTIME] Client not initialized')
+            return ""
+        
+        if not self._realtime_client.connected:
+            print('[REALTIME] Client not connected')
+            return ""
+        
+        try:
+            # Get timeout from config
+            timeout = self.config.get_setting('realtime_timeout', 30)
+            
+            # Commit and get text (audio was already streamed via callback)
+            transcription = self._realtime_client.commit_and_get_text(timeout=timeout)
+            
+            return transcription.strip()
+            
+        except Exception as e:
+            print(f'[REALTIME] Transcription failed: {e}')
+            return ""
+
+    def get_realtime_streaming_callback(self) -> Optional[Callable]:
+        """
+        Get the streaming callback for realtime-ws backend.
+        
+        Returns:
+            Callback function if realtime-ws backend is active, None otherwise
+        """
+        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        if backend == 'local':
+            backend = 'pywhispercpp'
+        elif backend == 'remote':
+            backend = 'rest-api'
+        
+        if backend == 'realtime-ws' and self._realtime_client:
+            return self._realtime_streaming_callback
+        return None
+
     def is_ready(self) -> bool:
         """Check if whisper is ready for transcription"""
         return self.ready
@@ -647,6 +818,12 @@ class WhisperManager:
                 print(f"[WARN] REST API backend selected but pywhispercpp model is loaded - this should not happen", flush=True)
             return self._transcribe_rest(audio_data, sample_rate)
 
+        if backend == 'realtime-ws':
+            # Use Realtime WebSocket transcription
+            # Note: Audio was already streamed via callback during capture
+            # This just commits and waits for the result
+            return self._transcribe_realtime(audio_data, sample_rate)
+
         try:
             # Get language setting from config (None = auto-detect)
             language = self.config.get_setting('language', None)
@@ -696,6 +873,21 @@ class WhisperManager:
                 self._pywhisper_model = None
             except Exception as e:
                 print(f"[WARN] Failed to cleanup model reference: {e}")
+    
+    def _cleanup_realtime_client(self) -> None:
+        """Cleanup Realtime WebSocket client"""
+        if self._realtime_client:
+            try:
+                self._realtime_client.close()
+                self._realtime_client = None
+                self._realtime_streaming_callback = None
+            except Exception as e:
+                print(f"[WARN] Failed to cleanup realtime client: {e}")
+    
+    def cleanup(self) -> None:
+        """Public cleanup method to clean up all resources"""
+        # Cleanup realtime WebSocket client if active
+        self._cleanup_realtime_client()
 
     def set_threads(self, num_threads: int) -> bool:
         """Update the number of threads used by the backend."""

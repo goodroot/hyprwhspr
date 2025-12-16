@@ -10,6 +10,7 @@ pyperclip>=1.8.2
 # Whisper integration
 pywhispercpp==1.4.0
 requests>=2.25.0
+websocket-client>=1.9.0
 
 # System integration
 psutil>=5.8.0

@@ -239,6 +239,8 @@ def _detect_current_backend() -> Optional[str]:
                 if PARAKEET_VENV_DIR.exists():
                     return 'parakeet'
             return 'rest-api'
+        if backend == 'realtime-ws':
+            return 'realtime-ws'
         if backend in ['cpu', 'nvidia', 'amd', 'pywhispercpp']:
             # Verify it's actually installed in venv
             venv_python = VENV_DIR / 'bin' / 'python'
@@ -361,6 +363,7 @@ def _prompt_backend_selection():
             'amd': 'AMD (ROCm)',
             'parakeet': 'Parakeet',
             'rest-api': 'REST API',
+            'realtime-ws': 'Realtime WebSocket',
             'pywhispercpp': 'pywhispercpp'
         }
         print(f"\nCurrent backend: {backend_names.get(current_backend, current_backend)}")
@@ -377,19 +380,23 @@ def _prompt_backend_selection():
     print("REST API (Remote - Cloud API or localhost):")
     print("  [4] Configure cloud provider or custom backend")
     print()
+    print("Realtime WebSocket (Low-latency cloud streaming transcription):")
+    print("  [5] Realtime WebSocket (OpenAI)")
+    print()
     print("Parakeet (Local REST Server - Latest NVIDIA Parakeet model):")
-    print("  [5] NVIDIA Parakeet model")
+    print("  [6] NVIDIA Parakeet model")
     print()
     
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6'], default='1')
             backend_map = {
                 '1': 'cpu',
                 '2': 'nvidia',
                 '3': 'amd',
                 '4': 'rest-api',
-                '5': 'parakeet'
+                '5': 'realtime-ws',
+                '6': 'parakeet'
             }
             selected = backend_map[choice]
             
@@ -521,9 +528,12 @@ def _prompt_model_selection():
             continue
 
 
-def _prompt_remote_provider_selection():
+def _prompt_remote_provider_selection(filter_realtime: bool = False):
     """
     Prompt user for remote provider and model selection.
+    
+    Args:
+        filter_realtime: If True, only show realtime-compatible models (for realtime-ws backend)
     
     Returns:
         Tuple of (provider_id, model_id, api_key, custom_config) or None if cancelled.
@@ -569,9 +579,27 @@ def _prompt_remote_provider_selection():
                 
                 models = get_provider_models(provider_id)
                 model_list = []
+                
+                # Filter models if this is for realtime-ws (only show realtime-compatible models)
                 for model_id, model_data in models.items():
+                    if filter_realtime:
+                        # Only include models with "realtime" in the name
+                        if 'realtime' not in model_id.lower():
+                            continue
                     model_list.append((model_id, model_data))
                     print(f"  [{len(model_list)}] {model_data['name']} - {model_data['description']}")
+                
+                if not model_list:
+                    if filter_realtime:
+                        print("\n⚠ No realtime-compatible models found for this provider.")
+                        if not Confirm.ask("Select a different provider?", default=True):
+                            return None
+                        continue
+                    else:
+                        print("\n⚠ No models found for this provider.")
+                        if not Confirm.ask("Select a different provider?", default=True):
+                            return None
+                        continue
                 
                 print()
                 model_choices = [str(i) for i in range(1, len(model_list) + 1)]
@@ -685,19 +713,31 @@ def _prompt_remote_provider_selection():
             continue
 
 
-def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: str, custom_config: Optional[dict] = None) -> dict:
+def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: str, custom_config: Optional[dict] = None, backend_type: str = 'rest-api') -> dict:
     """
-    Generate REST API configuration based on provider/model selection.
+    Generate remote backend configuration based on provider/model selection.
     
     Args:
         provider_id: Provider identifier (e.g., 'openai', 'groq', 'custom')
         model_id: Model identifier (None for custom backends)
         api_key: API key to use
         custom_config: Custom config dict for custom backends
+        backend_type: Backend type ('rest-api' or 'realtime-ws')
     
     Returns:
         Configuration dictionary ready to be saved
     """
+    if backend_type == 'realtime-ws':
+        config = {
+            'transcription_backend': 'realtime-ws',
+            'websocket_provider': provider_id,
+            'websocket_model': model_id
+        }
+        # For custom backends, include websocket_url from custom_config
+        if provider_id == 'custom' and custom_config and 'websocket_url' in custom_config:
+            config['websocket_url'] = custom_config['websocket_url']
+        return config
+    
     config = {
         'transcription_backend': 'rest-api'
     }
@@ -828,12 +868,79 @@ def setup_command():
         
         # Generate remote configuration
         try:
-            remote_config = _generate_remote_config(provider_id, model_id, api_key, custom_config)
+            remote_config = _generate_remote_config(provider_id, model_id, api_key, custom_config, backend_type='rest-api')
             log_success("Remote configuration generated")
         except Exception as e:
             log_error(f"Failed to generate remote configuration: {e}")
             return
-    elif backend not in ['rest-api', 'remote']:
+    elif backend == 'realtime-ws':
+        # Prompt for remote provider selection (filter for realtime models)
+        provider_result = _prompt_remote_provider_selection(filter_realtime=True)
+        if not provider_result:
+            log_error("Provider selection cancelled. Exiting.")
+            return
+        
+        provider_id, model_id, api_key, custom_config = provider_result
+        
+        # Validate that selected model is realtime-compatible (for known providers)
+        if provider_id != 'custom':
+            models = get_provider_models(provider_id)
+            if models:
+                # Check if selected model is realtime-compatible
+                if model_id not in models:
+                    log_error(f"Selected model {model_id} not found in provider models")
+                    return
+                
+                # Verify it's a realtime model
+                if 'realtime' not in model_id.lower():
+                    log_warning(f"Selected model {model_id} may not be realtime-compatible")
+                    # Try to find a realtime model
+                    realtime_models = [mid for mid in models.keys() if 'realtime' in mid.lower()]
+                    if realtime_models:
+                        if not Confirm.ask(f"Use realtime model '{realtime_models[0]}' instead?", default=True):
+                            log_error("Realtime-compatible model required for realtime-ws backend")
+                            return
+                        model_id = realtime_models[0]
+                        log_info(f"Using realtime model: {model_id}")
+                    else:
+                        log_error(f"No realtime-compatible models found for provider {provider_id}")
+                        return
+        
+        # Handle custom backends specially - require websocket_url
+        if provider_id == 'custom':
+            if not custom_config:
+                custom_config = {}
+            
+            # Prompt for WebSocket URL (required for custom realtime backends)
+            websocket_url = Prompt.ask("WebSocket URL (e.g., wss://api.example.com/v1/realtime)", default="")
+            if not websocket_url:
+                log_error("WebSocket URL is required for custom realtime backends")
+                return
+            
+            # Validate URL format
+            if not websocket_url.startswith('wss://') and not websocket_url.startswith('ws://'):
+                log_warning("WebSocket URL should start with wss:// or ws://")
+                if not Confirm.ask("Continue anyway?", default=True):
+                    return
+            
+            # Store websocket_url in custom_config
+            custom_config['websocket_url'] = websocket_url
+            
+            # Model is required for custom realtime backends
+            if not model_id:
+                model_id = Prompt.ask("Model identifier (for URL query parameter)", default="")
+                if not model_id:
+                    log_error("Model identifier is required for custom realtime backends")
+                    return
+        
+        # Generate realtime-ws configuration
+        try:
+            remote_config = _generate_remote_config(provider_id, model_id, api_key, custom_config, backend_type='realtime-ws')
+            log_success("Realtime WebSocket configuration generated")
+        except Exception as e:
+            log_error(f"Failed to generate realtime configuration: {e}")
+            return
+    elif backend not in ['rest-api', 'remote', 'realtime-ws']:
         # Local backend - prompt for model selection
         selected_model = _prompt_model_selection()
     

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | most accurate local models | or supports any cloud provider
+    instant performance | most accurate local models | realtime cloud streaming | supports any cloud provider
 </p>
 
  <p align="center">
@@ -54,7 +54,7 @@ hyprwhspr setup
 
 **The setup will:**
 
-1. ✅ Configure transcription backend (pywhispercpp, Parakeet-v3 or REST API)
+1. ✅ Configure transcription backend (pywhispercpp, Parakeet-v3, REST API, or Realtime WebSocket)
 2. ✅ Set up systemd user services
 3. ✅ Configure Waybar integration (if Waybar is installed)
 4. ✅ Download models (if using pywhispercpp backend)
@@ -134,7 +134,48 @@ Edit `~/.config/hyprwhspr/config.json`:
 - **`push_to_talk: false`** (default) - Toggle mode: press to start, press again to stop
 - **`push_to_talk: true`** - Push-to-talk mode: hold to record, release to stop
 
-**REST API backends** - use any ASR backend via HTTP API (local or cloud):
+**Realtime WebSockets** - low-latency streaming transcription:
+
+Stream audio in real-time for the fastest possible cloud transcription. 
+
+Provider available for OpenAI, or create your own custom backend:
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "openai",
+    "websocket_model": "gpt-realtime-mini-2025-12-15",
+    "realtime_timeout": 30,              // Completion timeout (seconds)
+    "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
+}
+```
+
+**Available realtime models:**
+
+- **GPT Realtime Mini (2025-12-15)** - Fastest realtime streaming transcription
+
+**Custom realtime backends:**
+
+Configure via `hyprwhspr setup` - select "Realtime WebSocket" backend, then "Customize your own backend". 
+
+The setup will prompt for:
+
+- WebSocket URL (e.g., `wss://api.example.com/v1/realtime`)
+- Model identifier
+- API key (stored securely, not in config)
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "custom",
+    "websocket_model": "your-model-id",
+    "websocket_url": "wss://api.example.com/v1/realtime"
+}
+```
+
+> API keys for custom backends are stored securely in the credential store (not in `config.json`). Configure them during setup or use `hyprwhspr config` to manage credentials.
+
+**REST API** - use any ASR backend via HTTP API (local or cloud):
 
 **Local Parakeet v3**
 
@@ -147,9 +188,10 @@ Bring an API key from OpenAI, and choose from:
 - **GPT-4o Transcribe** - Latest model with best accuracy
 - **GPT-4o Mini Transcribe** - Faster, lighter model
 - **GPT-4o Mini Transcribe (2025-12-15)** - Updated version of the faster, lighter transcription model
-- **GPT Realtime Mini (2025-12-15)** - Realtime/streaming transcription model
 - **GPT Audio Mini (2025-12-15)** - General purpose audio model
 - **Whisper 1** - Legacy Whisper model
+
+> For realtime streaming transcription, use the `realtime-ws` backend (see above) with **GPT Realtime Mini (2025-12-15)**.
 
 **Groq**
 
@@ -310,7 +352,7 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 - **`"super"`** — Sends Super+V. Omarchy default. Maybe finicky.
 
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
-
+    s
 **Add dynamic tray icon** to your `~/.config/waybar/config`:
 
 ```json

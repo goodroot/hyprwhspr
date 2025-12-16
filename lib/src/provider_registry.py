@@ -11,6 +11,7 @@ PROVIDERS: Dict[str, Dict] = {
     'openai': {
         'name': 'OpenAI',
         'endpoint': 'https://api.openai.com/v1/audio/transcriptions',
+        'websocket_endpoint': 'wss://api.openai.com/v1/realtime',
         'api_key_prefix': 'sk-',
         'api_key_description': 'OpenAI API key (starts with sk-)',
         'models': {
@@ -31,7 +32,7 @@ PROVIDERS: Dict[str, Dict] = {
             },
             'gpt-realtime-mini-2025-12-15': {
                 'name': 'GPT Realtime Mini (2025-12-15)',
-                'description': 'Realtime/streaming transcription model',
+                'description': 'Realtime/streaming transcription model - FAST!',
                 'body': {'model': 'gpt-realtime-mini-2025-12-15'}
             },
             'gpt-audio-mini-2025-12-15': {
