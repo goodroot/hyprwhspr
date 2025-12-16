@@ -165,14 +165,6 @@ class hyprwhsprApp:
             
             # For realtime-ws, audio was already streamed via callback
             # We still need audio_data for transcribe_audio (it will commit and wait)
-            if backend == 'realtime-ws':
-                if audio_data is not None:
-                    # Audio was streamed, now commit and get result
-                    self._process_audio(audio_data)
-                else:
-                    print("[WARN] No audio data captured")
-            else:
-                # For other backends, use existing flow
             if audio_data is not None:
                 self._process_audio(audio_data)
             else:

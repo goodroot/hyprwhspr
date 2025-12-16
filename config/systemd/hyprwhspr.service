@@ -1,5 +1,5 @@
 [Unit]
-Description=hyprwhspr tts
+Description=hyprwhspr stt
 Documentation=https://github.com/goodroot/hyprwhspr
 After=graphical-session.target pipewire.service ydotool.service
 Requires=ydotool.service
