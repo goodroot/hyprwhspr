@@ -253,10 +253,10 @@ class RealtimeClient:
         if not self.connected or not self.ws:
             return
         
-        # Build session config based on mode (type: realtime is required per docs)
+        # Session config per OpenAI docs example
         session_data = {
             'type': 'realtime',
-            'output_modalities': ['text'],  # Text output only
+            'output_modalities': ['text'],  # Text output only (no audio response)
             'audio': {
                 'input': {
                     'format': {
@@ -268,10 +268,6 @@ class RealtimeClient:
         }
         
         if self.mode == 'transcribe':
-            # Enable input audio transcription
-            session_data['input_audio_transcription'] = {
-                'model': 'gpt-4o-mini-transcribe'
-            }
             session_data['instructions'] = self.instructions or 'Transcribe the audio exactly as spoken. Output only the transcription, nothing else.'
         else:
             # Converse mode - LLM responds to speech
