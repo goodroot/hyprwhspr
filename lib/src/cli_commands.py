@@ -614,18 +614,21 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
                 models = get_provider_models(provider_id)
                 model_list = []
                 
-                # Filter models if this is for realtime-ws (only show realtime-compatible models)
+                # Filter models if this is for realtime-ws (transcription API)
                 for model_id, model_data in models.items():
                     if filter_realtime:
-                        # Only include models with "realtime" in the name
-                        if 'realtime' not in model_id.lower():
+                        # Exclude conversation-only models (marked with realtime_conversation_only flag)
+                        if model_data.get('realtime_conversation_only', False):
+                            continue
+                        # Only include transcription-capable models
+                        if 'transcribe' not in model_id.lower() and model_id != 'whisper-1':
                             continue
                     model_list.append((model_id, model_data))
                     print(f"  [{len(model_list)}] {model_data['name']} - {model_data['description']}")
                 
                 if not model_list:
                     if filter_realtime:
-                        print("\n⚠ No realtime-compatible models found for this provider.")
+                        print("\n⚠ No transcription-compatible models found for this provider.")
                         if not Confirm.ask("Select a different provider?", default=True):
                             return None
                         continue
@@ -920,24 +923,29 @@ def setup_command():
         if provider_id != 'custom':
             models = get_provider_models(provider_id)
             if models:
-                # Check if selected model is realtime-compatible
+                # Check if selected model exists
                 if model_id not in models:
                     log_error(f"Selected model {model_id} not found in provider models")
                     return
                 
-                # Verify it's a realtime model
-                if 'realtime' not in model_id.lower():
-                    log_warning(f"Selected model {model_id} may not be realtime-compatible")
-                    # Try to find a realtime model
-                    realtime_models = [mid for mid in models.keys() if 'realtime' in mid.lower()]
-                    if realtime_models:
-                        if not Confirm.ask(f"Use realtime model '{realtime_models[0]}' instead?", default=True):
-                            log_error("Realtime-compatible model required for realtime-ws backend")
+                # Verify it's a transcription-compatible model (not conversation-only)
+                model_data = models.get(model_id, {})
+                is_transcription_model = ('transcribe' in model_id.lower() or model_id == 'whisper-1') and not model_data.get('realtime_conversation_only', False)
+                
+                if not is_transcription_model:
+                    log_warning(f"Selected model {model_id} may not be transcription-compatible")
+                    # Try to find a transcription model
+                    transcription_models = [mid for mid in models.keys() 
+                                           if ('transcribe' in mid.lower() or mid == 'whisper-1') 
+                                           and not models[mid].get('realtime_conversation_only', False)]
+                    if transcription_models:
+                        if not Confirm.ask(f"Use transcription model '{transcription_models[0]}' instead?", default=True):
+                            log_error("Transcription-compatible model required for realtime-ws backend")
                             return
-                        model_id = realtime_models[0]
-                        log_info(f"Using realtime model: {model_id}")
+                        model_id = transcription_models[0]
+                        log_info(f"Using transcription model: {model_id}")
                     else:
-                        log_error(f"No realtime-compatible models found for provider {provider_id}")
+                        log_error(f"No transcription-compatible models found for provider {provider_id}")
                         return
         
         # Handle custom backends specially - require websocket_url
