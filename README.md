@@ -147,7 +147,6 @@ Bring an API key from OpenAI, and choose from:
 - **GPT-4o Transcribe** - Latest model with best accuracy
 - **GPT-4o Mini Transcribe** - Faster, lighter model
 - **GPT-4o Mini Transcribe (2025-12-15)** - Updated version of the faster, lighter transcription model
-- **GPT-4o Mini TTS (2025-12-15)** - Text-to-speech model
 - **GPT Realtime Mini (2025-12-15)** - Realtime/streaming transcription model
 - **GPT Audio Mini (2025-12-15)** - General purpose audio model
 - **Whisper 1** - Legacy Whisper model

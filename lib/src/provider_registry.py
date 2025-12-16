@@ -29,11 +29,6 @@ PROVIDERS: Dict[str, Dict] = {
                 'description': 'Updated version of the faster, lighter transcription model',
                 'body': {'model': 'gpt-4o-mini-transcribe-2025-12-15'}
             },
-            'gpt-4o-mini-tts-2025-12-15': {
-                'name': 'GPT-4o Mini TTS (2025-12-15)',
-                'description': 'Text-to-speech model',
-                'body': {'model': 'gpt-4o-mini-tts-2025-12-15'}
-            },
             'gpt-realtime-mini-2025-12-15': {
                 'name': 'GPT Realtime Mini (2025-12-15)',
                 'description': 'Realtime/streaming transcription model',
