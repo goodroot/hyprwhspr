@@ -253,10 +253,18 @@ class RealtimeClient:
         if not self.connected or not self.ws:
             return
         
-        # Build session config based on mode
+        # Build session config based on mode (type: realtime is required per docs)
         session_data = {
-            'modalities': ['text'],  # Text output only
-            'input_audio_format': 'pcm16',
+            'type': 'realtime',
+            'output_modalities': ['text'],  # Text output only
+            'audio': {
+                'input': {
+                    'format': {
+                        'type': 'audio/pcm',
+                        'rate': 24000
+                    }
+                }
+            }
         }
         
         if self.mode == 'transcribe':
