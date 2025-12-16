@@ -978,6 +978,15 @@ def setup_command():
         except Exception as e:
             log_error(f"Failed to generate realtime configuration: {e}")
             return
+        
+        # Prompt for realtime mode
+        print("\nRealtime Mode:")
+        print("  1. Transcribe - Convert speech to text (default)")
+        print("  2. Converse - Send speech to LLM and get a response")
+        mode_choice = Prompt.ask("Select mode", choices=['1', '2'], default='1')
+        realtime_mode = 'transcribe' if mode_choice == '1' else 'converse'
+        remote_config['realtime_mode'] = realtime_mode
+        log_info(f"Realtime mode: {realtime_mode}")
     
     # Step 1.4: Ensure venv and base dependencies for cloud backends
     if backend in ['rest-api', 'remote', 'realtime-ws']:

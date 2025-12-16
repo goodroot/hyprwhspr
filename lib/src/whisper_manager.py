@@ -135,8 +135,9 @@ class WhisperManager:
                 
                 instructions = ' '.join(instructions_parts) if instructions_parts else None
                 
-                # Initialize RealtimeClient
-                self._realtime_client = RealtimeClient()
+                # Initialize RealtimeClient with mode
+                realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+                self._realtime_client = RealtimeClient(mode=realtime_mode)
                 
                 # Set buffer max seconds
                 buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)

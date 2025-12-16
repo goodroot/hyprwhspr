@@ -32,12 +32,17 @@ except (ImportError, ModuleNotFoundError) as e:
 class RealtimeClient:
     """Generic WebSocket client for realtime transcription APIs"""
     
-    def __init__(self):
+    def __init__(self, mode: str = 'transcribe'):
+        """
+        Args:
+            mode: 'transcribe' for speech-to-text, 'converse' for LLM response mode
+        """
         self.ws = None
         self.url = None
         self.api_key = None
         self.model = None
         self.instructions = None
+        self.mode = mode  # 'transcribe' or 'converse'
         
         # Connection state
         self.connected = False
@@ -248,19 +253,21 @@ class RealtimeClient:
         if not self.connected or not self.ws:
             return
         
-        # Conversational session format per docs
+        # Build session config based on mode
         session_data = {
-            'type': 'realtime',
-            'audio': {
-                'input': {
-                    'format': {
-                        'type': 'audio/pcm',
-                        'rate': 24000
-                    }
-                }
-            },
-            'instructions': self.instructions or 'Transcribe the audio exactly as spoken. Output only the transcription, nothing else.'
+            'modalities': ['text'],  # Text output only
+            'input_audio_format': 'pcm16',
         }
+        
+        if self.mode == 'transcribe':
+            # Enable input audio transcription
+            session_data['input_audio_transcription'] = {
+                'model': 'gpt-4o-mini-transcribe'
+            }
+            session_data['instructions'] = self.instructions or 'Transcribe the audio exactly as spoken. Output only the transcription, nothing else.'
+        else:
+            # Converse mode - LLM responds to speech
+            session_data['instructions'] = self.instructions or 'You are a helpful assistant. Respond to the user based on what they say.'
         
         event = {
             'type': 'session.update',

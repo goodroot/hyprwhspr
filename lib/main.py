@@ -173,10 +173,10 @@ class hyprwhsprApp:
                     print("[WARN] No audio data captured")
             else:
                 # For other backends, use existing flow
-                if audio_data is not None:
-                    self._process_audio(audio_data)
-                else:
-                    print("[WARN] No audio data captured")
+            if audio_data is not None:
+                self._process_audio(audio_data)
+            else:
+                print("[WARN] No audio data captured")
                 
         except Exception as e:
             print(f"[ERROR] Error stopping recording: {e}")

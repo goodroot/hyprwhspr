@@ -42,7 +42,8 @@ class ConfigManager:
             'websocket_model': None,           # Model identifier (e.g., 'gpt-realtime-mini-2025-12-15')
             'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
             'realtime_timeout': 30,            # Completion timeout (seconds)
-            'realtime_buffer_max_seconds': 5   # Max buffer before dropping chunks
+            'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
+            'realtime_mode': 'transcribe'      # 'transcribe' or 'converse' (LLM response mode)
         }
         
         # Set up config directory and file path

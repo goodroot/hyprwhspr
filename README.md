@@ -148,10 +148,16 @@ Provider available for OpenAI, or create your own custom backend:
     "transcription_backend": "realtime-ws",
     "websocket_provider": "openai",
     "websocket_model": "gpt-realtime-mini-2025-12-15",
+    "realtime_mode": "transcribe",       // "transcribe" or "converse"
     "realtime_timeout": 30,              // Completion timeout (seconds)
     "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
 }
 ```
+
+**Realtime modes:**
+
+- **transcribe** (default) - Convert speech to text
+- **converse** - Send speech to LLM and paste its response (voice-to-AI)
 
 **Available realtime models:**
 
