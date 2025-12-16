@@ -279,7 +279,7 @@ class RealtimeClient:
                 }
             }
         else:
-            # Conversational session (voice-to-AI)
+            # Conversational session (voice-to-AI) - disable VAD for manual control
             session_data = {
                 'type': 'realtime',
                 'output_modalities': ['text'],  # Text output only (no audio response)
@@ -288,7 +288,8 @@ class RealtimeClient:
                         'format': {
                             'type': 'audio/pcm',
                             'rate': 24000
-                        }
+                        },
+                        'turn_detection': None  # Disable VAD - we'll commit manually
                     }
                 },
                 'instructions': self.instructions or 'You are a helpful assistant. Respond to the user based on what they say.'
@@ -365,11 +366,9 @@ class RealtimeClient:
             self.audio_buffer_seconds += chunk_duration
             
             # Check backpressure
+            # Reset buffer counter periodically to prevent overflow (audio is streamed directly)
             if self.audio_buffer_seconds > self.max_buffer_seconds:
-                print(f'[REALTIME] Backpressure: buffer at {self.audio_buffer_seconds:.2f}s, dropping oldest chunks', flush=True)
-                # Drop oldest chunks (simplified: just reset counter)
-                # In a more sophisticated implementation, we'd track and drop actual chunks
-                self.audio_buffer_seconds = self.max_buffer_seconds * 0.5
+                self.audio_buffer_seconds = 0.0
             
         except Exception as e:
             print(f'[REALTIME] Failed to append audio: {e}', flush=True)

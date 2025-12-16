@@ -143,7 +143,7 @@ Edit `~/.config/hyprwhspr/config.json`:
 Two modes available:
 
 - **transcribe** (default) - Pure speech-to-text using `gpt-4o-mini-transcribe`
-- **converse** - Voice-to-AI: speak and get AI responses using `gpt-realtime-mini`
+- **converse** - Voice-to-AI: speak and get AI responses (best for short queries)
 
 ```jsonc
 {
