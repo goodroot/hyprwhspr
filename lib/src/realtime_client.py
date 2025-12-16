@@ -55,7 +55,7 @@ class RealtimeClient:
         self.audio_chunks = deque()
         self.audio_buffer_seconds = 0.0
         self.max_buffer_seconds = 5.0
-        self.sample_rate = 16000  # PCM16 format
+        self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
         
         # Reconnection
         self.reconnect_attempts = 0
@@ -248,10 +248,17 @@ class RealtimeClient:
         if not self.connected or not self.ws:
             return
         
-        # Conversational session format
+        # Conversational session format per docs
         session_data = {
             'type': 'realtime',
-            'input_audio_format': 'pcm16',
+            'audio': {
+                'input': {
+                    'format': {
+                        'type': 'audio/pcm',
+                        'rate': 24000
+                    }
+                }
+            },
             'instructions': self.instructions or 'Transcribe the audio exactly as spoken. Output only the transcription, nothing else.'
         }
         

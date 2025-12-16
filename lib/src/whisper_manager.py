@@ -148,8 +148,14 @@ class WhisperManager:
                     self._realtime_client = None
                     return False
                 
-                # Set up streaming callback (audio is already 16kHz mono, matching pcm16 format)
-                self._realtime_streaming_callback = self._realtime_client.append_audio
+                # Set up streaming callback with resampling from 16kHz to 24kHz
+                def _resample_and_send(audio_chunk: np.ndarray):
+                    """Resample from 16kHz to 24kHz and send to realtime client"""
+                    from scipy import signal
+                    resampled = signal.resample(audio_chunk, int(len(audio_chunk) * 1.5))
+                    self._realtime_client.append_audio(resampled.astype(np.float32))
+                
+                self._realtime_streaming_callback = _resample_and_send
                 
                 print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
                 print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
