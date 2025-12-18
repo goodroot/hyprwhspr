@@ -333,7 +333,7 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 - **`"super"`** — Sends Super+V. Omarchy default. Maybe finicky.
 
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
-    s
+
 **Add dynamic tray icon** to your `~/.config/waybar/config`:
 
 ```json
@@ -345,8 +345,7 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
         "exec-on-event": true,
         "format": "{}",
         "on-click": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh toggle",
-        "on-click-right": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh start",
-        "on-click-middle": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh restart",
+        "on-click-right": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh restart",
         "tooltip": true
     }
 }

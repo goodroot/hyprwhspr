@@ -24,6 +24,10 @@ ICON_PATH="$PACKAGE_ROOT/share/assets/hyprwhspr.png"
 _now=$(date +%s%3N 2>/dev/null || date +%s)  # ms if available
 declare -A _cache
 
+# Persistent cache file for mic_actually_works() to survive across script invocations
+# This prevents expensive Python test from running on every waybar poll (every 1 second)
+MIC_CACHE_FILE="$HOME/.config/hyprwhspr/.mic_works_cache"
+
 # Cached command execution with timeout
 cmd_cached() {
     local key="$1" ttl_ms="${2:-500}" cmd="${3}"; shift 3 || true
@@ -59,10 +63,33 @@ is_ydotoold_running() {
 }
 
 # Function to check PipeWire health comprehensively
+# Uses retry logic to handle startup timing issues (PipeWire may take a moment to initialize)
 is_pipewire_ok() {
-    timeout 0.2s pactl info >/dev/null 2>&1 || return 1
-    pactl list short sources 2>/dev/null | grep -qE 'RUNNING|input' || return 1
-    return 0
+    local retries=3
+    local delay=0.1  # 100ms between retries
+    
+    # Retry loop to handle startup timing
+    for i in $(seq 1 $retries); do
+        # Check if pactl is accessible
+        if timeout 0.2s pactl info >/dev/null 2>&1; then
+            # Check if we have any input sources (not monitors)
+            # Note: pactl list short sources shows both inputs and output monitors
+            # We need actual input sources, which don't have ".monitor" in the name
+            local sources
+            sources=$(pactl list short sources 2>/dev/null | grep -v "\.monitor" | grep -v "^$")
+            if [[ -n "$sources" ]]; then
+                return 0  # Success
+            fi
+        fi
+        
+        # If not last retry, wait before trying again
+        if [[ $i -lt $retries ]]; then
+            sleep "$delay"
+        fi
+    done
+    
+    # All retries failed
+    return 1
 }
 
 # Function to check if model file exists
@@ -145,9 +172,23 @@ mic_present() {
 
 mic_accessible() {
     # if we can ask for a default source, the session can likely capture
-    try 'pactl get-default-source' >/dev/null || return 1
+    local default_source
+    default_source="$(try 'pactl get-default-source')"
+    [[ -n "$default_source" ]] || return 1
+    
     # /dev/snd should exist; don't over-enforce groups (PipeWire brokers access)
     [[ -d /dev/snd ]] || return 1
+    
+    # Check if default source is SUSPENDED (critical check)
+    # Use 'pactl list sources' (not 'short') to get reliable state information
+    local source_state
+    source_state="$(try "pactl list sources | awk -v D=\"$default_source\" '
+        /^[[:space:]]*Name: /{current_name=\$2}
+        /^[[:space:]]*State: /{if(current_name==D){print \$2; exit}}'")"
+    
+    # Source is not accessible if SUSPENDED
+    [[ "$source_state" == "SUSPENDED" ]] && return 1
+    
     return 0
 }
 
@@ -164,18 +205,46 @@ mic_recording_now() {
     
     # Check recording status file written by hyprwhspr
     local status_file="$HOME/.config/hyprwhspr/recording_status"
-    if [[ -f "$status_file" ]]; then
-        local status
-        status=$(cat "$status_file" 2>/dev/null)
-        if [[ "$status" == "true" ]]; then
-            return 0
-        else
-            return 1
-        fi
-    else
+    if [[ ! -f "$status_file" ]]; then
         # No recording status file means hyprwhspr is not recording
         return 1
     fi
+    
+    local status
+    status=$(cat "$status_file" 2>/dev/null)
+    if [[ "$status" != "true" ]]; then
+        return 1
+    fi
+    
+    # Verify recording is actually active by checking audio_level file staleness
+    # If recording is active, audio_level should be updated regularly (every ~100ms)
+    # If the file is stale (>2 seconds old), recording likely stopped/crashed
+    local level_file="$HOME/.config/hyprwhspr/audio_level"
+    if [[ -f "$level_file" ]]; then
+        # Check file modification time (seconds since epoch)
+        local file_age
+        file_age=$(($(date +%s) - $(stat -c %Y "$level_file" 2>/dev/null || echo 0)))
+        
+        # If audio_level file is stale (>2 seconds), recording is not actually happening
+        if [[ $file_age -gt 2 ]]; then
+            # Stale file - recording status file is likely left over from a crash
+            return 1
+        fi
+    else
+        # No audio_level file - if recording was active, this file should exist
+        # But give it a grace period (maybe recording just started)
+        # Check if recording_status file is very recent (<1 second)
+        local status_age
+        status_age=$(($(date +%s) - $(stat -c %Y "$status_file" 2>/dev/null || echo 0)))
+        if [[ $status_age -gt 1 ]]; then
+            # Status file exists but no audio_level file and status is >1s old
+            # This suggests recording never actually started or crashed immediately
+            return 1
+        fi
+    fi
+    
+    # All checks passed - recording is active
+    return 0
 }
 
 mic_fidelity_label() {
@@ -213,6 +282,140 @@ mic_tooltip_line() {
 # Function to check if we can actually start recording
 can_start_recording() {
     mic_present && mic_accessible
+}
+
+# Function to verify mic can actually capture audio (not just that stream opens)
+# Uses Python sd.rec() for quick test, cached persistently to avoid heavy calls
+mic_actually_works() {
+    local now cache_time cache_result test_script result max_level
+    
+    # Fast-path: If mic isn't present or accessible, skip expensive test and invalidate cache
+    # This catches suspend/resume issues immediately
+    if ! mic_present || ! mic_accessible; then
+        # Invalidate cache immediately (mic state changed)
+        [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
+        _cache[mic_works.time]=0
+        _cache[mic_works.result]=""
+        return 1
+    fi
+    
+    # If recovery file exists and mic is present/accessible, mic might have been reseated
+    # Invalidate cache to force fresh check (detect reseat immediately)
+    local recovery_file="$HOME/.config/hyprwhspr/recovery_requested"
+    if [[ -f "$recovery_file" ]]; then
+        # Recovery was requested - mic might have been reseated, force fresh check
+        [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
+        _cache[mic_works.time]=0
+        _cache[mic_works.result]=""
+    fi
+    
+    # Check persistent cache file (survives across script invocations)
+    # Use shorter TTL (10s) to catch suspend/resume issues faster
+    # This prevents expensive Python test from running on every waybar poll
+    now=$(_date_ms)
+    if [[ -f "$MIC_CACHE_FILE" ]]; then
+        local cache_data
+        cache_data=$(cat "$MIC_CACHE_FILE" 2>/dev/null)
+        if [[ -n "$cache_data" ]]; then
+            IFS=: read -r cache_time cache_result <<<"$cache_data"
+            # If cache valid and recent (< 10s), return cached result
+            # Shorter TTL ensures we catch suspend/resume issues within 10s
+            if [[ -n "$cache_time" && -n "$cache_result" && $((now - cache_time)) -lt 10000 ]]; then
+                [[ "$cache_result" == "1" ]] && return 0 || return 1
+            fi
+        fi
+    fi
+    
+    # Also check in-memory cache (for same script invocation)
+    cache_time="${_cache[mic_works.time]:-0}"
+    cache_result="${_cache[mic_works.result]:-}"
+    
+    # If cache valid and recent (< 10s), return cached result
+    if [[ -n "$cache_result" && $((now - cache_time)) -lt 10000 ]]; then
+        [[ "$cache_result" == "1" ]] && return 0 || return 1
+    fi
+    
+    # Cache expired or missing - run Python test
+    test_script=$(cat <<'PYTHON_EOF'
+import sys
+import json
+import sounddevice as sd
+import numpy as np
+import threading
+import time
+
+result = {"can_capture": False, "max_level": 0.0, "error": None}
+rec_done = threading.Event()
+audio_data = [None]
+rec_error = [None]
+
+def rec_thread():
+    try:
+        # Use sd.rec() - simpler blocking call, 0.05s test (faster)
+        data = sd.rec(
+            int(16000 * 0.05),  # 0.05 seconds of samples (faster)
+            samplerate=16000,
+            channels=1,
+            dtype='float32'
+        )
+        sd.wait()  # Wait for recording to finish
+        audio_data[0] = data
+    except Exception as e:
+        rec_error[0] = str(e)
+    finally:
+        rec_done.set()
+
+thread = threading.Thread(target=rec_thread, daemon=True)
+thread.start()
+
+# Wait with strict timeout (0.2s max - faster)
+if rec_done.wait(timeout=0.2):
+    if rec_error[0]:
+        result["error"] = rec_error[0]
+    elif audio_data[0] is not None:
+        data = audio_data[0]
+        result["max_level"] = float(np.abs(data).max())
+        # If max level is essentially zero, mic isn't working
+        result["can_capture"] = result["max_level"] > 1e-5
+    else:
+        result["error"] = "No audio data returned"
+else:
+    result["error"] = "Recording timed out"
+
+print(json.dumps(result))
+PYTHON_EOF
+)
+    
+    # Run the test script with strict timeout (0.5s total max)
+    # This prevents hanging if sounddevice blocks indefinitely
+    result=$(timeout 0.5s python3 -c "$test_script" 2>/dev/null)
+    
+    if [[ -n "$result" ]]; then
+        # Parse JSON result using Python (more reliable than grep)
+        can_capture=$(echo "$result" | python3 -c "import sys, json; d=json.load(sys.stdin); print('1' if d.get('can_capture') else '0')" 2>/dev/null)
+        
+        if [[ -n "$can_capture" ]]; then
+            # Update both in-memory and persistent cache
+            _cache[mic_works.result]="$can_capture"
+            _cache[mic_works.time]=$now
+            # Write to persistent cache file (survives across script invocations)
+            echo "${now}:${can_capture}" > "$MIC_CACHE_FILE" 2>/dev/null || true
+            
+            [[ "$can_capture" == "1" ]] && return 0 || return 1
+        else
+            # JSON parsing failed - cache negative result
+            _cache[mic_works.result]="0"
+            _cache[mic_works.time]=$now
+            echo "${now}:0" > "$MIC_CACHE_FILE" 2>/dev/null || true
+            return 1
+        fi
+    else
+        # Test failed - cache negative result
+        _cache[mic_works.result]="0"
+        _cache[mic_works.time]=$now
+        echo "${now}:0" > "$MIC_CACHE_FILE" 2>/dev/null || true
+        return 1
+    fi
 }
 
 # Function to check if hyprwhspr is currently recording
@@ -355,23 +558,33 @@ emit_json() {
         "recording")
             icon="󰍬"
             text="$icon REC$audio_viz"
-            tooltip="hyprwhspr: Currently recording\n\nLeft-click: Stop recording\nRight-click: Restart\nMiddle-click: Restart"
+            tooltip="hyprwhspr: Currently recording\n\nLeft-click: Stop recording\nRight-click: Restart service"
             ;;
         "error")
             icon="󰆉"
             text="$icon ERR"
-            tooltip="hyprwhspr: Issue detected${reason:+ ($reason)}\n\nLeft-click: Toggle service\nRight-click: Start service\nMiddle-click: Restart service"
+            case "$reason" in
+                mic_unavailable)
+                    tooltip="hyprwhspr: Microphone not available\n\nMicrophone hardware is present but cannot capture audio.\nThis often happens after suspend/resume or boot.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Toggle service\nRight-click: Restart service"
+                    ;;
+                mic_no_audio)
+                    tooltip="hyprwhspr: Recording but no audio input\n\nRecording is active but microphone is not providing audio.\nThis indicates the mic needs to be reconnected.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Toggle service\nRight-click: Restart service"
+                    ;;
+                *)
+            tooltip="hyprwhspr: Issue detected${reason:+ ($reason)}\n\nLeft-click: Toggle service\nRight-click: Restart service"
+;;
+            esac
             class="error"
             ;;
         "ready")
             icon="󰍬"
             text="$icon RDY"
-            tooltip="hyprwhspr: Ready to record\n\nLeft-click: Start recording\nRight-click: Start service\nMiddle-click: Restart service"
+            tooltip="hyprwhspr: Ready to record\n\nLeft-click: Start recording\nRight-click: Restart service"
             ;;
         *)
             icon="󰆉"
             text="$icon"
-            tooltip="hyprwhspr: Unknown state\n\nLeft-click: Toggle service\nRight-click: Start service\nMiddle-click: Restart service"
+            tooltip="hyprwhspr: Unknown state\n\nLeft-click: Toggle service\nRight-click: Restart service"
             class="error"
             state="error"
             ;;
@@ -381,6 +594,27 @@ emit_json() {
     if [[ -n "$custom_tooltip" ]]; then
         tooltip="$tooltip\n$custom_tooltip"
     fi
+    
+    # Add cache-busting timestamp to tooltip (invisible but forces waybar refresh)
+    # This ensures waybar sees each output as new, preventing stale state display
+    local ts
+    ts=$(_date_ms)
+    tooltip="${tooltip}\n_ts:${ts}"
+    
+    # Escape newlines for JSON (replace \n with \\n)
+    tooltip="${tooltip//$'\n'/\\n}"
+    
+    # Force waybar refresh by making text unique each time with zero-width space
+    # Waybar may cache based on text field, so we add an invisible character
+    # Using zero-width space (U+200B) - completely invisible but makes text unique
+    # We cycle through a few zero-width spaces based on timestamp to ensure uniqueness
+    local zws_count=$((ts % 10))
+    local zws=""
+    # Add 0-9 zero-width spaces based on timestamp (invisible but unique)
+    for ((i=0; i<zws_count; i++)); do
+        zws="${zws}$(printf '\u200B')"
+    done
+    text="${text}${zws}"
     
     # Output JSON for waybar
     printf '{"text":"%s","class":"%s","tooltip":"%s"}\n' "$text" "$class" "$tooltip"
@@ -409,6 +643,34 @@ get_current_state() {
     
     # Service is running - check if recording
     if is_hyprwhspr_recording; then
+        # Check for null/zero audio during recording
+        local level_file="$HOME/.config/hyprwhspr/audio_level"
+        if [[ -f "$level_file" ]]; then
+            local audio_level
+            audio_level=$(cat "$level_file" 2>/dev/null || echo "0")
+            # If audio level is 0.0 or very low (< 0.0001), mic isn't working
+            if awk -v level="$audio_level" 'BEGIN {exit (level < 0.0001) ? 0 : 1}'; then
+                # Request recovery from main app (file-based trigger)
+                # Only touch file if it doesn't exist (first detection) or is old (>30s, meaning recovery was attempted)
+                local recovery_file="$HOME/.config/hyprwhspr/recovery_requested"
+                if [[ ! -f "$recovery_file" ]]; then
+                    # First detection - touch file to request recovery
+                    touch "$recovery_file" 2>/dev/null || true
+                else
+                    # File exists - check age
+                    local file_age
+                    file_age=$(($(date +%s) - $(stat -c %Y "$recovery_file" 2>/dev/null || echo 0)))
+                    if [[ $file_age -gt 30 ]]; then
+                        # File is old (>30s) - recovery was likely attempted and failed
+                        # Don't touch it again, just show error
+                        :
+                    fi
+                fi
+                # Invalidate cache when requesting recovery (mic state may change)
+                [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
+                echo "error:mic_no_audio"; return
+            fi
+        fi
         echo "recording"; return
     fi
     
@@ -417,7 +679,40 @@ get_current_state() {
         echo "error:ydotoold"; return
     fi
     
-    # Check PipeWire health
+    # Check if mic actually works BEFORE other checks
+    # This is the most specific error and should be checked first
+    if ! mic_actually_works; then
+        # Request recovery from main app (file-based trigger)
+        # Only touch file if it doesn't exist (first detection) or is old (>30s, meaning recovery was attempted)
+        local recovery_file="$HOME/.config/hyprwhspr/recovery_requested"
+        if [[ ! -f "$recovery_file" ]]; then
+            # First detection - touch file to request recovery
+            touch "$recovery_file" 2>/dev/null || true
+        else
+            # File exists - check age
+            local file_age
+            file_age=$(($(date +%s) - $(stat -c %Y "$recovery_file" 2>/dev/null || echo 0)))
+            if [[ $file_age -gt 30 ]]; then
+                # File is old (>30s) - recovery was likely attempted and failed
+                # Don't touch it again, just show error
+                :
+            fi
+        fi
+        # Invalidate cache when requesting recovery (mic state may change)
+        [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
+        echo "error:mic_unavailable"; return
+    else
+        # Mic works - clear any pending recovery request and force cache refresh
+        local recovery_file="$HOME/.config/hyprwhspr/recovery_requested"
+        [[ -f "$recovery_file" ]] && rm -f "$recovery_file" 2>/dev/null || true
+        # Clear cache to force fresh check next time (helps detect when mic is reseated)
+        _cache[mic_works.time]=0
+        _cache[mic_works.result]=""
+        # Also clear persistent cache file to force fresh check
+        [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
+    fi
+    
+    # Check PipeWire health (after mic check - less specific error)
     if ! is_pipewire_ok; then
         echo "error:pipewire_down"; return
     fi

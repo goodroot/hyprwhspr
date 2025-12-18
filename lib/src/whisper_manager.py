@@ -804,17 +804,64 @@ class WhisperManager:
 
         # Check if we have valid audio data
         if audio_data is None:
-            print("No audio data provided to transcribe")
+            print("No audio data provided to transcribe", flush=True)
             return ""
 
         if len(audio_data) == 0:
-            print("Empty audio data provided to transcribe")
+            print("Empty audio data provided to transcribe", flush=True)
             return ""
 
-        # Check if audio is too short (less than 0.1 seconds)
-        min_samples = int(sample_rate * 0.1)  # 0.1 seconds minimum
-        if len(audio_data) < min_samples:
-            print(f"Audio too short: {len(audio_data)} samples (minimum {min_samples})")
+        # Validate audio data format and content
+        try:
+            # Ensure it's a numpy array
+            if not isinstance(audio_data, np.ndarray):
+                print(f"Invalid audio data type: {type(audio_data)}, expected numpy.ndarray", flush=True)
+                return ""
+            
+            # Check shape (should be 1D)
+            if audio_data.ndim != 1:
+                print(f"Invalid audio data shape: {audio_data.shape}, expected 1D array", flush=True)
+                # Try to flatten if 2D with single channel
+                if audio_data.ndim == 2 and audio_data.shape[1] == 1:
+                    audio_data = audio_data.flatten()
+                else:
+                    return ""
+            
+            # Check dtype (should be float32)
+            if audio_data.dtype != np.float32:
+                print(f"Converting audio data from {audio_data.dtype} to float32", flush=True)
+                audio_data = audio_data.astype(np.float32)
+            
+            # Ensure contiguous in memory (required by whisper C++ code)
+            if not audio_data.flags['C_CONTIGUOUS']:
+                audio_data = np.ascontiguousarray(audio_data, dtype=np.float32)
+            
+            # Check for NaN or inf values (invalid audio)
+            if np.any(np.isnan(audio_data)) or np.any(np.isinf(audio_data)):
+                print("Audio data contains NaN or inf values - invalid", flush=True)
+                return ""
+            
+            # Check if audio is all zeros (silence)
+            if np.all(audio_data == 0.0):
+                print("Audio data is all zeros (silence) - skipping transcription", flush=True)
+                return ""
+
+            # Check if audio is too short (less than 0.1 seconds)
+            min_samples = int(sample_rate * 0.1)  # 0.1 seconds minimum
+            if len(audio_data) < min_samples:
+                print(f"Audio too short: {len(audio_data)} samples (minimum {min_samples})", flush=True)
+                return ""
+            
+            # Check audio level (RMS) - if too quiet, might be invalid
+            rms = np.sqrt(np.mean(audio_data**2))
+            if rms < 1e-6:  # Extremely quiet
+                print(f"Audio level too low (RMS: {rms:.2e}) - likely invalid", flush=True)
+                return ""
+                
+        except Exception as e:
+            print(f"[ERROR] Audio data validation failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             return ""
 
         # Route to appropriate backend

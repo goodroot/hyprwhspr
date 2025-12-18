@@ -12,6 +12,7 @@ Type=simple
 ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo "Warning: Wayland socket not found after 15s"'
 ExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr
 Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
+Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=2
 StandardOutput=journal

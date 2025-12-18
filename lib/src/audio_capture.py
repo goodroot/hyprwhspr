@@ -60,6 +60,13 @@ class AudioCapture:
         # Audio stream
         self.stream = None
         
+        # Recovery state tracking
+        self.recovery_in_progress = False
+        self.recovery_lock = threading.Lock()
+        self.last_callback_monotonic = 0.0  # Timestamp of last callback
+        self.frames_since_start = 0  # Frame count for success criteria
+        self.recovery_start_time = 0.0  # When recovery started
+        
         # Initialize sounddevice
         self._initialize_sounddevice()
     
@@ -281,6 +288,9 @@ class AudioCapture:
                 self.audio_data = []
                 self.is_recording = True
                 self.streaming_callback = streaming_callback
+                # Reset callback health tracking
+                self.frames_since_start = 0
+                self.last_callback_monotonic = 0.0
             
             # Start recording thread
             self.record_thread = threading.Thread(target=self._record_audio, daemon=True)
@@ -312,12 +322,37 @@ class AudioCapture:
         # Return recorded data
         with self.lock:
             if self.audio_data:
-                # Concatenate all audio chunks
-                audio_array = np.concatenate(self.audio_data, axis=0)
-                duration = len(audio_array) / self.sample_rate
-                if duration < 0.5:
-                    print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio")
-                return audio_array
+                try:
+                    # Concatenate all audio chunks
+                    audio_array = np.concatenate(self.audio_data, axis=0)
+                    
+                    # Ensure it's 1D (flatten if needed)
+                    if audio_array.ndim > 1:
+                        audio_array = audio_array.flatten()
+                    
+                    # Ensure float32 dtype
+                    if audio_array.dtype != np.float32:
+                        audio_array = audio_array.astype(np.float32)
+                    
+                    # Ensure contiguous in memory
+                    if not audio_array.flags['C_CONTIGUOUS']:
+                        audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
+                    
+                    # Validate no NaN/inf
+                    if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
+                        print(f"[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
+                        return None
+                    
+                    duration = len(audio_array) / self.sample_rate
+                    if duration < 0.5:
+                        print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
+                    
+                    return audio_array
+                except Exception as e:
+                    print(f"[ERROR] Failed to process audio data: {e}", flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    return None
             else:
                 return None
     
@@ -332,6 +367,10 @@ class AudioCapture:
                     print(f"[WARN] Audio callback status: {status}")
                 
                 with self.lock:
+                    # Update callback health tracking (for recovery success criteria)
+                    self.last_callback_monotonic = time.monotonic()
+                    self.frames_since_start += 1
+                    
                     if self.is_recording:
                         # Store the audio data (indata is already numpy array)
                         audio_chunk = indata[:, 0]  # Get mono channel
@@ -354,23 +393,47 @@ class AudioCapture:
             # Determine device to use for recording
             device_to_use = self.preferred_device_id if self.preferred_device_id is not None else None
             
-            # Start audio stream with callback - explicitly specify device
-            with sd.InputStream(
+            # Create and own the stream handle (for recovery)
+            self.stream = sd.InputStream(
                 device=device_to_use,
                 samplerate=self.sample_rate,
                 channels=self.channels,
                 dtype=self.dtype,
                 blocksize=self.chunk_size,
                 callback=audio_callback
-            ):
+            )
+            
+            # Start the stream explicitly
+            self.stream.start()
+            
                 # Keep recording while is_recording is True
+            try:
                 while self.is_recording:
                     time.sleep(0.1)
+            finally:
+                # Clean up stream on exit
+                if self.stream:
+                    try:
+                        self.stream.stop()
+                        self.stream.close()
+                    except Exception as e:
+                        print(f"[WARN] Error cleaning up stream: {e}")
+                    finally:
+                        self.stream = None
                     
         except Exception as e:
             print(f"[ERROR] Error in recording thread: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            # Ensure stream is cleaned up even on exception
+            if self.stream:
+                try:
+                    self.stream.stop()
+                    self.stream.close()
+                except:
+                    pass
+                self.stream = None
     
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
         """Start monitoring audio levels without recording"""
@@ -448,11 +511,191 @@ class AudioCapture:
         """Clean up the audio stream"""
         try:
             if self.stream:
-                self.stream.stop_stream()
+                self.stream.stop()
                 self.stream.close()
                 self.stream = None
         except Exception as e:
             print(f"Error cleaning up audio stream: {e}")
+    
+    def is_recovery_successful(self) -> bool:
+        """
+        Check if recovery was successful using objective callback-based criteria.
+        
+        Recovery is successful if:
+        - At least N callbacks received (e.g., 3)
+        - last_callback_monotonic updated within T (e.g., 800ms) after recovery start
+        """
+        if self.recovery_start_time == 0.0:
+            return False
+        
+        now = time.monotonic()
+        time_since_recovery = now - self.recovery_start_time
+        
+        # Read shared state with lock held to avoid data race
+        with self.lock:
+            frames_count = self.frames_since_start
+            last_callback_time = self.last_callback_monotonic
+        
+        # Check timing: callback must have been received within 800ms of recovery start
+        if time_since_recovery > 0.8:
+            # Too much time has passed, check if we got callbacks
+            if frames_count >= 3 and last_callback_time > self.recovery_start_time:
+                # Got callbacks and they were recent enough
+                return True
+            return False
+        
+        # Still within timeout window, check if we're getting callbacks
+        # Need at least 3 callbacks and they must be recent
+        if frames_count >= 3:
+            # Check if last callback was recent (within last 200ms)
+            if now - last_callback_time < 0.2:
+                return True
+        
+        return False
+    
+    def recover_audio_capture(self, reason: str, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
+        """
+        Recover audio capture by tearing down and rebuilding the stream.
+        
+        This is the single entry point for recovery. It:
+        1. Hard stops current capture (Step A)
+        2. Re-enumerates devices and rebinds defaults (Step B)
+        3. Recreates capture (Step C)
+        
+        Args:
+            reason: Reason for recovery (for logging)
+            streaming_callback: Optional callback to restore after recovery
+            
+        Returns:
+            True if recovery successful, False otherwise
+        """
+        # Check if recovery is already in progress (serialization)
+        with self.recovery_lock:
+            if self.recovery_in_progress:
+                print(f"[RECOVERY] Recovery already in progress, skipping")
+                return False
+            
+            # Set recovery in progress
+            self.recovery_in_progress = True
+        
+        try:
+            print(f"[RECOVERY] Starting audio capture recovery (reason: {reason})", flush=True)
+            
+            # Step A: Hard stop current capture
+            print("[RECOVERY] Step A: Stopping current capture")
+            with self.lock:
+                was_recording = self.is_recording
+                self.is_recording = False
+            
+            # Stop and close stream if it exists
+            if self.stream:
+                try:
+                    self.stream.stop()
+                    self.stream.close()
+                except Exception as e:
+                    print(f"[RECOVERY] Error stopping stream: {e}")
+                finally:
+                    self.stream = None
+            
+            # Join record thread with timeout
+            if self.record_thread and self.record_thread.is_alive():
+                self.record_thread.join(timeout=2.0)
+                if self.record_thread.is_alive():
+                    print("[RECOVERY] ERROR: Recording thread did not exit, aborting recovery")
+                    return False
+            
+            # Reset tracking
+            with self.lock:
+                self.frames_since_start = 0
+                self.last_callback_monotonic = 0.0
+                self.audio_data = []
+            
+            # Step B: Re-enumerate devices and rebind defaults
+            print("[RECOVERY] Step B: Re-enumerating devices and rebinding defaults", flush=True)
+            try:
+                # Force PortAudio refresh (lightest reset)
+                sd.query_devices()
+                
+                # Re-run initialization to set sd.default.* and validate device
+                self._initialize_sounddevice()
+                
+                # If preferred device ID is now invalid, existing logic already fell back
+                print(f"[RECOVERY] Device re-initialized: {self.device_id}", flush=True)
+            except Exception as e:
+                print(f"[RECOVERY] ERROR: Failed to re-enumerate devices: {e}", flush=True)
+                return False
+            
+            # Step C: Recreate capture
+            print("[RECOVERY] Step C: Recreating capture")
+            self.recovery_start_time = time.monotonic()
+            
+            # If we were recording, skip the test recording to avoid model conflicts
+            # The caller will restart recording after recovery, so we just need to verify device works
+            if was_recording:
+                print("[RECOVERY] Was recording - skipping test recording to avoid model conflicts")
+                print("[RECOVERY] Device re-initialized successfully, ready for recording restart")
+                # Device enumeration already succeeded in Step B, so recovery is successful
+                return True
+            
+            # Restore streaming callback if provided (only for test recording when not was_recording)
+            if streaming_callback:
+                self.streaming_callback = streaming_callback
+            
+            # Start recording again (spawns fresh thread with fresh stream)
+            # This is needed to verify the device works, even if we weren't recording before
+            try:
+                if not self.start_recording(streaming_callback):
+                    print("[RECOVERY] ERROR: Failed to start recording after recovery")
+                    return False
+            except Exception as e:
+                print(f"[RECOVERY] ERROR: Exception starting recording: {e}")
+                return False
+            
+            # Wait a bit for callbacks to start
+            time.sleep(0.5)
+            
+            # Check if recovery was successful
+            if self.is_recovery_successful():
+                print("[RECOVERY] Recovery successful - callbacks received")
+                # Stop the test recording (we just verified device works)
+                with self.lock:
+                    self.is_recording = False
+                # Stop the stream
+                if self.stream:
+                    try:
+                        self.stream.stop()
+                        self.stream.close()
+                    except:
+                        pass
+                    self.stream = None
+                # Join thread
+                if self.record_thread and self.record_thread.is_alive():
+                    self.record_thread.join(timeout=1.0)
+                return True
+            else:
+                print("[RECOVERY] Recovery failed - please re-attach your mic usb")
+                # Stop the failed recording attempt
+                if self.is_recording:
+                    with self.lock:
+                        self.is_recording = False
+                if self.stream:
+                    try:
+                        self.stream.stop()
+                        self.stream.close()
+                    except:
+                        pass
+                    self.stream = None
+                return False
+                
+        except Exception as e:
+            print(f"[RECOVERY] ERROR: Exception during recovery: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        finally:
+            # Clear recovery in progress flag
+            with self.recovery_lock:
+                self.recovery_in_progress = False
     
     def list_devices(self):
         """List available audio input devices"""

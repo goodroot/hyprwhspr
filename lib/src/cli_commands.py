@@ -1723,7 +1723,7 @@ def setup_waybar(mode: str = 'install'):
                 "return-type": "json",
                 "exec-on-event": True,
                 "on-click": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh toggle",
-                "on-click-right": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh start",
+                "on-click-right": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh restart",
                 "on-click-middle": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh restart",
                 "tooltip": True
             }

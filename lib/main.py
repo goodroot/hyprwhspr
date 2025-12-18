@@ -12,6 +12,26 @@ import fcntl
 import atexit
 from pathlib import Path
 
+# Ensure unbuffered output for journald logging
+if sys.stdout.isatty():
+    # Interactive terminal - keep buffering
+    pass
+else:
+    # Non-interactive (systemd/journald) - unbuffer
+    # Note: reconfigure() was added in Python 3.7, and may not exist on all stdout/stderr objects
+    # We use try/except to handle cases where it's not available
+    try:
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, OSError):
+        pass  # Fall back to PYTHONUNBUFFERED environment variable
+    
+    try:
+        if hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(line_buffering=True)
+    except (AttributeError, OSError):
+        pass  # Fall back to PYTHONUNBUFFERED environment variable
+
 # Add the src directory to the Python path
 src_path = Path(__file__).parent / 'src'
 sys.path.insert(0, str(src_path))
@@ -41,7 +61,8 @@ class hyprwhsprApp:
         # Initialize audio feedback manager
         self.audio_manager = AudioManager(self.config)
 
-        self.whisper_manager = WhisperManager()
+        # Initialize whisper manager with shared config
+        self.whisper_manager = WhisperManager(config_manager=self.config)
         self.text_injector = TextInjector(self.config)
         self.global_shortcuts = None
 
@@ -50,6 +71,7 @@ class hyprwhsprApp:
         self.is_processing = False
         self.current_transcription = ""
         self.audio_level_thread = None
+        self.recovery_attempted_for_current_error = False  # Track if recovery was attempted for current error state
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -117,20 +139,80 @@ class hyprwhsprApp:
             # Write recording status to file for tray script
             self._write_recording_status(True)
             
-            # Play start sound
-            self.audio_manager.play_start_sound()
-            
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
             
-            # Start audio capture (with streaming callback for realtime-ws)
-            self.audio_capture.start_recording(streaming_callback=streaming_callback)
+            # Helper function to verify stream is working and play sound
+            def verify_and_play_sound():
+                """Wait for callbacks and play sound if stream works"""
+                import time
+                start_time = time.monotonic()
+                while time.monotonic() - start_time < 0.5:  # Wait up to 500ms
+                    # Read frames_since_start with lock held to avoid data race
+                    with self.audio_capture.lock:
+                        frames_count = self.audio_capture.frames_since_start
+                    if frames_count > 0:
+                        # At least one callback received - stream is working
+                        self.audio_manager.play_start_sound()
+                        return True
+                    time.sleep(0.05)
+                # No callbacks received - stream likely broken
+                print("[WARN] No audio callbacks received, stream may be broken - not playing sound", flush=True)
+                return False
             
-            # Start audio level monitoring thread
-            self._start_audio_level_monitoring()
+            # Start audio capture (with streaming callback for realtime-ws)
+            try:
+                if not self.audio_capture.start_recording(streaming_callback=streaming_callback):
+                    raise RuntimeError("start_recording() returned False")
+                
+                # Verify stream is working before playing sound
+                if not verify_and_play_sound():
+                    # Stream broken - stop and raise
+                    self.audio_capture.stop_recording()
+                    self.is_recording = False
+                    self._write_recording_status(False)
+                    raise RuntimeError("Audio stream not producing callbacks")
+                
+                # Stream is working - start monitoring
+                self._start_audio_level_monitoring()
+                    
+            except (RuntimeError, Exception) as e:
+                print(f"[ERROR] Failed to start recording: {e}", flush=True)
+                # Stop recording state before attempting recovery
+                self.is_recording = False
+                self._write_recording_status(False)
+                
+                # Attempt recovery if recording fails
+                print("[RECOVERY] Attempting audio capture recovery...", flush=True)
+                if self.audio_capture.recover_audio_capture("recording_start_failed", streaming_callback):
+                    print("[RECOVERY] Recovery successful, retrying recording...", flush=True)
+                    # Recovery succeeded - try starting recording again
+                    self.is_recording = True
+                    self._write_recording_status(True)
+                    if not self.audio_capture.start_recording(streaming_callback=streaming_callback):
+                        print("[RECOVERY] Retry failed - start_recording() returned False", flush=True)
+                        self.is_recording = False
+                        self._write_recording_status(False)
+                        return
+                    
+                    # Verify retry stream is working
+                    if not verify_and_play_sound():
+                        # Still broken after recovery
+                        print("[WARN] Stream still broken after recovery", flush=True)
+                        self.audio_capture.stop_recording()
+                        self.is_recording = False
+                        self._write_recording_status(False)
+                        return
+                    
+                    # Recovery retry succeeded - start monitoring
+                    self._start_audio_level_monitoring()
+                else:
+                    # Recovery failed
+                    print("[RECOVERY] Recovery failed, cannot record", flush=True)
+                    return
             
         except Exception as e:
-            print(f"[ERROR] Failed to start recording: {e}")
+            print(f"[ERROR] Failed to start recording: {e}", flush=True)
             self.is_recording = False
             self._write_recording_status(False)
 
@@ -253,6 +335,86 @@ class hyprwhsprApp:
             # Thread will exit when is_recording becomes False
             pass
 
+    def _attempt_recovery_if_needed(self):
+        """
+        Check for recovery request from tray script and attempt recovery once per error state.
+        
+        This is called periodically (e.g., in main loop) to check if recovery is needed.
+        Only attempts recovery once per error state to avoid infinite retry loops.
+        """
+        recovery_file = Path.home() / '.config' / 'hyprwhspr' / 'recovery_requested'
+        
+        # Check if recovery file exists
+        if not recovery_file.exists():
+            # No recovery requested - mic is working, reset flag
+            if self.recovery_attempted_for_current_error:
+                self.recovery_attempted_for_current_error = False
+            return
+        
+        # Recovery file exists - check if we should attempt recovery
+        # Don't trigger recovery if transcription is in progress
+        if self.is_processing:
+            return  # Skip recovery attempt during transcription
+        
+        # Check if recovery was already attempted for this error state
+        if self.recovery_attempted_for_current_error:
+            # Already attempted - don't try again
+            return
+        
+        # Check file age - if very old (>60s), assume recovery was attempted and failed
+        try:
+            file_age = time.time() - recovery_file.stat().st_mtime
+            if file_age > 60:
+                # File is old - assume recovery was attempted and failed
+                # Clear it to allow new error detection
+                recovery_file.unlink()
+                self.recovery_attempted_for_current_error = False
+                return
+        except Exception:
+            pass
+        
+        # Clear the file now that we're about to attempt recovery
+        try:
+            recovery_file.unlink()
+        except Exception as e:
+            print(f"[RECOVERY] Warning: Could not clear recovery request file: {e}", flush=True)
+        
+        # Determine reason for recovery
+        was_recording = self.is_recording
+        reason = "mic_unavailable" if not was_recording else "mic_no_audio"
+        
+        print(f"[RECOVERY] Recovery requested by tray script ({reason} detected)", flush=True)
+        
+        # Mark that we're attempting recovery for this error state
+        self.recovery_attempted_for_current_error = True
+        
+        # Attempt recovery (will handle stopping current recording if needed)
+        if self.audio_capture.recover_audio_capture(f"tray_script_request_{reason}"):
+            print("[RECOVERY] Recovery successful - mic should now be available", flush=True)
+            
+            # Reset flag since recovery succeeded
+            self.recovery_attempted_for_current_error = False
+            
+            # If we were recording, we need to restart recording after recovery
+            if was_recording:
+                print("[RECOVERY] Restarting recording after successful recovery", flush=True)
+                # Get streaming callback if needed
+                streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
+                try:
+                    if not self.audio_capture.start_recording(streaming_callback=streaming_callback):
+                        print("[RECOVERY] Failed to restart recording after recovery - start_recording() returned False", flush=True)
+                        self.is_recording = False
+                        self._write_recording_status(False)
+                        return
+                    self._start_audio_level_monitoring()
+                except Exception as e:
+                    print(f"[RECOVERY] Failed to restart recording after recovery: {e}", flush=True)
+                    self.is_recording = False
+                    self._write_recording_status(False)
+        else:
+            print("[RECOVERY] Recovery failed - please reseat your USB microphone", flush=True)
+            # Keep flag set - recovery was attempted and failed, don't retry
+
     def run(self):
         """Start the application"""
         # Check audio capture availability
@@ -275,11 +437,30 @@ class hyprwhsprApp:
             print("[ERROR] Global shortcuts not initialized!")
             return False
         
-        print("\n[READY] hyprwhspr ready - press shortcut to start dictation")
+        print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
+        
+        # Attempt one-time recovery on startup if recovery file exists
+        # This handles cases where mic was unavailable before service restart
+        recovery_file = Path.home() / '.config' / 'hyprwhspr' / 'recovery_requested'
+        if recovery_file.exists():
+            print("[STARTUP] Recovery file found - attempting recovery...", flush=True)
+            if self.audio_capture.recover_audio_capture("startup_recovery_file_exists"):
+                print("[STARTUP] Recovery successful - microphone is now available", flush=True)
+                # Clear the file since recovery succeeded
+                try:
+                    recovery_file.unlink()
+                except:
+                    pass
+            else:
+                # Recovery failed - error already logged by recover_audio_capture()
+                # Set flag so we don't retry immediately
+                self.recovery_attempted_for_current_error = True
         
         try:
             # Keep the application running
             while True:
+                # Check for recovery requests from tray script (non-blocking)
+                self._attempt_recovery_if_needed()
                 time.sleep(1)
         except KeyboardInterrupt:
             print("\n[SHUTDOWN] Shutting down hyprwhspr...")

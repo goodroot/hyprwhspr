@@ -235,7 +235,7 @@ class AudioManager:
         
         print(f"🔊 Playing start sound: {self.start_sound} (volume: {self.start_volume})")
         result = self._play_sound(self.start_sound, self.start_volume)
-        print(f"🔊 Start sound result: {'✅ Success' if result else '❌ Failed'}")
+        print(f"🔊 Start sound result: {'Success' if result else 'Failed'}")
         return result
     
     def play_stop_sound(self) -> bool:
@@ -247,7 +247,7 @@ class AudioManager:
         
         print(f"🔊 Playing stop sound: {self.stop_sound} (volume: {self.stop_volume})")
         result = self._play_sound(self.stop_sound, self.stop_volume)
-        print(f"🔊 Stop sound result: {'✅ Success' if result else '❌ Failed'}")
+        print(f"🔊 Stop sound result: {'Success' if result else 'Failed'}")
         return result
     
     def set_audio_feedback(self, enabled: bool):
