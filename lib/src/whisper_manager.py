@@ -778,6 +778,8 @@ class WhisperManager:
             backend = 'rest-api'
         
         if backend == 'realtime-ws' and self._realtime_client:
+            # Clear server buffer before starting new recording
+            self._realtime_client.clear_audio_buffer()
             return self._realtime_streaming_callback
         return None
 

@@ -614,11 +614,15 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
                 models = get_provider_models(provider_id)
                 model_list = []
                 
-                # Filter models if this is for realtime-ws
+                # Filter models based on backend type
                 for model_id, model_data in models.items():
                     if filter_realtime:
-                        # Only include realtime models (marked with realtime_model flag or has "realtime" in name)
-                        if not model_data.get('realtime_model', False) and 'realtime' not in model_id.lower():
+                        # Only include realtime models (marked with realtime_model flag)
+                        if not model_data.get('realtime_model', False):
+                            continue
+                    else:
+                        # For REST API, hide models marked as hidden
+                        if model_data.get('hidden', False):
                             continue
                     model_list.append((model_id, model_data))
                     print(f"  [{len(model_list)}] {model_data['name']} - {model_data['description']}")

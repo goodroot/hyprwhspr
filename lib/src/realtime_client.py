@@ -279,7 +279,7 @@ class RealtimeClient:
                 }
             }
         else:
-            # Conversational session (voice-to-AI) - disable VAD for manual control
+            # Conversational session (voice-to-AI) - no VAD, manual commit
             session_data = {
                 'type': 'realtime',
                 'output_modalities': ['text'],  # Text output only (no audio response)
@@ -289,7 +289,7 @@ class RealtimeClient:
                             'type': 'audio/pcm',
                             'rate': 24000
                         },
-                        'turn_detection': None  # Disable VAD - we'll commit manually
+                        'turn_detection': None  # Manual commit on stop
                     }
                 },
                 'instructions': self.instructions or 'You are a helpful assistant. Respond to the user based on what they say.'
@@ -335,6 +335,17 @@ class RealtimeClient:
         
         # Convert to bytes (little-endian)
         return audio_int16.tobytes()
+    
+    def clear_audio_buffer(self):
+        """Clear the server-side audio buffer before starting a new recording."""
+        if not self.connected or not self.ws:
+            return
+        try:
+            event = {'type': 'input_audio_buffer.clear'}
+            self.ws.send(json.dumps(event))
+            self.audio_buffer_seconds = 0.0
+        except Exception as e:
+            print(f'[REALTIME] Failed to clear buffer: {e}', flush=True)
     
     def append_audio(self, audio_chunk: np.ndarray):
         """

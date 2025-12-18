@@ -30,6 +30,13 @@ PROVIDERS: Dict[str, Dict] = {
                 'description': 'Updated version of the faster, lighter transcription model',
                 'body': {'model': 'gpt-4o-mini-transcribe-2025-12-15'}
             },
+            'gpt-realtime-mini-2025-12-15': {
+                'name': 'GPT Realtime Mini (2025-12-15)',
+                'description': 'Low-latency realtime streaming',
+                'body': {'model': 'gpt-realtime-mini-2025-12-15'},
+                'realtime_model': True,  # Only show for realtime-ws backend
+                'hidden': True  # Hide from REST API menu
+            },
             'gpt-audio-mini-2025-12-15': {
                 'name': 'GPT Audio Mini (2025-12-15)',
                 'description': 'General purpose audio model',
