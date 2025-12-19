@@ -282,6 +282,13 @@ class AudioCapture:
         if self.is_recording:
             return True
         
+        # Safety: Clean up any leftover stream before starting
+        if self.stream is not None:
+            try:
+                self._cleanup_stream()
+            except Exception:
+                pass  # Ignore cleanup errors
+        
         try:
             # Clear previous audio data
             with self.lock:
@@ -300,7 +307,13 @@ class AudioCapture:
             
         except Exception as e:
             print(f"[ERROR] Failed to start recording: {e}")
-            self.is_recording = False
+            # Ensure cleanup on failure
+            try:
+                self._cleanup_stream()
+            except Exception:
+                pass
+            with self.lock:
+                self.is_recording = False
             return False
     
     def stop_recording(self) -> Optional[np.ndarray]:
@@ -312,12 +325,22 @@ class AudioCapture:
         with self.lock:
             self.is_recording = False
         
-        # Wait for recording thread to finish
+        # Wait for recording thread to finish (it will clean up the stream itself)
         if self.record_thread and self.record_thread.is_alive():
             self.record_thread.join(timeout=2.0)
         
-        # Clean up stream
-        self._cleanup_stream()
+        # Don't clean up stream here - the recording thread does it in its finally block
+        # Only ensure stream reference is cleared if thread didn't clean it
+        with self.lock:
+            if self.stream is not None:
+                # Thread didn't clean up - do it now (shouldn't happen normally)
+                try:
+                    if self.stream:
+                        self.stream.stop()
+                        self.stream.close()
+                except Exception:
+                    pass
+                self.stream = None
         
         # Return recorded data
         with self.lock:
@@ -411,15 +434,23 @@ class AudioCapture:
                 while self.is_recording:
                     time.sleep(0.1)
             finally:
-                # Clean up stream on exit
-                if self.stream:
+                # Clean up stream on exit (recording thread owns this cleanup)
+                stream = None
+                with self.lock:
+                    stream = self.stream
+                    if stream is not None:
+                        self.stream = None  # Clear reference immediately
+                
+                # Clean up outside lock
+                if stream is not None:
                     try:
-                        self.stream.stop()
-                        self.stream.close()
-                    except Exception as e:
-                        print(f"[WARN] Error cleaning up stream: {e}")
-                    finally:
-                        self.stream = None
+                        stream.stop()
+                    except (AttributeError, RuntimeError, Exception):
+                        pass  # Stream might already be stopped
+                    try:
+                        stream.close()
+                    except (AttributeError, RuntimeError, Exception):
+                        pass  # Stream might already be closed
                     
         except Exception as e:
             print(f"[ERROR] Error in recording thread: {e}")
@@ -508,14 +539,23 @@ class AudioCapture:
         return min(1.0, self.current_level * 10)  # Scale for better visualization
     
     def _cleanup_stream(self):
-        """Clean up the audio stream"""
-        try:
-            if self.stream:
-                self.stream.stop()
-                self.stream.close()
-                self.stream = None
-        except Exception as e:
-            print(f"Error cleaning up audio stream: {e}")
+        """Clean up the audio stream (idempotent - safe to call multiple times)"""
+        stream = None
+        with self.lock:
+            stream = self.stream
+            if stream is not None:
+                self.stream = None  # Clear reference immediately to prevent double cleanup
+        
+        # Clean up stream outside lock to avoid deadlocks
+        if stream is not None:
+            try:
+                stream.stop()
+            except (AttributeError, RuntimeError, Exception):
+                pass  # Stream might already be stopped or invalid
+            try:
+                stream.close()
+            except (AttributeError, RuntimeError, Exception):
+                pass  # Stream might already be closed or invalid
     
     def is_recovery_successful(self) -> bool:
         """

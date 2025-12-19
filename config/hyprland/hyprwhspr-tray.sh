@@ -24,9 +24,6 @@ ICON_PATH="$PACKAGE_ROOT/share/assets/hyprwhspr.png"
 _now=$(date +%s%3N 2>/dev/null || date +%s)  # ms if available
 declare -A _cache
 
-# Persistent cache file for mic_actually_works() to survive across script invocations
-# This prevents expensive Python test from running on every waybar poll (every 1 second)
-MIC_CACHE_FILE="$HOME/.config/hyprwhspr/.mic_works_cache"
 
 # Cached command execution with timeout
 cmd_cached() {
@@ -284,139 +281,6 @@ can_start_recording() {
     mic_present && mic_accessible
 }
 
-# Function to verify mic can actually capture audio (not just that stream opens)
-# Uses Python sd.rec() for quick test, cached persistently to avoid heavy calls
-mic_actually_works() {
-    local now cache_time cache_result test_script result max_level
-    
-    # Fast-path: If mic isn't present or accessible, skip expensive test and invalidate cache
-    # This catches suspend/resume issues immediately
-    if ! mic_present || ! mic_accessible; then
-        # Invalidate cache immediately (mic state changed)
-        [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
-        _cache[mic_works.time]=0
-        _cache[mic_works.result]=""
-        return 1
-    fi
-    
-    # If recovery file exists and mic is present/accessible, mic might have been reseated
-    # Invalidate cache to force fresh check (detect reseat immediately)
-    local recovery_file="$HOME/.config/hyprwhspr/recovery_requested"
-    if [[ -f "$recovery_file" ]]; then
-        # Recovery was requested - mic might have been reseated, force fresh check
-        [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
-        _cache[mic_works.time]=0
-        _cache[mic_works.result]=""
-    fi
-    
-    # Check persistent cache file (survives across script invocations)
-    # Use shorter TTL (10s) to catch suspend/resume issues faster
-    # This prevents expensive Python test from running on every waybar poll
-    now=$(_date_ms)
-    if [[ -f "$MIC_CACHE_FILE" ]]; then
-        local cache_data
-        cache_data=$(cat "$MIC_CACHE_FILE" 2>/dev/null)
-        if [[ -n "$cache_data" ]]; then
-            IFS=: read -r cache_time cache_result <<<"$cache_data"
-            # If cache valid and recent (< 10s), return cached result
-            # Shorter TTL ensures we catch suspend/resume issues within 10s
-            if [[ -n "$cache_time" && -n "$cache_result" && $((now - cache_time)) -lt 10000 ]]; then
-                [[ "$cache_result" == "1" ]] && return 0 || return 1
-            fi
-        fi
-    fi
-    
-    # Also check in-memory cache (for same script invocation)
-    cache_time="${_cache[mic_works.time]:-0}"
-    cache_result="${_cache[mic_works.result]:-}"
-    
-    # If cache valid and recent (< 10s), return cached result
-    if [[ -n "$cache_result" && $((now - cache_time)) -lt 10000 ]]; then
-        [[ "$cache_result" == "1" ]] && return 0 || return 1
-    fi
-    
-    # Cache expired or missing - run Python test
-    test_script=$(cat <<'PYTHON_EOF'
-import sys
-import json
-import sounddevice as sd
-import numpy as np
-import threading
-import time
-
-result = {"can_capture": False, "max_level": 0.0, "error": None}
-rec_done = threading.Event()
-audio_data = [None]
-rec_error = [None]
-
-def rec_thread():
-    try:
-        # Use sd.rec() - simpler blocking call, 0.05s test (faster)
-        data = sd.rec(
-            int(16000 * 0.05),  # 0.05 seconds of samples (faster)
-            samplerate=16000,
-            channels=1,
-            dtype='float32'
-        )
-        sd.wait()  # Wait for recording to finish
-        audio_data[0] = data
-    except Exception as e:
-        rec_error[0] = str(e)
-    finally:
-        rec_done.set()
-
-thread = threading.Thread(target=rec_thread, daemon=True)
-thread.start()
-
-# Wait with strict timeout (0.2s max - faster)
-if rec_done.wait(timeout=0.2):
-    if rec_error[0]:
-        result["error"] = rec_error[0]
-    elif audio_data[0] is not None:
-        data = audio_data[0]
-        result["max_level"] = float(np.abs(data).max())
-        # If max level is essentially zero, mic isn't working
-        result["can_capture"] = result["max_level"] > 1e-5
-    else:
-        result["error"] = "No audio data returned"
-else:
-    result["error"] = "Recording timed out"
-
-print(json.dumps(result))
-PYTHON_EOF
-)
-    
-    # Run the test script with strict timeout (0.5s total max)
-    # This prevents hanging if sounddevice blocks indefinitely
-    result=$(timeout 0.5s python3 -c "$test_script" 2>/dev/null)
-    
-    if [[ -n "$result" ]]; then
-        # Parse JSON result using Python (more reliable than grep)
-        can_capture=$(echo "$result" | python3 -c "import sys, json; d=json.load(sys.stdin); print('1' if d.get('can_capture') else '0')" 2>/dev/null)
-        
-        if [[ -n "$can_capture" ]]; then
-            # Update both in-memory and persistent cache
-            _cache[mic_works.result]="$can_capture"
-            _cache[mic_works.time]=$now
-            # Write to persistent cache file (survives across script invocations)
-            echo "${now}:${can_capture}" > "$MIC_CACHE_FILE" 2>/dev/null || true
-            
-            [[ "$can_capture" == "1" ]] && return 0 || return 1
-        else
-            # JSON parsing failed - cache negative result
-            _cache[mic_works.result]="0"
-            _cache[mic_works.time]=$now
-            echo "${now}:0" > "$MIC_CACHE_FILE" 2>/dev/null || true
-            return 1
-        fi
-    else
-        # Test failed - cache negative result
-        _cache[mic_works.result]="0"
-        _cache[mic_works.time]=$now
-        echo "${now}:0" > "$MIC_CACHE_FILE" 2>/dev/null || true
-        return 1
-    fi
-}
 
 # Function to check if hyprwhspr is currently recording
 is_hyprwhspr_recording() {
@@ -653,41 +517,23 @@ get_current_state() {
         echo "error:ydotoold"; return
     fi
     
-    # Check if mic actually works BEFORE other checks
-    # This is the most specific error and should be checked first
-    if ! mic_actually_works; then
-        # Request recovery from main app (file-based trigger)
-        # Only touch file if it doesn't exist (first detection) or is old (>30s, meaning recovery was attempted)
-        local recovery_file="$HOME/.config/hyprwhspr/recovery_requested"
-        if [[ ! -f "$recovery_file" ]]; then
-            # First detection - touch file to request recovery
-            touch "$recovery_file" 2>/dev/null || true
-        else
-            # File exists - check age
-            local file_age
-            file_age=$(($(date +%s) - $(stat -c %Y "$recovery_file" 2>/dev/null || echo 0)))
-            if [[ $file_age -lt 2 ]]; then
-                # File is very new (<2s) - main app is likely processing it
-                # Don't recreate it to avoid race condition
-                :
-            elif [[ $file_age -gt 30 ]]; then
-                # File is old (>30s) - recovery was likely attempted and failed
-                # Don't touch it again, just show error
-                :
-            fi
-        fi
-        # Invalidate cache when requesting recovery (mic state may change)
-        [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
+    # Check if mic is present and accessible
+    if ! mic_present || ! mic_accessible; then
         echo "error:mic_unavailable"; return
-    else
-        # Mic works - clear any pending recovery request and force cache refresh
-        local recovery_file="$HOME/.config/hyprwhspr/recovery_requested"
-        [[ -f "$recovery_file" ]] && rm -f "$recovery_file" 2>/dev/null || true
-        # Clear cache to force fresh check next time (helps detect when mic is reseated)
-        _cache[mic_works.time]=0
-        _cache[mic_works.result]=""
-        # Also clear persistent cache file to force fresh check
-        [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
+    fi
+    
+    # Check for zero-volume signal from main app (mic present but not working)
+    local zero_volume_file="$HOME/.config/hyprwhspr/.mic_zero_volume"
+    if [[ -f "$zero_volume_file" ]]; then
+        # Check file age - if recent (<60s), show error
+        local file_age
+        file_age=$(($(date +%s) - $(stat -c %Y "$zero_volume_file" 2>/dev/null || echo 0)))
+        if [[ $file_age -lt 60 ]]; then
+            echo "error:mic_no_audio"; return
+        else
+            # File is stale - remove it
+            rm -f "$zero_volume_file" 2>/dev/null || true
+        fi
     fi
     
     # Check PipeWire health (after mic check - less specific error)

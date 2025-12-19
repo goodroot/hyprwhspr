@@ -10,7 +10,13 @@ import threading
 import os
 import fcntl
 import atexit
+import subprocess
 from pathlib import Path
+
+try:
+    import numpy as np
+except ImportError:
+    np = None  # Will be checked when needed
 
 # Ensure unbuffered output for journald logging
 if sys.stdout.isatty():
@@ -72,6 +78,10 @@ class hyprwhsprApp:
         self.current_transcription = ""
         self.audio_level_thread = None
         self.recovery_attempted_for_current_error = False  # Track if recovery was attempted for current error state
+        self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
+        
+        # Lock to prevent concurrent recording starts (race condition protection)
+        self._recording_lock = threading.Lock()
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -130,11 +140,18 @@ class hyprwhsprApp:
 
     def _start_recording(self):
         """Start voice recording"""
-        if self.is_recording:
-            return
-
-        try:
+        # Use a lock to prevent concurrent starts (race condition protection)
+        with self._recording_lock:
+            if self.is_recording:
+                return
+            
+            # Set flag immediately to prevent duplicate starts
             self.is_recording = True
+        
+        try:
+            # Clear zero-volume signal file when starting a new recording
+            # This allows waybar to recover immediately on successful start
+            self._clear_zero_volume_signal()
             
             # Write recording status to file for tray script
             self._write_recording_status(True)
@@ -156,8 +173,7 @@ class hyprwhsprApp:
                         self.audio_manager.play_start_sound()
                         return True
                     time.sleep(0.05)
-                # No callbacks received - stream likely broken
-                print("[WARN] No audio callbacks received, stream may be broken - not playing sound", flush=True)
+                # No callbacks received - stream likely broken (will be handled by caller)
                 return False
             
             # Start audio capture (with streaming callback for realtime-ws)
@@ -167,49 +183,31 @@ class hyprwhsprApp:
                 
                 # Verify stream is working before playing sound
                 if not verify_and_play_sound():
-                    # Stream broken - stop and raise
+                    # Stream broken - stop recording (thread will clean up stream)
                     self.audio_capture.stop_recording()
+                    
+                    # Reset state
                     self.is_recording = False
                     self._write_recording_status(False)
-                    raise RuntimeError("Audio stream not producing callbacks")
+                    self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+                    return  # Don't attempt recovery during user-initiated recording
                 
                 # Stream is working - start monitoring
                 self._start_audio_level_monitoring()
                     
             except (RuntimeError, Exception) as e:
                 print(f"[ERROR] Failed to start recording: {e}", flush=True)
-                # Stop recording state before attempting recovery
+                # Stop recording (will clean up if thread started)
+                try:
+                    self.audio_capture.stop_recording()
+                except Exception:
+                    pass  # Ignore if already stopped
+                
+                # Reset state - fail fast, don't attempt recovery
                 self.is_recording = False
                 self._write_recording_status(False)
-                
-                # Attempt recovery if recording fails
-                print("[RECOVERY] Attempting audio capture recovery...", flush=True)
-                if self.audio_capture.recover_audio_capture("recording_start_failed", streaming_callback):
-                    print("[RECOVERY] Recovery successful, retrying recording...", flush=True)
-                    # Recovery succeeded - try starting recording again
-                    self.is_recording = True
-                    self._write_recording_status(True)
-                    if not self.audio_capture.start_recording(streaming_callback=streaming_callback):
-                        print("[RECOVERY] Retry failed - start_recording() returned False", flush=True)
-                        self.is_recording = False
-                        self._write_recording_status(False)
-                        return
-                    
-                    # Verify retry stream is working
-                    if not verify_and_play_sound():
-                        # Still broken after recovery
-                        print("[WARN] Stream still broken after recovery", flush=True)
-                        self.audio_capture.stop_recording()
-                        self.is_recording = False
-                        self._write_recording_status(False)
-                        return
-                    
-                    # Recovery retry succeeded - start monitoring
-                    self._start_audio_level_monitoring()
-                else:
-                    # Recovery failed
-                    print("[RECOVERY] Recovery failed, cannot record", flush=True)
-                    return
+                self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+                return
             
         except Exception as e:
             print(f"[ERROR] Failed to start recording: {e}", flush=True)
@@ -243,12 +241,26 @@ class hyprwhsprApp:
             # Play stop sound
             self.audio_manager.play_stop_sound()
             
-            # For realtime-ws, audio was already streamed via callback
-            # We still need audio_data for transcribe_audio (it will commit and wait)
-            if audio_data is not None:
-                self._process_audio(audio_data)
+            # Check for zero-volume or broken stream
+            if audio_data is None:
+                # Stream was broken - check if we got any callbacks
+                with self.audio_capture.lock:
+                    frames_count = self.audio_capture.frames_since_start
+                if frames_count == 0:
+                    # No callbacks received - mic disconnected during recording
+                    self._notify_zero_volume("Microphone disconnected during recording - no audio captured. Try recording again after reseating.")
+                else:
+                    # Had callbacks but no data - stream broke mid-recording
+                    self._notify_zero_volume("Audio stream broke during recording - no audio data captured. Try recording again after reseating.")
+            elif self._is_zero_volume(audio_data):
+                # Audio data exists but is all zeros - mic not producing sound
+                self._notify_zero_volume("Microphone not producing audio (zero volume detected). Try recording again after reseating.")
             else:
-                print("[WARN] No audio data captured")
+                # Valid audio data - process it
+                # Zero-volume signal already cleared when recording started
+                # For realtime-ws, audio was already streamed via callback
+                # We still need audio_data for transcribe_audio (it will commit and wait)
+                self._process_audio(audio_data)
                 
         except Exception as e:
             print(f"[ERROR] Error stopping recording: {e}")
@@ -283,6 +295,70 @@ class hyprwhsprApp:
             self.text_injector.inject_text(text)
         except Exception as e:
             print(f"[ERROR] Text injection failed: {e}")
+
+    def _is_zero_volume(self, audio_data) -> bool:
+        """Check if audio data has zero or near-zero volume"""
+        if np is None:
+            # numpy not available, can't check - assume not zero
+            return False
+        
+        if audio_data is None or len(audio_data) == 0:
+            return True
+        
+        try:
+            # Check if all samples are zero
+            if np.all(audio_data == 0.0):
+                return True
+            
+            # Check RMS level (very quiet = likely broken)
+            rms = np.sqrt(np.mean(audio_data**2))
+            if rms < 1e-6:  # Extremely quiet threshold
+                return True
+        except Exception:
+            # If check fails, assume not zero (safer)
+            return False
+        
+        return False
+
+    def _notify_user(self, title: str, message: str, urgency: str = "normal"):
+        """Send desktop notification if notify-send is available"""
+        try:
+            subprocess.run(
+                ["notify-send", "-u", urgency, title, message],
+                timeout=2,
+                check=False,
+                capture_output=True
+            )
+        except Exception:
+            pass  # Silently fail if notify-send not available
+
+    def _notify_zero_volume(self, message: str, log_level: str = "WARN"):
+        """Notify user about zero-volume recording and optionally signal waybar"""
+        # Print to logs (primary notification)
+        print(f"[{log_level}] {message}", flush=True)
+        
+        # Desktop notification
+        self._notify_user("hyprwhspr", message, "normal")
+        
+        # Optional: Write waybar signal file (atomic, no conflicts)
+        # This allows waybar to show error state even if mic isn't SUSPENDED
+        try:
+            signal_file = Path.home() / '.config' / 'hyprwhspr' / '.mic_zero_volume'
+            # Use atomic write (write to temp file, then rename)
+            temp_file = signal_file.with_suffix('.tmp')
+            temp_file.write_text(str(int(time.time())))
+            temp_file.replace(signal_file)
+        except Exception:
+            pass  # Silently fail - waybar signal is optional
+
+    def _clear_zero_volume_signal(self):
+        """Clear zero-volume signal file when valid audio is detected"""
+        try:
+            signal_file = Path.home() / '.config' / 'hyprwhspr' / '.mic_zero_volume'
+            if signal_file.exists():
+                signal_file.unlink()
+        except Exception:
+            pass  # Silently fail - waybar signal cleanup is optional
 
     def _write_recording_status(self, is_recording):
         """Write recording status to file for tray script"""
@@ -396,6 +472,23 @@ class hyprwhsprApp:
         if self.audio_capture.recover_audio_capture(f"tray_script_request_{reason}"):
             print("[RECOVERY] Recovery successful - mic should now be available", flush=True)
             
+            # After successful audio recovery, also reinitialize model if needed
+            # This handles suspend/resume cases where CUDA context is invalid
+            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+            if backend == 'local':
+                backend = 'pywhispercpp'
+            elif backend == 'remote':
+                backend = 'rest-api'
+            
+            if backend == 'pywhispercpp' and hasattr(self.whisper_manager, '_pywhisper_model') and self.whisper_manager._pywhisper_model:
+                # Check if model needs reinitialization (long idle = suspend/resume)
+                current_time = time.monotonic()
+                if hasattr(self.whisper_manager, '_last_use_time'):
+                    time_since_last = current_time - self.whisper_manager._last_use_time
+                    if time_since_last > 300 and self.whisper_manager._last_use_time > 0:
+                        print("[RECOVERY] Reinitializing model after audio recovery (suspend/resume detected)", flush=True)
+                        self.whisper_manager._reinitialize_model()
+            
             # Reset flag since recovery succeeded
             self.recovery_attempted_for_current_error = False
             
@@ -443,22 +536,14 @@ class hyprwhsprApp:
         
         print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
         
-        # Attempt one-time recovery on startup if recovery file exists
-        # This handles cases where mic was unavailable before service restart
+        # Clean up any stale recovery file (tray script no longer creates these)
         recovery_file = Path.home() / '.config' / 'hyprwhspr' / 'recovery_requested'
         if recovery_file.exists():
-            print("[STARTUP] Recovery file found - attempting recovery...", flush=True)
-            if self.audio_capture.recover_audio_capture("startup_recovery_file_exists"):
-                print("[STARTUP] Recovery successful - microphone is now available", flush=True)
-                # Clear the file since recovery succeeded
-                try:
-                    recovery_file.unlink()
-                except:
-                    pass
-            else:
-                # Recovery failed - error already logged by recover_audio_capture()
-                # Set flag so we don't retry immediately
-                self.recovery_attempted_for_current_error = True
+            try:
+                recovery_file.unlink()
+                print("[STARTUP] Removed stale recovery file", flush=True)
+            except Exception:
+                pass
         
         try:
             # Keep the application running

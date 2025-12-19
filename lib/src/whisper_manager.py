@@ -68,6 +68,9 @@ class WhisperManager:
 
         # State
         self.ready = False
+        
+        # Track last successful transcription time for suspend/resume detection
+        self._last_use_time = 0.0
 
     def initialize(self) -> bool:
         """Initialize the whisper manager and check dependencies"""
@@ -267,6 +270,8 @@ class WhisperManager:
 
                 print(f"[BACKEND] pywhispercpp ({gpu_backend}) - model: {self.current_model}")
                 self.ready = True
+                # Record initialization time for suspend/resume detection
+                self._last_use_time = time.monotonic()
                 return True
 
             except ImportError as e:
@@ -366,8 +371,33 @@ class WhisperManager:
                 return "CPU"
                 
         except Exception:
-            # Package detection failed - fall back to hardware-only detection
+            # Package detection failed - fall back to config/hardware detection
             pass
+
+        # Check config for pip-installed variant
+        backend_config = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        if backend_config == 'nvidia':
+            if shutil.which('nvidia-smi'):
+                try:
+                    result = subprocess.run(['nvidia-smi', '-L'],
+                                           capture_output=True,
+                                           timeout=2)
+                    if result.returncode == 0:
+                        return "CUDA (NVIDIA)"
+                except (subprocess.TimeoutExpired, Exception):
+                    pass
+        elif backend_config == 'amd':
+            if shutil.which('rocm-smi') or os.path.exists('/opt/rocm'):
+                try:
+                    result = subprocess.run(['rocm-smi', '--showproductname'],
+                                           capture_output=True,
+                                           timeout=2)
+                    if result.returncode == 0:
+                        return "ROCm (AMD)"
+                except (subprocess.TimeoutExpired, Exception):
+                    pass
+        elif backend_config == 'cpu':
+            return "CPU"
 
         # Fallback: hardware-only detection (for non-Arch systems or when pacman unavailable)
         # Check NVIDIA CUDA - verify it actually works
@@ -886,6 +916,18 @@ class WhisperManager:
             # This just commits and waits for the result
             return self._transcribe_realtime(audio_data, sample_rate)
 
+        # Check if model needs reinitialization (suspend/resume detection)
+        current_time = time.monotonic()
+        time_since_last_use = current_time - self._last_use_time
+        
+        # If model hasn't been used in 5+ minutes, likely suspend/resume occurred
+        # Reinitialize to refresh CUDA context before using stale model
+        if time_since_last_use > 300 and self._last_use_time > 0:
+            print("[MODEL] Long idle period detected - reinitializing model (suspend/resume likely)", flush=True)
+            if not self._reinitialize_model():
+                print("[MODEL] Reinitialization failed, transcription may fail", flush=True)
+                return ""
+
         # Use model lock to prevent concurrent transcription calls
         # This prevents crashes from concurrent access to the whisper model
         with self._model_lock:
@@ -902,6 +944,10 @@ class WhisperManager:
                         segments = self._pywhisper_model.transcribe(audio_data)
 
                 result = ' '.join(seg.text for seg in segments).strip()
+                
+                # Update last use time on successful transcription
+                self._last_use_time = time.monotonic()
+                
                 return result
             except Exception as e:
                 print(f"[ERROR] pywhispercpp transcription failed: {e}")
@@ -938,6 +984,66 @@ class WhisperManager:
                 self._pywhisper_model = None
             except Exception as e:
                 print(f"[WARN] Failed to cleanup model reference: {e}")
+    
+    def _reinitialize_model(self) -> bool:
+        """
+        Reinitialize the pywhispercpp model.
+        This is needed after suspend/resume when CUDA contexts become invalid.
+        
+        Returns:
+            True if reinitialization successful, False otherwise
+        """
+        if not self._pywhisper_model:
+            # Model not loaded, just initialize normally
+            return self.initialize()
+        
+        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        if backend == 'local':
+            backend = 'pywhispercpp'
+        elif backend == 'remote':
+            backend = 'rest-api'
+        
+        # Only reinitialize for pywhispercpp backend
+        if backend != 'pywhispercpp':
+            return True
+        
+        print("[MODEL] Reinitializing whisper model (suspend/resume detected)", flush=True)
+        
+        try:
+            # Save current model name and thread count
+            model_name = self.current_model
+            threads = self.config.get_setting('threads', 4)
+            
+            # Clean up old model
+            self._cleanup_model()
+            
+            # Small delay to let CUDA context fully release
+            time.sleep(0.1)
+            
+            # Reload model
+            try:
+                from pywhispercpp.model import Model
+            except ImportError:
+                from pywhispercpp import Model
+            
+            self._pywhisper_model = Model(
+                model=model_name,
+                n_threads=threads,
+                redirect_whispercpp_logs_to=None
+            )
+            
+            self.ready = True
+            # Update last use time to mark successful reinitialization
+            self._last_use_time = time.monotonic()
+            print("[MODEL] Model reinitialized successfully", flush=True)
+            return True
+            
+        except Exception as e:
+            print(f"[MODEL] ERROR: Failed to reinitialize model: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            self.ready = False
+            return False
     
     def _cleanup_realtime_client(self) -> None:
         """Cleanup Realtime WebSocket client"""
