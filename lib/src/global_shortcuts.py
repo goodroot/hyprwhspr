@@ -215,27 +215,38 @@ class GlobalShortcuts:
                     continue
                 
                 # Device can emit all required keys - test if we can grab it
-                try:
-                    device.grab()
-                    device.ungrab()
-                    
+                # Retry logic to handle cases where device is temporarily busy (e.g., during service restart)
+                grab_success = False
+                for retry in range(3):
+                    try:
+                        device.grab()
+                        device.ungrab()
+                        grab_success = True
+                        break
+                    except (OSError, IOError) as e:
+                        if retry < 2:  # Don't sleep on last retry
+                            # Device might be busy from previous process - wait a bit
+                            time.sleep(0.2)
+                            continue
+                        # Last retry failed - this is a real error
+                        if self.selected_device_path:
+                            print(f"[ERROR] Cannot access selected device '{device.name}' ({device.path}): {e}")
+                            print("[ERROR] This usually means you need root or input group membership")
+                            print("[ERROR]   Run: sudo usermod -aG input $USER (then log out and back in)")
+                            device.close()
+                            return
+                        print(f"[WARN] Cannot access device {device.name}: {e}")
+                        print("[WARN]   This usually means you need root or input group membership")
+                        device.close()
+                        break
+                
+                if grab_success:
                     self.devices.append(device)
                     self.device_fds[device.fd] = device
                     
                     # If we selected a specific device, we're done
                     if self.selected_device_path:
                         break
-                    
-                except (OSError, IOError) as e:
-                    if self.selected_device_path:
-                        print(f"[ERROR] Cannot access selected device '{device.name}' ({device.path}): {e}")
-                        print("[ERROR] This usually means you need root or input group membership")
-                        print("[ERROR]   Run: sudo usermod -aG input $USER (then log out and back in)")
-                        device.close()
-                        return
-                    print(f"[WARN] Cannot access device {device.name}: {e}")
-                    print("[WARN]   This usually means you need root or input group membership")
-                    device.close()
                         
         except Exception as e:
             print(f"[ERROR] Error discovering devices: {e}")
@@ -529,13 +540,23 @@ class GlobalShortcuts:
             self.uinput = UInput(name="hyprwhspr-virtual-keyboard")
 
             # Grab all keyboard devices to intercept their events
+            # Use retry logic to handle cases where devices are temporarily busy (e.g., during service restart)
             grabbed_count = 0
             for device in self.devices:
-                try:
-                    device.grab()
-                    grabbed_count += 1
-                except Exception as e:
-                    print(f"[ERROR] Could not grab {device.name}: {e}")
+                grab_success = False
+                for retry in range(3):
+                    try:
+                        device.grab()
+                        grab_success = True
+                        grabbed_count += 1
+                        break
+                    except (OSError, IOError) as e:
+                        if retry < 2:  # Don't sleep on last retry
+                            # Device might be busy from previous process - wait a bit
+                            time.sleep(0.2)
+                            continue
+                        # Last retry failed - this is a real error
+                        print(f"[ERROR] Could not grab {device.name} after retries: {e}")
 
             if grabbed_count == 0:
                 print("[ERROR] No devices were grabbed! Shortcuts will not work!")
@@ -560,6 +581,9 @@ class GlobalShortcuts:
                 except:
                     pass
             self.devices_grabbed = False
+            # Small delay to let kernel release devices before closing
+            # This prevents "device busy" errors when service restarts quickly
+            time.sleep(0.1)
 
         # Close UInput
         if self.uinput:
@@ -580,10 +604,10 @@ class GlobalShortcuts:
             if self.listener_thread and self.listener_thread.is_alive():
                 self.listener_thread.join(timeout=1.0)
 
-            # Clean up key grabbing
+            # Clean up key grabbing (this includes ungrabing and a small delay)
             self._cleanup_key_grabbing()
 
-            # Close all devices
+            # Close all devices (after ungrab delay)
             for device in self.devices[:]:  # Copy list to avoid modification during iteration
                 self._remove_device(device)
 
