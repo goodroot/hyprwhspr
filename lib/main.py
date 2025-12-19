@@ -356,6 +356,10 @@ class hyprwhsprApp:
         if self.is_processing:
             return  # Skip recovery attempt during transcription
         
+        # Don't trigger recovery if actively recording - recovery will interfere with recording
+        if self.is_recording:
+            return  # Skip recovery attempt during active recording
+        
         # Check if recovery was already attempted for this error state
         if self.recovery_attempted_for_current_error:
             # Already attempted - don't try again

@@ -643,34 +643,8 @@ get_current_state() {
     
     # Service is running - check if recording
     if is_hyprwhspr_recording; then
-        # Check for null/zero audio during recording
-        local level_file="$HOME/.config/hyprwhspr/audio_level"
-        if [[ -f "$level_file" ]]; then
-            local audio_level
-            audio_level=$(cat "$level_file" 2>/dev/null || echo "0")
-            # If audio level is 0.0 or very low (< 0.0001), mic isn't working
-            if awk -v level="$audio_level" 'BEGIN {exit (level < 0.0001) ? 0 : 1}'; then
-                # Request recovery from main app (file-based trigger)
-                # Only touch file if it doesn't exist (first detection) or is old (>30s, meaning recovery was attempted)
-                local recovery_file="$HOME/.config/hyprwhspr/recovery_requested"
-                if [[ ! -f "$recovery_file" ]]; then
-                    # First detection - touch file to request recovery
-                    touch "$recovery_file" 2>/dev/null || true
-                else
-                    # File exists - check age
-                    local file_age
-                    file_age=$(($(date +%s) - $(stat -c %Y "$recovery_file" 2>/dev/null || echo 0)))
-                    if [[ $file_age -gt 30 ]]; then
-                        # File is old (>30s) - recovery was likely attempted and failed
-                        # Don't touch it again, just show error
-                        :
-                    fi
-                fi
-                # Invalidate cache when requesting recovery (mic state may change)
-                [[ -f "$MIC_CACHE_FILE" ]] && rm -f "$MIC_CACHE_FILE" 2>/dev/null || true
-                echo "error:mic_no_audio"; return
-            fi
-        fi
+        # Recording is active - don't check audio levels (low levels are normal during speech pauses)
+        # Only check mic availability when service is running but NOT recording
         echo "recording"; return
     fi
     
@@ -692,7 +666,11 @@ get_current_state() {
             # File exists - check age
             local file_age
             file_age=$(($(date +%s) - $(stat -c %Y "$recovery_file" 2>/dev/null || echo 0)))
-            if [[ $file_age -gt 30 ]]; then
+            if [[ $file_age -lt 2 ]]; then
+                # File is very new (<2s) - main app is likely processing it
+                # Don't recreate it to avoid race condition
+                :
+            elif [[ $file_age -gt 30 ]]; then
                 # File is old (>30s) - recovery was likely attempted and failed
                 # Don't touch it again, just show error
                 :

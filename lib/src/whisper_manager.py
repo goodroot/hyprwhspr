@@ -886,25 +886,28 @@ class WhisperManager:
             # This just commits and waits for the result
             return self._transcribe_realtime(audio_data, sample_rate)
 
-        try:
-            # Get language setting from config (None = auto-detect)
-            language = self.config.get_setting('language', None)
-            
-            # Intercept progress logs and enhance them
-            with self._intercept_progress_logs():
-                # Transcribe with language parameter if specified
-                if language:
-                    segments = self._pywhisper_model.transcribe(audio_data, language=language)
-                else:
-                    segments = self._pywhisper_model.transcribe(audio_data)
+        # Use model lock to prevent concurrent transcription calls
+        # This prevents crashes from concurrent access to the whisper model
+        with self._model_lock:
+            try:
+                # Get language setting from config (None = auto-detect)
+                language = self.config.get_setting('language', None)
+                
+                # Intercept progress logs and enhance them
+                with self._intercept_progress_logs():
+                    # Transcribe with language parameter if specified
+                    if language:
+                        segments = self._pywhisper_model.transcribe(audio_data, language=language)
+                    else:
+                        segments = self._pywhisper_model.transcribe(audio_data)
 
-            result = ' '.join(seg.text for seg in segments).strip()
-            return result
-        except Exception as e:
-            print(f"[ERROR] pywhispercpp transcription failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return ""
+                result = ' '.join(seg.text for seg in segments).strip()
+                return result
+            except Exception as e:
+                print(f"[ERROR] pywhispercpp transcription failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return ""
 
     def _validate_model_file(self, model_name: str) -> bool:
         """Validate that model file exists and is not corrupted"""
