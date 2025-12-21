@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# hyprwhspr System Tray Status Script
-# Shows hyprwhspr status in the Hyprland system tray with JSON output
+# hyprwhspr waybar tray
 
 # Detect PACKAGE_ROOT dynamically
 if [ -n "${HYPRWHSPR_ROOT:-}" ]; then
@@ -168,24 +167,20 @@ mic_present() {
 }
 
 mic_accessible() {
-    # if we can ask for a default source, the session can likely capture
     local default_source
     default_source="$(try 'pactl get-default-source')"
     [[ -n "$default_source" ]] || return 1
-    
-    # /dev/snd should exist; don't over-enforce groups (PipeWire brokers access)
+
     [[ -d /dev/snd ]] || return 1
-    
-    # Check if default source is SUSPENDED (critical check)
-    # Use 'pactl list sources' (not 'short') to get reliable state information
-    local source_state
-    source_state="$(try "pactl list sources | awk -v D=\"$default_source\" '
-        /^[[:space:]]*Name: /{current_name=\$2}
-        /^[[:space:]]*State: /{if(current_name==D){print \$2; exit}}'")"
-    
-    # Source is not accessible if SUSPENDED
-    [[ "$source_state" == "SUSPENDED" ]] && return 1
-    
+
+    # Default source must exist (stale default is a real failure)
+    if ! try 'pactl list short sources' | awk '{print $2}' | grep -qxF "$default_source"; then
+        return 1
+    fi
+
+    # Don't treat monitor sources as a microphone
+    [[ "$default_source" == *.monitor ]] && return 1
+
     return 0
 }
 

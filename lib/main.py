@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-hyprwhspr - Voice dictation application for Hyprland (Headless Mode)
-Fast, reliable speech-to-text with instant text injection
+hyprwhspr - stt
 """
 
 import sys
@@ -341,7 +340,7 @@ class hyprwhsprApp:
         self._notify_user("hyprwhspr", message, "normal")
         
         # Optional: Write waybar signal file (atomic, no conflicts)
-        # This allows waybar to show error state even if mic isn't SUSPENDED
+        # This allows waybar to when mic present but not recording
         try:
             signal_file = Path.home() / '.config' / 'hyprwhspr' / '.mic_zero_volume'
             # Use atomic write (write to temp file, then rename)
