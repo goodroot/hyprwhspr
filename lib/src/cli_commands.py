@@ -441,7 +441,7 @@ def _prompt_backend_selection():
                         'realtime-ws': 'Realtime WebSocket'
                     }
                     print(f"\n✓ Selected: {backend_names[selected]}")
-                    return (selected, cleanup_venv)  # Return tuple: (backend, cleanup_venv)
+                    return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
             
             # If re-selecting same backend, offer reinstall option
             if current_backend == selected and selected not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
@@ -454,7 +454,8 @@ def _prompt_backend_selection():
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
                 if not reinstall:
                     print("Keeping existing installation.")
-                    return (selected, False)
+                    return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
+                # If yes to reinstall, continue to return with wants_reinstall=True
             elif current_backend == selected and selected == 'parakeet':
                 backend_names = {
                     'parakeet': 'Parakeet'
@@ -463,7 +464,8 @@ def _prompt_backend_selection():
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
                 if not reinstall:
                     print("Keeping existing installation.")
-                    return (selected, False)
+                    return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
+                # If yes to reinstall, continue to return with wants_reinstall=True
             elif current_backend == selected and selected == 'realtime-ws':
                 backend_names = {
                     'realtime-ws': 'Realtime WebSocket'
@@ -472,7 +474,8 @@ def _prompt_backend_selection():
                 reconfigure = Confirm.ask("Reconfigure backend?", default=False)
                 if not reconfigure:
                     print("Keeping existing configuration.")
-                    return (selected, False)
+                    return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
+                # If yes to reconfigure, continue to return with wants_reinstall=True for correct state tracking
             elif current_backend == selected and selected in ['rest-api', 'remote']:
                 backend_names = {
                     'rest-api': 'REST API',
@@ -482,7 +485,8 @@ def _prompt_backend_selection():
                 reconfigure = Confirm.ask("Reconfigure backend?", default=False)
                 if not reconfigure:
                     print("Keeping existing configuration.")
-                    return (selected, False)
+                    return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
+                # If yes to reconfigure, continue to return with wants_reinstall=True for correct state tracking
             
             backend_names = {
                 'cpu': 'CPU',
@@ -493,7 +497,11 @@ def _prompt_backend_selection():
                 'realtime-ws': 'Realtime WebSocket'
             }
             print(f"\n✓ Selected: {backend_names[selected]}")
-            return (selected, False)  # Return tuple: (backend, cleanup_venv)
+            # Check if user wants to reinstall/reconfigure (same backend selected and they said yes)
+            # For local backends: wants_reinstall means reinstall
+            # For cloud backends: wants_reinstall means reconfigure (correctly tracks user intent)
+            wants_reinstall = (current_backend == selected)
+            return (selected, False, wants_reinstall)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
         except KeyboardInterrupt:
             print("\n\nCancelled by user.")
             raise
@@ -822,10 +830,19 @@ def setup_command():
     
     # Handle tuple or string return (backward compatibility)
     if isinstance(backend_result, tuple):
-        backend, cleanup_venv = backend_result
+        if len(backend_result) == 3:
+            backend, cleanup_venv, wants_reinstall = backend_result
+        elif len(backend_result) == 2:
+            backend, cleanup_venv = backend_result
+            wants_reinstall = False
+        else:
+            backend = backend_result[0]
+            cleanup_venv = False
+            wants_reinstall = False
     else:
         backend = backend_result
         cleanup_venv = False
+        wants_reinstall = False
     
     current_backend = _detect_current_backend()
     
@@ -860,32 +877,41 @@ def setup_command():
     # Step 1.5: Backend installation (if not cloud backend)
     parakeet_installed = False
     if backend not in ['rest-api', 'remote', 'realtime-ws']:
-        print("\n" + "="*60)
-        print("Backend Installation")
-        print("="*60)
-        if backend == 'parakeet':
-            print("\nThis will install the Parakeet backend.")
-            print("This will create a separate virtual environment and install dependencies.")
-            print("Parakeet runs as a local REST API server that hyprwhspr connects to.")
-        else:
-            print(f"\nThis will install the {backend.upper()} backend for pywhispercpp.")
-            print("This may take several minutes as it compiles from source.")
-        if not Confirm.ask("Proceed with backend installation?", default=True):
-            log_warning("Skipping backend installation. You can install it later.")
-            log_warning("Backend installation is required for local transcription to work.")
-        else:
-            if not install_backend(backend):
-                log_error("Backend installation failed. Setup cannot continue.")
-                return
-            
-            if backend == 'parakeet':
+        # Skip installation section if user selected the same backend and declined reinstalling
+        if current_backend == backend and not wants_reinstall:
+            # User already said "no" to reinstalling in the selection step, skip installation section
+            # If Parakeet is already installed, mark it as installed so REST API auto-configuration works
+            if backend == 'parakeet' and current_backend == 'parakeet':
                 parakeet_installed = True
+        else:
+            # New backend selected, or user wants to reinstall existing backend
+            print("\n" + "="*60)
+            print("Backend Installation")
+            print("="*60)
+            if backend == 'parakeet':
+                print("\nThis will install the Parakeet backend.")
+                print("This will create a separate virtual environment and install dependencies.")
+                print("Parakeet runs as a local REST API server that hyprwhspr connects to.")
+            else:
+                print(f"\nThis will install the {backend.upper()} backend for pywhispercpp.")
+                print("This may take several minutes as it compiles from source.")
+            if not Confirm.ask("Proceed with backend installation?", default=True):
+                log_warning("Skipping backend installation. You can install it later.")
+                log_warning("Backend installation is required for local transcription to work.")
+            else:
+                if not install_backend(backend):
+                    log_error("Backend installation failed. Setup cannot continue.")
+                    return
+                
+                if backend == 'parakeet':
+                    parakeet_installed = True
     
     # Step 2: Provider/model selection (if REST API backend or parakeet)
     remote_config = None
     selected_model = None
-    if backend == 'parakeet' and parakeet_installed:
-        # Auto-configure REST API for parakeet
+    if backend == 'parakeet':
+        # Auto-configure REST API for parakeet (always needed, regardless of installation status)
+        # If installation was skipped, user can install Parakeet later, but config should be set up now
         log_info("Auto-configuring REST API for Parakeet...")
         remote_config = {
             'transcription_backend': 'rest-api',
@@ -894,6 +920,8 @@ def setup_command():
             'rest_body': {}
         }
         log_success("Parakeet REST API configuration ready")
+        if not parakeet_installed:
+            log_warning("Parakeet backend is not installed. Install it later to use this configuration.")
         # Note about manual start will be shown later if systemd is not set up
     elif backend in ['rest-api', 'remote']:
         # Prompt for remote provider selection
@@ -1059,8 +1087,9 @@ def setup_command():
         else:
             log_info("Base Python dependencies up to date")
     
-    elif backend not in ['rest-api', 'remote', 'realtime-ws']:
+    elif backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
         # Local backend - prompt for model selection
+        # Note: Parakeet doesn't use Whisper models, it's handled via REST API auto-configuration
         selected_model = _prompt_model_selection()
     
     # Step 3: Waybar integration
