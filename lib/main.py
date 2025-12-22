@@ -249,21 +249,27 @@ class hyprwhsprApp:
             elif backend == 'remote':
                 backend = 'rest-api'
             
+            # Stop audio capture
             audio_data = self.audio_capture.stop_recording()
 
+            # Check for zero-volume or broken stream
             if audio_data is None:
-                # Broken stream - hardware failure, set ERR state
+                # Stream was broken - check if we got any callbacks
                 self.audio_manager.play_error_sound()
                 with self.audio_capture.lock:
                     frames_count = self.audio_capture.frames_since_start
                 if frames_count == 0:
+                    # No callbacks received - mic disconnected during recording
                     self._notify_zero_volume("Microphone disconnected during recording - no audio captured. Try recording again after reseating.")
                 else:
+                    # Had callbacks but no data - stream broke mid-recording
                     self._notify_zero_volume("Audio stream broke during recording - no audio data captured. Try recording again after reseating.")
             elif self._is_zero_volume(audio_data):
-                # Zero volume (likely muted) - don't set ERR state, just play error sound
+                # Audio data exists but is all zeros - mic not producing sound
+                # Play error sound but don't set ERR state (likely intentional muting)
                 self.audio_manager.play_error_sound()
             else:
+                # Valid audio data - process it
                 self.audio_manager.play_stop_sound()
                 self._process_audio(audio_data)
                 
@@ -277,19 +283,25 @@ class hyprwhsprApp:
 
         try:
             self.is_processing = True
+
+            # Transcribe audio
             transcription = self.whisper_manager.transcribe_audio(audio_data)
 
             if transcription and transcription.strip():
                 text = transcription.strip()
 
-                # Whisper returns "[BLANK_AUDIO]" for silence - ignore it
+                # Filter out Whisper's blank audio markers - don't touch clipboard
                 if text.lower().replace('_', ' ').strip('[]() ') in ('blank audio', 'blank'):
+                    print("[INFO] Blank audio detected - ignoring")
                     self.audio_manager.play_error_sound()
                     return
 
                 self.current_transcription = text
+
+                # Inject text
                 self._inject_text(self.current_transcription)
             else:
+                print("[WARN] No transcription generated")
                 self.audio_manager.play_error_sound()
                 
         except Exception as e:
@@ -404,6 +416,7 @@ class hyprwhsprApp:
                     with open(level_file, 'w') as f:
                         f.write(f'{level:.3f}')
 
+                    # Early muted mic detection
                     if level < zero_threshold:
                         zero_samples += 1
                         if zero_samples >= samples_to_cancel:
@@ -411,10 +424,12 @@ class hyprwhsprApp:
                             return
                     else:
                         zero_samples = 0
-                except Exception:
+                except Exception as e:
+                    # Silently fail - don't spam errors
                     pass
-                time.sleep(0.1)
+                time.sleep(0.1)  # Update 10 times per second
 
+            # Clean up file when not recording
             try:
                 if level_file.exists():
                     level_file.unlink()
