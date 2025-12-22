@@ -19,20 +19,29 @@ class AudioManager:
         # Initialize settings from config if available
         if self.config_manager:
             self.enabled = self.config_manager.get_setting('audio_feedback', False)  # Default to disabled
-            self.start_volume = self.config_manager.get_setting('start_sound_volume', 0.3)  # Default 30% volume
-            self.stop_volume = self.config_manager.get_setting('stop_sound_volume', 0.3)  # Default 30% volume
-            self.start_sound_path = self.config_manager.get_setting('start_sound_path', None)  # Custom start sound path
-            self.stop_sound_path = self.config_manager.get_setting('stop_sound_path', None)  # Custom stop sound path
+            # General audio volume (fallback for _play_sound when volume=None)
+            self.volume = self.config_manager.get_setting('audio_volume', 0.5)  # Default 50% volume
+            self.start_volume = self.config_manager.get_setting('start_sound_volume', 0.5)
+            self.stop_volume = self.config_manager.get_setting('stop_sound_volume', 0.5)
+            self.error_volume = self.config_manager.get_setting('error_sound_volume', 0.5)
+            self.start_sound_path = self.config_manager.get_setting('start_sound_path', None)
+            self.stop_sound_path = self.config_manager.get_setting('stop_sound_path', None)
+            self.error_sound_path = self.config_manager.get_setting('error_sound_path', None)
         else:
             self.enabled = False  # Default to disabled
-            self.start_volume = 0.3
-            self.stop_volume = 0.3
+            self.volume = 0.5  
+            self.start_volume = 0.5
+            self.stop_volume = 0.5
+            self.error_volume = 0.5
             self.start_sound_path = None
             self.stop_sound_path = None
-        
+            self.error_sound_path = None
+
         # Validate volumes
+        self.volume = self._validate_volume(self.volume)
         self.start_volume = self._validate_volume(self.start_volume)
         self.stop_volume = self._validate_volume(self.stop_volume)
+        self.error_volume = self._validate_volume(self.error_volume)
         
         # Audio file paths - use custom paths if specified, otherwise fall back to defaults
         # Check HYPRWHSPR_ROOT env var first, then fall back to hardcoded path
@@ -80,17 +89,36 @@ class AudioManager:
                     self.stop_sound = self.assets_dir / "ping-down.ogg"
         else:
             self.stop_sound = self.assets_dir / "ping-down.ogg"
-        
+
+        # Error sound path resolution
+        if self.error_sound_path:
+            # Try the path as-is first (for absolute paths)
+            error_path = Path(self.error_sound_path)
+            if error_path.exists():
+                self.error_sound = error_path
+            else:
+                # Try relative to assets directory (for relative paths like "ping-error.ogg")
+                error_path = self.assets_dir / self.error_sound_path
+                if error_path.exists():
+                    self.error_sound = error_path
+                else:
+                    # Fall back to default
+                    self.error_sound = self.assets_dir / "ping-error.ogg"
+        else:
+            self.error_sound = self.assets_dir / "ping-error.ogg"
+
         # Check if audio files exist
         self.start_sound_available = self.start_sound.exists()
         self.stop_sound_available = self.stop_sound.exists()
-        
-        if not self.start_sound_available or not self.stop_sound_available:
+        self.error_sound_available = self.error_sound.exists()
+
+        if not self.start_sound_available or not self.stop_sound_available or not self.error_sound_available:
             print(f"⚠️  Audio feedback files not found:")
             print(f"   Start sound: {'✓' if self.start_sound_available else '✗'} {self.start_sound}")
             print(f"   Stop sound: {'✓' if self.stop_sound_available else '✗'} {self.stop_sound}")
-            if self.start_sound_path or self.stop_sound_path:
-                print(f"   Custom paths specified: start='{self.start_sound_path}', stop='{self.stop_sound_path}'")
+            print(f"   Error sound: {'✓' if self.error_sound_available else '✗'} {self.error_sound}")
+            if self.start_sound_path or self.stop_sound_path or self.error_sound_path:
+                print(f"   Custom paths specified: start='{self.start_sound_path}', stop='{self.stop_sound_path}', error='{self.error_sound_path}'")
             print(f"   Default assets directory: {self.assets_dir}")
     
     def _validate_volume(self, volume: float) -> float:
@@ -244,12 +272,24 @@ class AudioManager:
         if not self.enabled or not self.stop_sound_available:
             print(f"❌ Stop sound blocked - enabled: {self.enabled}, available: {self.stop_sound_available}")
             return False
-        
+
         print(f"🔊 Playing stop sound: {self.stop_sound} (volume: {self.stop_volume})")
         result = self._play_sound(self.stop_sound, self.stop_volume)
         print(f"🔊 Stop sound result: {'Success' if result else 'Failed'}")
         return result
-    
+
+    def play_error_sound(self) -> bool:
+        """Play the error sound (e.g., for blank audio or failed transcription)"""
+        print(f"🔊 play_error_sound called - enabled: {self.enabled}, available: {self.error_sound_available}")
+        if not self.enabled or not self.error_sound_available:
+            print(f"❌ Error sound blocked - enabled: {self.enabled}, available: {self.error_sound_available}")
+            return False
+
+        print(f"🔊 Playing error sound: {self.error_sound} (volume: {self.error_volume})")
+        result = self._play_sound(self.error_sound, self.error_volume)
+        print(f"🔊 Error sound result: {'Success' if result else 'Failed'}")
+        return result
+
     def set_audio_feedback(self, enabled: bool):
         """Enable or disable audio feedback"""
         self.enabled = bool(enabled)
@@ -350,11 +390,15 @@ class AudioManager:
             'enabled': self.enabled,
             'start_volume': self.start_volume,
             'stop_volume': self.stop_volume,
+            'error_volume': self.error_volume,
             'start_sound_available': self.start_sound_available,
             'stop_sound_available': self.stop_sound_available,
+            'error_sound_available': self.error_sound_available,
             'start_sound_path': str(self.start_sound),
             'stop_sound_path': str(self.stop_sound),
+            'error_sound_path': str(self.error_sound),
             'start_sound_custom': self.start_sound_path,
             'stop_sound_custom': self.stop_sound_path,
+            'error_sound_custom': self.error_sound_path,
             'default_assets_dir': str(self.assets_dir),
         }

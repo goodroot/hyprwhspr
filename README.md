@@ -251,10 +251,13 @@ Examples:
 ```jsonc
 {
     "audio_feedback": true,            // Enable audio feedback (default: false)
-    "start_sound_volume": 0.3,        // Start recording sound volume (0.1 to 1.0)
-    "stop_sound_volume": 0.3,         // Stop recording sound volume (0.1 to 1.0)
+    "audio_volume": 0.5,               // General audio volume fallback (0.1 to 1.0, default: 0.5)
+    "start_sound_volume": 0.5,         // Start recording sound volume (0.1 to 1.0, default: 0.5)
+    "stop_sound_volume": 0.5,          // Stop recording sound volume (0.1 to 1.0, default: 0.5)
+    "error_sound_volume": 0.5,         // Error sound volume (0.1 to 1.0, default: 0.5)
     "start_sound_path": "custom-start.ogg",  // Custom start sound (relative to assets)
-    "stop_sound_path": "custom-stop.ogg"     // Custom stop sound (relative to assets)
+    "stop_sound_path": "custom-stop.ogg",    // Custom stop sound (relative to assets)
+    "error_sound_path": "custom-error.ogg"  // Custom error sound (relative to assets)
 }
 ```
 
@@ -262,6 +265,7 @@ Examples:
 
 - **Start recording**: `ping-up.ogg` (ascending tone)
 - **Stop recording**: `ping-down.ogg` (descending tone)
+- **Error/blank audio**: `ping-error.ogg` (double-beep)
 
 **Custom sounds:**
 

@@ -213,6 +213,21 @@ class hyprwhsprApp:
             self.is_recording = False
             self._write_recording_status(False)
 
+    def _cancel_recording_muted(self):
+        """Cancel recording early due to muted microphone"""
+        if not self.is_recording:
+            return
+
+        try:
+            self.is_recording = False
+            self._stop_audio_level_monitoring()
+            self._write_recording_status(False)
+            self.audio_capture.stop_recording()
+            self.audio_manager.play_error_sound()
+            self._notify_user("hyprwhspr", "Microphone muted - recording canceled", "normal")
+        except Exception as e:
+            print(f"[ERROR] Error canceling recording: {e}")
+
     def _stop_recording(self):
         """Stop voice recording and process audio"""
         if not self.is_recording:
@@ -236,13 +251,11 @@ class hyprwhsprApp:
             
             # Stop audio capture
             audio_data = self.audio_capture.stop_recording()
-            
-            # Play stop sound
-            self.audio_manager.play_stop_sound()
-            
+
             # Check for zero-volume or broken stream
             if audio_data is None:
                 # Stream was broken - check if we got any callbacks
+                self.audio_manager.play_error_sound()
                 with self.audio_capture.lock:
                     frames_count = self.audio_capture.frames_since_start
                 if frames_count == 0:
@@ -253,12 +266,12 @@ class hyprwhsprApp:
                     self._notify_zero_volume("Audio stream broke during recording - no audio data captured. Try recording again after reseating.")
             elif self._is_zero_volume(audio_data):
                 # Audio data exists but is all zeros - mic not producing sound
-                self._notify_zero_volume("Microphone not producing audio (zero volume detected). Try recording again after reseating.")
+                # Play error sound and notify user (may be intentional muting, but still inform)
+                self.audio_manager.play_error_sound()
+                self._notify_zero_volume("Microphone not producing audio (zero volume detected). This may be intentional muting, or the microphone may need to be reseated.")
             else:
                 # Valid audio data - process it
-                # Zero-volume signal already cleared when recording started
-                # For realtime-ws, audio was already streamed via callback
-                # We still need audio_data for transcribe_audio (it will commit and wait)
+                self.audio_manager.play_stop_sound()
                 self._process_audio(audio_data)
                 
         except Exception as e:
@@ -271,16 +284,19 @@ class hyprwhsprApp:
 
         try:
             self.is_processing = True
-            
+
             # Transcribe audio
             transcription = self.whisper_manager.transcribe_audio(audio_data)
-            
+
             if transcription and transcription.strip():
                 text = transcription.strip()
 
-                # Filter out Whisper's blank audio markers - don't touch clipboard
-                if text.lower().replace('_', ' ').strip('[]() ') in ('blank audio', 'blank'):
-                    print("[INFO] Blank audio detected - ignoring")
+                # Filter out Whisper hallucination markers - don't touch clipboard
+                normalized = text.lower().replace('_', ' ').strip('[]() ')
+                hallucination_markers = ('blank audio', 'blank', 'video playback', 'music', 'music playing')
+                if normalized in hallucination_markers:
+                    print(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
+                    self.audio_manager.play_error_sound()
                     return
 
                 self.current_transcription = text
@@ -289,6 +305,7 @@ class hyprwhsprApp:
                 self._inject_text(self.current_transcription)
             else:
                 print("[WARN] No transcription generated")
+                self.audio_manager.play_error_sound()
                 
         except Exception as e:
             print(f"[ERROR] Error processing audio: {e}")
@@ -386,28 +403,45 @@ class hyprwhsprApp:
         """Start monitoring and writing audio levels to file"""
         if self.audio_level_thread and self.audio_level_thread.is_alive():
             return
-        
+
         def monitor_audio_level():
             level_file = Path.home() / '.config' / 'hyprwhspr' / 'audio_level'
             level_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            while self.is_recording:
-                try:
-                    level = self.audio_capture.get_audio_level()
-                    with open(level_file, 'w') as f:
-                        f.write(f'{level:.3f}')
-                except Exception as e:
-                    # Silently fail - don't spam errors
-                    pass
-                time.sleep(0.1)  # Update 10 times per second
-            
-            # Clean up file when not recording
+
+            # Muted mic detection: 5e-7 threshold catches true digital silence but not quiet rooms
+            zero_samples = 0
+            zero_threshold = 5e-7
+            samples_to_cancel = 10  # 1 second at 100ms intervals
+
             try:
-                if level_file.exists():
-                    level_file.unlink()
-            except:
-                pass
-        
+                while self.is_recording:
+                    try:
+                        # Get scaled level for visualization (0.0-1.0)
+                        level = self.audio_capture.get_audio_level()
+                        with open(level_file, 'w') as f:
+                            f.write(f'{level:.3f}')
+
+                        # get_audio_level() scales by 10x, so we need raw value for accurate detection
+                        raw_level = self.audio_capture.current_level
+                        if raw_level < zero_threshold:
+                            zero_samples += 1
+                            if zero_samples >= samples_to_cancel:
+                                self._cancel_recording_muted()
+                                return
+                        else:
+                            zero_samples = 0
+                    except Exception as e:
+                        # Silently fail - don't spam errors
+                        pass
+                    time.sleep(0.1)  # Update 10 times per second
+            finally:
+                # Clean up file when not recording (always runs, even on early return)
+                try:
+                    if level_file.exists():
+                        level_file.unlink()
+                except:
+                    pass
+
         self.audio_level_thread = threading.Thread(target=monitor_audio_level, daemon=True)
         self.audio_level_thread.start()
 
