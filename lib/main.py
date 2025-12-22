@@ -82,6 +82,21 @@ class hyprwhsprApp:
         # Lock to prevent concurrent recording starts (race condition protection)
         self._recording_lock = threading.Lock()
 
+        # Lock for auto mode state variables (protects against race conditions between trigger/release callbacks)
+        self._auto_mode_lock = threading.Lock()
+
+        # Hybrid tap/hold mode state tracking (auto mode)
+        recording_mode = self.config.get_setting('recording_mode', 'toggle')
+        if recording_mode == 'auto':
+            self._shortcut_press_time = 0.0
+            self._recording_started_this_press = False
+            self._tap_threshold = 0.4  # 400ms - shorter than this is a "tap", longer is a "hold"
+        else:
+            # Initialize to None to avoid AttributeError if accidentally accessed
+            self._shortcut_press_time = None
+            self._recording_started_this_press = None
+            self._tap_threshold = None
+
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
 
@@ -89,12 +104,23 @@ class hyprwhsprApp:
         """Initialize global keyboard shortcuts"""
         try:
             shortcut_key = self.config.get_setting("primary_shortcut", "Super+Alt+D")
-            push_to_talk = self.config.get_setting("push_to_talk", False)
+            recording_mode = self.config.get_setting("recording_mode", "toggle")
             grab_keys = self.config.get_setting("grab_keys", True)
             selected_device_path = self.config.get_setting("selected_device_path", None)
 
-            if push_to_talk:
-                # Push-to-talk mode: register both press and release callbacks
+            # Register callbacks based on recording mode
+            # Validate recording_mode and only register release callback for modes that need it
+            if recording_mode == 'toggle':
+                # Toggle mode: only register press callback
+                self.global_shortcuts = GlobalShortcuts(
+                    shortcut_key,
+                    self._on_shortcut_triggered,
+                    None,  # No release callback for toggle mode
+                    device_path=selected_device_path,
+                    grab_keys=grab_keys,
+                )
+            elif recording_mode in ('push_to_talk', 'auto'):
+                # Push-to-talk and auto modes: register both press and release callbacks
                 self.global_shortcuts = GlobalShortcuts(
                     shortcut_key,
                     self._on_shortcut_triggered,
@@ -103,10 +129,12 @@ class hyprwhsprApp:
                     grab_keys=grab_keys,
                 )
             else:
-                # Toggle mode: only register press callback
+                # Invalid mode: default to toggle behavior (no release callback)
+                print(f"[WARNING] Invalid recording_mode '{recording_mode}', defaulting to 'toggle'")
                 self.global_shortcuts = GlobalShortcuts(
                     shortcut_key,
                     self._on_shortcut_triggered,
+                    None,  # No release callback for invalid modes (treated as toggle)
                     device_path=selected_device_path,
                     grab_keys=grab_keys,
                 )
@@ -115,27 +143,90 @@ class hyprwhsprApp:
             self.global_shortcuts = None
 
     def _on_shortcut_triggered(self):
-        """Handle global shortcut trigger"""
-        push_to_talk = self.config.get_setting("push_to_talk", False)
-
-        if push_to_talk:
+        """Handle global shortcut trigger (key press)"""
+        recording_mode = self.config.get_setting("recording_mode", "toggle")
+        
+        if recording_mode == 'toggle':
+            # Toggle mode: start/stop recording
+            if self.is_recording:
+                self._stop_recording()
+            else:
+                self._start_recording()
+        elif recording_mode == 'push_to_talk':
             # Push-to-talk mode: only start recording on key press
             if not self.is_recording:
                 self._start_recording()
+        elif recording_mode == 'auto':
+            # Auto mode (hybrid tap/hold): record timestamp and start if not recording
+            # Synchronize access to state variables to prevent race conditions
+            # Don't call _start_recording() inside the lock to avoid blocking release callback
+            # Initialize state variables if they're None (e.g., if mode was changed from non-auto)
+            with self._auto_mode_lock:
+                # Ensure variables are initialized (handles mode change from non-auto to auto)
+                if self._shortcut_press_time is None:
+                    self._shortcut_press_time = 0.0
+                    self._recording_started_this_press = False
+                    self._tap_threshold = 0.4
+                
+                self._shortcut_press_time = time.time()
+                if not self.is_recording:
+                    self._recording_started_this_press = True
+                    should_start = True
+                else:
+                    # Already recording - will be stopped on release if this is a tap
+                    self._recording_started_this_press = False
+                    should_start = False
+            
+            # Call _start_recording() outside the lock to avoid blocking release callback
+            if should_start:
+                self._start_recording()
         else:
-            # Toggle mode: start/stop recording
+            # Invalid mode, default to toggle behavior
             if self.is_recording:
                 self._stop_recording()
             else:
                 self._start_recording()
 
     def _on_shortcut_released(self):
-        """Handle global shortcut release (push-to-talk mode)"""
-        push_to_talk = self.config.get_setting("push_to_talk", False)
-
-        if push_to_talk and self.is_recording:
+        """Handle global shortcut release (key release)
+        
+        Only called for 'push_to_talk' and 'auto' modes (not 'toggle')
+        """
+        recording_mode = self.config.get_setting("recording_mode", "toggle")
+        
+        if recording_mode == 'push_to_talk':
             # Push-to-talk mode: stop recording on key release
-            self._stop_recording()
+            if self.is_recording:
+                self._stop_recording()
+        elif recording_mode == 'auto':
+            # Auto mode (hybrid tap/hold): determine behavior based on hold duration
+            if not self.is_recording:
+                return
+            
+            # Synchronize access to state variables to prevent race conditions
+            # Calculate hold_duration inside the lock to ensure consistent timing
+            with self._auto_mode_lock:
+                press_time = self._shortcut_press_time
+                started_this_press = self._recording_started_this_press
+                release_time = time.time()  # Capture release time while holding lock
+                
+                # Validate press_time is not None (handles mode change from non-auto to auto)
+                if press_time is None:
+                    # State not initialized - treat as hold (stop recording)
+                    self._stop_recording()
+                    return
+                
+                hold_duration = release_time - press_time
+                tap_threshold = self._tap_threshold if self._tap_threshold is not None else 0.4
+
+            if hold_duration >= tap_threshold:
+                # Hold (>= 400ms): always stop recording (push-to-talk behavior)
+                self._stop_recording()
+            else:
+                # Tap (< 400ms): only stop if we didn't start recording on this press (toggle off)
+                if not started_this_press:
+                    self._stop_recording()
+                # Otherwise, keep recording (tap started it, let it continue)
 
     def _start_recording(self):
         """Start voice recording"""

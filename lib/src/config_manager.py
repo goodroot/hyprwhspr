@@ -15,7 +15,7 @@ class ConfigManager:
         # Default configuration values - minimal set for hyprwhspr
         self.default_config = {
             'primary_shortcut': 'SUPER+ALT+D',
-            'push_to_talk': False,  # Enable push-to-talk mode (hold to record, release to stop)
+            'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' (hybrid tap/hold)
             'model': 'base',
             'threads': 4,           # Thread count for whisper processing
             'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
@@ -77,11 +77,28 @@ class ConfigManager:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f)
                     
+                # Migrate old push_to_talk config to recording_mode (before merging with defaults)
+                # Check the original loaded_config, not self.config (which has defaults merged)
+                migration_occurred = False
+                if 'push_to_talk' in loaded_config and 'recording_mode' not in loaded_config:
+                    if loaded_config['push_to_talk']:
+                        loaded_config['recording_mode'] = 'push_to_talk'
+                    else:
+                        loaded_config['recording_mode'] = 'toggle'
+                    # Remove old push_to_talk key from loaded config
+                    del loaded_config['push_to_talk']
+                    migration_occurred = True
+                
                 # Merge loaded config with defaults (preserving any new default keys)
                 self.config.update(loaded_config)
                 
                 # Attempt automatic migration of API key if needed
                 self.migrate_api_key_to_credential_manager()
+                
+                # Save migrated config if migration occurred
+                if migration_occurred:
+                    self.save_config()
+                    print("Migrated 'push_to_talk' config to 'recording_mode'")
                 
                 print(f"Configuration loaded from {self.config_file}")
             else:

@@ -397,6 +397,15 @@ class GlobalShortcuts:
     def _remove_device(self, device: InputDevice):
         """Remove a disconnected device from monitoring"""
         try:
+            # CRITICAL: Ungrab device before closing to prevent keyboard lockout
+            # If device is still grabbed when closed, it may remain grabbed even after
+            # the process exits, causing keyboard to be unresponsive on restart
+            if self.devices_grabbed:
+                try:
+                    device.ungrab()
+                except:
+                    pass  # Device may already be ungrab or closed
+            
             if device in self.devices:
                 self.devices.remove(device)
             if device.fd in self.device_fds:
@@ -443,6 +452,15 @@ class GlobalShortcuts:
                 # Key released
                 was_combination_active = self.combination_active
                 self.pressed_keys.discard(event.code)
+
+                # If this key release completes the combination release, clear suppressed_keys
+                # This ensures key releases are re-emitted in auto mode when tap starts recording
+                # Prevents keyboard lockout - keys must be re-emitted so system knows they're released
+                if was_combination_active and event.code in self.target_keys:
+                    # Combination is being released - clear all suppressed target keys so releases are re-emitted
+                    for key_code in self.target_keys:
+                        if key_code in self.suppressed_keys:
+                            self.suppressed_keys.discard(key_code)
 
                 # If this key was suppressed, suppress its release too
                 # But NEVER suppress modifier key releases to prevent stuck keys
@@ -580,20 +598,25 @@ class GlobalShortcuts:
 
             # Grab all keyboard devices to intercept their events
             # Use retry logic to handle cases where devices are temporarily busy (e.g., during service restart)
+            # When a service restarts quickly, the kernel may not have released device grabs yet
             grabbed_count = 0
             for device in self.devices:
-                for retry in range(2):
+                for retry in range(3):  # Increased retries for better recovery
                     try:
                         device.grab()
                         grabbed_count += 1
                         break
                     except (OSError, IOError) as e:
-                        if retry < 1:  # Don't sleep on last retry
-                            # Device might be busy from previous process - wait a bit
-                            time.sleep(0.05)
+                        if retry < 2:  # Sleep on first two retries
+                            # Device might be busy from previous process - wait progressively longer
+                            # First retry: 0.1s, second retry: 0.2s
+                            time.sleep(0.1 * (retry + 1))
                             continue
                         # Last retry failed - this is a real error
-                        print(f"[ERROR] Could not grab {device.name} after retries: {e}")
+                        print(f"[ERROR] Could not grab {device.name} after {retry + 1} retries: {e}")
+                        print(f"[ERROR] Device may still be grabbed by previous process.")
+                        print(f"[ERROR] Check what's using it: sudo fuser {device.path}")
+                        print(f"[ERROR] If needed, kill the process: sudo fuser -k {device.path} (WARNING: kills all processes using this device)")
 
             if grabbed_count == 0:
                 print("[ERROR] No devices were grabbed! Shortcuts will not work!")
