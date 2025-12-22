@@ -103,7 +103,7 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 
 ### Global hotkey modes
 
-hyprwhspr supports two configurable interaction modes:
+hyprwhspr supports three configurable interaction modes:
 
 **Toggle mode (default):**
 
@@ -113,6 +113,11 @@ hyprwhspr supports two configurable interaction modes:
 
 - **Hold `Super+Alt+D`** - Start dictation
 - **Release `Super+Alt+D`** - Stop dictation
+
+**Auto mode (hybrid tap/hold):**
+
+- **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
+- **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
 ## Configuration
 
@@ -127,12 +132,32 @@ Edit `~/.config/hyprwhspr/config.json`:
 }
 ```
 
-**Hybrid tap/hold mode** - hyprwhspr automatically detects your intent:
+**Toggle hotkey mode** (default) - press to start, press again to stop:
 
-- **Tap** (< 400ms) - Toggle mode: tap to start recording, tap again to stop
-- **Hold** (>= 400ms) - Push-to-talk mode: hold to record, release to stop
+```jsonc
+{
+    "recording_mode": "toggle"
+}
+```
 
-No configuration needed - both modes work with the same shortcut!
+**Push-to-talk mode** - hold to record, release to stop:
+
+```jsonc
+{
+    "recording_mode": "push_to_talk"
+}
+```
+
+**Auto mode (hybrid tap/hold)** - automatically detects your intent:
+
+```jsonc
+{
+    "recording_mode": "auto"
+}
+```
+
+- **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
+- **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
 **Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
 
@@ -267,8 +292,6 @@ Examples:
 
 - **Supported formats**: `.ogg`, `.wav`, `.mp3`
 - **Fallback**: Uses defaults if custom files don't exist
-
-_Thanks for [the sounds](https://github.com/akx/Notifications), @akx!_
 
 **Text replacement:** Automatically converts spoken words to symbols / punctuation:
 
