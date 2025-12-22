@@ -276,8 +276,15 @@ class hyprwhsprApp:
             transcription = self.whisper_manager.transcribe_audio(audio_data)
             
             if transcription and transcription.strip():
-                self.current_transcription = transcription.strip()
-                
+                text = transcription.strip()
+
+                # Filter out Whisper's blank audio markers - don't touch clipboard
+                if text.lower().replace('_', ' ').strip('[]() ') in ('blank audio', 'blank'):
+                    print("[INFO] Blank audio detected - ignoring")
+                    return
+
+                self.current_transcription = text
+
                 # Inject text
                 self._inject_text(self.current_transcription)
             else:
