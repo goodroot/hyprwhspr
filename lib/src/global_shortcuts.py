@@ -416,7 +416,11 @@ class GlobalShortcuts:
     def _process_event(self, event):
         """Process individual keyboard events"""
         if event.type == ecodes.EV_KEY:
-            key_event = categorize(event)
+            try:
+                key_event = categorize(event)
+            except KeyError:
+                # Unknown key code (e.g., 254) - skip this event
+                return
             key_name = self._keycode_to_name(event.code)
             should_suppress = False
 
