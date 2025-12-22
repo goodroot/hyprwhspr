@@ -15,7 +15,6 @@ class ConfigManager:
         # Default configuration values - minimal set for hyprwhspr
         self.default_config = {
             'primary_shortcut': 'SUPER+ALT+D',
-            'push_to_talk': False,  # Enable push-to-talk mode (hold to record, release to stop)
             'model': 'base',
             'threads': 4,           # Thread count for whisper processing
             'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)

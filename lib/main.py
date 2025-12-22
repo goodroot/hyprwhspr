@@ -82,6 +82,11 @@ class hyprwhsprApp:
         # Lock to prevent concurrent recording starts (race condition protection)
         self._recording_lock = threading.Lock()
 
+        # Hybrid tap/hold mode state tracking
+        self._shortcut_press_time = 0.0
+        self._recording_started_this_press = False
+        self._tap_threshold = 0.4  # 400ms - shorter than this is a "tap", longer is a "hold"
+
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
 
@@ -89,53 +94,60 @@ class hyprwhsprApp:
         """Initialize global keyboard shortcuts"""
         try:
             shortcut_key = self.config.get_setting("primary_shortcut", "Super+Alt+D")
-            push_to_talk = self.config.get_setting("push_to_talk", False)
             grab_keys = self.config.get_setting("grab_keys", True)
             selected_device_path = self.config.get_setting("selected_device_path", None)
 
-            if push_to_talk:
-                # Push-to-talk mode: register both press and release callbacks
-                self.global_shortcuts = GlobalShortcuts(
-                    shortcut_key,
-                    self._on_shortcut_triggered,
-                    self._on_shortcut_released,
-                    device_path=selected_device_path,
-                    grab_keys=grab_keys,
-                )
-            else:
-                # Toggle mode: only register press callback
-                self.global_shortcuts = GlobalShortcuts(
-                    shortcut_key,
-                    self._on_shortcut_triggered,
-                    device_path=selected_device_path,
-                    grab_keys=grab_keys,
-                )
+            # Always register both press and release callbacks for hybrid tap/hold mode
+            self.global_shortcuts = GlobalShortcuts(
+                shortcut_key,
+                self._on_shortcut_triggered,
+                self._on_shortcut_released,
+                device_path=selected_device_path,
+                grab_keys=grab_keys,
+            )
         except Exception as e:
             print(f"[ERROR] Failed to initialize global shortcuts: {e}")
             self.global_shortcuts = None
 
     def _on_shortcut_triggered(self):
-        """Handle global shortcut trigger"""
-        push_to_talk = self.config.get_setting("push_to_talk", False)
+        """Handle global shortcut trigger (key press)
 
-        if push_to_talk:
-            # Push-to-talk mode: only start recording on key press
-            if not self.is_recording:
-                self._start_recording()
+        Hybrid tap/hold mode:
+        - Records the press timestamp
+        - Starts recording if not already recording
+        - Release handler determines whether to stop based on hold duration
+        """
+        self._shortcut_press_time = time.time()
+
+        if not self.is_recording:
+            self._recording_started_this_press = True
+            self._start_recording()
         else:
-            # Toggle mode: start/stop recording
-            if self.is_recording:
-                self._stop_recording()
-            else:
-                self._start_recording()
+            # Already recording - will be stopped on release if this is a tap
+            self._recording_started_this_press = False
 
     def _on_shortcut_released(self):
-        """Handle global shortcut release (push-to-talk mode)"""
-        push_to_talk = self.config.get_setting("push_to_talk", False)
+        """Handle global shortcut release (key release)
 
-        if push_to_talk and self.is_recording:
-            # Push-to-talk mode: stop recording on key release
+        Hybrid tap/hold mode:
+        - Hold (>= 400ms): stop recording (push-to-talk style)
+        - Tap (< 400ms): toggle behavior
+          - If tap started recording: keep it going
+          - If tap while already recording: stop it
+        """
+        if not self.is_recording:
+            return
+
+        hold_duration = time.time() - self._shortcut_press_time
+
+        if hold_duration >= self._tap_threshold:
+            # Hold: always stop recording (push-to-talk behavior)
             self._stop_recording()
+        else:
+            # Tap: only stop if we didn't start recording on this press (toggle off)
+            if not self._recording_started_this_press:
+                self._stop_recording()
+            # Otherwise, keep recording (tap started it, let it continue)
 
     def _start_recording(self):
         """Start voice recording"""

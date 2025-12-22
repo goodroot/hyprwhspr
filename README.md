@@ -127,16 +127,12 @@ Edit `~/.config/hyprwhspr/config.json`:
 }
 ```
 
-**Push-to-talk mode** - hold to record, release to stop:
+**Hybrid tap/hold mode** - hyprwhspr automatically detects your intent:
 
-```jsonc
-{
-    "push_to_talk": true
-}
-```
+- **Tap** (< 400ms) - Toggle mode: tap to start recording, tap again to stop
+- **Hold** (>= 400ms) - Push-to-talk mode: hold to record, release to stop
 
-- **`push_to_talk: false`** (default) - Toggle mode: press to start, press again to stop
-- **`push_to_talk: true`** - Push-to-talk mode: hold to record, release to stop
+No configuration needed - both modes work with the same shortcut!
 
 **Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
 
