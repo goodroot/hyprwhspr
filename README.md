@@ -581,6 +581,21 @@ systemctl --user restart hyprwhspr.service
 systemctl --user status hyprwhspr.service
 ```
 
+**Keyboard remappers (keyd / kmonad)**:
+
+If you use a keyboard remapping daemon that grabs evdev devices (e.g. `keyd`, `kmonad`), set:
+
+```json
+{
+  "grab_keys": false
+}
+```
+
+This prevents hyprwhspr from taking exclusive control of keyboards and allows it to listen to events normally.
+
+> When grab_keys is disabled, the shortcut is not suppressed and may also trigger other system keybindings.
+
+
 ## Getting help
 
 1. **Check logs**: `journalctl --user -u hyprwhspr.service` `journalctl --user -u ydotool.service`

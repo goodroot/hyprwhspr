@@ -214,21 +214,44 @@ class GlobalShortcuts:
                     device.close()
                     continue
                 
-                # Device can emit all required keys - test if we can grab it
-                # Retry logic to handle cases where device is temporarily busy (e.g., during service restart)
-                grab_success = False
-                for retry in range(3):
+                # Device can emit all required keys - test accessibility
+                # When grab_keys is true, test grab capability; when false, just test read access
+                if self.grab_keys:
+                    # Retry logic to handle cases where device is temporarily busy (e.g., during service restart)
+                    grab_test_success = False
+                    for retry in range(2):
+                        try:
+                            device.grab()
+                            device.ungrab()
+                            grab_test_success = True
+                            break
+                        except (OSError, IOError) as e:
+                            if retry < 1:  # Don't sleep on last retry
+                                # Device might be busy from previous process - wait a bit
+                                time.sleep(0.05)
+                                continue
+                            # Last retry failed - this is a real error
+                            if self.selected_device_path:
+                                print(f"[ERROR] Cannot access selected device '{device.name}' ({device.path}): {e}")
+                                print("[ERROR] This usually means you need root or input group membership")
+                                print("[ERROR]   Run: sudo usermod -aG input $USER (then log out and back in)")
+                                device.close()
+                                return
+                            print(f"[WARN] Cannot access device {device.name}: {e}")
+                            print("[WARN]   This usually means you need root or input group membership")
+                            device.close()
+                            break
+                    
+                    if not grab_test_success:
+                        continue
+                else:
+                    # When grab_keys is false, still test if we can read from the device
+                    # This prevents adding inaccessible devices that will error in _event_loop()
                     try:
-                        device.grab()
-                        device.ungrab()
-                        grab_success = True
-                        break
+                        # Try to read capabilities as a basic accessibility test
+                        # This will fail if we don't have read permission
+                        device.capabilities()
                     except (OSError, IOError) as e:
-                        if retry < 2:  # Don't sleep on last retry
-                            # Device might be busy from previous process - wait a bit
-                            time.sleep(0.2)
-                            continue
-                        # Last retry failed - this is a real error
                         if self.selected_device_path:
                             print(f"[ERROR] Cannot access selected device '{device.name}' ({device.path}): {e}")
                             print("[ERROR] This usually means you need root or input group membership")
@@ -238,15 +261,15 @@ class GlobalShortcuts:
                         print(f"[WARN] Cannot access device {device.name}: {e}")
                         print("[WARN]   This usually means you need root or input group membership")
                         device.close()
-                        break
+                        continue
                 
-                if grab_success:
-                    self.devices.append(device)
-                    self.device_fds[device.fd] = device
-                    
-                    # If we selected a specific device, we're done
-                    if self.selected_device_path:
-                        break
+                # Device is usable - add it
+                self.devices.append(device)
+                self.device_fds[device.fd] = device
+                
+                # If we selected a specific device, we're done
+                if self.selected_device_path:
+                    break
                         
         except Exception as e:
             print(f"[ERROR] Error discovering devices: {e}")
@@ -364,6 +387,12 @@ class GlobalShortcuts:
             print(f"[ERROR] Error in keyboard event loop: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            # CRITICAL: Always cleanup grabs if thread crashes
+            # This prevents permanent keyboard lockout
+            # Call unconditionally - _cleanup_key_grabbing() already guards internally
+            print("[CLEANUP] Event loop exiting - cleaning up device grabs")
+            self._cleanup_key_grabbing()
         
     def _remove_device(self, device: InputDevice):
         """Remove a disconnected device from monitoring"""
@@ -516,7 +545,9 @@ class GlobalShortcuts:
         try:
             # Set up key grabbing if enabled
             if self.grab_keys:
-                self._setup_key_grabbing()
+                if not self._setup_key_grabbing():
+                    print("[ERROR] Failed to set up key grabbing - cannot start shortcuts")
+                    return False
 
             self.stop_event.clear()
             self.listener_thread = threading.Thread(target=self._event_loop, daemon=True)
@@ -532,8 +563,12 @@ class GlobalShortcuts:
             self._cleanup_key_grabbing()
             return False
 
-    def _setup_key_grabbing(self):
-        """Set up UInput virtual keyboard and grab physical devices"""
+    def _setup_key_grabbing(self) -> bool:
+        """Set up UInput virtual keyboard and grab physical devices
+        
+        Returns:
+            True if at least one device was grabbed, False otherwise
+        """
         try:
             # Create a virtual keyboard that can emit all key events
             # This will re-emit keys that aren't part of our shortcut
@@ -543,17 +578,15 @@ class GlobalShortcuts:
             # Use retry logic to handle cases where devices are temporarily busy (e.g., during service restart)
             grabbed_count = 0
             for device in self.devices:
-                grab_success = False
-                for retry in range(3):
+                for retry in range(2):
                     try:
                         device.grab()
-                        grab_success = True
                         grabbed_count += 1
                         break
                     except (OSError, IOError) as e:
-                        if retry < 2:  # Don't sleep on last retry
+                        if retry < 1:  # Don't sleep on last retry
                             # Device might be busy from previous process - wait a bit
-                            time.sleep(0.2)
+                            time.sleep(0.05)
                             continue
                         # Last retry failed - this is a real error
                         print(f"[ERROR] Could not grab {device.name} after retries: {e}")
@@ -561,8 +594,18 @@ class GlobalShortcuts:
             if grabbed_count == 0:
                 print("[ERROR] No devices were grabbed! Shortcuts will not work!")
                 print("[ERROR] Try running with sudo or check permissions")
-
+                # Clean up UInput since we can't use it
+                if self.uinput:
+                    try:
+                        self.uinput.close()
+                    except:
+                        pass
+                    self.uinput = None
+                self.devices_grabbed = False
+                return False
+            
             self.devices_grabbed = True
+            return True
 
         except Exception as e:
             print(f"[ERROR] Could not set up key grabbing: {e}")
@@ -570,6 +613,7 @@ class GlobalShortcuts:
             import traceback
             traceback.print_exc()
             self._cleanup_key_grabbing()
+            return False
 
     def _cleanup_key_grabbing(self):
         """Clean up UInput and ungrab devices"""
@@ -604,10 +648,10 @@ class GlobalShortcuts:
             if self.listener_thread and self.listener_thread.is_alive():
                 self.listener_thread.join(timeout=1.0)
 
-            # Clean up key grabbing (this includes ungrabing and a small delay)
+            # Clean up key grabbing
             self._cleanup_key_grabbing()
 
-            # Close all devices (after ungrab delay)
+            # Close all devices
             for device in self.devices[:]:  # Copy list to avoid modification during iteration
                 self._remove_device(device)
 
