@@ -19,22 +19,26 @@ class AudioManager:
         # Initialize settings from config if available
         if self.config_manager:
             self.enabled = self.config_manager.get_setting('audio_feedback', False)  # Default to disabled
-            self.start_volume = self.config_manager.get_setting('start_sound_volume', 0.3)  # Default 30% volume
-            self.stop_volume = self.config_manager.get_setting('stop_sound_volume', 0.3)  # Default 30% volume
-            self.error_volume = self.config_manager.get_setting('error_sound_volume', 0.3)  # Default 30% volume
-            self.start_sound_path = self.config_manager.get_setting('start_sound_path', None)  # Custom start sound path
-            self.stop_sound_path = self.config_manager.get_setting('stop_sound_path', None)  # Custom stop sound path
-            self.error_sound_path = self.config_manager.get_setting('error_sound_path', None)  # Custom error sound path
+            # General audio volume (fallback for _play_sound when volume=None)
+            self.volume = self.config_manager.get_setting('audio_volume', 0.5)  # Default 50% volume
+            self.start_volume = self.config_manager.get_setting('start_sound_volume', 0.5)
+            self.stop_volume = self.config_manager.get_setting('stop_sound_volume', 0.5)
+            self.error_volume = self.config_manager.get_setting('error_sound_volume', 0.5)
+            self.start_sound_path = self.config_manager.get_setting('start_sound_path', None)
+            self.stop_sound_path = self.config_manager.get_setting('stop_sound_path', None)
+            self.error_sound_path = self.config_manager.get_setting('error_sound_path', None)
         else:
             self.enabled = False  # Default to disabled
-            self.start_volume = 0.3
-            self.stop_volume = 0.3
-            self.error_volume = 0.3
+            self.volume = 0.5  
+            self.start_volume = 0.5
+            self.stop_volume = 0.5
+            self.error_volume = 0.5
             self.start_sound_path = None
             self.stop_sound_path = None
             self.error_sound_path = None
 
         # Validate volumes
+        self.volume = self._validate_volume(self.volume)
         self.start_volume = self._validate_volume(self.start_volume)
         self.stop_volume = self._validate_volume(self.stop_volume)
         self.error_volume = self._validate_volume(self.error_volume)
@@ -108,7 +112,7 @@ class AudioManager:
         self.stop_sound_available = self.stop_sound.exists()
         self.error_sound_available = self.error_sound.exists()
 
-        if not self.start_sound_available or not self.stop_sound_available:
+        if not self.start_sound_available or not self.stop_sound_available or not self.error_sound_available:
             print(f"⚠️  Audio feedback files not found:")
             print(f"   Start sound: {'✓' if self.start_sound_available else '✗'} {self.start_sound}")
             print(f"   Stop sound: {'✓' if self.stop_sound_available else '✗'} {self.stop_sound}")
