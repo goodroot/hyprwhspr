@@ -384,7 +384,7 @@ class hyprwhsprApp:
 
                 # Filter out Whisper hallucination markers - don't touch clipboard
                 normalized = text.lower().replace('_', ' ').strip('[]() ')
-                hallucination_markers = ('blank audio', 'blank', 'video playback', 'music', 'music playing')
+                hallucination_markers = ('blank audio', 'blank', 'video playback', 'music', 'music playing', 'keyboard clicking')
                 if normalized in hallucination_markers:
                     print(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
                     self.audio_manager.play_error_sound()
