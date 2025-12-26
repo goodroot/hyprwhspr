@@ -99,13 +99,22 @@ class AudioCapture:
             
             # Get device information
             try:
-                # Get current input device info
-                current_device_id = sd.default.device[0] if sd.default.device[0] is not None else sd.default.device
-                device_info = sd.query_devices(device=current_device_id, kind='input')
+                # Extract input device ID (sd.default.device is tuple (input, output) or None)
+                if sd.default.device is None:
+                    current_device_id = None
+                elif isinstance(sd.default.device, tuple):
+                    current_device_id = sd.default.device[0]
+                else:
+                    # Legacy: single integer
+                    current_device_id = sd.default.device
                 
-                # Store device info for later use
-                self.device_info = device_info
-                self.device_id = current_device_id
+                if current_device_id is not None:
+                    device_info = sd.query_devices(device=current_device_id, kind='input')
+                    self.device_info = device_info
+                    self.device_id = current_device_id
+                else:
+                    self.device_info = None
+                    self.device_id = None
                 
             except Exception as e:
                 print(f"⚠ Could not query device details: {e}")
@@ -120,10 +129,20 @@ class AudioCapture:
     def _set_system_default_device(self):
         """Set system default device when no specific device is configured"""
         try:
-            # Use system default - no need to list all devices
-            pass
+            # Ensure we have a valid default input device
+            # sd.default.device is tuple (input, output) or None
+            if sd.default.device is None or (isinstance(sd.default.device, tuple) and sd.default.device[0] is None):
+                # Find first available input device
+                devices = sd.query_devices()
+                for i, device in enumerate(devices):
+                    if device['max_input_channels'] > 0:
+                        if sd.default.device is None:
+                            sd.default.device = (i, None)
+                        else:
+                            sd.default.device = (i, sd.default.device[1] if isinstance(sd.default.device, tuple) else None)
+                        break
         except Exception as e:
-            print(f"⚠ Could not query audio devices: {e}")
+            print(f"⚠ Could not set system default device: {e}")
     
     @staticmethod
     def get_available_input_devices():
@@ -168,9 +187,9 @@ class AudioCapture:
         """Set the audio input device"""
         try:
             if device_id is None:
-                # Reset to system default
+                # Reset to system default - re-initialize to get fresh default
                 self.preferred_device_id = None
-                sd.default.device[0] = None
+                self._initialize_sounddevice()
             else:
                 # Validate device exists and has input channels
                 device_info = sd.query_devices(device=device_id, kind='input')
@@ -281,6 +300,20 @@ class AudioCapture:
         
         if self.is_recording:
             return True
+        
+        # Validate device ID still exists (works for configured and system default)
+        if self.device_id is not None:
+            try:
+                sd.query_devices(device=self.device_id, kind='input')
+            except Exception:
+                print(f"[INFO] Device ID {self.device_id} no longer available, re-initializing")
+                self.preferred_device_id = None
+                self.device_id = None
+                self.device_info = None
+                self._initialize_sounddevice()
+                # Verify re-initialization succeeded
+                if self.device_id is None:
+                    print("[WARN] Re-initialization failed - no device available")
         
         # Safety: Clean up any leftover stream before starting
         if self.stream is not None:
@@ -413,8 +446,8 @@ class AudioCapture:
                         
                         chunk_count += 1
             
-            # Determine device to use for recording
-            device_to_use = self.preferred_device_id if self.preferred_device_id is not None else None
+            # Determine device to use for recording (use validated device_id)
+            device_to_use = self.device_id
             
             # Create and own the stream handle (for recovery)
             self.stream = sd.InputStream(

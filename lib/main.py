@@ -270,6 +270,22 @@ class hyprwhsprApp:
                 # No callbacks received - stream likely broken (will be handled by caller)
                 return False
             
+            # Helper function to verify stream continues working after initial check
+            def verify_stream_stable():
+                """Verify stream continues receiving callbacks after initial verification"""
+                import time
+                initial_frames = 0
+                with self.audio_capture.lock:
+                    initial_frames = self.audio_capture.frames_since_start
+                
+                # Wait a bit more to ensure stream is stable
+                time.sleep(0.2)
+                
+                with self.audio_capture.lock:
+                    current_frames = self.audio_capture.frames_since_start
+                    # Stream should have received more callbacks if it's stable
+                    return current_frames > initial_frames
+            
             # Start audio capture (with streaming callback for realtime-ws)
             try:
                 if not self.audio_capture.start_recording(streaming_callback=streaming_callback):
@@ -286,7 +302,16 @@ class hyprwhsprApp:
                     self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
                     return  # Don't attempt recovery during user-initiated recording
                 
-                # Stream is working - start monitoring
+                # Additional stability check - verify stream continues working
+                if not verify_stream_stable():
+                    # Stream stopped working shortly after starting - likely unstable after reconnect
+                    self.audio_capture.stop_recording()
+                    self.is_recording = False
+                    self._write_recording_status(False)
+                    self._notify_zero_volume("Microphone stream unstable - please wait a moment and try recording again", log_level="WARN")
+                    return
+                
+                # Stream is working and stable - start monitoring
                 self._start_audio_level_monitoring()
                     
             except (RuntimeError, Exception) as e:

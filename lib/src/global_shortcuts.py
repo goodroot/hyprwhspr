@@ -388,7 +388,7 @@ class GlobalShortcuts:
             import traceback
             traceback.print_exc()
         finally:
-            # CRITICAL: Always cleanup grabs if thread crashes
+            # Always cleanup grabs if thread crashes
             # This prevents permanent keyboard lockout
             # Call unconditionally - _cleanup_key_grabbing() already guards internally
             print("[CLEANUP] Event loop exiting - cleaning up device grabs")
@@ -397,14 +397,13 @@ class GlobalShortcuts:
     def _remove_device(self, device: InputDevice):
         """Remove a disconnected device from monitoring"""
         try:
-            # CRITICAL: Ungrab device before closing to prevent keyboard lockout
-            # If device is still grabbed when closed, it may remain grabbed even after
-            # the process exits, causing keyboard to be unresponsive on restart
-            if self.devices_grabbed:
-                try:
-                    device.ungrab()
-                except:
-                    pass  # Device may already be ungrab or closed
+            # Always try to ungrab before closing
+            # Don't rely on devices_grabbed flag
+            # It ensures cleanup even if flag is cleared early
+            try:
+                device.ungrab()
+            except:
+                pass  # Device may already be ungrab or closed
             
             if device in self.devices:
                 self.devices.remove(device)
