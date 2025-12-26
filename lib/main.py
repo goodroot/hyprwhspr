@@ -78,12 +78,16 @@ class hyprwhsprApp:
         self.audio_level_thread = None
         self.recovery_attempted_for_current_error = False  # Track if recovery was attempted for current error state
         self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
+        self._last_mic_error_log_time = 0.0  # Track when we last logged mic error (prevent duplicates)
         
         # Lock to prevent concurrent recording starts (race condition protection)
         self._recording_lock = threading.Lock()
 
         # Lock for auto mode state variables (protects against race conditions between trigger/release callbacks)
         self._auto_mode_lock = threading.Lock()
+        
+        # Lock for error logging deduplication (protects read-modify-write on _last_mic_error_log_time)
+        self._error_log_lock = threading.Lock()
 
         # Hybrid tap/hold mode state tracking (auto mode)
         recording_mode = self.config.get_setting('recording_mode', 'toggle')
@@ -448,6 +452,16 @@ class hyprwhsprApp:
 
     def _notify_zero_volume(self, message: str, log_level: str = "WARN"):
         """Notify user about zero-volume recording and optionally signal waybar"""
+        # Prevent duplicate error logs within 2 seconds (user might hit record twice)
+        # Use lock to ensure thread-safe read-modify-write on _last_mic_error_log_time
+        if "Microphone disconnected or not responding" in message:
+            with self._error_log_lock:
+                current_time = time.monotonic()
+                if current_time - self._last_mic_error_log_time < 2.0:
+                    # Already logged this error recently, skip duplicate log
+                    return
+                self._last_mic_error_log_time = current_time
+        
         # Print to logs (primary notification)
         print(f"[{log_level}] {message}", flush=True)
         
