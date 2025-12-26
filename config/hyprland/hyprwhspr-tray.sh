@@ -415,8 +415,8 @@ emit_json() {
     
     case "$state" in
         "recording")
-            icon="󰍬"
-            text="$icon REC$audio_viz"
+            icon=""
+            text="$icon$audio_viz"
             tooltip="hyprwhspr: Currently recording\n\nLeft-click: Stop recording\nRight-click: Restart service"
             ;;
         "error")
@@ -436,9 +436,14 @@ emit_json() {
             class="error"
             ;;
         "ready")
-            icon="󰍬"
-            text="$icon RDY"
-            tooltip="hyprwhspr: Ready to record\n\nLeft-click: Start recording\nRight-click: Restart service"
+            icon=""
+            text="$icon"
+            tooltip="hyprwhspr: Ready to record\n\nLeft-click: Toggle service\nRight-click: Restart service"
+            ;;
+        "stopped")
+            icon=""
+            text="$icon"
+            tooltip="hyprwhspr: Stopped\n\nLeft-click: Start service\nRight-click: Restart service"
             ;;
         *)
             icon="󰆉"
@@ -494,10 +499,10 @@ get_current_state() {
             result=$(systemctl --user show hyprwhspr.service -p Result --value 2>/dev/null)
             exec_code=$(systemctl --user show hyprwhspr.service -p ExecMainStatus --value 2>/dev/null)
             reason="service_failed:${result:-unknown}:${exec_code:-}"
+            echo "error:$reason"; return
         else
-            reason="service_inactive"
+            echo "stopped"; return
         fi
-        echo "error:$reason"; return
     fi
     
     # Service is running - check if recording
