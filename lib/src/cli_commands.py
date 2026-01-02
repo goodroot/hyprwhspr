@@ -883,7 +883,8 @@ def setup_command():
                 log_warning("Skipping backend installation. You can install it later.")
                 log_warning("Backend installation is required for local transcription to work.")
             else:
-                if not install_backend(backend):
+                # Pass force_rebuild=True when reinstalling to ensure clean venv
+                if not install_backend(backend, force_rebuild=wants_reinstall):
                     log_error("Backend installation failed. Setup cannot continue.")
                     return
                 
@@ -2232,7 +2233,8 @@ def backend_repair_command():
             current_backend = _detect_current_backend()
             if current_backend and current_backend in ['cpu', 'nvidia', 'amd']:
                 log_info(f"Reinstalling {current_backend.upper()} backend...")
-                if install_backend(current_backend):
+                # Use force_rebuild=True to ensure clean reinstall
+                if install_backend(current_backend, force_rebuild=True):
                     log_success("Backend reinstalled successfully")
                 else:
                     log_error("Backend reinstallation failed")

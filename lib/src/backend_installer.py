@@ -337,19 +337,25 @@ def setup_amd_support() -> bool:
 
 # ==================== Python Environment ====================
 
-def setup_python_venv() -> Path:
-    """Create or update Python virtual environment. Returns path to pip binary."""
+def setup_python_venv(force_rebuild: bool = False) -> Path:
+    """Create or update Python virtual environment. Returns path to pip binary.
+
+    Args:
+        force_rebuild: If True, delete and recreate venv even if it exists and Python version matches.
+    """
     log_info("Setting up Python virtual environment…")
-    
+
     # Validate requirements.txt exists
     requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
     if not requirements_file.exists():
         log_error(f"requirements.txt not found at {requirements_file}")
         raise FileNotFoundError(f"requirements.txt not found at {requirements_file}")
-    
+
     # Check if venv exists and if Python version matches
-    venv_needs_recreation = False
-    if VENV_DIR.exists():
+    venv_needs_recreation = force_rebuild
+    if force_rebuild:
+        log_info("Force rebuild requested - will recreate venv")
+    if VENV_DIR.exists() and not force_rebuild:
         venv_python = VENV_DIR / 'bin' / 'python'
         if venv_python.exists():
             try:
@@ -680,18 +686,24 @@ def download_pywhispercpp_model(model_name: str = 'base.en') -> bool:
 
 # ==================== Parakeet Installation ====================
 
-def setup_parakeet_venv() -> Path:
-    """Create or update Parakeet Python virtual environment. Returns path to pip binary."""
+def setup_parakeet_venv(force_rebuild: bool = False) -> Path:
+    """Create or update Parakeet Python virtual environment. Returns path to pip binary.
+
+    Args:
+        force_rebuild: If True, delete and recreate venv even if it exists and Python version matches.
+    """
     log_info("Setting up Parakeet Python virtual environment…")
-    
+
     # Validate requirements.txt exists
     if not PARAKEET_REQUIREMENTS.exists():
         log_error(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
         raise FileNotFoundError(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
-    
+
     # Check if venv exists and if Python version matches
-    venv_needs_recreation = False
-    if PARAKEET_VENV_DIR.exists():
+    venv_needs_recreation = force_rebuild
+    if force_rebuild:
+        log_info("Force rebuild requested - will recreate venv")
+    if PARAKEET_VENV_DIR.exists() and not force_rebuild:
         venv_python = PARAKEET_VENV_DIR / 'bin' / 'python'
         if venv_python.exists():
             try:
@@ -759,12 +771,13 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
             pass
     
     try:
+
         # Install ml_dtypes and numpy first with pinned versions to ensure compatibility
         # - ml_dtypes 0.5.4+ includes float4_e2m1fn required by onnx
         # - numpy must be <2.4 for numba compatibility (numba is a nemo_toolkit dep)
         log_info("Installing ml_dtypes and numpy (required for onnx/numba compatibility)...")
         run_command([str(pip_bin), 'install', '--upgrade', 'ml_dtypes>=0.5.4', 'numpy>=1.22,<2.4'], check=True)
-
+       
         # Install base dependencies first (excluding torch)
         log_info("Installing base dependencies... May take a moment.")
         base_deps = [
@@ -809,14 +822,15 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
 
 # ==================== Main Installation Function ====================
 
-def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
+def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_rebuild: bool = False) -> bool:
     """
     Main function to install backend.
-    
+
     Args:
         backend_type: One of 'cpu', 'nvidia', 'amd', 'parakeet'
         cleanup_on_failure: Whether to clean up partial installations on failure
-    
+        force_rebuild: If True, delete and recreate venv even if it exists
+
     Returns:
         True if installation succeeded, False otherwise
     """
@@ -869,8 +883,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
             
             # Setup Parakeet venv
             parakeet_venv_existed = PARAKEET_VENV_DIR.exists()
-            parakeet_pip_bin = setup_parakeet_venv()
-            if not parakeet_venv_existed and PARAKEET_VENV_DIR.exists():
+            parakeet_pip_bin = setup_parakeet_venv(force_rebuild=force_rebuild)
+            if (force_rebuild or not parakeet_venv_existed) and PARAKEET_VENV_DIR.exists():
                 created_items['venv_created'] = True
                 created_items['venv_path'] = str(PARAKEET_VENV_DIR)
             
@@ -891,8 +905,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True) -> bool:
         
         # Setup Python venv (for cpu/nvidia/amd backends)
         venv_existed = VENV_DIR.exists()
-        pip_bin = setup_python_venv()
-        if not venv_existed and VENV_DIR.exists():
+        pip_bin = setup_python_venv(force_rebuild=force_rebuild)
+        if (force_rebuild or not venv_existed) and VENV_DIR.exists():
             created_items['venv_created'] = True
             created_items['venv_path'] = str(VENV_DIR)
         
@@ -1069,4 +1083,3 @@ def _cleanup_partial_installation(created_items: dict, pip_bin: Optional[Path]):
                        check=False, capture_output=True)
         except Exception:
             pass
-
