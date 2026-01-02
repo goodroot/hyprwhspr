@@ -1,7 +1,12 @@
 # Parakeet backend dependencies
-# Install ml_dtypes first to ensure compatibility with onnx
-# Version 0.5.4+ includes float4_e2m1fn required by onnx
+# NOTE: This file is for documentation/reference. The actual installer
+# uses hardcoded package lists in backend_installer.py.
+
+# Install ml_dtypes and numpy first to ensure compatibility:
+# - ml_dtypes 0.5.4+ includes float4_e2m1fn required by onnx
+# - numpy must be <2.4 for numba compatibility (numba is a nemo_toolkit dep)
 ml_dtypes>=0.5.4
+numpy>=1.22,<2.4
 nemo_toolkit[asr]
 fastapi
 uvicorn[standard]
