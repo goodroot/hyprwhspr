@@ -11,9 +11,12 @@ Type=simple
 # services don't inherit WAYLAND_DISPLAY from the graphical session
 ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo "Warning: Wayland socket not found after 15s"'
 ExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr
+# Ensure virtual keyboard is killed even on crash/SIGKILL to release device grabs
+ExecStopPost=/bin/bash -c 'pkill -9 -f "hyprwhspr-virtual-keyboard" 2>/dev/null || true'
 Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
+# Give kernel time to release device grabs after stop
 RestartSec=2
 StandardOutput=journal
 StandardError=journal

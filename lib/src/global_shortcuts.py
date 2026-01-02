@@ -600,16 +600,17 @@ class GlobalShortcuts:
             # When a service restarts quickly, the kernel may not have released device grabs yet
             grabbed_count = 0
             for device in self.devices:
-                for retry in range(3):  # Increased retries for better recovery
+                for retry in range(10):  # Increased from 3 to 10 retries for better recovery
                     try:
                         device.grab()
                         grabbed_count += 1
                         break
                     except (OSError, IOError) as e:
-                        if retry < 2:  # Sleep on first two retries
-                            # Device might be busy from previous process - wait progressively longer
-                            # First retry: 0.1s, second retry: 0.2s
-                            time.sleep(0.1 * (retry + 1))
+                        if retry < 9:  # Retry all but last attempt
+                            # Device might be busy from previous process - use exponential backoff
+                            # Delays: 0.1s, 0.2s, 0.4s, 0.8s, 1.6s, then capped at 2.0s
+                            delay = min(0.1 * (2 ** retry), 2.0)
+                            time.sleep(delay)
                             continue
                         # Last retry failed - this is a real error
                         print(f"[ERROR] Could not grab {device.name} after {retry + 1} retries: {e}")
@@ -672,10 +673,17 @@ class GlobalShortcuts:
             self.stop_event.set()
 
             if self.listener_thread and self.listener_thread.is_alive():
-                self.listener_thread.join(timeout=1.0)
+                self.listener_thread.join(timeout=2.0)  # Increased from 1.0s to 2.0s
 
-            # Clean up key grabbing
-            self._cleanup_key_grabbing()
+                if self.listener_thread.is_alive():
+                    print("[WARN] Listener thread did not exit cleanly after 2 seconds, forcing cleanup")
+                    # Thread is stuck - cleanup will happen in event loop's finally block
+                    # Don't call cleanup here to avoid double-cleanup race
+
+            # Only cleanup if thread exited (or we're being called from outside thread context)
+            # This avoids race condition with event loop's finally block
+            if not self.listener_thread or not self.listener_thread.is_alive():
+                self._cleanup_key_grabbing()
 
             # Close all devices
             for device in self.devices[:]:  # Copy list to avoid modification during iteration

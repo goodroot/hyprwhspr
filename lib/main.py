@@ -51,6 +51,7 @@ from whisper_manager import WhisperManager
 from text_injector import TextInjector
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
+from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 
 class hyprwhsprApp:
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
@@ -61,7 +62,7 @@ class hyprwhsprApp:
 
         # Initialize audio capture with configured device
         audio_device_id = self.config.get_setting('audio_device', None)
-        self.audio_capture = AudioCapture(device_id=audio_device_id)
+        self.audio_capture = AudioCapture(device_id=audio_device_id, config_manager=self.config)
 
         # Initialize audio feedback manager
         self.audio_manager = AudioManager(self.config)
@@ -79,6 +80,7 @@ class hyprwhsprApp:
         self.recovery_attempted_for_current_error = False  # Track if recovery was attempted for current error state
         self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
         self._last_mic_error_log_time = 0.0  # Track when we last logged mic error (prevent duplicates)
+        self._mic_disconnected = False  # Track if microphone was disconnected via hotplug event
         
         # Lock to prevent concurrent recording starts (race condition protection)
         self._recording_lock = threading.Lock()
@@ -100,6 +102,9 @@ class hyprwhsprApp:
             self._shortcut_press_time = None
             self._recording_started_this_press = None
             self._tap_threshold = None
+
+        # Set up device hotplug monitoring (for automatic mic recovery)
+        self._setup_device_monitor()
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -145,6 +150,87 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Failed to initialize global shortcuts: {e}")
             self.global_shortcuts = None
+
+    def _setup_device_monitor(self):
+        """Initialize device hotplug monitoring for automatic microphone recovery"""
+        if PYUDEV_AVAILABLE:
+            self.device_monitor = DeviceMonitor(
+                on_audio_add=self._on_audio_device_added,
+                on_audio_remove=self._on_audio_device_removed
+            )
+            if self.device_monitor.start():
+                print("[INIT] Device hotplug monitoring enabled")
+            else:
+                print("[WARN] Failed to start device hotplug monitoring")
+                self.device_monitor = None
+        else:
+            self.device_monitor = None
+            print("[WARN] pyudev not available - audio hotplug detection disabled")
+
+    def _on_audio_device_added(self, device):
+        """Called when audio device is plugged in"""
+        try:
+            device_model = device.get('ID_MODEL') or 'Unknown'
+            print(f"[HOTPLUG] Audio device added: {device_model}", flush=True)
+
+            # Determine if we should trigger recovery
+            should_recover = False
+            configured_name = self.config.get_setting('audio_device_name')
+
+            if configured_name:
+                # User has configured a specific device - only recover if it matches
+                if device_model and configured_name in device_model:
+                    print(f"[HOTPLUG] Configured microphone detected: {device_model}", flush=True)
+                    should_recover = True
+            else:
+                # No configured device - recover on ANY audio device addition
+                # This helps when starting with mic unplugged
+                if device_model != 'Unknown':
+                    print(f"[HOTPLUG] Audio device detected (no specific device configured): {device_model}", flush=True)
+                    should_recover = True
+
+            if should_recover:
+                print(f"[HOTPLUG] Triggering recovery in 0.5s (let drivers settle)...", flush=True)
+
+                # Give drivers a moment to settle before attempting recovery
+                time.sleep(0.5)
+
+                # Trigger recovery
+                if self.audio_capture.recover_audio_capture('hotplug_detected'):
+                    print(f"[HOTPLUG] Recovery successful - microphone ready", flush=True)
+                    self._write_recovery_result(True, 'hotplug')
+                    # Clear disconnected flag - microphone is back
+                    self._mic_disconnected = False
+                else:
+                    print(f"[HOTPLUG] Recovery failed - microphone may not be fully initialized", flush=True)
+                    self._write_recovery_result(False, 'hotplug')
+        except Exception as e:
+            print(f"[HOTPLUG] Error handling device add: {e}", flush=True)
+
+    def _on_audio_device_removed(self, device):
+        """Called when audio device is unplugged"""
+        try:
+            device_model = device.get('ID_MODEL') or 'Unknown'
+            print(f"[HOTPLUG] Audio device removed: {device_model}", flush=True)
+
+            # Determine if this is a significant removal
+            configured_name = self.config.get_setting('audio_device_name')
+
+            if configured_name:
+                # User has configured a specific device - only mark disconnected if it matches
+                if device_model and configured_name in device_model:
+                    self._mic_disconnected = True
+                    print(f"[HOTPLUG] Configured microphone disconnected", flush=True)
+            else:
+                # No configured device - mark disconnected for any non-Unknown device
+                if device_model != 'Unknown':
+                    self._mic_disconnected = True
+                    print(f"[HOTPLUG] Audio device disconnected", flush=True)
+
+            # If currently recording, this will fail gracefully in next audio callback
+            # No immediate action needed - recovery will trigger on next recording attempt
+        except Exception as e:
+            print(f"[HOTPLUG] Error handling device remove: {e}", flush=True)
 
     def _on_shortcut_triggered(self):
         """Handle global shortcut trigger (key press)"""
@@ -295,20 +381,30 @@ class hyprwhsprApp:
                 if not verify_and_play_sound():
                     # Stream broken - stop recording (thread will clean up stream)
                     self.audio_capture.stop_recording()
-                    
+
                     # Reset state
                     self.is_recording = False
                     self._write_recording_status(False)
-                    self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+
+                    # Check if we know the microphone was disconnected
+                    if self._mic_disconnected:
+                        self._notify_zero_volume("Microphone disconnected - please replug USB microphone", log_level="ERROR")
+                    else:
+                        self._notify_zero_volume("Microphone not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
                     return  # Don't attempt recovery during user-initiated recording
                 
                 # Additional stability check - verify stream continues working
                 if not verify_stream_stable():
-                    # Stream stopped working shortly after starting - likely unstable after reconnect
+                    # Stream stopped working shortly after starting
                     self.audio_capture.stop_recording()
                     self.is_recording = False
                     self._write_recording_status(False)
-                    self._notify_zero_volume("Microphone stream unstable - please wait a moment and try recording again", log_level="WARN")
+
+                    # Check if we know the microphone was disconnected
+                    if self._mic_disconnected:
+                        self._notify_zero_volume("Microphone disconnected - please replug USB microphone", log_level="ERROR")
+                    else:
+                        self._notify_zero_volume("Microphone stream unstable - please wait a moment and try recording again", log_level="WARN")
                     return
                 
                 # Stream is working and stable - start monitoring
@@ -529,6 +625,46 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[WARN] Failed to write recording status: {e}")
 
+    def _write_recovery_result(self, success, reason):
+        """Write recovery result to file for tray script notification"""
+        try:
+            result_file = Path.home() / '.config' / 'hyprwhspr' / 'recovery_result'
+            result_file.parent.mkdir(parents=True, exist_ok=True)
+
+            status = "success" if success else "failed"
+            timestamp = int(time.time())
+
+            with open(result_file, 'w') as f:
+                f.write(f"{status}:{reason}:{timestamp}")
+
+            print(f"[RECOVERY] Result written: {status} ({reason})", flush=True)
+
+            # If recovery succeeded, clear any error state signals
+            if success:
+                self._clear_error_state_signals()
+
+        except Exception as e:
+            print(f"[WARN] Failed to write recovery result: {e}")
+
+    def _clear_error_state_signals(self):
+        """Clear error state signal files after successful recovery"""
+        try:
+            config_dir = Path.home() / '.config' / 'hyprwhspr'
+
+            # Clear mic zero volume signal
+            zero_volume_file = config_dir / '.mic_zero_volume'
+            if zero_volume_file.exists():
+                zero_volume_file.unlink()
+                print("[RECOVERY] Cleared mic_zero_volume error signal", flush=True)
+
+            # Clear any stale recovery request file
+            recovery_request = config_dir / 'recovery_requested'
+            if recovery_request.exists():
+                recovery_request.unlink()
+
+        except Exception as e:
+            print(f"[WARN] Failed to clear error signals: {e}", flush=True)
+
     def _start_audio_level_monitoring(self):
         """Start monitoring and writing audio levels to file"""
         if self.audio_level_thread and self.audio_level_thread.is_alive():
@@ -641,7 +777,13 @@ class hyprwhsprApp:
         # Attempt recovery (will handle stopping current recording if needed)
         if self.audio_capture.recover_audio_capture(f"tray_script_request_{reason}"):
             print("[RECOVERY] Recovery successful - mic should now be available", flush=True)
-            
+
+            # Write recovery success result for tray script
+            self._write_recovery_result(True, reason)
+
+            # Clear disconnected flag - microphone is back
+            self._mic_disconnected = False
+
             # After successful audio recovery, also reinitialize model if needed
             # This handles suspend/resume cases where CUDA context is invalid
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
@@ -680,6 +822,10 @@ class hyprwhsprApp:
                     self._write_recording_status(False)
         else:
             print("[RECOVERY] Recovery failed - please reseat your USB microphone", flush=True)
+
+            # Write recovery failure result for tray script
+            self._write_recovery_result(False, reason)
+
             # Keep flag set - recovery was attempted and failed, don't retry
 
     def run(self):
@@ -734,6 +880,10 @@ class hyprwhsprApp:
     def _cleanup(self):
         """Clean up resources when shutting down"""
         try:
+            # Stop device monitor
+            if hasattr(self, 'device_monitor') and self.device_monitor:
+                self.device_monitor.stop()
+
             # Stop global shortcuts
             if self.global_shortcuts:
                 self.global_shortcuts.stop()
@@ -748,7 +898,7 @@ class hyprwhsprApp:
 
             # Save configuration
             self.config.save_config()
-            
+
             print("[CLEANUP] Cleanup completed")
             
         except Exception as e:
