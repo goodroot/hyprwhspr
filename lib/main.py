@@ -52,6 +52,11 @@ from text_injector import TextInjector
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
+from paths import (
+    RECORDING_STATUS_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
+    RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE
+)
+from backend_utils import normalize_backend
 
 class hyprwhsprApp:
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
@@ -77,7 +82,7 @@ class hyprwhsprApp:
         self.is_processing = False
         self.current_transcription = ""
         self.audio_level_thread = None
-        self.recovery_attempted_for_current_error = False  # Track if recovery was attempted for current error state
+        self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
         self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
         self._last_mic_error_log_time = 0.0  # Track when we last logged mic error (prevent duplicates)
         self._mic_disconnected = False  # Track if microphone was disconnected via hotplug event
@@ -460,10 +465,7 @@ class hyprwhsprApp:
             
             # Check backend type
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            if backend == 'local':
-                backend = 'pywhispercpp'
-            elif backend == 'remote':
-                backend = 'rest-api'
+            backend = normalize_backend(backend)
             
             # Stop audio capture
             audio_data = self.audio_capture.stop_recording()
@@ -592,49 +594,45 @@ class hyprwhsprApp:
         # Optional: Write waybar signal file (atomic, no conflicts)
         # This allows waybar to when mic present but not recording
         try:
-            signal_file = Path.home() / '.config' / 'hyprwhspr' / '.mic_zero_volume'
             # Use atomic write (write to temp file, then rename)
-            temp_file = signal_file.with_suffix('.tmp')
+            temp_file = MIC_ZERO_VOLUME_FILE.with_suffix('.tmp')
             temp_file.write_text(str(int(time.time())))
-            temp_file.replace(signal_file)
+            temp_file.replace(MIC_ZERO_VOLUME_FILE)
         except Exception:
             pass  # Silently fail - waybar signal is optional
 
     def _clear_zero_volume_signal(self):
         """Clear zero-volume signal file when valid audio is detected"""
         try:
-            signal_file = Path.home() / '.config' / 'hyprwhspr' / '.mic_zero_volume'
-            if signal_file.exists():
-                signal_file.unlink()
+            if MIC_ZERO_VOLUME_FILE.exists():
+                MIC_ZERO_VOLUME_FILE.unlink()
         except Exception:
             pass  # Silently fail - waybar signal cleanup is optional
 
     def _write_recording_status(self, is_recording):
         """Write recording status to file for tray script"""
         try:
-            status_file = Path.home() / '.config' / 'hyprwhspr' / 'recording_status'
-            status_file.parent.mkdir(parents=True, exist_ok=True)
-            
+            RECORDING_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
             if is_recording:
-                with open(status_file, 'w') as f:
+                with open(RECORDING_STATUS_FILE, 'w') as f:
                     f.write('true')
             else:
                 # Remove the file when not recording to avoid stale state
-                if status_file.exists():
-                    status_file.unlink()
+                if RECORDING_STATUS_FILE.exists():
+                    RECORDING_STATUS_FILE.unlink()
         except Exception as e:
             print(f"[WARN] Failed to write recording status: {e}")
 
     def _write_recovery_result(self, success, reason):
         """Write recovery result to file for tray script notification"""
         try:
-            result_file = Path.home() / '.config' / 'hyprwhspr' / 'recovery_result'
-            result_file.parent.mkdir(parents=True, exist_ok=True)
+            RECOVERY_RESULT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
             status = "success" if success else "failed"
             timestamp = int(time.time())
 
-            with open(result_file, 'w') as f:
+            with open(RECOVERY_RESULT_FILE, 'w') as f:
                 f.write(f"{status}:{reason}:{timestamp}")
 
             print(f"[RECOVERY] Result written: {status} ({reason})", flush=True)
@@ -649,18 +647,14 @@ class hyprwhsprApp:
     def _clear_error_state_signals(self):
         """Clear error state signal files after successful recovery"""
         try:
-            config_dir = Path.home() / '.config' / 'hyprwhspr'
-
             # Clear mic zero volume signal
-            zero_volume_file = config_dir / '.mic_zero_volume'
-            if zero_volume_file.exists():
-                zero_volume_file.unlink()
+            if MIC_ZERO_VOLUME_FILE.exists():
+                MIC_ZERO_VOLUME_FILE.unlink()
                 print("[RECOVERY] Cleared mic_zero_volume error signal", flush=True)
 
             # Clear any stale recovery request file
-            recovery_request = config_dir / 'recovery_requested'
-            if recovery_request.exists():
-                recovery_request.unlink()
+            if RECOVERY_REQUESTED_FILE.exists():
+                RECOVERY_REQUESTED_FILE.unlink()
 
         except Exception as e:
             print(f"[WARN] Failed to clear error signals: {e}", flush=True)
@@ -671,8 +665,7 @@ class hyprwhsprApp:
             return
 
         def monitor_audio_level():
-            level_file = Path.home() / '.config' / 'hyprwhspr' / 'audio_level'
-            level_file.parent.mkdir(parents=True, exist_ok=True)
+            AUDIO_LEVEL_FILE.parent.mkdir(parents=True, exist_ok=True)
 
             # Muted mic detection: 5e-7 threshold catches true digital silence but not quiet rooms
             zero_samples = 0
@@ -684,7 +677,7 @@ class hyprwhsprApp:
                     try:
                         # Get scaled level for visualization (0.0-1.0)
                         level = self.audio_capture.get_audio_level()
-                        with open(level_file, 'w') as f:
+                        with open(AUDIO_LEVEL_FILE, 'w') as f:
                             f.write(f'{level:.3f}')
 
                         # get_audio_level() scales by 10x, so we need raw value for accurate detection
@@ -703,8 +696,8 @@ class hyprwhsprApp:
             finally:
                 # Clean up file when not recording (always runs, even on early return)
                 try:
-                    if level_file.exists():
-                        level_file.unlink()
+                    if AUDIO_LEVEL_FILE.exists():
+                        AUDIO_LEVEL_FILE.unlink()
                 except:
                     pass
 
@@ -720,17 +713,15 @@ class hyprwhsprApp:
     def _attempt_recovery_if_needed(self):
         """
         Check for recovery request from tray script and attempt recovery once per error state.
-        
+
         This is called periodically (e.g., in main loop) to check if recovery is needed.
         Only attempts recovery once per error state to avoid infinite retry loops.
         """
-        recovery_file = Path.home() / '.config' / 'hyprwhspr' / 'recovery_requested'
-        
         # Check if recovery file exists
-        if not recovery_file.exists():
+        if not RECOVERY_REQUESTED_FILE.exists():
             # No recovery requested - mic is working, reset flag
-            if self.recovery_attempted_for_current_error:
-                self.recovery_attempted_for_current_error = False
+            if self.recovery_attempted.is_set():
+                self.recovery_attempted.clear()
             return
         
         # Recovery file exists - check if we should attempt recovery
@@ -743,25 +734,25 @@ class hyprwhsprApp:
             return  # Skip recovery attempt during active recording
         
         # Check if recovery was already attempted for this error state
-        if self.recovery_attempted_for_current_error:
+        if self.recovery_attempted.is_set():
             # Already attempted - don't try again
             return
         
         # Check file age - if very old (>60s), assume recovery was attempted and failed
         try:
-            file_age = time.time() - recovery_file.stat().st_mtime
+            file_age = time.time() - RECOVERY_REQUESTED_FILE.stat().st_mtime
             if file_age > 60:
                 # File is old - assume recovery was attempted and failed
                 # Clear it to allow new error detection
-                recovery_file.unlink()
-                self.recovery_attempted_for_current_error = False
+                RECOVERY_REQUESTED_FILE.unlink()
+                self.recovery_attempted.clear()
                 return
         except Exception:
             pass
-        
+
         # Clear the file now that we're about to attempt recovery
         try:
-            recovery_file.unlink()
+            RECOVERY_REQUESTED_FILE.unlink()
         except Exception as e:
             print(f"[RECOVERY] Warning: Could not clear recovery request file: {e}", flush=True)
         
@@ -772,7 +763,7 @@ class hyprwhsprApp:
         print(f"[RECOVERY] Recovery requested by tray script ({reason} detected)", flush=True)
         
         # Mark that we're attempting recovery for this error state
-        self.recovery_attempted_for_current_error = True
+        self.recovery_attempted.set()
         
         # Attempt recovery (will handle stopping current recording if needed)
         if self.audio_capture.recover_audio_capture(f"tray_script_request_{reason}"):
@@ -787,10 +778,7 @@ class hyprwhsprApp:
             # After successful audio recovery, also reinitialize model if needed
             # This handles suspend/resume cases where CUDA context is invalid
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            if backend == 'local':
-                backend = 'pywhispercpp'
-            elif backend == 'remote':
-                backend = 'rest-api'
+            backend = normalize_backend(backend)
             
             if backend == 'pywhispercpp' and hasattr(self.whisper_manager, '_pywhisper_model') and self.whisper_manager._pywhisper_model:
                 # Check if model needs reinitialization (long idle = suspend/resume)
@@ -802,7 +790,7 @@ class hyprwhsprApp:
                         self.whisper_manager._reinitialize_model()
             
             # Reset flag since recovery succeeded
-            self.recovery_attempted_for_current_error = False
+            self.recovery_attempted.clear()
             
             # If we were recording, we need to restart recording after recovery
             if was_recording:
@@ -853,10 +841,9 @@ class hyprwhsprApp:
         print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
         
         # Clean up any stale recovery file (tray script no longer creates these)
-        recovery_file = Path.home() / '.config' / 'hyprwhspr' / 'recovery_requested'
-        if recovery_file.exists():
+        if RECOVERY_REQUESTED_FILE.exists():
             try:
-                recovery_file.unlink()
+                RECOVERY_REQUESTED_FILE.unlink()
                 print("[STARTUP] Removed stale recovery file", flush=True)
             except Exception:
                 pass
@@ -938,9 +925,8 @@ def _acquire_lock_file():
         return True, None
     
     # Set up lock file path
-    config_dir = Path.home() / '.config' / 'hyprwhspr'
-    config_dir.mkdir(parents=True, exist_ok=True)
-    _lock_file_path = config_dir / 'hyprwhspr.lock'
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _lock_file_path = LOCK_FILE
     
     try:
         # Try to open/create the lock file

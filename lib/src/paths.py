@@ -1,0 +1,31 @@
+"""Centralized path constants for hyprwhspr with XDG Base Directory support"""
+from pathlib import Path
+import os
+
+# XDG Base Directory specification
+# https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
+HOME = Path.home()
+XDG_CONFIG_HOME = Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config'))
+XDG_DATA_HOME = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local' / 'share'))
+
+# hyprwhspr directories
+CONFIG_DIR = XDG_CONFIG_HOME / 'hyprwhspr'
+DATA_DIR = XDG_DATA_HOME / 'hyprwhspr'
+
+# Configuration files
+CONFIG_FILE = CONFIG_DIR / 'config.json'
+
+# Runtime state signal files (used for IPC between service and waybar)
+RECORDING_STATUS_FILE = CONFIG_DIR / 'recording_status'
+AUDIO_LEVEL_FILE = CONFIG_DIR / 'audio_level'
+RECOVERY_REQUESTED_FILE = CONFIG_DIR / 'recovery_requested'
+RECOVERY_RESULT_FILE = CONFIG_DIR / 'recovery_result'
+MIC_ZERO_VOLUME_FILE = CONFIG_DIR / '.mic_zero_volume'
+LOCK_FILE = CONFIG_DIR / 'hyprwhspr.lock'
+
+# Secure credential storage
+CREDENTIALS_DIR = DATA_DIR
+CREDENTIALS_FILE = CREDENTIALS_DIR / 'credentials'
+
+# Temporary files and models
+TEMP_DIR = DATA_DIR / 'temp'

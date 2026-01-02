@@ -7,6 +7,11 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
+try:
+    from .paths import CONFIG_DIR, CONFIG_FILE, TEMP_DIR
+except ImportError:
+    from paths import CONFIG_DIR, CONFIG_FILE, TEMP_DIR
+
 
 class ConfigManager:
     """Manages application configuration and settings"""
@@ -53,8 +58,8 @@ class ConfigManager:
         }
         
         # Set up config directory and file path
-        self.config_dir = Path.home() / '.config' / 'hyprwhspr'
-        self.config_file = self.config_dir / 'config.json'
+        self.config_dir = CONFIG_DIR
+        self.config_file = CONFIG_FILE
         
         # Current configuration (starts with defaults)
         self.config = self.default_config.copy()
@@ -147,9 +152,8 @@ class ConfigManager:
     def get_temp_directory(self) -> Path:
         """Get the temporary directory for audio files"""
         # Use user-writable temp directory instead of system installation directory
-        temp_dir = Path.home() / '.local' / 'share' / 'hyprwhspr' / 'temp'
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        return temp_dir
+        TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        return TEMP_DIR
     
     def get_word_overrides(self) -> Dict[str, str]:
         """Get the word overrides dictionary"""

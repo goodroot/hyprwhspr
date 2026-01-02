@@ -11,22 +11,12 @@ from typing import Optional, Callable
 from io import BytesIO
 
 try:
-    import sounddevice as sd
-except (ImportError, ModuleNotFoundError) as e:
-    print("ERROR: python-sounddevice is not available in this Python environment.", file=sys.stderr)
-    print(f"ImportError: {e}", file=sys.stderr)
-    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
-    print("  pacman -S python-sounddevice    # system-wide on Arch", file=sys.stderr)
-    sys.exit(1)
+    from .dependencies import require_package
+except ImportError:
+    from dependencies import require_package
 
-try:
-    import numpy as np
-except (ImportError, ModuleNotFoundError) as e:
-    print("ERROR: python-numpy is not available in this Python environment.", file=sys.stderr)
-    print(f"ImportError: {e}", file=sys.stderr)
-    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
-    print("  pacman -S python-numpy    # system-wide on Arch", file=sys.stderr)
-    sys.exit(1)
+sd = require_package('sounddevice')
+np = require_package('numpy')
 
 
 class AudioCapture:
@@ -385,18 +375,14 @@ class AudioCapture:
             if self.record_thread.is_alive():
                 print("[WARN] Recording thread did not exit cleanly after 3 seconds", flush=True)
 
-        # Thread should have cleaned up stream - only verify it's gone
-        # Don't try to clean it up here (avoid race with thread's finally block)
+        # Thread's finally block handles cleanup - verify it completed
+        # Do NOT cleanup here to avoid deadlock (callback may still hold lock)
         with self.lock:
             if self.stream is not None:
-                print("[WARN] Stream still exists after thread exit - cleaning up", flush=True)
-                try:
-                    self.stream.stop()
-                    self.stream.close()
-                except Exception:
-                    pass
-                finally:
-                    self.stream = None
+                print("[WARN] Stream still exists after thread exit - this should not happen", flush=True)
+                # Force clear the reference, but don't try to stop/close
+                # (that would deadlock if callback thread is still waiting for lock)
+                self.stream = None
         
         # Return recorded data
         with self.lock:

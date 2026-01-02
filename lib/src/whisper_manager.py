@@ -16,22 +16,12 @@ from io import BytesIO
 from typing import Optional, Callable
 
 try:
-    import numpy as np
-except (ImportError, ModuleNotFoundError) as e:
-    print("ERROR: python-numpy is not available in this Python environment.", file=sys.stderr)
-    print(f"ImportError: {e}", file=sys.stderr)
-    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
-    print("  pacman -S python-numpy    # system-wide on Arch", file=sys.stderr)
-    sys.exit(1)
+    from .dependencies import require_package
+except ImportError:
+    from dependencies import require_package
 
-try:
-    import requests
-except (ImportError, ModuleNotFoundError) as e:
-    print("ERROR: python-requests is not available in this Python environment.", file=sys.stderr)
-    print(f"ImportError: {e}", file=sys.stderr)
-    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
-    print("  pacman -S python-requests    # system-wide on Arch", file=sys.stderr)
-    sys.exit(1)
+np = require_package('numpy')
+requests = require_package('requests')
 
 try:
     from .config_manager import ConfigManager
@@ -41,6 +31,11 @@ except ImportError:
     from config_manager import ConfigManager
     from credential_manager import get_credential
     from provider_registry import get_provider
+
+try:
+    from .backend_utils import normalize_backend
+except ImportError:
+    from backend_utils import normalize_backend
 
 
 class WhisperManager:
@@ -79,12 +74,7 @@ class WhisperManager:
 
             # Check which backend is configured
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            
-            # Backward compatibility: map old values
-            if backend == 'local':
-                backend = 'pywhispercpp'
-            elif backend == 'remote':
-                backend = 'rest-api'
+            backend = normalize_backend(backend)  # Backward compatibility
 
             # Configure Realtime WebSocket backend
             if backend == 'realtime-ws':
@@ -802,10 +792,7 @@ class WhisperManager:
             Callback function if realtime-ws backend is active, None otherwise
         """
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        if backend == 'local':
-            backend = 'pywhispercpp'
-        elif backend == 'remote':
-            backend = 'rest-api'
+        backend = normalize_backend(backend)
         
         if backend == 'realtime-ws' and self._realtime_client:
             # Clear server buffer before starting new recording
@@ -916,21 +903,23 @@ class WhisperManager:
             # This just commits and waits for the result
             return self._transcribe_realtime(audio_data, sample_rate)
 
-        # Check if model needs reinitialization (suspend/resume detection)
-        current_time = time.monotonic()
-        time_since_last_use = current_time - self._last_use_time
-        
-        # If model hasn't been used in 5+ minutes, likely suspend/resume occurred
-        # Reinitialize to refresh CUDA context before using stale model
-        if time_since_last_use > 300 and self._last_use_time > 0:
-            print("[MODEL] Long idle period detected - reinitializing model (suspend/resume likely)", flush=True)
-            if not self._reinitialize_model():
-                print("[MODEL] Reinitialization failed, transcription may fail", flush=True)
-                return ""
-
         # Use model lock to prevent concurrent transcription calls
         # This prevents crashes from concurrent access to the whisper model
         with self._model_lock:
+            # Check if model needs reinitialization (suspend/resume detection)
+            # This check is inside the lock to prevent race conditions where
+            # multiple threads detect idle period and try to reinitialize simultaneously
+            current_time = time.monotonic()
+            time_since_last_use = current_time - self._last_use_time
+
+            # If model hasn't been used in 5+ minutes, likely suspend/resume occurred
+            # Reinitialize to refresh CUDA context before using stale model
+            if time_since_last_use > 300 and self._last_use_time > 0:
+                print("[MODEL] Long idle period detected - reinitializing model (suspend/resume likely)", flush=True)
+                if not self._reinitialize_model():
+                    print("[MODEL] Reinitialization failed, transcription may fail", flush=True)
+                    return ""
+
             try:
                 # Get language setting from config (None = auto-detect)
                 language = self.config.get_setting('language', None)
@@ -998,10 +987,7 @@ class WhisperManager:
             return self.initialize()
         
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        if backend == 'local':
-            backend = 'pywhispercpp'
-        elif backend == 'remote':
-            backend = 'rest-api'
+        backend = normalize_backend(backend)
         
         # Only reinitialize for pywhispercpp backend
         if backend != 'pywhispercpp':

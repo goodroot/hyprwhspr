@@ -13,10 +13,10 @@ try:
 except ImportError:
     from output_control import log_info, log_error, log_warning
 
-
-# Credentials file location
-CREDENTIALS_DIR = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share')) / 'hyprwhspr'
-CREDENTIALS_FILE = CREDENTIALS_DIR / 'credentials'
+try:
+    from .paths import CREDENTIALS_DIR, CREDENTIALS_FILE
+except ImportError:
+    from paths import CREDENTIALS_DIR, CREDENTIALS_FILE
 
 
 def _ensure_credentials_dir():

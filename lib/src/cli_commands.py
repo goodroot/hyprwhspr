@@ -28,6 +28,16 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
+    from .paths import CONFIG_DIR, CONFIG_FILE
+except ImportError:
+    from paths import CONFIG_DIR, CONFIG_FILE
+
+try:
+    from .backend_utils import BACKEND_DISPLAY_NAMES
+except ImportError:
+    from backend_utils import BACKEND_DISPLAY_NAMES
+
+try:
     from .backend_installer import (
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
@@ -80,7 +90,7 @@ SERVICE_NAME = 'hyprwhspr.service'
 PARAKEET_SERVICE_NAME = 'parakeet-tdt-0.6b-v3.service'
 YDOTOOL_UNIT = 'ydotool.service'
 USER_HOME = Path.home()
-USER_CONFIG_DIR = USER_HOME / '.config' / 'hyprwhspr'
+USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
 USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
 PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', USER_HOME / '.local' / 'share')) / 'pywhispercpp' / 'models'
 
@@ -357,15 +367,7 @@ def _prompt_backend_selection():
     print("="*60)
     
     if current_backend:
-        backend_names = {
-            'cpu': 'CPU',
-            'nvidia': 'NVIDIA (CUDA)',
-            'amd': 'AMD (ROCm)',
-            'parakeet': 'Parakeet',
-            'rest-api': 'REST API',
-            'realtime-ws': 'Realtime WebSocket',
-            'pywhispercpp': 'pywhispercpp'
-        }
+        backend_names = BACKEND_DISPLAY_NAMES
         print(f"\nCurrent backend: {backend_names.get(current_backend, current_backend)}")
     else:
         print("\nNo backend currently configured.")
@@ -432,24 +434,13 @@ def _prompt_backend_selection():
                     else:
                         print("The local backend venv will no longer be needed.")
                         cleanup_venv = Confirm.ask("Remove the venv to free up space?", default=False)
-                    backend_names = {
-                        'cpu': 'CPU',
-                        'nvidia': 'NVIDIA (CUDA)',
-                        'amd': 'AMD (ROCm)',
-                        'parakeet': 'Parakeet',
-                        'rest-api': 'REST API',
-                        'realtime-ws': 'Realtime WebSocket'
-                    }
+                    backend_names = BACKEND_DISPLAY_NAMES
                     print(f"\n✓ Selected: {backend_names[selected]}")
                     return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
             
             # If re-selecting same backend, offer reinstall option
             if current_backend == selected and selected not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
-                backend_names = {
-                    'cpu': 'CPU',
-                    'nvidia': 'NVIDIA (CUDA)',
-                    'amd': 'AMD (ROCm)'
-                }
+                backend_names = BACKEND_DISPLAY_NAMES
                 print(f"\n{backend_names.get(selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
                 if not reinstall:
@@ -457,9 +448,7 @@ def _prompt_backend_selection():
                     return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
                 # If yes to reinstall, continue to return with wants_reinstall=True
             elif current_backend == selected and selected == 'parakeet':
-                backend_names = {
-                    'parakeet': 'Parakeet'
-                }
+                backend_names = BACKEND_DISPLAY_NAMES
                 print(f"\n{backend_names.get(selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
                 if not reinstall:
@@ -467,9 +456,7 @@ def _prompt_backend_selection():
                     return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
                 # If yes to reinstall, continue to return with wants_reinstall=True
             elif current_backend == selected and selected == 'realtime-ws':
-                backend_names = {
-                    'realtime-ws': 'Realtime WebSocket'
-                }
+                backend_names = BACKEND_DISPLAY_NAMES
                 print(f"\n{backend_names.get(selected)} backend is already configured.")
                 reconfigure = Confirm.ask("Reconfigure backend?", default=False)
                 if not reconfigure:
@@ -477,10 +464,7 @@ def _prompt_backend_selection():
                     return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
                 # If yes to reconfigure, continue to return with wants_reinstall=True for correct state tracking
             elif current_backend == selected and selected in ['rest-api', 'remote']:
-                backend_names = {
-                    'rest-api': 'REST API',
-                    'remote': 'REST API'
-                }
+                backend_names = BACKEND_DISPLAY_NAMES
                 print(f"\n{backend_names.get(selected)} backend is already configured.")
                 reconfigure = Confirm.ask("Reconfigure backend?", default=False)
                 if not reconfigure:
