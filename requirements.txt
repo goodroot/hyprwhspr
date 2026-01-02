@@ -14,6 +14,7 @@ websocket-client>=1.9.0
 
 # System integration
 psutil>=5.8.0
+pyudev>=0.24.0
 
 # CLI formatting and logging
 rich>=13.0.0

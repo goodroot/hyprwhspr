@@ -32,15 +32,16 @@ except (ImportError, ModuleNotFoundError) as e:
 class AudioCapture:
     """Handles audio recording and real-time level monitoring"""
     
-    def __init__(self, device_id=None):
+    def __init__(self, device_id=None, config_manager=None):
         # Audio configuration - whisper.cpp prefers 16kHz mono
         self.sample_rate = 16000
         self.channels = 1
         self.chunk_size = 1024
         self.dtype = np.float32
-        
+
         # Device configuration
         self.preferred_device_id = device_id
+        self.config = config_manager  # For accessing device name fallback
         
         # Recording state
         self.is_recording = False
@@ -79,6 +80,7 @@ class AudioCapture:
             sd.default.dtype = self.dtype
             
             # Set the preferred device if specified
+            device_found = False
             if self.preferred_device_id is not None:
                 try:
                     # Validate that the device exists and has input channels
@@ -86,15 +88,32 @@ class AudioCapture:
                     if device_info['max_input_channels'] > 0:
                         sd.default.device[0] = self.preferred_device_id
                         print(f"Using configured audio device: {device_info['name']} (ID: {self.preferred_device_id})")
+                        device_found = True
                     else:
-                        print(f"⚠ Configured device {self.preferred_device_id} has no input channels, using default")
+                        print(f"⚠ Configured device {self.preferred_device_id} has no input channels")
                         self.preferred_device_id = None
                 except Exception as e:
-                    print(f"⚠ Configured audio device {self.preferred_device_id} not available: {e}")
+                    print(f"⚠ Configured audio device ID {self.preferred_device_id} not available: {e}")
                     self.preferred_device_id = None
-            
+
+            # If device ID failed, try to find by name (more stable across reboots)
+            if not device_found and self.config:
+                configured_name = self.config.get_setting('audio_device_name')
+                if configured_name:
+                    print(f"Searching for device by name: {configured_name}")
+                    devices = sd.query_devices()
+                    for i, device in enumerate(devices):
+                        if device['max_input_channels'] > 0 and configured_name in device['name']:
+                            self.preferred_device_id = i
+                            sd.default.device[0] = i
+                            print(f"Found device by name: {device['name']} (ID: {i})")
+                            device_found = True
+                            break
+
             # If no specific device was configured or it failed, use system default
-            if self.preferred_device_id is None:
+            if not device_found:
+                if self.preferred_device_id is None:
+                    print("Using system default audio device")
                 self._set_system_default_device()
             
             # Get device information
@@ -358,22 +377,26 @@ class AudioCapture:
         with self.lock:
             self.is_recording = False
         
-        # Wait for recording thread to finish (it will clean up the stream itself)
+        # Wait for recording thread to finish (it handles cleanup in finally block)
         if self.record_thread and self.record_thread.is_alive():
-            self.record_thread.join(timeout=2.0)
-        
-        # Don't clean up stream here - the recording thread does it in its finally block
-        # Only ensure stream reference is cleared if thread didn't clean it
+            self.record_thread.join(timeout=3.0)  # Increased from 2.0s to 3.0s
+
+            # Check if thread actually exited
+            if self.record_thread.is_alive():
+                print("[WARN] Recording thread did not exit cleanly after 3 seconds", flush=True)
+
+        # Thread should have cleaned up stream - only verify it's gone
+        # Don't try to clean it up here (avoid race with thread's finally block)
         with self.lock:
             if self.stream is not None:
-                # Thread didn't clean up - do it now (shouldn't happen normally)
+                print("[WARN] Stream still exists after thread exit - cleaning up", flush=True)
                 try:
-                    if self.stream:
-                        self.stream.stop()
-                        self.stream.close()
+                    self.stream.stop()
+                    self.stream.close()
                 except Exception:
                     pass
-                self.stream = None
+                finally:
+                    self.stream = None
         
         # Return recorded data
         with self.lock:
@@ -593,37 +616,44 @@ class AudioCapture:
     def is_recovery_successful(self) -> bool:
         """
         Check if recovery was successful using objective callback-based criteria.
-        
+
         Recovery is successful if:
-        - At least N callbacks received (e.g., 3)
-        - last_callback_monotonic updated within T (e.g., 800ms) after recovery start
+        - At least 2 callbacks received (reduced from 3 for faster recovery)
+        - last_callback_monotonic updated within 2.0s after recovery start (increased from 0.8s)
+
+        More lenient criteria to handle:
+        - Post-suspend CPU throttling
+        - Slow audio driver reinitialization
+        - USB device enumeration delays
         """
         if self.recovery_start_time == 0.0:
             return False
-        
+
         now = time.monotonic()
         time_since_recovery = now - self.recovery_start_time
-        
+
         # Read shared state with lock held to avoid data race
         with self.lock:
             frames_count = self.frames_since_start
             last_callback_time = self.last_callback_monotonic
-        
-        # Check timing: callback must have been received within 800ms of recovery start
-        if time_since_recovery > 0.8:
+
+        # Check timing: callback must have been received within 2.0s of recovery start
+        # (increased from 0.8s to handle slow post-suspend recovery)
+        if time_since_recovery > 2.0:
             # Too much time has passed, check if we got callbacks
-            if frames_count >= 3 and last_callback_time > self.recovery_start_time:
+            if frames_count >= 2 and last_callback_time > self.recovery_start_time:
                 # Got callbacks and they were recent enough
                 return True
             return False
-        
+
         # Still within timeout window, check if we're getting callbacks
-        # Need at least 3 callbacks and they must be recent
-        if frames_count >= 3:
-            # Check if last callback was recent (within last 200ms)
-            if now - last_callback_time < 0.2:
+        # Need at least 2 callbacks (reduced from 3) and they must be recent
+        if frames_count >= 2:
+            # Check if last callback was recent (within last 0.5s)
+            # (increased from 0.2s to handle CPU throttling)
+            if now - last_callback_time < 0.5:
                 return True
-        
+
         return False
     
     def recover_audio_capture(self, reason: str, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:

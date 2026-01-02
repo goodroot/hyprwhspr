@@ -295,10 +295,77 @@ show_notification() {
     local title="$1"
     local message="$2"
     local urgency="${3:-normal}"
-    
+
     if command -v notify-send &> /dev/null; then
         notify-send -i "$ICON_PATH" "$title" "$message" -u "$urgency"
     fi
+}
+
+# Function to check and show recovery result notification
+check_recovery_result() {
+    local result_file="$HOME/.config/hyprwhspr/recovery_result"
+
+    if [[ ! -f "$result_file" ]]; then
+        return 0
+    fi
+
+    local result
+    result=$(cat "$result_file" 2>/dev/null)
+
+    if [[ -z "$result" ]]; then
+        return 0
+    fi
+
+    # Parse result format: status:reason:timestamp
+    local status="${result%%:*}"
+    local rest="${result#*:}"
+    local reason="${rest%%:*}"
+    local timestamp="${rest#*:}"
+
+    # Check if result is fresh (within last 10 seconds)
+    local current_time=$(date +%s)
+    local result_age=$((current_time - timestamp))
+
+    # Only process recent results
+    if [[ $result_age -gt 10 ]]; then
+        # Stale result, remove it
+        rm -f "$result_file" 2>/dev/null
+        return 0
+    fi
+
+    # Show notification based on status
+    if [[ "$status" == "success" ]]; then
+        case "$reason" in
+            hotplug)
+                show_notification "hyprwhspr" "Microphone reconnected successfully" "normal"
+                ;;
+            mic_unavailable|mic_no_audio)
+                show_notification "hyprwhspr" "Microphone recovered successfully" "normal"
+                ;;
+            *)
+                show_notification "hyprwhspr" "Recovery successful" "normal"
+                ;;
+        esac
+
+        # Clear any cached error states after successful recovery
+        # Give device enumeration a moment to settle before next status check
+        sleep 0.5
+    elif [[ "$status" == "failed" ]]; then
+        case "$reason" in
+            hotplug)
+                show_notification "hyprwhspr" "Microphone detected but recovery failed - please wait or restart service" "critical"
+                ;;
+            mic_unavailable|mic_no_audio)
+                show_notification "hyprwhspr" "Recovery failed - please replug microphone" "critical"
+                ;;
+            *)
+                show_notification "hyprwhspr" "Recovery failed - please check microphone connection" "critical"
+                ;;
+        esac
+    fi
+
+    # Remove result file after showing notification
+    rm -f "$result_file" 2>/dev/null
 }
 
 # Function to toggle hyprwhspr
@@ -516,10 +583,31 @@ get_current_state() {
     if ! is_ydotoold_running; then
         echo "error:ydotoold"; return
     fi
-    
+
     # Check if mic is present and accessible
-    if ! mic_present || ! mic_accessible; then
-        echo "error:mic_unavailable"; return
+    # BUT: if recovery just succeeded (within last 5 seconds), give it grace period
+    local recovery_file="$HOME/.config/hyprwhspr/recovery_result"
+    local in_recovery_grace=false
+    if [[ -f "$recovery_file" ]]; then
+        local result=$(cat "$recovery_file" 2>/dev/null)
+        local status="${result%%:*}"
+        local rest="${result#*:}"
+        local reason="${rest%%:*}"
+        local timestamp="${rest#*:}"
+        local current_time=$(date +%s)
+        local result_age=$((current_time - timestamp))
+
+        # If recovery succeeded within last 5 seconds, we're in grace period
+        if [[ "$status" == "success" && $result_age -lt 5 ]]; then
+            in_recovery_grace=true
+        fi
+    fi
+
+    # Only check mic if NOT in recovery grace period
+    if [[ "$in_recovery_grace" == "false" ]]; then
+        if ! mic_present || ! mic_accessible; then
+            echo "error:mic_unavailable"; return
+        fi
     fi
     
     # Check for zero-volume signal from main app (mic present but not working)
@@ -552,6 +640,8 @@ get_current_state() {
 # Main menu
 case "${1:-status}" in
     "status")
+        # Check for recovery results and show notifications
+        check_recovery_result
         IFS=: read -r s r <<<"$(get_current_state)"
         emit_json "$s" "$r" "$(mic_tooltip_line)"
         ;;
