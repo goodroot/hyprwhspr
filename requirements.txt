@@ -18,3 +18,6 @@ pyudev>=0.24.0
 
 # CLI formatting and logging
 rich>=13.0.0
+
+# Mic-osd visualization (requires python-gobject system package)
+PyGObject>=3.42.0

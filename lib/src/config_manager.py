@@ -54,7 +54,9 @@ class ConfigManager:
             'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
             'realtime_timeout': 30,            # Completion timeout (seconds)
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
-            'realtime_mode': 'transcribe'      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
+            'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
+            # Visual feedback settings
+            'mic_osd_enabled': True             # Show microphone visualization overlay during recording
         }
         
         # Set up config directory and file path

@@ -1,0 +1,218 @@
+"""
+mic-osd - A minimal audio visualization OSD for Wayland/Hyprland.
+
+Shows a real-time microphone input visualization overlay.
+Supports two modes:
+- Standalone: runs until killed (SIGTERM/SIGINT)
+- Daemon: stays running, shows on SIGUSR1, hides on SIGUSR2
+"""
+
+import sys
+import signal
+
+import gi
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk, GLib
+
+from .window import OSDWindow, load_css
+from .audio import AudioMonitor
+from .visualizations import VISUALIZATIONS
+from .theme import ThemeWatcher
+
+
+class MicOSD:
+    """
+    Mic-osd application with show/hide support.
+    """
+    
+    def __init__(self, visualization="waveform", width=400, height=68, daemon=False):
+        self.main_loop = None
+        self.audio_monitor = None
+        self.window = None
+        self.update_timer_id = None
+        self.daemon = daemon
+        self.visible = False
+        self.theme_watcher = None
+        
+        # Get visualization
+        viz_class = VISUALIZATIONS.get(visualization, VISUALIZATIONS["waveform"])
+        self.visualization = viz_class()
+        self.width = width
+        self.height = height
+    
+    def run(self):
+        """Start the OSD and run until killed."""
+        # Initialize GTK
+        Gtk.init()
+        
+        # Load CSS
+        load_css()
+        
+        # Create window (hidden in daemon mode)
+        self.window = OSDWindow(self.visualization, self.width, self.height)
+        
+        # Start theme watcher for live theme updates
+        self.theme_watcher = ThemeWatcher(on_theme_changed=self._on_theme_changed)
+        self.theme_watcher.start()
+        
+        if self.daemon:
+            # Start hidden, wait for SIGUSR1
+            self.window.set_visible(False)
+        else:
+            # Show immediately
+            self._show()
+        
+        # Create main loop
+        self.main_loop = GLib.MainLoop()
+        
+        try:
+            self.main_loop.run()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._cleanup()
+    
+    def _show(self):
+        """Show the OSD and start audio monitoring."""
+        if self.visible:
+            return
+        
+        self.visible = True
+        self.window.set_visible(True)
+        
+        # Start audio monitoring
+        if not self.audio_monitor:
+            self.audio_monitor = AudioMonitor(samplerate=44100, blocksize=1024)
+        self.audio_monitor.start()
+        
+        # Start update timer (60 FPS)
+        if not self.update_timer_id:
+            self.update_timer_id = GLib.timeout_add(16, self._update)
+    
+    def _hide(self):
+        """Hide the OSD and stop audio monitoring."""
+        if not self.visible:
+            return
+        
+        self.visible = False
+        self.window.set_visible(False)
+        
+        # Stop update timer
+        if self.update_timer_id:
+            GLib.source_remove(self.update_timer_id)
+            self.update_timer_id = None
+        
+        # Stop audio monitoring
+        if self.audio_monitor:
+            self.audio_monitor.stop()
+    
+    def _update(self):
+        """Update visualization with current audio data."""
+        if self.audio_monitor and self.window and self.visible:
+            level = self.audio_monitor.get_level()
+            samples = self.audio_monitor.get_samples()
+            self.window.update(level, samples)
+        return True  # Continue timer
+    
+    def _on_theme_changed(self):
+        """Called when the Omarchy theme changes."""
+        # Force a redraw to pick up new colors
+        if self.window:
+            self.window.drawing_area.queue_draw()
+    
+    def stop(self):
+        """Stop the OSD completely."""
+        if self.main_loop:
+            self.main_loop.quit()
+    
+    def _cleanup(self):
+        """Clean up resources."""
+        if self.update_timer_id:
+            GLib.source_remove(self.update_timer_id)
+            self.update_timer_id = None
+        
+        if self.audio_monitor:
+            self.audio_monitor.stop()
+            self.audio_monitor = None
+        
+        if self.theme_watcher:
+            self.theme_watcher.stop()
+            self.theme_watcher = None
+
+
+# Global instance for signal handlers
+_app = None
+
+
+def _signal_handler(signum, frame):
+    """Handle SIGTERM/SIGINT - quit."""
+    if _app:
+        _app.stop()
+
+
+def _sigusr1_handler(signum, frame):
+    """Handle SIGUSR1 - show OSD."""
+    if _app:
+        GLib.idle_add(_app._show)
+
+
+def _sigusr2_handler(signum, frame):
+    """Handle SIGUSR2 - hide OSD."""
+    if _app:
+        GLib.idle_add(_app._hide)
+
+
+def main():
+    """Entry point."""
+    global _app
+    
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="mic-osd",
+        description="Show microphone input visualization overlay"
+    )
+    parser.add_argument(
+        "-v", "--viz",
+        choices=["waveform", "vu_meter"],
+        default="waveform",
+        help="Visualization type (default: waveform)"
+    )
+    parser.add_argument(
+        "-w", "--width",
+        type=int,
+        default=400,
+        help="Window width (default: 400)"
+    )
+    parser.add_argument(
+        "-H", "--height",
+        type=int,
+        default=68,
+        help="Window height (default: 68)"
+    )
+    parser.add_argument(
+        "-d", "--daemon",
+        action="store_true",
+        help="Run as daemon (start hidden, show on SIGUSR1, hide on SIGUSR2)"
+    )
+    args = parser.parse_args()
+    
+    # Set up signal handlers
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGUSR1, _sigusr1_handler)
+    signal.signal(signal.SIGUSR2, _sigusr2_handler)
+    
+    # Run
+    _app = MicOSD(
+        visualization=args.viz,
+        width=args.width,
+        height=args.height,
+        daemon=args.daemon
+    )
+    _app.run()
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

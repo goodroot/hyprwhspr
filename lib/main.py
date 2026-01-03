@@ -111,6 +111,18 @@ class hyprwhsprApp:
         # Set up device hotplug monitoring (for automatic mic recovery)
         self._setup_device_monitor()
 
+        # Pre-initialize mic-osd daemon (eliminates latency on recording)
+        self._mic_osd_runner = None
+        if self.config.get_setting('mic_osd_enabled', True):
+            try:
+                from mic_osd import MicOSDRunner
+                runner = MicOSDRunner()
+                if runner.is_available():
+                    if runner._ensure_daemon():  # Start daemon now
+                        self._mic_osd_runner = runner
+            except Exception:
+                pass
+
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
 
@@ -341,6 +353,9 @@ class hyprwhsprApp:
             # Write recording status to file for tray script
             self._write_recording_status(True)
             
+            # Show mic-osd visualization if enabled
+            self._show_mic_osd()
+            
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
             
@@ -456,6 +471,9 @@ class hyprwhsprApp:
 
         try:
             self.is_recording = False
+            
+            # Hide mic-osd visualization
+            self._hide_mic_osd()
             
             # Stop audio level monitoring
             self._stop_audio_level_monitoring()
@@ -623,6 +641,20 @@ class hyprwhsprApp:
                     RECORDING_STATUS_FILE.unlink()
         except Exception as e:
             print(f"[WARN] Failed to write recording status: {e}")
+
+    def _show_mic_osd(self):
+        """Show mic-osd visualization overlay"""
+        if self._mic_osd_runner and self._mic_osd_runner.is_available():
+            self._mic_osd_runner.show()
+
+    def _hide_mic_osd(self):
+        """Hide mic-osd visualization overlay"""
+        runner = getattr(self, '_mic_osd_runner', None)
+        if runner:
+            try:
+                runner.hide()
+            except Exception:
+                pass
 
     def _write_recovery_result(self, success, reason):
         """Write recovery result to file for tray script notification"""
@@ -867,6 +899,16 @@ class hyprwhsprApp:
     def _cleanup(self):
         """Clean up resources when shutting down"""
         try:
+            # Hide mic-osd overlay if visible
+            self._hide_mic_osd()
+            
+            # Stop mic-osd daemon
+            if hasattr(self, '_mic_osd_runner') and self._mic_osd_runner:
+                try:
+                    self._mic_osd_runner.stop()
+                except Exception:
+                    pass  # Silently fail - daemon cleanup is best-effort
+            
             # Stop device monitor
             if hasattr(self, 'device_monitor') and self.device_monitor:
                 self.device_monitor.stop()

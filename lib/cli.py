@@ -21,6 +21,7 @@ from cli_commands import (
     setup_command,
     config_command,
     waybar_command,
+    mic_osd_command,
     systemd_command,
     model_command,
     status_command,
@@ -71,6 +72,13 @@ def main():
     waybar_subparsers.add_parser('install', help='Add module to waybar config')
     waybar_subparsers.add_parser('remove', help='Remove module from waybar config')
     waybar_subparsers.add_parser('status', help='Check if waybar is configured')
+    
+    # mic-osd command
+    mic_osd_parser = subparsers.add_parser('mic-osd', help='Microphone visualization overlay')
+    mic_osd_subparsers = mic_osd_parser.add_subparsers(dest='mic_osd_action', help='Mic-OSD actions')
+    mic_osd_subparsers.add_parser('enable', help='Enable visualization during recording')
+    mic_osd_subparsers.add_parser('disable', help='Disable visualization')
+    mic_osd_subparsers.add_parser('status', help='Check mic-osd status')
     
     # systemd command
     systemd_parser = subparsers.add_parser('systemd', help='Systemd service management')
@@ -158,6 +166,11 @@ def main():
                 waybar_parser.print_help()
                 sys.exit(1)
             waybar_command(args.waybar_action)
+        elif args.command == 'mic-osd':
+            if not args.mic_osd_action:
+                mic_osd_parser.print_help()
+                sys.exit(1)
+            mic_osd_command(args.mic_osd_action)
         elif args.command == 'systemd':
             if not args.systemd_action:
                 systemd_parser.print_help()

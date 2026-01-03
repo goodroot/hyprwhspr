@@ -1092,6 +1092,31 @@ def setup_command():
         print("\nWaybar configuration not found.")
         setup_waybar_choice = Confirm.ask("Set up Waybar integration anyway?", default=False)
     
+    # Step 3b: Mic-OSD setup
+    print("\n" + "="*60)
+    print("Mic-OSD Visualization")
+    print("="*60)
+    print("\nShows a visual overlay during recording with animated bars")
+    print("and a pulsing indicator. Requires GTK4 and gtk4-layer-shell.")
+    
+    # Check if dependencies are available
+    mic_osd_available = False
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent))
+        from mic_osd import MicOSDRunner
+        mic_osd_available = MicOSDRunner.is_available()
+        if not mic_osd_available:
+            print(f"\nNote: {MicOSDRunner.get_unavailable_reason()}")
+    except ImportError:
+        pass
+    
+    if mic_osd_available:
+        setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=True)
+    else:
+        print("\nDependencies not found. Install python-gobject and gtk4-layer-shell to enable.")
+        setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
+    
     # Step 4: Systemd setup
     print("\n" + "="*60)
     print("Systemd Service")
@@ -1148,6 +1173,7 @@ def setup_command():
     elif selected_model:
         print(f"Model: {selected_model}")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
+    print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
     if backend == 'parakeet':
         if setup_systemd_choice:
             print("Systemd services: Yes (ydotool + Parakeet + hyprwhspr)")
@@ -1188,6 +1214,13 @@ def setup_command():
             setup_waybar('install')
         else:
             log_info("Skipping Waybar integration")
+        
+        # Step 2b: Mic-OSD
+        if setup_mic_osd_choice:
+            mic_osd_enable()
+        else:
+            mic_osd_disable()
+            log_info("Mic-OSD visualization disabled")
         
         # Step 3: Systemd
         if setup_systemd_choice:
@@ -1880,6 +1913,89 @@ def waybar_status():
     except IOError as e:
         log_error(f"Failed to check waybar status: {e}")
         return False
+
+
+# ==================== Mic-OSD Commands ====================
+
+def mic_osd_command(action: str):
+    """Handle mic-osd subcommands"""
+    if action == 'enable':
+        mic_osd_enable()
+    elif action == 'disable':
+        mic_osd_disable()
+    elif action == 'status':
+        mic_osd_status()
+    else:
+        log_error(f"Unknown mic-osd action: {action}")
+
+
+def mic_osd_enable():
+    """Enable the mic-osd visualization overlay"""
+    # Check if dependencies are available
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from mic_osd import MicOSDRunner
+        
+        if not MicOSDRunner.is_available():
+            reason = MicOSDRunner.get_unavailable_reason()
+            log_error(f"Cannot enable mic-osd: {reason}")
+            log_info("Install required packages: python-gobject gtk4-layer-shell")
+            return False
+    except ImportError:
+        log_error("mic-osd module not found")
+        return False
+    
+    # Update config
+    config = ConfigManager()
+    config.set_setting('mic_osd_enabled', True)
+    config.save_config()
+    log_success("Mic-OSD visualization enabled")
+    log_info("The overlay will show during recording when the service is running")
+    return True
+
+
+def mic_osd_disable():
+    """Disable the mic-osd visualization overlay"""
+    config = ConfigManager()
+    config.set_setting('mic_osd_enabled', False)
+    config.save_config()
+    log_success("Mic-OSD visualization disabled")
+    return True
+
+
+def mic_osd_status():
+    """Check mic-osd status"""
+    config = ConfigManager()
+    enabled = config.get_setting('mic_osd_enabled', True)
+    
+    # Check dependencies
+    deps_available = False
+    deps_reason = ""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from mic_osd import MicOSDRunner
+        deps_available = MicOSDRunner.is_available()
+        if not deps_available:
+            deps_reason = MicOSDRunner.get_unavailable_reason()
+    except ImportError:
+        deps_reason = "mic_osd module not found"
+    
+    print("\nMic-OSD Status:")
+    print(f"  Enabled in config: {'Yes' if enabled else 'No'}")
+    print(f"  Dependencies available: {'Yes' if deps_available else 'No'}")
+    
+    if deps_available:
+        if enabled:
+            log_success("Mic-OSD will show during recording")
+        else:
+            log_info("Mic-OSD is disabled (use 'hyprwhspr mic-osd enable' to enable)")
+    else:
+        log_warning(f"Mic-OSD cannot run: {deps_reason}")
+        log_info("Install required packages: python-gobject gtk4-layer-shell")
+    
+    return enabled and deps_available
 
 
 # ==================== Model Commands ====================
