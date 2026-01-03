@@ -100,6 +100,11 @@ class hyprwhsprApp:
         # Lock for hotplug event debouncing (protects read-modify-write on _last_hotplug_add_time)
         self._hotplug_lock = threading.Lock()
 
+        # Background recovery retry state (for suspend/resume)
+        self._background_recovery_needed = threading.Event()  # Signal that recovery should be retried
+        self._background_recovery_thread = None  # Background thread handle
+        self._background_recovery_stop = threading.Event()  # Signal to stop background recovery
+
         # Hybrid tap/hold mode state tracking (auto mode)
         recording_mode = self.config.get_setting('recording_mode', 'toggle')
         if recording_mode == 'auto':
@@ -279,6 +284,8 @@ class hyprwhsprApp:
                     self._write_recovery_result(True, 'hotplug')
                     # Clear disconnected flag - microphone is back
                     self._mic_disconnected = False
+                    # Clear background recovery flag (hotplug succeeded, no need to retry)
+                    self._background_recovery_needed.clear()
                 else:
                     print(f"[HOTPLUG] Recovery failed - microphone may not be fully initialized", flush=True)
                     self._write_recovery_result(False, 'hotplug')
@@ -944,6 +951,9 @@ class hyprwhsprApp:
             # Clear disconnected flag - microphone is back
             self._mic_disconnected = False
 
+            # Clear background recovery flag (manual recovery succeeded, no need to retry)
+            self._background_recovery_needed.clear()
+
             # After successful audio recovery, also reinitialize model if needed
             # This handles suspend/resume cases where CUDA context is invalid
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
@@ -1003,31 +1013,135 @@ class hyprwhsprApp:
         try:
             print("[SUSPEND] System resumed from suspend", flush=True)
 
-            # Trigger full recovery after brief delay
-            print("[SUSPEND] Triggering post-resume recovery in 2s (let drivers settle)...", flush=True)
+            # Try immediate recovery first (quick attempt)
+            print("[SUSPEND] Attempting immediate recovery...", flush=True)
             time.sleep(2)  # Give audio/GPU drivers time to reinitialize
 
             if self.audio_capture.recover_audio_capture('post_suspend_resume'):
-                print("[SUSPEND] Audio recovery successful", flush=True)
-                self._write_recovery_result(True, 'suspend_resume')
+                print("[SUSPEND] Immediate recovery successful", flush=True)
 
                 # Reinitialize model for pywhispercpp (CUDA context)
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+                backend_reinit_success = True
                 if backend == 'pywhispercpp':
                     print("[SUSPEND] Reinitializing model (CUDA context)", flush=True)
-                    self.whisper_manager._reinitialize_model()
+                    if not self.whisper_manager._reinitialize_model():
+                        print("[SUSPEND] Failed to reinitialize model", flush=True)
+                        backend_reinit_success = False
 
                 # Reconnect WebSocket for realtime-ws
                 if backend == 'realtime-ws':
                     print("[SUSPEND] Reinitializing WebSocket connection", flush=True)
                     if not self.whisper_manager.initialize():
                         print("[SUSPEND] Failed to reinitialize WebSocket", flush=True)
+                        backend_reinit_success = False
+
+                # Write recovery result and clear background recovery flag only after ALL recovery steps complete successfully
+                if backend_reinit_success:
+                    self._write_recovery_result(True, 'suspend_resume')
+                    # Clear disconnected flag - microphone is back
+                    self._mic_disconnected = False
+                    self._background_recovery_needed.clear()
+                else:
+                    # Backend reinitialization failed - write failure result and signal that recovery is still needed
+                    if backend == 'pywhispercpp':
+                        self._write_recovery_result(False, 'suspend_resume_model')
+                    else:
                         self._write_recovery_result(False, 'suspend_resume_websocket')
+                    self._background_recovery_needed.set()
+                    # Start background recovery thread if not already running
+                    if self._background_recovery_thread is None or not self._background_recovery_thread.is_alive():
+                        self._background_recovery_thread = threading.Thread(
+                            target=self._background_recovery_retry,
+                            daemon=True
+                        )
+                        self._background_recovery_thread.start()
+                        print("[SUSPEND] Background recovery thread started (backend reinit failed)", flush=True)
             else:
-                print("[SUSPEND] Audio recovery failed", flush=True)
-                self._write_recovery_result(False, 'suspend_resume')
+                # Immediate recovery failed - start background retry
+                print("[SUSPEND] Immediate recovery failed - starting background retry (6 attempts over 30s)", flush=True)
+
+                # Signal that recovery is needed
+                self._background_recovery_needed.set()
+
+                # Start background recovery thread if not already running
+                if self._background_recovery_thread is None or not self._background_recovery_thread.is_alive():
+                    self._background_recovery_thread = threading.Thread(
+                        target=self._background_recovery_retry,
+                        daemon=True
+                    )
+                    self._background_recovery_thread.start()
+                    print("[SUSPEND] Background recovery thread started", flush=True)
         except Exception as e:
             print(f"[SUSPEND] Error handling resume: {e}", flush=True)
+
+    def _background_recovery_retry(self):
+        """
+        Background thread that retries recovery after suspend/resume.
+        Retries every 5 seconds for up to 30 seconds (6 attempts).
+        """
+        max_attempts = 6
+        retry_interval = 5  # seconds
+
+        for attempt in range(1, max_attempts + 1):
+            # Check if we should stop (service shutting down)
+            if self._background_recovery_stop.is_set():
+                print("[RECOVERY] Background recovery stopped", flush=True)
+                return
+
+            # Check if recovery is no longer needed (user manually recovered or hotplug succeeded)
+            if not self._background_recovery_needed.is_set():
+                print("[RECOVERY] Background recovery no longer needed", flush=True)
+                return
+
+            print(f"[RECOVERY] Background retry attempt {attempt}/{max_attempts}", flush=True)
+
+            # Attempt recovery
+            if self.audio_capture.recover_audio_capture(f'background_retry_{attempt}'):
+                print("[RECOVERY] Background recovery successful!", flush=True)
+
+                # Reinitialize model for pywhispercpp (CUDA context)
+                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+                backend_reinit_success = True
+                if backend == 'pywhispercpp':
+                    print("[RECOVERY] Reinitializing model (CUDA context)", flush=True)
+                    if not self.whisper_manager._reinitialize_model():
+                        print("[RECOVERY] Failed to reinitialize model", flush=True)
+                        backend_reinit_success = False
+
+                # Reconnect WebSocket for realtime-ws
+                if backend == 'realtime-ws':
+                    print("[RECOVERY] Reinitializing WebSocket connection", flush=True)
+                    if not self.whisper_manager.initialize():
+                        print("[RECOVERY] Failed to reinitialize WebSocket", flush=True)
+                        backend_reinit_success = False
+
+                # Write recovery result and clear background recovery flag only after ALL recovery steps complete successfully
+                if backend_reinit_success:
+                    self._write_recovery_result(True, 'background_retry')
+                    # Clear disconnected flag - microphone is back
+                    self._mic_disconnected = False
+                    self._background_recovery_needed.clear()
+                    return  # Success, exit
+                else:
+                    # Backend reinitialization failed - continue retrying
+                    print("[RECOVERY] Backend reinitialization failed, will retry...", flush=True)
+                    # Don't write result yet - will retry or write failure after all attempts
+                    # Don't return - continue to next iteration
+
+            # Recovery failed, wait before next attempt (unless this was the last attempt)
+            if attempt < max_attempts:
+                print(f"[RECOVERY] Retry failed, waiting {retry_interval}s before next attempt...", flush=True)
+                # Sleep in small increments to allow early exit if stop is signaled
+                for _ in range(retry_interval):
+                    if self._background_recovery_stop.is_set() or not self._background_recovery_needed.is_set():
+                        return
+                    time.sleep(1)
+
+        # All attempts failed
+        print("[RECOVERY] Background recovery failed after all attempts - mic will need manual reseat", flush=True)
+        self._write_recovery_result(False, 'background_retry_exhausted')
+        self._background_recovery_needed.clear()
 
     def run(self):
         """Start the application"""
@@ -1084,6 +1198,13 @@ class hyprwhsprApp:
     def _cleanup(self):
         """Clean up resources when shutting down"""
         try:
+            # Stop background recovery thread
+            if hasattr(self, '_background_recovery_stop'):
+                self._background_recovery_stop.set()
+                if hasattr(self, '_background_recovery_thread') and self._background_recovery_thread and self._background_recovery_thread.is_alive():
+                    print("[SHUTDOWN] Stopping background recovery thread...", flush=True)
+                    self._background_recovery_thread.join(timeout=2.0)
+
             # Hide mic-osd overlay if visible
             self._hide_mic_osd()
             
