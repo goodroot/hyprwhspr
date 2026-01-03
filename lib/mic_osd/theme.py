@@ -186,3 +186,66 @@ class Theme:
 
 # Global theme instance
 theme = Theme()
+
+
+class ThemeWatcher:
+    """
+    Watches the Omarchy theme directory for changes and reloads the theme.
+    
+    Uses GLib.FileMonitor (inotify on Linux) for efficient file watching.
+    """
+    
+    def __init__(self, on_theme_changed=None):
+        """
+        Initialize the theme watcher.
+        
+        Args:
+            on_theme_changed: Optional callback to invoke after theme reload
+        """
+        self._monitor = None
+        self._on_theme_changed = on_theme_changed
+    
+    def start(self):
+        """Start watching the theme directory."""
+        # Import here to avoid circular imports and allow non-GTK usage
+        from gi.repository import Gio, GLib
+        
+        theme_dir = Path.home() / '.config' / 'omarchy' / 'current' / 'theme'
+        
+        if not theme_dir.exists():
+            return False
+        
+        try:
+            gfile = Gio.File.new_for_path(str(theme_dir))
+            self._monitor = gfile.monitor_directory(
+                Gio.FileMonitorFlags.NONE,
+                None
+            )
+            self._monitor.connect('changed', self._on_file_changed)
+            return True
+        except Exception:
+            return False
+    
+    def stop(self):
+        """Stop watching the theme directory."""
+        if self._monitor:
+            self._monitor.cancel()
+            self._monitor = None
+    
+    def _on_file_changed(self, monitor, file, other_file, event_type):
+        """Handle file change events."""
+        from gi.repository import Gio, GLib
+        
+        # Only react to changes done (not every write event)
+        if event_type == Gio.FileMonitorEvent.CHANGES_DONE_HINT:
+            filename = file.get_basename()
+            # Only reload for relevant files
+            if filename in ('swayosd.css', 'mic-osd.css'):
+                GLib.idle_add(self._reload_theme)
+    
+    def _reload_theme(self):
+        """Reload theme on main thread."""
+        theme.reload()
+        if self._on_theme_changed:
+            self._on_theme_changed()
+        return False  # Don't repeat

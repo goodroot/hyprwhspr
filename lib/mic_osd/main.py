@@ -17,6 +17,7 @@ from gi.repository import Gtk, GLib
 from .window import OSDWindow, load_css
 from .audio import AudioMonitor
 from .visualizations import VISUALIZATIONS
+from .theme import ThemeWatcher
 
 
 class MicOSD:
@@ -31,6 +32,7 @@ class MicOSD:
         self.update_timer_id = None
         self.daemon = daemon
         self.visible = False
+        self.theme_watcher = None
         
         # Get visualization
         viz_class = VISUALIZATIONS.get(visualization, VISUALIZATIONS["waveform"])
@@ -48,6 +50,10 @@ class MicOSD:
         
         # Create window (hidden in daemon mode)
         self.window = OSDWindow(self.visualization, self.width, self.height)
+        
+        # Start theme watcher for live theme updates
+        self.theme_watcher = ThemeWatcher(on_theme_changed=self._on_theme_changed)
+        self.theme_watcher.start()
         
         if self.daemon:
             # Start hidden, wait for SIGUSR1
@@ -108,6 +114,12 @@ class MicOSD:
             self.window.update(level, samples)
         return True  # Continue timer
     
+    def _on_theme_changed(self):
+        """Called when the Omarchy theme changes."""
+        # Force a redraw to pick up new colors
+        if self.window:
+            self.window.drawing_area.queue_draw()
+    
     def stop(self):
         """Stop the OSD completely."""
         if self.main_loop:
@@ -122,6 +134,10 @@ class MicOSD:
         if self.audio_monitor:
             self.audio_monitor.stop()
             self.audio_monitor = None
+        
+        if self.theme_watcher:
+            self.theme_watcher.stop()
+            self.theme_watcher = None
 
 
 # Global instance for signal handlers
