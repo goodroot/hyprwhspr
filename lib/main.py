@@ -432,12 +432,17 @@ class hyprwhsprApp:
                     
             except (RuntimeError, Exception) as e:
                 print(f"[ERROR] Failed to start recording: {e}", flush=True)
+
+                # Clean up resources
+                self._hide_mic_osd()
+                self._stop_audio_level_monitoring()
+
                 # Stop recording (will clean up if thread started)
                 try:
                     self.audio_capture.stop_recording()
                 except Exception:
                     pass  # Ignore if already stopped
-                
+
                 # Reset state - fail fast, don't attempt recovery
                 self.is_recording = False
                 self._write_recording_status(False)
@@ -446,6 +451,11 @@ class hyprwhsprApp:
             
         except Exception as e:
             print(f"[ERROR] Failed to start recording: {e}", flush=True)
+
+            # Clean up resources
+            self._hide_mic_osd()
+            self._stop_audio_level_monitoring()
+
             self.is_recording = False
             self._write_recording_status(False)
 
@@ -456,6 +466,7 @@ class hyprwhsprApp:
 
         try:
             self.is_recording = False
+            self._hide_mic_osd()
             self._stop_audio_level_monitoring()
             self._write_recording_status(False)
             self.audio_capture.stop_recording()
@@ -463,6 +474,13 @@ class hyprwhsprApp:
             self._notify_user("hyprwhspr", "Microphone muted - recording canceled", "normal")
         except Exception as e:
             print(f"[ERROR] Error canceling recording: {e}")
+            # Ensure cleanup even if error occurs
+            try:
+                self._hide_mic_osd()
+                self._stop_audio_level_monitoring()
+                self._write_recording_status(False)
+            except Exception:
+                pass  # Best effort cleanup
 
     def _stop_recording(self):
         """Stop voice recording and process audio"""
@@ -511,7 +529,15 @@ class hyprwhsprApp:
                 self._process_audio(audio_data)
                 
         except Exception as e:
-            print(f"[ERROR] Error stopping recording: {e}")
+            print(f"[ERROR] Error stopping recording: {e}", flush=True)
+            # Ensure cleanup even if error occurs
+            try:
+                self.is_recording = False
+                self._hide_mic_osd()
+                self._stop_audio_level_monitoring()
+                self._write_recording_status(False)
+            except Exception:
+                pass  # Best effort cleanup
 
     def _process_audio(self, audio_data):
         """Process captured audio through Whisper"""
