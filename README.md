@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | most accurate local models | realtime cloud streaming | themed visuals | supports any cloud provider
+    instant performance | most accurate local models | realtime cloud streaming | themed visuals
 </p>
 
  <p align="center">
@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Latest local models with GPU support**: Whisper turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
-- **Themed visualizer** - Visual feedback when recording, matched to your Omarcy theme
+- **Themed visualizer via mic-osd** - Visual feedback when recording, matched to your Omarcy theme
 - **Supports any cloud API** -  Use a cloud stt service or any custom localhost model
 - **Word overrides and multi-language** - Customize transcriptions, prompt and corrections, in your language
 - **Auto-paste anywhere** - Pastes in active buffer without additional keypresses
