@@ -721,12 +721,21 @@ class AudioCapture:
             if self.record_thread and self.record_thread.is_alive():
                 self.record_thread.join(timeout=2.0)
                 if self.record_thread.is_alive():
-                    # This is expected during recovery of a dead device (stream.close() hangs)
-                    # Only log at INFO level - not an error, just device unresponsiveness
-                    print("[RECOVERY] Note: Recording thread cleanup in progress (device unresponsive)", flush=True)
-                    # Can't proceed safely with a stuck thread - abort recovery
-                    # The thread will eventually exit when the stream times out, but we can't continue recovery now
-                    return False
+                    # Thread is stuck (likely in stream.stop() or stream.close() waiting for dead device)
+                    # This is expected during recovery of a truly dead/unplugged device
+                    print("[RECOVERY] Warning: Recording thread stuck in cleanup (device unresponsive)", flush=True)
+
+                    # Try waiting longer before giving up
+                    print("[RECOVERY] Waiting additional 3 seconds for thread cleanup...", flush=True)
+                    self.record_thread.join(timeout=3.0)
+
+                    if self.record_thread.is_alive():
+                        # Still stuck after 5 total seconds - this is a zombie thread
+                        # Abandon it and proceed with recovery anyway
+                        # The zombie thread will eventually time out and die on its own
+                        print("[RECOVERY] Thread still stuck - abandoning zombie thread and proceeding with recovery", flush=True)
+                        print("[RECOVERY] Note: If issues persist, restart the service", flush=True)
+                        self.record_thread = None  # Abandon reference to stuck thread
             
             # Reset tracking
             with self.lock:
