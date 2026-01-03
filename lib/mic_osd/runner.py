@@ -11,6 +11,13 @@ import sys
 import os
 from pathlib import Path
 
+# Import PID file path
+try:
+    from ..src.paths import MIC_OSD_PID_FILE
+except ImportError:
+    # Fallback for direct execution
+    from src.paths import MIC_OSD_PID_FILE
+
 
 class MicOSDRunner:
     """
@@ -22,6 +29,7 @@ class MicOSDRunner:
     def __init__(self):
         self._process = None
         self._mic_osd_dir = Path(__file__).parent
+        self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
     
     @staticmethod
     def is_available() -> bool:
@@ -50,9 +58,35 @@ class MicOSDRunner:
     
     def _ensure_daemon(self):
         """Ensure the daemon process is running."""
+        # Check in-memory reference first
         if self._process is not None and self._process.poll() is None:
             return True  # Already running
-        
+
+        # Check PID file for orphaned daemon (from previous crash)
+        if MIC_OSD_PID_FILE.exists():
+            try:
+                pid = int(MIC_OSD_PID_FILE.read_text().strip())
+                # Check if process still exists (signal 0 = existence check)
+                os.kill(pid, 0)
+                print(f"[MIC-OSD] Found orphaned daemon (PID {pid}), reusing it")
+                # Create dummy process reference (we can't use wait() on it)
+                # The actual daemon PID is tracked in _orphaned_daemon_pid
+                self._process = subprocess.Popen(
+                    ['true'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                # Note: Cannot override self._process.pid (read-only), so we track it separately
+                self._orphaned_daemon_pid = pid  # Track that we're using an orphaned daemon
+                return True
+            except (ValueError, ProcessLookupError, PermissionError):
+                # Stale PID file, clean it up
+                print("[MIC-OSD] Cleaning up stale PID file")
+                try:
+                    MIC_OSD_PID_FILE.unlink()
+                except Exception:
+                    pass
+
         # Build the Python code to run
         lib_dir = self._mic_osd_dir.parent
         code = f"""
@@ -62,11 +96,11 @@ from mic_osd.main import main
 sys.argv = ['mic-osd', '--daemon']
 sys.exit(main())
 """
-        
+
         # Set LD_PRELOAD for gtk4-layer-shell
         env = os.environ.copy()
         env['LD_PRELOAD'] = '/usr/lib/libgtk4-layer-shell.so'
-        
+
         try:
             self._process = subprocess.Popen(
                 ['/usr/bin/python3', '-c', code],
@@ -75,6 +109,14 @@ sys.exit(main())
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
+
+            # Write PID file
+            MIC_OSD_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+            MIC_OSD_PID_FILE.write_text(str(self._process.pid))
+
+            # Clear orphaned daemon flag since we created a new daemon
+            self._orphaned_daemon_pid = None
+
             return True
         except Exception:
             self._process = None
@@ -89,33 +131,72 @@ sys.exit(main())
             return False
         
         try:
-            os.kill(self._process.pid, signal.SIGUSR1)
+            # For orphaned daemons, use the tracked PID
+            pid = self._orphaned_daemon_pid if self._orphaned_daemon_pid is not None else self._process.pid
+            os.kill(pid, signal.SIGUSR1)
             return True
         except (ProcessLookupError, OSError):
             self._process = None
+            self._orphaned_daemon_pid = None
             return False
     
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
-        if self._process is None or self._process.poll() is not None:
+        if self._process is None:
+            return
+        
+        # For orphaned daemons, check PID directly instead of poll()
+        # (poll() returns exit code of dummy process, not the actual daemon)
+        if self._orphaned_daemon_pid is not None:
+            try:
+                # Verify the orphaned daemon PID is still alive
+                os.kill(self._orphaned_daemon_pid, 0)
+                # PID exists, send hide signal
+                os.kill(self._orphaned_daemon_pid, signal.SIGUSR2)
+                return
+            except (ProcessLookupError, OSError):
+                # Orphaned daemon is dead, clean up
+                self._process = None
+                self._orphaned_daemon_pid = None
+                return
+        
+        # For normal daemons, use poll() to check if process is alive
+        if self._process.poll() is not None:
             return
         
         try:
             os.kill(self._process.pid, signal.SIGUSR2)
         except (ProcessLookupError, OSError):
             self._process = None
+            self._orphaned_daemon_pid = None
     
     def stop(self):
         """Stop the daemon completely."""
         if self._process is None:
             return
-        
+
         try:
-            os.kill(self._process.pid, signal.SIGTERM)
-            self._process.wait(timeout=1.0)
+            # For orphaned daemons, use the tracked PID
+            pid = self._orphaned_daemon_pid if self._orphaned_daemon_pid is not None else self._process.pid
+            os.kill(pid, signal.SIGTERM)
+            # Only wait if it's a normal process (not orphaned)
+            if self._orphaned_daemon_pid is None:
+                self._process.wait(timeout=1.0)
+            else:
+                # For orphaned daemons, give it a moment to exit
+                import time
+                time.sleep(0.5)
         except subprocess.TimeoutExpired:
-            os.kill(self._process.pid, signal.SIGKILL)
+            pid = self._orphaned_daemon_pid if self._orphaned_daemon_pid is not None else self._process.pid
+            os.kill(pid, signal.SIGKILL)
         except (ProcessLookupError, OSError):
             pass
         finally:
             self._process = None
+            self._orphaned_daemon_pid = None
+            # Clean up PID file
+            if MIC_OSD_PID_FILE.exists():
+                try:
+                    MIC_OSD_PID_FILE.unlink()
+                except Exception:
+                    pass

@@ -139,6 +139,11 @@ class WhisperManager:
                 # Connect
                 if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
                     print('ERROR: Failed to connect to Realtime WebSocket')
+                    # Clean up failed client
+                    try:
+                        self._realtime_client.close()
+                    except Exception:
+                        pass
                     self._realtime_client = None
                     return False
                 

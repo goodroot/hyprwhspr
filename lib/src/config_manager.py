@@ -101,7 +101,13 @@ class ConfigManager:
                     # Remove old push_to_talk key from loaded config
                     del loaded_config['push_to_talk']
                     migration_occurred = True
-                
+
+                # Migrate old audio_device config key to audio_device_id
+                if 'audio_device' in loaded_config and 'audio_device_id' not in loaded_config:
+                    loaded_config['audio_device_id'] = loaded_config['audio_device']
+                    del loaded_config['audio_device']
+                    migration_occurred = True
+
                 # Merge loaded config with defaults (preserving any new default keys)
                 self.config.update(loaded_config)
                 

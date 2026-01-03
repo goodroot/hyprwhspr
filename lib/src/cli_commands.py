@@ -87,6 +87,7 @@ except ImportError:
 # Constants
 HYPRWHSPR_ROOT = os.environ.get('HYPRWHSPR_ROOT', '/usr/lib/hyprwhspr')
 SERVICE_NAME = 'hyprwhspr.service'
+RESUME_SERVICE_NAME = 'hyprwhspr-resume.service'
 PARAKEET_SERVICE_NAME = 'parakeet-tdt-0.6b-v3.service'
 YDOTOOL_UNIT = 'ydotool.service'
 USER_HOME = Path.home()
@@ -1567,12 +1568,36 @@ def setup_systemd(mode: str = 'install'):
         # Write substituted content to user directory
         with open(service_dest, 'w', encoding='utf-8') as f:
             f.write(service_content)
-        
+
         log_success("User service file created with correct paths")
     except IOError as e:
         log_error(f"Failed to read/write service file: {e}")
         return False
-    
+
+    # Install hyprwhspr-resume service (suspend/resume hook)
+    resume_service_source = Path(HYPRWHSPR_ROOT) / 'config' / 'systemd' / RESUME_SERVICE_NAME
+    resume_service_dest = USER_SYSTEMD_DIR / RESUME_SERVICE_NAME
+
+    if resume_service_source.exists():
+        try:
+            # Read template and substitute home directory
+            with open(resume_service_source, 'r', encoding='utf-8') as f:
+                resume_service_content = f.read()
+
+            # Substitute user home directory (service uses ~/.config/hyprwhspr)
+            resume_service_content = resume_service_content.replace('~/', str(USER_HOME) + '/')
+
+            # Write to user systemd directory
+            with open(resume_service_dest, 'w', encoding='utf-8') as f:
+                f.write(resume_service_content)
+
+            log_success("Suspend/resume service file created")
+        except IOError as e:
+            log_warning(f"Failed to install suspend/resume service: {e}")
+            # Non-fatal - main service will still work
+    else:
+        log_warning(f"Suspend/resume service template not found (optional): {resume_service_source}")
+
     # Reload systemd daemon
     run_command(['systemctl', '--user', 'daemon-reload'], check=False)
     
@@ -1581,6 +1606,10 @@ def setup_systemd(mode: str = 'install'):
         run_command(['systemctl', '--user', 'enable', '--now', YDOTOOL_UNIT], check=False)
         if is_parakeet:
             run_command(['systemctl', '--user', 'enable', '--now', PARAKEET_SERVICE_NAME], check=False)
+
+        # Enable suspend/resume service (non-fatal if it fails)
+        if resume_service_dest.exists():
+            run_command(['systemctl', '--user', 'enable', '--now', RESUME_SERVICE_NAME], check=False)
         
         # Check if hyprwhspr service was already running before enabling
         service_was_running = False
@@ -1608,6 +1637,9 @@ def setup_systemd(mode: str = 'install'):
         if is_parakeet:
             run_command(['systemctl', '--user', 'disable', '--now', PARAKEET_SERVICE_NAME], check=False)
         run_command(['systemctl', '--user', 'disable', '--now', SERVICE_NAME], check=False)
+        # Disable suspend/resume service if it exists
+        if resume_service_dest.exists():
+            run_command(['systemctl', '--user', 'disable', '--now', RESUME_SERVICE_NAME], check=False)
         log_success("Systemd user service disabled")
     
     return True
@@ -1618,18 +1650,22 @@ def systemd_status():
     # Check if Parakeet backend is configured
     current_backend = _detect_current_backend()
     is_parakeet = current_backend == 'parakeet'
-    
+
     try:
         if is_parakeet:
-            # Show status for both services
+            # Show status for all services
             log_info("Parakeet service status:")
             run_command(['systemctl', '--user', 'status', PARAKEET_SERVICE_NAME], check=False)
             print()  # Add spacing
-            log_info("hyprwhspr service status:")
-            run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
-        else:
-            # Show status for hyprwhspr only
-            run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
+
+        log_info("hyprwhspr service status:")
+        run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
+        print()  # Add spacing
+
+        # Show suspend/resume service status if it exists
+        if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
+            log_info("Suspend/resume handler status:")
+            run_command(['systemctl', '--user', 'status', RESUME_SERVICE_NAME], check=False)
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to get status: {e}")
 
@@ -2683,6 +2719,8 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     # Systemd services
     if (USER_SYSTEMD_DIR / SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {SERVICE_NAME}")
+    if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
+        items_to_remove.append(f"Systemd service: {RESUME_SERVICE_NAME}")
     if (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {PARAKEET_SERVICE_NAME}")
     
@@ -2758,7 +2796,14 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             run_command(['systemctl', '--user', 'disable', SERVICE_NAME], check=False)
             (USER_SYSTEMD_DIR / SERVICE_NAME).unlink(missing_ok=True)
             log_success(f"Removed {SERVICE_NAME}")
-        
+
+        # Stop and disable hyprwhspr-resume service
+        if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
+            run_command(['systemctl', '--user', 'stop', RESUME_SERVICE_NAME], check=False)
+            run_command(['systemctl', '--user', 'disable', RESUME_SERVICE_NAME], check=False)
+            (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).unlink(missing_ok=True)
+            log_success(f"Removed {RESUME_SERVICE_NAME}")
+
         # Stop and disable Parakeet service
         if (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).exists():
             run_command(['systemctl', '--user', 'stop', PARAKEET_SERVICE_NAME], check=False)

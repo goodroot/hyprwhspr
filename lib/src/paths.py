@@ -21,6 +21,8 @@ AUDIO_LEVEL_FILE = CONFIG_DIR / 'audio_level'
 RECOVERY_REQUESTED_FILE = CONFIG_DIR / 'recovery_requested'
 RECOVERY_RESULT_FILE = CONFIG_DIR / 'recovery_result'
 MIC_ZERO_VOLUME_FILE = CONFIG_DIR / '.mic_zero_volume'
+MIC_OSD_PID_FILE = CONFIG_DIR / 'mic_osd.pid'
+SUSPEND_MARKER_FILE = CONFIG_DIR / '.suspend_marker'
 LOCK_FILE = CONFIG_DIR / 'hyprwhspr.lock'
 
 # Secure credential storage

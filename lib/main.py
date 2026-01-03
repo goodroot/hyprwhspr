@@ -66,7 +66,7 @@ class hyprwhsprApp:
         self.config = ConfigManager()
 
         # Initialize audio capture with configured device
-        audio_device_id = self.config.get_setting('audio_device', None)
+        audio_device_id = self.config.get_setting('audio_device_id', None)
         self.audio_capture = AudioCapture(device_id=audio_device_id, config_manager=self.config)
 
         # Initialize audio feedback manager
@@ -110,6 +110,9 @@ class hyprwhsprApp:
 
         # Set up device hotplug monitoring (for automatic mic recovery)
         self._setup_device_monitor()
+
+        # Set up PulseAudio/PipeWire event monitoring
+        self._setup_pulse_monitor()
 
         # Pre-initialize mic-osd daemon (eliminates latency on recording)
         self._mic_osd_runner = None
@@ -184,6 +187,26 @@ class hyprwhsprApp:
             self.device_monitor = None
             print("[WARN] pyudev not available - audio hotplug detection disabled")
 
+    def _setup_pulse_monitor(self):
+        """Initialize PulseAudio/PipeWire event monitoring"""
+        try:
+            from src.pulse_monitor import PulseAudioMonitor
+            self.pulse_monitor = PulseAudioMonitor(
+                on_default_change_callback=self._on_pulse_default_changed,
+                on_server_restart_callback=self._on_pulse_server_restarted
+            )
+            if self.pulse_monitor.start():
+                print("[INIT] PulseAudio/PipeWire monitoring enabled")
+            else:
+                print("[WARN] Failed to start PulseAudio monitoring")
+                self.pulse_monitor = None
+        except ImportError:
+            self.pulse_monitor = None
+            print("[WARN] pulsectl not available - pulse monitoring disabled")
+        except Exception as e:
+            self.pulse_monitor = None
+            print(f"[WARN] Failed to setup pulse monitor: {e}")
+
     def _on_audio_device_added(self, device):
         """Called when audio device is plugged in"""
         try:
@@ -248,6 +271,38 @@ class hyprwhsprApp:
             # No immediate action needed - recovery will trigger on next recording attempt
         except Exception as e:
             print(f"[HOTPLUG] Error handling device remove: {e}", flush=True)
+
+    def _on_pulse_default_changed(self, new_default_source):
+        """Called when user changes system default microphone via PulseAudio/PipeWire"""
+        try:
+            print(f"[PULSE] Default source changed to: {new_default_source}", flush=True)
+
+            # Check if we're using system default (no specific device configured)
+            if self.config.get_setting('audio_device_id', None) is None:
+                print("[PULSE] Re-enumerating devices (no specific device configured, using system default)")
+                # Re-initialize audio capture to pick up new default
+                self.audio_capture._initialize_sounddevice()
+            else:
+                print("[PULSE] Specific device configured, ignoring system default change")
+        except Exception as e:
+            print(f"[PULSE] Error handling default source change: {e}", flush=True)
+
+    def _on_pulse_server_restarted(self):
+        """Called when PulseAudio/PipeWire server restarts"""
+        try:
+            print("[PULSE] Audio server restarted - recovering audio capture", flush=True)
+
+            # Give audio server time to fully initialize
+            time.sleep(1)
+
+            if self.audio_capture.recover_audio_capture('pulse_server_restart'):
+                print("[PULSE] Recovery successful after server restart", flush=True)
+                self._write_recovery_result(True, 'pulse_restart')
+            else:
+                print("[PULSE] Recovery failed after server restart", flush=True)
+                self._write_recovery_result(False, 'pulse_restart')
+        except Exception as e:
+            print(f"[PULSE] Error handling server restart: {e}", flush=True)
 
     def _on_shortcut_triggered(self):
         """Handle global shortcut trigger (key press)"""
@@ -437,6 +492,12 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
 
+                # Close WebSocket if using realtime-ws backend
+                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
+                    print("[CLEANUP] Closing WebSocket after recording start failure", flush=True)
+                    self.whisper_manager._cleanup_realtime_client()
+
                 # Stop recording (will clean up if thread started)
                 try:
                     self.audio_capture.stop_recording()
@@ -455,6 +516,12 @@ class hyprwhsprApp:
             # Clean up resources
             self._hide_mic_osd()
             self._stop_audio_level_monitoring()
+
+            # Close WebSocket if using realtime-ws backend
+            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
+                print("[CLEANUP] Closing WebSocket after recording start failure", flush=True)
+                self.whisper_manager._cleanup_realtime_client()
 
             self.is_recording = False
             self._write_recording_status(False)
@@ -536,6 +603,12 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
+
+                # Close WebSocket if using realtime-ws backend
+                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
+                    print("[CLEANUP] Closing WebSocket after recording stop error", flush=True)
+                    self.whisper_manager._cleanup_realtime_client()
             except Exception:
                 pass  # Best effort cleanup
 
@@ -874,6 +947,56 @@ class hyprwhsprApp:
 
             # Keep flag set - recovery was attempted and failed, don't retry
 
+    def _check_suspend_resume(self):
+        """Detect suspend/resume via marker file and trigger recovery"""
+        from src.paths import SUSPEND_MARKER_FILE
+
+        # Check if suspend marker exists
+        suspend_active = SUSPEND_MARKER_FILE.exists()
+
+        if suspend_active and not hasattr(self, '_suspend_detected'):
+            self._suspend_detected = False
+
+        if suspend_active and not self._suspend_detected:
+            # Entering suspend
+            print("[SUSPEND] System suspend detected", flush=True)
+            self._suspend_detected = True
+
+            # Close WebSocket connections preemptively (avoid timeout errors)
+            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
+                print("[SUSPEND] Closing WebSocket before suspend", flush=True)
+                self.whisper_manager._cleanup_realtime_client()
+
+        elif not suspend_active and hasattr(self, '_suspend_detected') and self._suspend_detected:
+            # Resumed from suspend
+            print("[SUSPEND] Resume from suspend detected", flush=True)
+            self._suspend_detected = False
+
+            # Trigger full recovery after brief delay
+            print("[SUSPEND] Triggering post-resume recovery in 2s (let drivers settle)...", flush=True)
+            time.sleep(2)  # Give audio/GPU drivers time to reinitialize
+
+            if self.audio_capture.recover_audio_capture('post_suspend_resume'):
+                print("[SUSPEND] Audio recovery successful", flush=True)
+                self._write_recovery_result(True, 'suspend_resume')
+
+                # Reinitialize model for pywhispercpp (CUDA context)
+                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+                if backend == 'pywhispercpp':
+                    print("[SUSPEND] Reinitializing model (CUDA context)", flush=True)
+                    self.whisper_manager._reinitialize_model()
+
+                # Reconnect WebSocket for realtime-ws
+                if backend == 'realtime-ws':
+                    print("[SUSPEND] Reinitializing WebSocket connection", flush=True)
+                    if not self.whisper_manager.initialize():
+                        print("[SUSPEND] Failed to reinitialize WebSocket", flush=True)
+                        self._write_recovery_result(False, 'suspend_resume_websocket')
+            else:
+                print("[SUSPEND] Audio recovery failed", flush=True)
+                self._write_recovery_result(False, 'suspend_resume')
+
     def run(self):
         """Start the application"""
         # Check audio capture availability
@@ -909,6 +1032,9 @@ class hyprwhsprApp:
         try:
             # Keep the application running
             while True:
+                # Check for suspend/resume events
+                self._check_suspend_resume()
+
                 # Check for recovery requests from tray script (non-blocking)
                 self._attempt_recovery_if_needed()
                 time.sleep(1)
@@ -939,6 +1065,13 @@ class hyprwhsprApp:
             if hasattr(self, 'device_monitor') and self.device_monitor:
                 self.device_monitor.stop()
 
+            # Stop pulse monitor
+            if hasattr(self, 'pulse_monitor') and self.pulse_monitor:
+                try:
+                    self.pulse_monitor.stop()
+                except Exception:
+                    pass  # Silently fail - pulse monitor cleanup is best-effort
+
             # Stop global shortcuts
             if self.global_shortcuts:
                 self.global_shortcuts.stop()
@@ -961,6 +1094,14 @@ class hyprwhsprApp:
         finally:
             # Release lock file
             _release_lock_file()
+
+            # Clean up mic-osd PID file (safety cleanup in case runner.stop() wasn't called)
+            from src.paths import MIC_OSD_PID_FILE
+            if MIC_OSD_PID_FILE.exists():
+                try:
+                    MIC_OSD_PID_FILE.unlink()
+                except Exception:
+                    pass
 
 
 def _acquire_lock_file():

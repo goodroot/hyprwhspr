@@ -84,7 +84,21 @@ class AudioCapture:
                         self.preferred_device_id = None
                 except Exception as e:
                     print(f"⚠ Configured audio device ID {self.preferred_device_id} not available: {e}")
-                    self.preferred_device_id = None
+                    # Try fallback to system default
+                    pulse_default_id = self._get_pulse_default_source_device_id()
+                    if pulse_default_id is not None:
+                        try:
+                            device_info = sd.query_devices(device=pulse_default_id, kind='input')
+                            sd.default.device[0] = pulse_default_id
+                            self.preferred_device_id = pulse_default_id
+                            device_found = True
+                            print(f"[FALLBACK] Using system default: {device_info['name']} (ID: {pulse_default_id})")
+                            self._notify_device_fallback(device_info['name'])
+                        except Exception:
+                            pass
+
+                    if not device_found:
+                        self.preferred_device_id = None
 
             # If device ID failed, try to find by name (more stable across reboots)
             if not device_found and self.config:
@@ -99,6 +113,20 @@ class AudioCapture:
                             print(f"Found device by name: {device['name']} (ID: {i})")
                             device_found = True
                             break
+
+                    # If name search failed, try fallback to system default
+                    if not device_found:
+                        pulse_default_id = self._get_pulse_default_source_device_id()
+                        if pulse_default_id is not None:
+                            try:
+                                device_info = sd.query_devices(device=pulse_default_id, kind='input')
+                                sd.default.device[0] = pulse_default_id
+                                self.preferred_device_id = pulse_default_id
+                                device_found = True
+                                print(f"[FALLBACK] Using system default: {device_info['name']} (ID: {pulse_default_id})")
+                                self._notify_device_fallback(device_info['name'])
+                            except Exception:
+                                pass
 
             # If no specific device was configured or it failed, use system default
             if not device_found:
@@ -217,75 +245,67 @@ class AudioCapture:
             print(f"Error setting audio device: {e}")
             return False
     
-    def _find_system_input_device(self):
-        """Try to find the system's configured input device"""
+    def _get_pulse_default_source_device_id(self) -> Optional[int]:
+        """Get PortAudio device ID for PulseAudio/PipeWire default source"""
+        import subprocess
         try:
-            # Try to get the system's default input device using pactl (PulseAudio)
-            import subprocess
-            try:
-                result = subprocess.run(['pactl', 'get-default-source'], 
-                                      capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    default_source = result.stdout.strip()
-                    print(f"PulseAudio default source: {default_source}")
-                    
-                    # Try to match this with sounddevice devices
-                    devices = sd.query_devices()
-                    for device_idx, device in enumerate(devices):
-                        if (device['max_input_channels'] > 0 and 
-                            (default_source.lower() in device['name'].lower() or 
-                             any(keyword in device['name'].lower() 
-                                 for keyword in ['blue', 'microphone', 'usb', 'webcam']))):
-                            return device_idx
-            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
-                pass  # pactl not available or failed
-            
-            # Fallback: Look for devices that are commonly preferred
+            result = subprocess.run(
+                ['pactl', 'get-default-source'],
+                capture_output=True, text=True, timeout=2
+            )
+            if result.returncode != 0:
+                return None
+
+            pulse_source_name = result.stdout.strip()
+            print(f"[PULSE] System default source: {pulse_source_name}")
+
+            # Match pulse source name to PortAudio device
             devices = sd.query_devices()
-            
-            # Priority order: USB microphones, USB audio, built-in audio
-            device_priorities = [
-                ['blue', 'microphone'],  # Blue Microphones (your preferred device)
-                ['usb', 'audio'],        # Other USB audio devices
-                ['webcam', 'usb'],       # USB webcams with audio
-                ['analog']               # Built-in analog audio
-            ]
-            
-            for priority_keywords in device_priorities:
-                for device_idx, device in enumerate(devices):
-                    if (device['max_input_channels'] > 0 and
-                        all(keyword in device['name'].lower() for keyword in priority_keywords)):
-                        return device_idx
-            
+            for idx, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    # PulseAudio source names appear in PortAudio device names
+                    # Example: pulse source "alsa_input.usb-Blue_Microphones" matches
+                    # PortAudio device name "Blue Microphones: USB Audio (hw:2,0)"
+                    device_name = device['name'].lower()
+                    source_name = pulse_source_name.lower()
+
+                    # Direct match (source name in device name)
+                    if source_name in device_name:
+                        print(f"[PULSE] Matched device {idx}: {device['name']}")
+                        return idx
+
+                    # Partial match (extract model from source name)
+                    # Example: "alsa_input.usb-Blue_Microphones" → "blue_microphones"
+                    if 'alsa_input' in source_name:
+                        model_part = source_name.split('alsa_input.')[-1]
+                        # Remove USB- prefix if present
+                        model_part = model_part.replace('usb-', '').replace('_', ' ')
+                        if model_part in device_name:
+                            print(f"[PULSE] Matched device {idx} via model: {device['name']}")
+                            return idx
+
+            # Fallback: return first PulseAudio device with input channels
+            for idx, device in enumerate(devices):
+                if device['max_input_channels'] > 0 and 'pulse' in device['name'].lower():
+                    print(f"[PULSE] Fallback to first PulseAudio device {idx}: {device['name']}")
+                    return idx
+
             return None
-            
-        except Exception as e:
-            print(f"Error finding system input device: {e}")
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
+            print(f"[PULSE] Could not query default source: {e}")
             return None
-    
-    def _find_pulseaudio_input_device(self):
-        """Find a PulseAudio input device"""
+
+    def _notify_device_fallback(self, device_name: str):
+        """Notify user that device fell back to system default"""
         try:
-            host_apis = sd.query_hostapis()
-            pulseaudio_idx = None
-            
-            for idx, api in enumerate(host_apis):
-                if 'pulse' in api['name'].lower():
-                    pulseaudio_idx = idx
-                    break
-            
-            if pulseaudio_idx is not None:
-                devices = sd.query_devices()
-                for device_idx, device in enumerate(devices):
-                    if (device['hostapi'] == pulseaudio_idx and 
-                        device['max_input_channels'] > 0):
-                        return device_idx
-            
-            return None
-            
-        except Exception as e:
-            print(f"Error finding PulseAudio device: {e}")
-            return None
+            import subprocess
+            subprocess.run(
+                ["notify-send", "-u", "normal", "hyprwhspr",
+                 f"Configured microphone unavailable - using system default:\n{device_name}"],
+                timeout=2, check=False, capture_output=True
+            )
+        except Exception:
+            pass  # Best effort notification
     
     def is_available(self) -> bool:
         """Check if audio capture is available"""
@@ -499,14 +519,15 @@ class AudioCapture:
             import traceback
             traceback.print_exc()
         finally:
-            # Ensure stream is cleaned up even on exception
+            # Ensure stream is cleaned up even on exception during stream creation
             if self.stream:
                 try:
                     self.stream.stop()
                     self.stream.close()
                 except:
                     pass
-                self.stream = None
+                with self.lock:
+                    self.stream = None
     
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
         """Start monitoring audio levels without recording"""
