@@ -118,8 +118,8 @@ class hyprwhsprApp:
                 from mic_osd import MicOSDRunner
                 runner = MicOSDRunner()
                 if runner.is_available():
-                    runner._ensure_daemon()  # Start daemon now
-                    self._mic_osd_runner = runner
+                    if runner._ensure_daemon():  # Start daemon now
+                        self._mic_osd_runner = runner
             except Exception:
                 pass
 
@@ -899,6 +899,16 @@ class hyprwhsprApp:
     def _cleanup(self):
         """Clean up resources when shutting down"""
         try:
+            # Hide mic-osd overlay if visible
+            self._hide_mic_osd()
+            
+            # Stop mic-osd daemon
+            if hasattr(self, '_mic_osd_runner') and self._mic_osd_runner:
+                try:
+                    self._mic_osd_runner.stop()
+                except Exception:
+                    pass  # Silently fail - daemon cleanup is best-effort
+            
             # Stop device monitor
             if hasattr(self, 'device_monitor') and self.device_monitor:
                 self.device_monitor.stop()
