@@ -515,9 +515,16 @@ class AudioCapture:
                         pass  # Stream might already be closed
                     
         except Exception as e:
-            print(f"[ERROR] Error in recording thread: {e}")
-            import traceback
-            traceback.print_exc()
+            # Always log the error message
+            print(f"[ERROR] Error in recording thread: {e}", flush=True)
+
+            # Only print traceback for unexpected errors (not common device/stream errors)
+            # This reduces log noise during startup/recovery when device isn't ready yet
+            error_msg = str(e).lower()
+            if not ('device' in error_msg or 'stream' in error_msg or 'portaudio' in error_msg):
+                # Unexpected error - print full traceback for debugging
+                import traceback
+                traceback.print_exc()
         finally:
             # Ensure stream is cleaned up even on exception during stream creation
             if self.stream:

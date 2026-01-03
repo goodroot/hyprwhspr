@@ -86,6 +86,7 @@ class hyprwhsprApp:
         self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
         self._last_mic_error_log_time = 0.0  # Track when we last logged mic error (prevent duplicates)
         self._mic_disconnected = False  # Track if microphone was disconnected via hotplug event
+        self._last_hotplug_add_time = float('-inf')  # Track last USB add event (for debouncing multiple events)
         
         # Lock to prevent concurrent recording starts (race condition protection)
         self._recording_lock = threading.Lock()
@@ -95,6 +96,9 @@ class hyprwhsprApp:
         
         # Lock for error logging deduplication (protects read-modify-write on _last_mic_error_log_time)
         self._error_log_lock = threading.Lock()
+        
+        # Lock for hotplug event debouncing (protects read-modify-write on _last_hotplug_add_time)
+        self._hotplug_lock = threading.Lock()
 
         # Hybrid tap/hold mode state tracking (auto mode)
         recording_mode = self.config.get_setting('recording_mode', 'toggle')
@@ -234,6 +238,17 @@ class hyprwhsprApp:
         """Called when audio device is plugged in"""
         try:
             device_model = device.get('ID_MODEL') or 'Unknown'
+
+            # Debounce: USB reseat generates multiple 'add' events in quick succession
+            # Only process one event per 2-second window to prevent notification spam
+            # Use lock to ensure thread-safe read-modify-write on _last_hotplug_add_time
+            with self._hotplug_lock:
+                current_time = time.monotonic()
+                if current_time - self._last_hotplug_add_time < 2.0:
+                    print(f"[HOTPLUG] Audio device added (debounced): {device_model}", flush=True)
+                    return
+                self._last_hotplug_add_time = current_time
+            
             print(f"[HOTPLUG] Audio device added: {device_model}", flush=True)
 
             # Determine if we should trigger recovery
@@ -1039,7 +1054,7 @@ class hyprwhsprApp:
             return False
         
         print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
-        
+
         # Clean up any stale recovery file (tray script no longer creates these)
         if RECOVERY_REQUESTED_FILE.exists():
             try:
@@ -1047,7 +1062,11 @@ class hyprwhsprApp:
                 print("[STARTUP] Removed stale recovery file", flush=True)
             except Exception:
                 pass
-        
+
+        # Give microphone 1 second to fully initialize before checking for recovery
+        # This prevents spurious errors on startup if device is still settling
+        time.sleep(1)
+
         try:
             # Keep the application running
             while True:
