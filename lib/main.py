@@ -97,8 +97,9 @@ class hyprwhsprApp:
         # Lock for error logging deduplication (protects read-modify-write on _last_mic_error_log_time)
         self._error_log_lock = threading.Lock()
         
-        # Lock for hotplug event debouncing (protects read-modify-write on _last_hotplug_add_time)
+        # Lock for hotplug event debouncing (protects read-modify-write on _last_hotplug_add_time and _last_hotplug_remove_time)
         self._hotplug_lock = threading.Lock()
+        self._last_hotplug_remove_time = float('-inf')  # Last time we processed a device removal
 
         # Lock for recovery result writes (prevents race conditions when multiple threads write results)
         self._recovery_result_lock = threading.Lock()
@@ -250,17 +251,6 @@ class hyprwhsprApp:
         """Called when audio device is plugged in"""
         try:
             device_model = device.get('ID_MODEL') or 'Unknown'
-
-            # Debounce: USB reseat generates multiple 'add' events in quick succession
-            # Only process one event per 2-second window to prevent notification spam
-            # Use lock to ensure thread-safe read-modify-write on _last_hotplug_add_time
-            with self._hotplug_lock:
-                current_time = time.monotonic()
-                if current_time - self._last_hotplug_add_time < 2.0:
-                    print(f"[HOTPLUG] Audio device added (debounced): {device_model}", flush=True)
-                    return
-                self._last_hotplug_add_time = current_time
-            
             print(f"[HOTPLUG] Audio device added: {device_model}", flush=True)
 
             # Determine if we should trigger recovery
@@ -280,6 +270,15 @@ class hyprwhsprApp:
                     should_recover = True
 
             if should_recover:
+                # Debounce recovery attempts: USB reseat generates multiple events in quick succession
+                # Only attempt one recovery per 2-second window to prevent spam
+                with self._hotplug_lock:
+                    current_time = time.monotonic()
+                    if current_time - self._last_hotplug_add_time < 2.0:
+                        print(f"[HOTPLUG] Recovery already attempted recently, skipping duplicate", flush=True)
+                        return
+                    self._last_hotplug_add_time = current_time
+
                 print(f"[HOTPLUG] Triggering recovery in 0.5s (let drivers settle)...", flush=True)
 
                 # Give drivers a moment to settle before attempting recovery
@@ -299,12 +298,6 @@ class hyprwhsprApp:
                         "hyprwhspr - Microphone Ready",
                         "Microphone reconnected successfully"
                     )
-                    # Play success sound (only if not currently recording to avoid conflicts)
-                    if not self.is_recording and not self.is_processing:
-                        try:
-                            self.audio_manager.play_start_sound()
-                        except Exception as e:
-                            print(f"[HOTPLUG] Warning: Could not play sound: {e}", flush=True)
                 else:
                     print(f"[HOTPLUG] Recovery failed - microphone may not be fully initialized", flush=True)
                     self._write_recovery_result(False, 'hotplug')
@@ -319,29 +312,35 @@ class hyprwhsprApp:
 
             # Determine if this is a significant removal
             configured_name = self.config.get_setting('audio_device_name')
+            is_significant_removal = False
 
             if configured_name:
                 # User has configured a specific device - only mark disconnected if it matches
                 if device_model and configured_name in device_model:
-                    self._mic_disconnected = True
-                    print(f"[MIC] Microphone unplugged - recording disabled", flush=True)
-                    # Notify user about disconnection
-                    self._notify_user(
-                        "hyprwhspr - Microphone Disconnected",
-                        "Microphone unplugged - recording disabled until reconnected",
-                        "normal"
-                    )
+                    is_significant_removal = True
             else:
                 # No configured device - mark disconnected for any non-Unknown device
                 if device_model != 'Unknown':
-                    self._mic_disconnected = True
-                    print(f"[MIC] Microphone unplugged - recording disabled", flush=True)
-                    # Notify user about disconnection
-                    self._notify_user(
-                        "hyprwhspr - Microphone Disconnected",
-                        "Microphone unplugged - recording disabled until reconnected",
-                        "normal"
-                    )
+                    is_significant_removal = True
+
+            if is_significant_removal:
+                # Debounce notifications: USB removal generates multiple events
+                # Only notify once per 2-second window
+                with self._hotplug_lock:
+                    current_time = time.monotonic()
+                    if current_time - self._last_hotplug_remove_time < 2.0:
+                        # Already notified recently, skip duplicate
+                        return
+                    self._last_hotplug_remove_time = current_time
+
+                self._mic_disconnected = True
+                print(f"[MIC] Microphone unplugged - recording disabled", flush=True)
+                # Notify user about disconnection
+                self._notify_user(
+                    "hyprwhspr - Microphone Disconnected",
+                    "Microphone unplugged - recording disabled until reconnected",
+                    "normal"
+                )
 
             # If currently recording, this will fail gracefully in next audio callback
             # No immediate action needed - recovery will trigger on next recording attempt
