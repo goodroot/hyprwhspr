@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | most accurate local models | realtime cloud streaming | supports any cloud provider
+    instant performance | most accurate local models | realtime cloud streaming | themed visuals | supports any cloud provider
 </p>
 
  <p align="center">
@@ -22,6 +22,7 @@ https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
 - **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Latest local models with GPU support**: Whisper turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
+- **Themed visualizer** - Visual feedback when recording, matched to your Omarcy theme
 - **Supports any cloud API** -  Use a cloud stt service or any custom localhost model
 - **Word overrides and multi-language** - Customize transcriptions, prompt and corrections, in your language
 - **Auto-paste anywhere** - Pastes in active buffer without additional keypresses
@@ -53,14 +54,15 @@ Then run through the interactive setup:
 hyprwhspr setup
 ```
 
-**The setup will:**
+**The setup will walk you through the process:**
 
 1. ✅ Configure transcription backend (pywhispercpp, Parakeet-v3, REST API, or Realtime WebSocket)
-2. ✅ Set up systemd user services
-3. ✅ Configure Waybar integration (if Waybar is installed)
-4. ✅ Download models (if using pywhispercpp backend)
-5. ✅ Set up permissions
-6. ✅ Validate installation
+2. ✅ Download models (if using pywhispercpp backend)
+3. ✅ Configure themed visualizer for maximum coolness
+4. ✅ Configure Waybar integration (if Waybar is installed)
+5. ✅ Set up systemd user services 
+6. ✅ Set up permissions
+7. ✅ Validate installation
 
 ### First use
 
@@ -91,6 +93,7 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr setup` - Interactive initial setup
 - `hyprwhspr config` - Manage configuration (init/show/edit)
 - `hyprwhspr waybar` - Manage Waybar integration (install/remove/status)
+- `hyprwhspr mic-osd` - Manage microphone visualization overlay (enable/disable/status)
 - `hyprwhspr systemd` - Manage systemd services (install/enable/disable/status/restart)
 - `hyprwhspr model` - Manage models (download/list/status)
 - `hyprwhspr status` - Overall status check
@@ -255,6 +258,14 @@ Examples:
 - `"CTRL+ALT+F1"` - Ctrl + Alt + F1
 - `"F12"` - Just F12 (no modifier)
 - `"RCTRL+RSHIFT+ENTER"` - Right Ctrl + Right Shift + Enter
+
+**Themed visualizer** - visual feedback, matches your Omarchy theme:
+
+```json
+{
+  "mic_osd_enabled": true,
+}
+```
 
 **Word overrides** - customize transcriptions:
 
