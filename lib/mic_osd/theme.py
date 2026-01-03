@@ -190,7 +190,10 @@ theme = Theme()
 
 class ThemeWatcher:
     """
-    Watches the Omarchy theme directory for changes and reloads the theme.
+    Watches for Omarchy theme changes and reloads the theme.
+    
+    Watches the 'current' symlink in ~/.config/omarchy/ since theme switching
+    changes the symlink target rather than modifying files in place.
     
     Uses GLib.FileMonitor (inotify on Linux) for efficient file watching.
     """
@@ -206,42 +209,42 @@ class ThemeWatcher:
         self._on_theme_changed = on_theme_changed
     
     def start(self):
-        """Start watching the theme directory."""
-        # Import here to avoid circular imports and allow non-GTK usage
-        from gi.repository import Gio, GLib
+        """Start watching the 'current' symlink for changes."""
+        from gi.repository import Gio
         
-        theme_dir = Path.home() / '.config' / 'omarchy' / 'current' / 'theme'
+        # Watch the 'current' symlink itself, not its contents
+        # Theme changes update the symlink target, not files within
+        current_link = Path.home() / '.config' / 'omarchy' / 'current'
         
-        if not theme_dir.exists():
+        if not current_link.exists():
             return False
         
         try:
-            gfile = Gio.File.new_for_path(str(theme_dir))
-            self._monitor = gfile.monitor_directory(
-                Gio.FileMonitorFlags.NONE,
+            gfile = Gio.File.new_for_path(str(current_link))
+            # WATCH_MOUNTS helps catch symlink target changes
+            self._monitor = gfile.monitor_file(
+                Gio.FileMonitorFlags.WATCH_MOUNTS,
                 None
             )
-            self._monitor.connect('changed', self._on_file_changed)
+            self._monitor.connect('changed', self._on_symlink_changed)
             return True
         except Exception:
             return False
     
     def stop(self):
-        """Stop watching the theme directory."""
+        """Stop watching."""
         if self._monitor:
             self._monitor.cancel()
             self._monitor = None
     
-    def _on_file_changed(self, monitor, file, other_file, event_type):
-        """Handle file change events."""
+    def _on_symlink_changed(self, monitor, file, other_file, event_type):
+        """Handle symlink change events."""
         from gi.repository import Gio, GLib
         
-        # Only react to changes done (not every write event)
-        if event_type == Gio.FileMonitorEvent.CHANGES_DONE_HINT:
-            filename = file.get_basename()
-            # Only reload for relevant files
-            if filename in ('swayosd.css', 'mic-osd.css'):
-                GLib.idle_add(self._reload_theme)
+        # CHANGED fires when symlink target changes
+        if event_type in (Gio.FileMonitorEvent.CHANGED, 
+                          Gio.FileMonitorEvent.ATTRIBUTE_CHANGED):
+            GLib.idle_add(self._reload_theme)
     
     def _reload_theme(self):
         """Reload theme on main thread."""
