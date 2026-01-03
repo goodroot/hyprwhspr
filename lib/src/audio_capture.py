@@ -393,7 +393,10 @@ class AudioCapture:
 
             # Check if thread actually exited
             if self.record_thread.is_alive():
-                print("[WARN] Recording thread did not exit cleanly after 3 seconds", flush=True)
+                # Only warn if this is a normal stop (not during recovery)
+                # During recovery, it's expected that the thread may not exit cleanly when device is dead
+                if not (hasattr(self, 'recovery_in_progress') and self.recovery_in_progress):
+                    print("[WARN] Recording thread did not exit cleanly after 3 seconds", flush=True)
 
         # Thread's finally block handles cleanup - verify it completed
         # Do NOT cleanup here to avoid deadlock (callback may still hold lock)
@@ -718,7 +721,11 @@ class AudioCapture:
             if self.record_thread and self.record_thread.is_alive():
                 self.record_thread.join(timeout=2.0)
                 if self.record_thread.is_alive():
-                    print("[RECOVERY] ERROR: Recording thread did not exit, aborting recovery")
+                    # This is expected during recovery of a dead device (stream.close() hangs)
+                    # Only log at INFO level - not an error, just device unresponsiveness
+                    print("[RECOVERY] Note: Recording thread cleanup in progress (device unresponsive)", flush=True)
+                    # Can't proceed safely with a stuck thread - abort recovery
+                    # The thread will eventually exit when the stream times out, but we can't continue recovery now
                     return False
             
             # Reset tracking
