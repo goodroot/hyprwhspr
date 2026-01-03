@@ -1128,11 +1128,13 @@ def setup_command():
         print("  • ydotool.service (required dependency, provides paste)")
         print("  • parakeet-tdt-0.6b-v3.service (Parakeet REST API server)")
         print("  • hyprwhspr.service (main application)")
+        print("  • hyprwhspr-resume.service (suspend/resume handler)")
     else:
         print("\nSystemd user service will run hyprwhspr in the background.")
         print("This will enable/configure:")
         print("  • ydotool.service (required dependency, provides paste)")
         print("  • hyprwhspr.service (main application)")
+        print("  • hyprwhspr-resume.service (suspend/resume handler)")
     setup_systemd_choice = Confirm.ask("Set up systemd user service" + ("s" if backend == 'parakeet' else ""), default=True)
     
     # Step 5: Permissions setup
