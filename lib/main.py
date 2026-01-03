@@ -114,6 +114,9 @@ class hyprwhsprApp:
         # Set up PulseAudio/PipeWire event monitoring
         self._setup_pulse_monitor()
 
+        # Set up suspend/resume monitoring
+        self._setup_suspend_monitor()
+
         # Pre-initialize mic-osd daemon (eliminates latency on recording)
         self._mic_osd_runner = None
         if self.config.get_setting('mic_osd_enabled', True):
@@ -206,6 +209,26 @@ class hyprwhsprApp:
         except Exception as e:
             self.pulse_monitor = None
             print(f"[WARN] Failed to setup pulse monitor: {e}")
+
+    def _setup_suspend_monitor(self):
+        """Initialize suspend/resume monitoring via D-Bus"""
+        try:
+            from src.suspend_monitor import SuspendMonitor
+            self.suspend_monitor = SuspendMonitor(
+                on_suspend_callback=self._on_system_suspend,
+                on_resume_callback=self._on_system_resume
+            )
+            if self.suspend_monitor.start():
+                print("[INIT] Suspend/resume monitoring enabled (D-Bus)")
+            else:
+                print("[WARN] Failed to start suspend monitoring")
+                self.suspend_monitor = None
+        except ImportError:
+            self.suspend_monitor = None
+            print("[WARN] D-Bus/GLib not available - suspend monitoring disabled")
+        except Exception as e:
+            self.suspend_monitor = None
+            print(f"[WARN] Failed to setup suspend monitor: {e}")
 
     def _on_audio_device_added(self, device):
         """Called when audio device is plugged in"""
@@ -947,31 +970,24 @@ class hyprwhsprApp:
 
             # Keep flag set - recovery was attempted and failed, don't retry
 
-    def _check_suspend_resume(self):
-        """Detect suspend/resume via marker file and trigger recovery"""
-        from src.paths import SUSPEND_MARKER_FILE
-
-        # Check if suspend marker exists
-        suspend_active = SUSPEND_MARKER_FILE.exists()
-
-        if suspend_active and not hasattr(self, '_suspend_detected'):
-            self._suspend_detected = False
-
-        if suspend_active and not self._suspend_detected:
-            # Entering suspend
-            print("[SUSPEND] System suspend detected", flush=True)
-            self._suspend_detected = True
+    def _on_system_suspend(self):
+        """Called when system is about to suspend (D-Bus PrepareForSleep signal)"""
+        try:
+            print("[SUSPEND] System entering suspend", flush=True)
 
             # Close WebSocket connections preemptively (avoid timeout errors)
+            from src.config_manager import normalize_backend
             backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
             if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
                 print("[SUSPEND] Closing WebSocket before suspend", flush=True)
                 self.whisper_manager._cleanup_realtime_client()
+        except Exception as e:
+            print(f"[SUSPEND] Error handling suspend: {e}", flush=True)
 
-        elif not suspend_active and hasattr(self, '_suspend_detected') and self._suspend_detected:
-            # Resumed from suspend
-            print("[SUSPEND] Resume from suspend detected", flush=True)
-            self._suspend_detected = False
+    def _on_system_resume(self):
+        """Called when system resumes from suspend (D-Bus PrepareForSleep signal)"""
+        try:
+            print("[SUSPEND] System resumed from suspend", flush=True)
 
             # Trigger full recovery after brief delay
             print("[SUSPEND] Triggering post-resume recovery in 2s (let drivers settle)...", flush=True)
@@ -982,6 +998,7 @@ class hyprwhsprApp:
                 self._write_recovery_result(True, 'suspend_resume')
 
                 # Reinitialize model for pywhispercpp (CUDA context)
+                from src.config_manager import normalize_backend
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
                 if backend == 'pywhispercpp':
                     print("[SUSPEND] Reinitializing model (CUDA context)", flush=True)
@@ -996,6 +1013,8 @@ class hyprwhsprApp:
             else:
                 print("[SUSPEND] Audio recovery failed", flush=True)
                 self._write_recovery_result(False, 'suspend_resume')
+        except Exception as e:
+            print(f"[SUSPEND] Error handling resume: {e}", flush=True)
 
     def run(self):
         """Start the application"""
@@ -1032,9 +1051,6 @@ class hyprwhsprApp:
         try:
             # Keep the application running
             while True:
-                # Check for suspend/resume events
-                self._check_suspend_resume()
-
                 # Check for recovery requests from tray script (non-blocking)
                 self._attempt_recovery_if_needed()
                 time.sleep(1)
@@ -1071,6 +1087,13 @@ class hyprwhsprApp:
                     self.pulse_monitor.stop()
                 except Exception:
                     pass  # Silently fail - pulse monitor cleanup is best-effort
+
+            # Stop suspend monitor
+            if hasattr(self, 'suspend_monitor') and self.suspend_monitor:
+                try:
+                    self.suspend_monitor.stop()
+                except Exception:
+                    pass  # Silently fail - suspend monitor cleanup is best-effort
 
             # Stop global shortcuts
             if self.global_shortcuts:
