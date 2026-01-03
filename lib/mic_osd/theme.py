@@ -192,10 +192,9 @@ class ThemeWatcher:
     """
     Watches for Omarchy theme changes and reloads the theme.
     
-    Watches the 'current' symlink in ~/.config/omarchy/ since theme switching
-    changes the symlink target rather than modifying files in place.
-    
-    Uses GLib.FileMonitor (inotify on Linux) for efficient file watching.
+    Omarchy uses `ln -nsf` to atomically swap the theme symlink, which
+    inotify/GLib.FileMonitor can't detect. Instead, we poll the symlink
+    target every second (negligible overhead, theme changes are rare).
     """
     
     def __init__(self, on_theme_changed=None):
@@ -205,50 +204,52 @@ class ThemeWatcher:
         Args:
             on_theme_changed: Optional callback to invoke after theme reload
         """
-        self._monitor = None
+        self._timer_id = None
+        self._last_target = None
         self._on_theme_changed = on_theme_changed
+        self._theme_link = Path.home() / '.config' / 'omarchy' / 'current' / 'theme'
     
     def start(self):
-        """Start watching the 'current' symlink for changes."""
-        from gi.repository import Gio
+        """Start polling the theme symlink for changes."""
+        from gi.repository import GLib
+        import os
         
-        # Watch the 'current' symlink itself, not its contents
-        # Theme changes update the symlink target, not files within
-        current_link = Path.home() / '.config' / 'omarchy' / 'current'
-        
-        if not current_link.exists():
+        if not self._theme_link.exists():
             return False
         
         try:
-            gfile = Gio.File.new_for_path(str(current_link))
-            # WATCH_MOUNTS helps catch symlink target changes
-            self._monitor = gfile.monitor_file(
-                Gio.FileMonitorFlags.WATCH_MOUNTS,
-                None
-            )
-            self._monitor.connect('changed', self._on_symlink_changed)
+            # Record initial target
+            self._last_target = os.readlink(self._theme_link)
+            # Poll every 1 second
+            self._timer_id = GLib.timeout_add(1000, self._check_theme)
             return True
         except Exception:
             return False
     
     def stop(self):
-        """Stop watching."""
-        if self._monitor:
-            self._monitor.cancel()
-            self._monitor = None
-    
-    def _on_symlink_changed(self, monitor, file, other_file, event_type):
-        """Handle symlink change events."""
-        from gi.repository import Gio, GLib
+        """Stop polling."""
+        from gi.repository import GLib
         
-        # CHANGED fires when symlink target changes
-        if event_type in (Gio.FileMonitorEvent.CHANGED, 
-                          Gio.FileMonitorEvent.ATTRIBUTE_CHANGED):
-            GLib.idle_add(self._reload_theme)
+        if self._timer_id:
+            GLib.source_remove(self._timer_id)
+            self._timer_id = None
+    
+    def _check_theme(self):
+        """Check if theme symlink target has changed."""
+        import os
+        
+        try:
+            current_target = os.readlink(self._theme_link)
+            if current_target != self._last_target:
+                self._last_target = current_target
+                self._reload_theme()
+        except Exception:
+            pass
+        
+        return True  # Keep polling
     
     def _reload_theme(self):
-        """Reload theme on main thread."""
+        """Reload theme."""
         theme.reload()
         if self._on_theme_changed:
             self._on_theme_changed()
-        return False  # Don't repeat

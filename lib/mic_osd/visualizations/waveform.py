@@ -102,7 +102,7 @@ class WaveformVisualization(BaseVisualization):
         
         start_x = bars_start_x
         
-        # Get colors from theme
+        # Get colors from theme (fresh on each draw)
         bar_left = theme.bar_left
         bar_right = theme.bar_right
         
