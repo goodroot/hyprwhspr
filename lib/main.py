@@ -991,7 +991,6 @@ class hyprwhsprApp:
             print("[SUSPEND] System entering suspend", flush=True)
 
             # Close WebSocket connections preemptively (avoid timeout errors)
-            from src.config_manager import normalize_backend
             backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
             if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
                 print("[SUSPEND] Closing WebSocket before suspend", flush=True)
@@ -1013,7 +1012,6 @@ class hyprwhsprApp:
                 self._write_recovery_result(True, 'suspend_resume')
 
                 # Reinitialize model for pywhispercpp (CUDA context)
-                from src.config_manager import normalize_backend
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
                 if backend == 'pywhispercpp':
                     print("[SUSPEND] Reinitializing model (CUDA context)", flush=True)

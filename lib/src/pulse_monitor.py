@@ -23,6 +23,7 @@ class PulseAudioMonitor:
         self._monitor_thread = None
         self._running = False
         self._default_source_name = None
+        self._pending_server_check = False  # Flag to defer server_info() outside callback
 
         if not PULSECTL_AVAILABLE:
             print("[PULSE_MONITOR] pulsectl not available, pulse monitoring disabled")
@@ -80,6 +81,11 @@ class PulseAudioMonitor:
                 try:
                     # Listen for events (blocking call with timeout)
                     self._pulse.event_listen(timeout=1.0)
+
+                    # Check for pending server info check (deferred from callback to avoid threading violation)
+                    if self._pending_server_check:
+                        self._pending_server_check = False
+                        self._check_default_source_change()
                 except pulsectl.PulseDisconnected:
                     # Server disconnected - likely a restart
                     print("[PULSE_MONITOR] PulseAudio server disconnected")
@@ -139,28 +145,32 @@ class PulseAudioMonitor:
         try:
             # Check for server events (includes default source changes)
             if event.facility == pulsectl.PulseEventFacilityEnum.server:
-                # Check if default source changed
-                try:
-                    server_info = self._pulse.server_info()
-                    new_default_source = server_info.default_source_name
-
-                    if new_default_source != self._default_source_name:
-                        old_default = self._default_source_name
-                        self._default_source_name = new_default_source
-                        print(f"[PULSE_MONITOR] Default source changed: {old_default} → {new_default_source}")
-
-                        if self.on_default_change:
-                            # Run callback in separate thread
-                            threading.Thread(
-                                target=self.on_default_change,
-                                args=(new_default_source,),
-                                daemon=True
-                            ).start()
-                except Exception as e:
-                    print(f"[PULSE_MONITOR] Error checking default source: {e}")
+                # Defer server_info() check to event loop (can't call blocking operations from callback)
+                self._pending_server_check = True
 
         except Exception as e:
             print(f"[PULSE_MONITOR] Error in event callback: {e}")
+
+    def _check_default_source_change(self):
+        """Check if default source changed (called outside event callback to avoid threading violations)"""
+        try:
+            server_info = self._pulse.server_info()
+            new_default_source = server_info.default_source_name
+
+            if new_default_source != self._default_source_name:
+                old_default = self._default_source_name
+                self._default_source_name = new_default_source
+                print(f"[PULSE_MONITOR] Default source changed: {old_default} → {new_default_source}")
+
+                if self.on_default_change:
+                    # Run callback in separate thread
+                    threading.Thread(
+                        target=self.on_default_change,
+                        args=(new_default_source,),
+                        daemon=True
+                    ).start()
+        except Exception as e:
+            print(f"[PULSE_MONITOR] Error checking default source: {e}")
 
     def stop(self):
         """Stop monitoring for pulse events"""
