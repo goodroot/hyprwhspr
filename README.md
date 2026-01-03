@@ -11,10 +11,10 @@
 </p>
 
  <p align="center">
-    <i>pssst...un-mute!</i>
+    <i>Matches your theme!</i>
  </p>
 
-https://github.com/user-attachments/assets/40cb1837-550c-4e6e-8d61-07ea59898f12
+https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
