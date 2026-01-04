@@ -652,6 +652,20 @@ Mute detection can cause conflicts with Bluetooth microphones. To disable it, ad
 }
 ```
 
+**This sucks!**
+
+Doh! We tried.
+
+Wipe the slate clean and remove everything:
+
+```
+hyprwhspr uninstall
+yay -Rs hyprwhspr
+```
+
+Or better yet - create an issue and help us improve.
+
+
 ## Getting help
 
 1. **Check logs**: `journalctl --user -u hyprwhspr.service` `journalctl --user -u ydotool.service`

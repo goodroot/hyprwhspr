@@ -2737,7 +2737,9 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         items_to_remove.append(f"Systemd service: {SERVICE_NAME}")
     if (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {PARAKEET_SERVICE_NAME}")
-    
+    if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
+        items_to_remove.append(f"Systemd service: {RESUME_SERVICE_NAME} (deprecated)")
+
     # Waybar integration
     waybar_module = USER_HOME / '.config' / 'waybar' / 'hyprwhspr-module.jsonc'
     if waybar_module.exists():
@@ -2817,7 +2819,14 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             run_command(['systemctl', '--user', 'disable', PARAKEET_SERVICE_NAME], check=False)
             (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).unlink(missing_ok=True)
             log_success(f"Removed {PARAKEET_SERVICE_NAME}")
-        
+
+        # Stop and disable deprecated resume service
+        if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
+            run_command(['systemctl', '--user', 'stop', RESUME_SERVICE_NAME], check=False)
+            run_command(['systemctl', '--user', 'disable', RESUME_SERVICE_NAME], check=False)
+            (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).unlink(missing_ok=True)
+            log_success(f"Removed {RESUME_SERVICE_NAME}")
+
         # Reload systemd daemon
         run_command(['systemctl', '--user', 'daemon-reload'], check=False)
     except Exception as e:
