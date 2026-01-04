@@ -56,7 +56,8 @@ class ConfigManager:
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
             'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
             # Visual feedback settings
-            'mic_osd_enabled': True             # Show microphone visualization overlay during recording
+            'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
+            'mute_detection': True                # Enable mute detection to cancel recording when mic is muted
         }
         
         # Set up config directory and file path

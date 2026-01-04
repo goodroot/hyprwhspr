@@ -904,15 +904,17 @@ class hyprwhsprApp:
                         with open(AUDIO_LEVEL_FILE, 'w') as f:
                             f.write(f'{level:.3f}')
 
-                        # get_audio_level() scales by 10x, so we need raw value for accurate detection
-                        raw_level = self.audio_capture.current_level
-                        if raw_level < zero_threshold:
-                            zero_samples += 1
-                            if zero_samples >= samples_to_cancel:
-                                self._cancel_recording_muted()
-                                return
-                        else:
-                            zero_samples = 0
+                        # Mute detection (only if enabled)
+                        if self.config.get_setting('mute_detection', True):
+                            # get_audio_level() scales by 10x, so we need raw value for accurate detection
+                            raw_level = self.audio_capture.current_level
+                            if raw_level < zero_threshold:
+                                zero_samples += 1
+                                if zero_samples >= samples_to_cancel:
+                                    self._cancel_recording_muted()
+                                    return
+                            else:
+                                zero_samples = 0
                     except Exception as e:
                         # Silently fail - don't spam errors
                         pass
