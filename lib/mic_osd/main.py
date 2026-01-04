@@ -30,6 +30,7 @@ class MicOSD:
         self.audio_monitor = None
         self.window = None
         self.update_timer_id = None
+        self._auto_hide_timeout_id = None
         self.daemon = daemon
         self.visible = False
         self.theme_watcher = None
@@ -103,23 +104,56 @@ class MicOSD:
         # Start update timer (60 FPS)
         if not self.update_timer_id:
             self.update_timer_id = GLib.timeout_add(16, self._update)
+        
+        # Start auto-hide timeout (30 seconds)
+        if self._auto_hide_timeout_id:
+            GLib.source_remove(self._auto_hide_timeout_id)
+        self._auto_hide_timeout_id = GLib.timeout_add_seconds(30, self._auto_hide_callback)
     
     def _hide(self):
         """Hide the OSD and stop audio monitoring."""
         if not self.visible:
             return
         
-        self.visible = False
-        self.window.set_visible(False)
-        
-        # Stop update timer
-        if self.update_timer_id:
-            GLib.source_remove(self.update_timer_id)
-            self.update_timer_id = None
-        
-        # Stop audio monitoring
-        if self.audio_monitor:
-            self.audio_monitor.stop()
+        try:
+            self.visible = False
+            self.window.set_visible(False)
+            
+            # Stop update timer
+            if self.update_timer_id:
+                GLib.source_remove(self.update_timer_id)
+                self.update_timer_id = None
+            
+            # Cancel auto-hide timeout
+            if self._auto_hide_timeout_id:
+                GLib.source_remove(self._auto_hide_timeout_id)
+                self._auto_hide_timeout_id = None
+            
+            # Stop audio monitoring
+            if self.audio_monitor:
+                self.audio_monitor.stop()
+        except Exception as e:
+            # Ensure window is hidden even if exceptions occur
+            print(f"[MIC-OSD] Error in _hide(): {e}", flush=True)
+            self.visible = False
+            if self.window:
+                try:
+                    self.window.set_visible(False)
+                except Exception:
+                    pass
+            # Clean up timers on error
+            if self.update_timer_id:
+                try:
+                    GLib.source_remove(self.update_timer_id)
+                except Exception:
+                    pass
+                self.update_timer_id = None
+            if self._auto_hide_timeout_id:
+                try:
+                    GLib.source_remove(self._auto_hide_timeout_id)
+                except Exception:
+                    pass
+                self._auto_hide_timeout_id = None
     
     def _update(self):
         """Update visualization with current audio data."""
@@ -128,6 +162,14 @@ class MicOSD:
             samples = self.audio_monitor.get_samples()
             self.window.update(level, samples)
         return True  # Continue timer
+    
+    def _auto_hide_callback(self):
+        """Auto-hide callback triggered after 30 seconds of visibility."""
+        if self.visible:
+            print("[MIC-OSD] Auto-hiding window after 30 second timeout", flush=True)
+            self._hide()
+        self._auto_hide_timeout_id = None
+        return False  # Don't repeat
     
     def _on_theme_changed(self):
         """Called when the Omarchy theme changes."""
@@ -145,6 +187,10 @@ class MicOSD:
         if self.update_timer_id:
             GLib.source_remove(self.update_timer_id)
             self.update_timer_id = None
+        
+        if self._auto_hide_timeout_id:
+            GLib.source_remove(self._auto_hide_timeout_id)
+            self._auto_hide_timeout_id = None
         
         if self.audio_monitor:
             self.audio_monitor.stop()
