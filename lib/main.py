@@ -496,9 +496,6 @@ class hyprwhsprApp:
             # Write recording status to file for tray script
             self._write_recording_status(True)
             
-            # Show mic-osd visualization if enabled
-            self._show_mic_osd()
-            
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
             
@@ -548,6 +545,9 @@ class hyprwhsprApp:
                     # Reset state
                     self.is_recording = False
                     self._write_recording_status(False)
+                    
+                    # Hide mic-osd visualization
+                    self._hide_mic_osd()
 
                     # Check if we know the microphone was disconnected
                     with self._mic_state_lock:
@@ -559,12 +559,18 @@ class hyprwhsprApp:
                         self._notify_zero_volume("Microphone not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
                     return  # Don't attempt recovery during user-initiated recording
                 
+                # Stream is verified working - show mic-osd visualization
+                self._show_mic_osd()
+                
                 # Additional stability check - verify stream continues working
                 if not verify_stream_stable():
                     # Stream stopped working shortly after starting
                     self.audio_capture.stop_recording()
                     self.is_recording = False
                     self._write_recording_status(False)
+                    
+                    # Hide mic-osd visualization
+                    self._hide_mic_osd()
 
                     # Check if we know the microphone was disconnected
                     with self._mic_state_lock:
