@@ -793,28 +793,45 @@ class AudioCapture:
             if self.is_recovery_successful():
                 print("[RECOVERY] Recovery successful - callbacks received")
                 # Stop the test recording (we just verified device works)
+                # Signal the thread to exit - it will handle stream cleanup in its finally block
+                # Don't touch the stream here - let the recording thread clean it up to avoid race conditions
                 with self.lock:
                     self.is_recording = False
-                # Stop the stream
-                if self.stream:
-                    try:
-                        self.stream.stop()
-                        self.stream.close()
-                    except:
-                        pass
-                    self.stream = None
-                # Join thread with longer timeout to ensure clean shutdown
+                
+                # Wait for the recording thread to exit and clean up the stream itself
+                # The thread's finally block will handle stream.stop() and stream.close()
+                # This avoids PortAudio errors from concurrent stream cleanup
                 if self.record_thread and self.record_thread.is_alive():
                     self.record_thread.join(timeout=3.0)
                     if self.record_thread.is_alive():
-                        print("[RECOVERY] Warning: Test recording thread did not exit cleanly, but proceeding", flush=True)
+                        print("[RECOVERY] Warning: Test recording thread did not exit cleanly, forcing cleanup", flush=True)
+                        # Thread is stuck - force cleanup from recovery thread as last resort
+                        # Get stream reference before clearing to avoid race
+                        stream_to_cleanup = None
+                        with self.lock:
+                            stream_to_cleanup = self.stream
+                            self.stream = None
+                        # Clean up outside lock (thread might still be trying to access it)
+                        if stream_to_cleanup:
+                            try:
+                                stream_to_cleanup.stop()
+                            except:
+                                pass
+                            try:
+                                stream_to_cleanup.close()
+                            except:
+                                pass
                     else:
                         print("[RECOVERY] Test recording thread exited cleanly", flush=True)
-                # Ensure stream is fully cleared
+                
+                # Ensure stream reference is cleared (thread cleanup should have done this)
                 with self.lock:
                     if self.stream is not None:
-                        print("[RECOVERY] Warning: Stream still exists after cleanup, forcing clear", flush=True)
+                        print("[RECOVERY] Warning: Stream reference still exists after thread exit", flush=True)
+                        # Thread should have cleaned this up, but if not, clear the reference
+                        # Don't try to stop/close here - thread already did it or it's invalid
                         self.stream = None
+                
                 # Small delay to ensure all cleanup is complete before next recording
                 time.sleep(0.2)
                 return True
