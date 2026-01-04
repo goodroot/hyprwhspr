@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | most accurate local models | realtime cloud streaming | themed visuals
+    instant performance | most accurate local models | realtime cloud streaming | stylish visuals
 </p>
 
  <p align="center">
@@ -24,7 +24,8 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
 - **Themed visualizer via mic-osd** - Visual feedback when recording, matched to your Omarcy theme
 - **Supports any cloud API** -  Use a cloud stt service or any custom localhost model
-- **Word overrides and multi-language** - Customize transcriptions, prompt and corrections, in your language
+- **Custom word overides and prompts** - Hot keys, common words, and more
+- **Multi-lingual** - Great performance in many languages
 - **Auto-paste anywhere** - Pastes in active buffer without additional keypresses
 
 ## Quick start

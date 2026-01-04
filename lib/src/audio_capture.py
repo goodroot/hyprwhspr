@@ -57,6 +57,12 @@ class AudioCapture:
         self.last_callback_monotonic = 0.0  # Timestamp of last callback
         self.frames_since_start = 0  # Frame count for success criteria
         self.recovery_start_time = 0.0  # When recovery started
+        self._last_recovery_attempt_time = 0.0  # Track when recovery last started (for cooldown)
+
+        # Thread cleanup tracking
+        self._cleanup_complete = threading.Event()  # Signals when cleanup finishes
+        self._cleanup_complete.set()  # Initialize as set (no cleanup in progress on startup)
+        self._abort_cleanup = False  # Flag to signal stuck threads to abort cleanup
         
         # Initialize sounddevice
         self._initialize_sounddevice()
@@ -361,6 +367,10 @@ class AudioCapture:
                 self.frames_since_start = 0
                 self.last_callback_monotonic = 0.0
             
+            # Reset cleanup tracking flags for new recording
+            self._cleanup_complete.clear()
+            self._abort_cleanup = False
+            
             # Start recording thread
             self.record_thread = threading.Thread(target=self._record_audio, daemon=True)
             self.record_thread.start()
@@ -500,22 +510,52 @@ class AudioCapture:
                     time.sleep(0.1)
             finally:
                 # Clean up stream on exit (recording thread owns this cleanup)
-                stream = None
-                with self.lock:
-                    stream = self.stream
+                # Check abort flag - if set, exit early to avoid blocking
+                if self._abort_cleanup:
+                    print("[RECOVERY] Thread cleanup aborted by recovery", flush=True)
+                    # Clear the stream reference but don't try to stop/close (might be stuck)
+                    with self.lock:
+                        if self.stream is not None:
+                            self.stream = None
+                    self._cleanup_complete.set()  # Signal cleanup attempt finished (even if aborted)
+                else:
+                    stream = None
+                    with self.lock:
+                        stream = self.stream
+                        if stream is not None:
+                            self.stream = None  # Clear reference immediately
+                    
+                    # Clean up outside lock with timeout protection
                     if stream is not None:
-                        self.stream = None  # Clear reference immediately
-                
-                # Clean up outside lock
-                if stream is not None:
-                    try:
-                        stream.stop()
-                    except (AttributeError, RuntimeError, Exception):
-                        pass  # Stream might already be stopped
-                    try:
-                        stream.close()
-                    except (AttributeError, RuntimeError, Exception):
-                        pass  # Stream might already be closed
+                        # Use threading to add timeout to stream operations
+                        def stop_with_timeout():
+                            try:
+                                stream.stop()
+                            except (AttributeError, RuntimeError, Exception):
+                                pass
+                        
+                        def close_with_timeout():
+                            try:
+                                stream.close()
+                            except (AttributeError, RuntimeError, Exception):
+                                pass
+                        
+                        # Stop stream with timeout
+                        stop_thread = threading.Thread(target=stop_with_timeout, daemon=True)
+                        stop_thread.start()
+                        stop_thread.join(timeout=1.0)
+                        if stop_thread.is_alive():
+                            print("[RECOVERY] Warning: stream.stop() timed out in thread cleanup", flush=True)
+                        
+                        # Close stream with timeout
+                        close_thread = threading.Thread(target=close_with_timeout, daemon=True)
+                        close_thread.start()
+                        close_thread.join(timeout=1.0)
+                        if close_thread.is_alive():
+                            print("[RECOVERY] Warning: stream.close() timed out in thread cleanup", flush=True)
+                    
+                    # Signal cleanup is complete
+                    self._cleanup_complete.set()
                     
         except Exception as e:
             # Always log the error message
@@ -538,6 +578,8 @@ class AudioCapture:
                     pass
                 with self.lock:
                     self.stream = None
+            # Signal cleanup is complete (even if exception occurred)
+            self._cleanup_complete.set()
     
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
         """Start monitoring audio levels without recording"""
@@ -673,6 +715,23 @@ class AudioCapture:
 
         return False
     
+    def _reset_portaudio_state(self):
+        """
+        Reset PortAudio library state as last resort when threads are stuck.
+        This should only be called when a thread is truly stuck and cannot be recovered.
+        """
+        try:
+            print("[RECOVERY] Resetting PortAudio state...", flush=True)
+            # Terminate and reinitialize PortAudio to clear stuck state
+            # This is a last resort - it will affect all PortAudio operations
+            sd._terminate()
+            time.sleep(0.1)  # Brief pause
+            sd._initialize()
+            print("[RECOVERY] PortAudio state reset complete", flush=True)
+        except Exception as e:
+            print(f"[RECOVERY] ERROR: Failed to reset PortAudio state: {e}", flush=True)
+            # Continue anyway - recovery will attempt to proceed
+    
     def recover_audio_capture(self, reason: str, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
         Recover audio capture by tearing down and rebuilding the stream.
@@ -695,170 +754,104 @@ class AudioCapture:
                 print(f"[RECOVERY] Recovery already in progress, skipping")
                 return False
             
-            # Set recovery in progress
+            # Check cooldown period - prevent rapid recovery attempts
+            current_time = time.monotonic()
+            if current_time - self._last_recovery_attempt_time < 2.0:
+                print(f"[RECOVERY] Recovery attempted too recently (cooldown: {2.0 - (current_time - self._last_recovery_attempt_time):.1f}s remaining), skipping")
+                return False
+            
+            # Check if previous recovery's cleanup is still in progress
+            if not self._cleanup_complete.is_set():
+                print(f"[RECOVERY] Previous recovery cleanup still in progress, skipping")
+                return False
+            
+            # Set recovery in progress and update attempt time
             self.recovery_in_progress = True
+            self._last_recovery_attempt_time = current_time
         
         try:
-            print(f"[RECOVERY] Starting audio capture recovery (reason: {reason})", flush=True)
-            
-            # Step A: Hard stop current capture
-            print("[RECOVERY] Step A: Stopping current capture")
+            print(f"[RECOVERY] Starting recovery ({reason})", flush=True)
+
+            # Reset cleanup tracking flags
+            self._cleanup_complete.clear()
+            self._abort_cleanup = False
+
             with self.lock:
                 was_recording = self.is_recording
                 self.is_recording = False
-            
+
+            # Signal thread to abort cleanup if it's stuck
+            self._abort_cleanup = True
+
             # Stop and close stream if it exists
             if self.stream:
                 try:
                     self.stream.stop()
                     self.stream.close()
-                except Exception as e:
-                    print(f"[RECOVERY] Error stopping stream: {e}")
+                except Exception:
+                    pass  # Expected if device is dead
                 finally:
-                    self.stream = None
-            
-            # Join record thread with timeout
+                    with self.lock:
+                        self.stream = None
+
+            # Join record thread with timeout and verify cleanup completion
             if self.record_thread and self.record_thread.is_alive():
                 self.record_thread.join(timeout=2.0)
                 if self.record_thread.is_alive():
-                    # Thread is stuck (likely in stream.stop() or stream.close() waiting for dead device)
-                    # This is expected during recovery of a truly dead/unplugged device
-                    print("[RECOVERY] Warning: Recording thread stuck in cleanup (device unresponsive)", flush=True)
-
-                    # Try waiting longer before giving up
-                    print("[RECOVERY] Waiting additional 3 seconds for thread cleanup...", flush=True)
+                    # Thread stuck (expected for dead device) - wait longer
                     self.record_thread.join(timeout=3.0)
 
                     if self.record_thread.is_alive():
-                        # Still stuck after 5 total seconds - this is a zombie thread
-                        # Abandon it and proceed with recovery anyway
-                        # The zombie thread will eventually time out and die on its own
-                        print("[RECOVERY] Thread still stuck - abandoning zombie thread and proceeding with recovery", flush=True)
-                        print("[RECOVERY] Note: If issues persist, restart the service", flush=True)
-                        self.record_thread = None  # Abandon reference to stuck thread
-            
+                        # Still stuck after 5s - wait for cleanup flag
+                        cleanup_waited = self._cleanup_complete.wait(timeout=5.0)
+
+                        if not cleanup_waited or self.record_thread.is_alive():
+                            # Still stuck after 10s - reset PortAudio and abandon thread
+                            print("[RECOVERY] Thread stuck after 10s - abandoning and resetting PortAudio", flush=True)
+                            self._reset_portaudio_state()
+                            self.record_thread.join(timeout=1.0)
+                            if self.record_thread.is_alive():
+                                self.record_thread = None  # Abandon zombie thread
+
+            # Reset abort flag for next recovery
+            self._abort_cleanup = False
+
             # Reset tracking
             with self.lock:
                 self.frames_since_start = 0
                 self.last_callback_monotonic = 0.0
                 self.audio_data = []
-            
-            # Step B: Re-enumerate devices and rebind defaults
-            print("[RECOVERY] Step B: Re-enumerating devices and rebinding defaults", flush=True)
+
+            # Re-enumerate devices and rebind defaults
             try:
-                # Force PortAudio refresh (lightest reset)
-                sd.query_devices()
-                
-                # Re-run initialization to set sd.default.* and validate device
-                # Hold recovery_lock to prevent concurrent modifications from pulse callback
+                sd.query_devices()  # Force PortAudio refresh
                 with self.recovery_lock:
                     self._initialize_sounddevice()
-                
-                # If preferred device ID is now invalid, existing logic already fell back
-                print(f"[RECOVERY] Device re-initialized: {self.device_id}", flush=True)
             except Exception as e:
-                print(f"[RECOVERY] ERROR: Failed to re-enumerate devices: {e}", flush=True)
+                print(f"[RECOVERY] Failed to re-enumerate devices: {e}", flush=True)
+                # Set cleanup complete flag so next recovery can proceed
+                self._cleanup_complete.set()
                 return False
-            
-            # Step C: Recreate capture
-            print("[RECOVERY] Step C: Recreating capture")
-            self.recovery_start_time = time.monotonic()
-            
-            # If we were recording, skip the test recording to avoid model conflicts
-            # The caller will restart recording after recovery, so we just need to verify device works
-            if was_recording:
-                print("[RECOVERY] Was recording - skipping test recording to avoid model conflicts")
-                print("[RECOVERY] Device re-initialized successfully, ready for recording restart")
-                # Device enumeration already succeeded in Step B, so recovery is successful
-                return True
-            
-            # Restore streaming callback if provided (only for test recording when not was_recording)
-            if streaming_callback:
-                self.streaming_callback = streaming_callback
-            
-            # Start recording again (spawns fresh thread with fresh stream)
-            # This is needed to verify the device works, even if we weren't recording before
-            try:
-                if not self.start_recording(streaming_callback):
-                    print("[RECOVERY] ERROR: Failed to start recording after recovery")
-                    return False
-            except Exception as e:
-                print(f"[RECOVERY] ERROR: Exception starting recording: {e}")
-                return False
-            
-            # Wait a bit for callbacks to start
-            time.sleep(0.5)
-            
-            # Check if recovery was successful
-            if self.is_recovery_successful():
-                print("[RECOVERY] Recovery successful - callbacks received")
-                # Stop the test recording (we just verified device works)
-                # Signal the thread to exit - it will handle stream cleanup in its finally block
-                # Don't touch the stream here - let the recording thread clean it up to avoid race conditions
-                with self.lock:
-                    self.is_recording = False
-                
-                # Wait for the recording thread to exit and clean up the stream itself
-                # The thread's finally block will handle stream.stop() and stream.close()
-                # This avoids PortAudio errors from concurrent stream cleanup
-                if self.record_thread and self.record_thread.is_alive():
-                    self.record_thread.join(timeout=3.0)
-                    if self.record_thread.is_alive():
-                        print("[RECOVERY] Warning: Test recording thread did not exit cleanly, forcing cleanup", flush=True)
-                        # Thread is stuck - force cleanup from recovery thread as last resort
-                        # Get stream reference before clearing to avoid race
-                        stream_to_cleanup = None
-                        with self.lock:
-                            stream_to_cleanup = self.stream
-                            self.stream = None
-                        # Clean up outside lock (thread might still be trying to access it)
-                        if stream_to_cleanup:
-                            try:
-                                stream_to_cleanup.stop()
-                            except:
-                                pass
-                            try:
-                                stream_to_cleanup.close()
-                            except:
-                                pass
-                    else:
-                        print("[RECOVERY] Test recording thread exited cleanly", flush=True)
-                
-                # Ensure stream reference is cleared (thread cleanup should have done this)
-                with self.lock:
-                    if self.stream is not None:
-                        print("[RECOVERY] Warning: Stream reference still exists after thread exit", flush=True)
-                        # Thread should have cleaned this up, but if not, clear the reference
-                        # Don't try to stop/close here - thread already did it or it's invalid
-                        self.stream = None
-                
-                # Small delay to ensure all cleanup is complete before next recording
-                time.sleep(0.2)
-                return True
-            else:
-                print("[RECOVERY] Recovery failed - please re-attach your mic usb")
-                # Stop the failed recording attempt
-                if self.is_recording:
-                    with self.lock:
-                        self.is_recording = False
-                if self.stream:
-                    try:
-                        self.stream.stop()
-                        self.stream.close()
-                    except:
-                        pass
-                    self.stream = None
-                return False
-                
+
+            # Recovery complete - device re-initialized successfully
+            # Set cleanup complete flag so next recovery attempt can proceed
+            self._cleanup_complete.set()
+            print("[RECOVERY] Complete - device ready", flush=True)
+            return True
+
         except Exception as e:
             print(f"[RECOVERY] ERROR: Exception during recovery: {e}")
             import traceback
             traceback.print_exc()
+            # Set cleanup complete flag even on error so next recovery can proceed
+            self._cleanup_complete.set()
             return False
         finally:
             # Clear recovery in progress flag
             with self.recovery_lock:
                 self.recovery_in_progress = False
+            # Reset cleanup flags for next recovery attempt
+            self._abort_cleanup = False
     
     def list_devices(self):
         """List available audio input devices"""
