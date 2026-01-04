@@ -442,16 +442,16 @@ check_recovery_result() {
 # Function to toggle hyprwhspr
 toggle_hyprwhspr() {
     if is_hyprwhspr_running; then
-        echo "Stopping hyprwhspr..."
+        echo "Stopping hyprwhspr..." >&2
         systemctl --user stop hyprwhspr.service
         show_notification "hyprwhspr" "Stopped" "low"
     else
         if can_start_recording; then
-            echo "Starting hyprwhspr..."
+            echo "Starting hyprwhspr..." >&2
             systemctl --user start hyprwhspr.service
             show_notification "hyprwhspr" "Started" "normal"
         else
-            echo "Cannot start hyprwhspr - no microphone available"
+            echo "Cannot start hyprwhspr - no microphone available" >&2
             show_notification "hyprwhspr" "No microphone available" "critical"
             return 1
         fi
@@ -471,7 +471,7 @@ control_recording() {
         # Start recording - ensure service is running first
         if ! is_hyprwhspr_running; then
             if can_start_recording; then
-                echo "Starting hyprwhspr service..."
+                echo "Starting hyprwhspr service..." >&2
                 systemctl --user start hyprwhspr.service
                 # Wait a moment for service to initialize
                 sleep 0.5
@@ -490,7 +490,7 @@ control_recording() {
 # Function to start ydotoold if needed
 start_ydotoold() {
     if ! is_ydotoold_running; then
-        echo "Starting ydotoold..."
+        echo "Starting ydotoold..." >&2
         systemctl --user start ydotool.service  # Using system service
         sleep 1
         if is_ydotoold_running; then
@@ -509,7 +509,7 @@ check_service_health() {
         
         if [ "$service_status" = "activating" ]; then
             # Service is stuck starting, restart it
-            echo "Service stuck in activating state, restarting..."
+            echo "Service stuck in activating state, restarting..." >&2
             systemctl --user restart hyprwhspr.service
             return 1
         fi
@@ -696,12 +696,18 @@ case "${1:-status}" in
     "toggle")
         toggle_hyprwhspr
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "record")
         control_recording
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "start")
         if ! is_hyprwhspr_running; then
@@ -713,7 +719,10 @@ case "${1:-status}" in
             fi
         fi
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "stop")
         if is_hyprwhspr_running; then
@@ -721,28 +730,40 @@ case "${1:-status}" in
             show_notification "hyprwhspr" "Stopped" "low"
         fi
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "ydotoold")
         start_ydotoold
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "restart")
         systemctl --user restart hyprwhspr.service
         show_notification "hyprwhspr" "Restarted" "normal"
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "health")
         check_service_health
         if [ $? -eq 0 ]; then
-            echo "Service health check passed"
+            echo "Service health check passed" >&2
         else
-            echo "Service health check failed, attempting recovery"
+            echo "Service health check failed, attempting recovery" >&2
         fi
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     *)
         echo "Usage: $0 [status|toggle|record|start|stop|ydotoold|restart|health]"
