@@ -84,7 +84,7 @@ class SuspendMonitor:
         try:
             if entering_suspend:
                 # System is about to suspend
-                print("[SUSPEND_MONITOR] System suspend detected (D-Bus signal)", flush=True)
+                # Note: Callback will log details, no need to log here
                 if self.on_suspend:
                     # Run callback in separate thread to avoid blocking D-Bus
                     threading.Thread(
@@ -93,7 +93,7 @@ class SuspendMonitor:
                     ).start()
             else:
                 # System just resumed
-                print("[SUSPEND_MONITOR] System resume detected (D-Bus signal)", flush=True)
+                # Note: Callback will log details, no need to log here
                 if self.on_resume:
                     # Run callback in separate thread
                     threading.Thread(

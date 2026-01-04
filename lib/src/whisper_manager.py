@@ -993,9 +993,10 @@ class WhisperManager:
         
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
         backend = normalize_backend(backend)
-        
-        # Only reinitialize for pywhispercpp backend
-        if backend != 'pywhispercpp':
+
+        # Only reinitialize for pywhispercpp and its variants (cpu, nvidia, amd)
+        pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd']
+        if backend not in pywhispercpp_variants:
             return True
         
         print("[MODEL] Reinitializing whisper model (suspend/resume detected)", flush=True)
