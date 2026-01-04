@@ -368,6 +368,16 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
 
+**Auto-submit** - automatically press Enter after pasting:
+
+```jsonc
+{
+    "auto_submit": true   // Send Enter key after paste (default: false)
+}
+```
+
+Useful for chat applications, search boxes, or any input where you want to submit immediately after dictation.
+
 **Add dynamic tray icon** to your `~/.config/waybar/config`:
 
 ```json

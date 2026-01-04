@@ -163,6 +163,20 @@ class TextInjector:
             print(f"Slow paste key injection failed: {e}")
             return False
 
+    def _send_enter_if_auto_submit(self):
+        """Send Enter key if auto_submit is enabled"""
+        if self.config_manager and self.config_manager.get_setting('auto_submit', False):
+            try:
+                enter_result = subprocess.run(
+                    ['ydotool', 'key', '28:1', '28:0'],  # 28 = Enter key
+                    capture_output=True, timeout=1
+                )
+                if enter_result.returncode != 0:
+                    stderr = (enter_result.stderr or b"").decode("utf-8", "ignore")
+                    print(f"  ydotool Enter key failed: {stderr}")
+            except Exception as e:
+                print(f"  auto_submit Enter key failed: {e}")
+
     def _clear_clipboard(self):
         """Clear the clipboard by setting it to empty content"""
         try:
@@ -396,6 +410,7 @@ class TextInjector:
                         if not success:
                             print(f"  Slow paste failed for mode {paste_mode}")
                             return False
+                        self._send_enter_if_auto_submit()
                         return True
                     elif paste_mode is None:
                         # Back-compat: use shift_paste setting
@@ -408,6 +423,7 @@ class TextInjector:
                         if not success:
                             print(f"  Slow paste failed for back-compat mode {mode}")
                             return False
+                        self._send_enter_if_auto_submit()
                         return True
 
                 # Fast path for non-Kitty terminals (original behavior)
@@ -453,6 +469,8 @@ class TextInjector:
                     stderr = (result.stderr or b"").decode("utf-8", "ignore")
                     print(f"  ydotool paste command failed: {stderr}")
                     return False
+
+                self._send_enter_if_auto_submit()
                 return True
 
             print("No key-injection tool available; text is on the clipboard.")
