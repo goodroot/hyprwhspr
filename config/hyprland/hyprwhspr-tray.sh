@@ -304,6 +304,7 @@ show_notification() {
 # Function to check and show recovery result notification
 check_recovery_result() {
     local result_file="$HOME/.config/hyprwhspr/recovery_result"
+    local notification_lock="$HOME/.config/hyprwhspr/.recovery_notification_lock"
 
     if [[ ! -f "$result_file" ]]; then
         return 0
@@ -333,35 +334,68 @@ check_recovery_result() {
         return 0
     fi
 
-    # Show notification based on status
-    if [[ "$status" == "success" ]]; then
-        case "$reason" in
-            hotplug)
-                show_notification "hyprwhspr" "Microphone reconnected successfully" "normal"
-                ;;
-            mic_unavailable|mic_no_audio)
-                show_notification "hyprwhspr" "Microphone recovered successfully" "normal"
-                ;;
-            *)
-                show_notification "hyprwhspr" "Recovery successful" "normal"
-                ;;
-        esac
+    # Debounce: Check if we've shown a notification for THIS SPECIFIC result recently (within 2 seconds)
+    # Format: timestamp:status:reason
+    local result_key="${status}:${reason}"
+    local should_show=true
+    
+    if [[ -f "$notification_lock" ]]; then
+        local lock_content
+        lock_content=$(cat "$notification_lock" 2>/dev/null)
+        if [[ -n "$lock_content" ]]; then
+            # Parse lock file format: timestamp:status:reason
+            local lock_timestamp="${lock_content%%:*}"
+            local lock_rest="${lock_content#*:}"
+            local lock_status="${lock_rest%%:*}"
+            local lock_reason="${lock_rest#*:}"
+            local lock_key="${lock_status}:${lock_reason}"
+            
+            if [[ -n "$lock_timestamp" ]]; then
+                local lock_age=$((current_time - lock_timestamp))
+                # Only suppress if it's the SAME result (status:reason) within 2 seconds
+                if [[ "$lock_key" == "$result_key" && $lock_age -lt 2 ]]; then
+                    # Same result shown recently, skip to prevent duplicates
+                    should_show=false
+                fi
+            fi
+        fi
+    fi
 
-        # Clear any cached error states after successful recovery
-        # Give device enumeration a moment to settle before next status check
-        sleep 0.5
-    elif [[ "$status" == "failed" ]]; then
-        case "$reason" in
-            hotplug)
-                show_notification "hyprwhspr" "Microphone detected but recovery failed - please wait or restart service" "critical"
-                ;;
-            mic_unavailable|mic_no_audio)
-                show_notification "hyprwhspr" "Recovery failed - please replug microphone" "critical"
-                ;;
-            *)
-                show_notification "hyprwhspr" "Recovery failed - please check microphone connection" "critical"
-                ;;
-        esac
+    if [[ "$should_show" == "true" ]]; then
+        # Show notification based on status
+        if [[ "$status" == "success" ]]; then
+            case "$reason" in
+                hotplug)
+                    show_notification "hyprwhspr" "Microphone reconnected successfully" "normal"
+                    ;;
+                mic_unavailable|mic_no_audio)
+                    show_notification "hyprwhspr" "Microphone recovered successfully" "normal"
+                    ;;
+                *)
+                    show_notification "hyprwhspr" "Recovery successful" "normal"
+                    ;;
+            esac
+
+            # Clear any cached error states after successful recovery
+            # Give device enumeration a moment to settle before next status check
+            sleep 0.5
+        elif [[ "$status" == "failed" ]]; then
+            case "$reason" in
+                hotplug)
+                    show_notification "hyprwhspr" "Microphone detected but recovery failed - please wait or restart service" "critical"
+                    ;;
+                mic_unavailable|mic_no_audio)
+                    show_notification "hyprwhspr" "Recovery failed - please replug microphone" "critical"
+                    ;;
+                *)
+                    show_notification "hyprwhspr" "Recovery failed - please check microphone connection" "critical"
+                    ;;
+            esac
+        fi
+
+        # Record that we've shown this specific notification (debounce)
+        # Format: timestamp:status:reason
+        echo "${current_time}:${status}:${reason}" > "$notification_lock" 2>/dev/null
     fi
 
     # Remove result file after showing notification

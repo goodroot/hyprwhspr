@@ -750,7 +750,9 @@ class AudioCapture:
                 sd.query_devices()
                 
                 # Re-run initialization to set sd.default.* and validate device
-                self._initialize_sounddevice()
+                # Hold recovery_lock to prevent concurrent modifications from pulse callback
+                with self.recovery_lock:
+                    self._initialize_sounddevice()
                 
                 # If preferred device ID is now invalid, existing logic already fell back
                 print(f"[RECOVERY] Device re-initialized: {self.device_id}", flush=True)
@@ -801,9 +803,20 @@ class AudioCapture:
                     except:
                         pass
                     self.stream = None
-                # Join thread
+                # Join thread with longer timeout to ensure clean shutdown
                 if self.record_thread and self.record_thread.is_alive():
-                    self.record_thread.join(timeout=1.0)
+                    self.record_thread.join(timeout=3.0)
+                    if self.record_thread.is_alive():
+                        print("[RECOVERY] Warning: Test recording thread did not exit cleanly, but proceeding", flush=True)
+                    else:
+                        print("[RECOVERY] Test recording thread exited cleanly", flush=True)
+                # Ensure stream is fully cleared
+                with self.lock:
+                    if self.stream is not None:
+                        print("[RECOVERY] Warning: Stream still exists after cleanup, forcing clear", flush=True)
+                        self.stream = None
+                # Small delay to ensure all cleanup is complete before next recording
+                time.sleep(0.2)
                 return True
             else:
                 print("[RECOVERY] Recovery failed - please re-attach your mic usb")

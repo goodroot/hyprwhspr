@@ -629,6 +629,15 @@ This prevents hyprwhspr from taking exclusive control of keyboards and allows it
 
 > When grab_keys is disabled, the shortcut is not suppressed and may also trigger other system keybindings.
 
+**Bluetooth mic and flakey recording:**
+
+Mute detection can cause conflicts with Bluetooth microphones. To disable it, add the following to your `~/.config/hyprwhspr/config.json`:
+
+```json
+{
+  "mute_detection": false
+}
+```
 
 ## Getting help
 

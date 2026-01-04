@@ -355,7 +355,15 @@ class hyprwhsprApp:
             if self.config.get_setting('audio_device_id', None) is None:
                 print("[PULSE] Re-enumerating devices (no specific device configured, using system default)")
                 # Re-initialize audio capture to pick up new default
-                self.audio_capture._initialize_sounddevice()
+                # Hold recovery_lock to prevent concurrent modifications with recovery
+                # Check again right before calling to avoid TOCTOU race condition
+                with self.audio_capture.recovery_lock:
+                    if self.audio_capture.recovery_in_progress:
+                        print(f"[PULSE] Default source changed during recovery - skipping (recovery will handle)", flush=True)
+                        return
+                    # Call _initialize_sounddevice() while holding the lock to prevent
+                    # concurrent modifications to sd.default.* global state
+                    self.audio_capture._initialize_sounddevice()
             else:
                 print("[PULSE] Specific device configured, ignoring system default change")
         except Exception as e:
