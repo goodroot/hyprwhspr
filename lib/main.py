@@ -124,6 +124,11 @@ class hyprwhsprApp:
             self._recording_started_this_press = None
             self._tap_threshold = None
 
+        # Track startup time BEFORE any monitors are initialized
+        # This prevents race condition where hotplug events arrive before _startup_time is set
+        self._startup_time = time.monotonic()
+        self._startup_grace_period = 5.0  # Ignore hotplug events for 5 seconds after startup
+
         # Set up device hotplug monitoring (for automatic mic recovery)
         self._setup_device_monitor()
 
@@ -249,6 +254,14 @@ class hyprwhsprApp:
     def _on_audio_device_added(self, device):
         """Called when audio device is plugged in"""
         try:
+            # Ignore hotplug events during startup grace period
+            # This prevents false positives from pyudev detecting existing devices on startup
+            current_time = time.monotonic()
+            if current_time - self._startup_time < self._startup_grace_period:
+                remaining = self._startup_grace_period - (current_time - self._startup_time)
+                print(f"[HOTPLUG] Ignoring hotplug event during startup grace period ({remaining:.1f}s remaining)", flush=True)
+                return
+
             device_model = device.get('ID_MODEL') or 'Unknown'
 
             # Determine if we should trigger recovery
@@ -329,6 +342,9 @@ class hyprwhsprApp:
                 with self._mic_state_lock:
                     self._mic_disconnected = True
                 print(f"[HOTPLUG] Microphone disconnected", flush=True)
+                
+                # Send notification on disconnect
+                self._notify_user("hyprwhspr", "Microphone disconnected", "normal")
 
             # If currently recording, this will fail gracefully in next audio callback
         except Exception as e:
