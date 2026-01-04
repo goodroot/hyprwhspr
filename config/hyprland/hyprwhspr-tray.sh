@@ -523,67 +523,15 @@ check_service_health() {
     return 0
 }
 
-# Function to get audio level visualization
-get_audio_level_viz() {
-    local level_file="$HOME/.config/hyprwhspr/audio_level"
-    
-    if [[ ! -f "$level_file" ]]; then
-        echo ""
-        return
-    fi
-    
-    local level
-    level=$(cat "$level_file" 2>/dev/null || echo "0")
-    
-    # Convert level (0.0-1.0) to multi-segment dot visualization
-    # Using smaller Unicode characters for pixel-like appearance
-    local num_segments=12
-    local inactive_char="·"  # middle dot for inactive segments
-    local active_char="▪"    # small square for active segments
-    
-    # Apply non-linear scaling for better sensitivity to lower levels
-    # Using square root curve: makes quiet sounds more visible
-    # This maps low levels (0.0-0.3) to more segments for better responsiveness
-    local active_segments=$(awk -v l="$level" -v n="$num_segments" 'BEGIN {
-        # Apply square root scaling for better sensitivity
-        # This makes lower levels fill more segments
-        scaled = sqrt(l) * n
-        segs = int(scaled + 0.5)  # Round to nearest integer
-        if (segs > n) segs = n
-        if (segs < 0) segs = 0
-        print segs
-    }')
-    
-    # Build the visualization string
-    local viz=""
-    local i
-    for ((i=0; i<num_segments; i++)); do
-        if [ $i -lt $active_segments ]; then
-            viz="${viz}${active_char}"
-        else
-            viz="${viz}${inactive_char}"
-        fi
-    done
-    
-    echo "$viz"
-}
-
 # Function to emit JSON output for waybar with granular error classes
 emit_json() {
     local state="$1" reason="${2:-}" custom_tooltip="${3:-}"
     local icon text tooltip class="$state"
-    local audio_viz=""
-    
-    # Get audio visualization if recording
-    if [[ "$state" == "recording" ]]; then
-        audio_viz=$(get_audio_level_viz)
-        [[ -n "$audio_viz" ]] && audio_viz=" $audio_viz"
-    fi
     
     case "$state" in
         "recording")
             icon=""
-            text="$icon$audio_viz"
+            text="$icon"
             tooltip="hyprwhspr: Currently recording\n\nLeft-click: Stop recording\nRight-click: Restart service"
             ;;
         "error")
