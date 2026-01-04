@@ -304,7 +304,8 @@ show_notification() {
 # Function to check and show recovery result notification
 check_recovery_result() {
     local result_file="$HOME/.config/hyprwhspr/recovery_result"
-    local notification_lock="$HOME/.config/hyprwhspr/.recovery_notification_lock"
+    local notification_lock_dir="$HOME/.config/hyprwhspr/.recovery_notification_lock"
+    local notification_lock_file="${notification_lock_dir}/lock"
 
     if [[ ! -f "$result_file" ]]; then
         return 0
@@ -331,32 +332,72 @@ check_recovery_result() {
     if [[ $result_age -gt 10 ]]; then
         # Stale result, remove it
         rm -f "$result_file" 2>/dev/null
+        # Clean up stale lock directory
+        [[ -d "$notification_lock_dir" ]] && rmdir "$notification_lock_dir" 2>/dev/null
         return 0
     fi
 
-    # Debounce: Check if we've shown a notification for THIS SPECIFIC result recently (within 2 seconds)
-    # Format: timestamp:status:reason
+    # Atomic check-and-set using directory creation
+    # Directory creation is atomic - only one process can succeed
     local result_key="${status}:${reason}"
-    local should_show=true
+    local should_show=false
     
-    if [[ -f "$notification_lock" ]]; then
-        local lock_content
-        lock_content=$(cat "$notification_lock" 2>/dev/null)
-        if [[ -n "$lock_content" ]]; then
-            # Parse lock file format: timestamp:status:reason
-            local lock_timestamp="${lock_content%%:*}"
-            local lock_rest="${lock_content#*:}"
-            local lock_status="${lock_rest%%:*}"
-            local lock_reason="${lock_rest#*:}"
-            local lock_key="${lock_status}:${lock_reason}"
-            
-            if [[ -n "$lock_timestamp" ]]; then
-                local lock_age=$((current_time - lock_timestamp))
-                # Only suppress if it's the SAME result (status:reason) within 2 seconds
-                if [[ "$lock_key" == "$result_key" && $lock_age -lt 2 ]]; then
-                    # Same result shown recently, skip to prevent duplicates
-                    should_show=false
+    # Try to create lock directory atomically
+    if mkdir "$notification_lock_dir" 2>/dev/null; then
+        # We successfully created the lock - we're the first to process this
+        should_show=true
+        # Write metadata to lock file inside the directory
+        echo "${current_time}:${status}:${reason}" > "$notification_lock_file" 2>/dev/null
+    else
+        # Lock directory already exists - check if it's for the same result
+        if [[ -f "$notification_lock_file" ]]; then
+            local lock_content
+            lock_content=$(cat "$notification_lock_file" 2>/dev/null)
+            if [[ -n "$lock_content" ]]; then
+                # Parse lock file format: timestamp:status:reason
+                local lock_timestamp="${lock_content%%:*}"
+                local lock_rest="${lock_content#*:}"
+                local lock_status="${lock_rest%%:*}"
+                local lock_reason="${lock_rest#*:}"
+                local lock_key="${lock_status}:${lock_reason}"
+                
+                if [[ -n "$lock_timestamp" ]]; then
+                    local lock_age=$((current_time - lock_timestamp))
+                    # If same result and within 60 seconds, suppress notification
+                    if [[ "$lock_key" == "$result_key" && $lock_age -lt 60 ]]; then
+                        should_show=false
+                    else
+                        # Different result or stale lock (>60s) - clean up and allow notification
+                        rm -rf "$notification_lock_dir" 2>/dev/null
+                        # Retry creating lock (but only once to avoid infinite loop)
+                        if mkdir "$notification_lock_dir" 2>/dev/null; then
+                            should_show=true
+                            echo "${current_time}:${status}:${reason}" > "$notification_lock_file" 2>/dev/null
+                        fi
+                    fi
+                else
+                    # Invalid lock timestamp - clean up stale lock
+                    rm -rf "$notification_lock_dir" 2>/dev/null
+                    if mkdir "$notification_lock_dir" 2>/dev/null; then
+                        should_show=true
+                        echo "${current_time}:${status}:${reason}" > "$notification_lock_file" 2>/dev/null
+                    fi
                 fi
+            else
+                # Lock file missing but directory exists - clean up stale lock
+                rmdir "$notification_lock_dir" 2>/dev/null
+                # Retry once
+                if mkdir "$notification_lock_dir" 2>/dev/null; then
+                    should_show=true
+                    echo "${current_time}:${status}:${reason}" > "$notification_lock_file" 2>/dev/null
+                fi
+            fi
+        else
+            # Directory exists but no lock file - clean up and retry
+            rmdir "$notification_lock_dir" 2>/dev/null
+            if mkdir "$notification_lock_dir" 2>/dev/null; then
+                should_show=true
+                echo "${current_time}:${status}:${reason}" > "$notification_lock_file" 2>/dev/null
             fi
         fi
     fi
@@ -392,13 +433,10 @@ check_recovery_result() {
                     ;;
             esac
         fi
-
-        # Record that we've shown this specific notification (debounce)
-        # Format: timestamp:status:reason
-        echo "${current_time}:${status}:${reason}" > "$notification_lock" 2>/dev/null
     fi
 
     # Keep result file for short grace period; stale results are cleared above
+    # Lock directory will be cleaned up when stale (age > 60s) or on next check
 }
 
 # Function to toggle hyprwhspr
