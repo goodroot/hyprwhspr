@@ -53,7 +53,7 @@ from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
-    RECORDING_STATUS_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
+    RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE
 )
 from backend_utils import normalize_backend
@@ -971,6 +971,46 @@ class hyprwhsprApp:
             # Thread will exit when is_recording becomes False
             pass
 
+    def _check_recording_control(self):
+        """Check for recording control requests from tray script and start/stop recording"""
+        # Check if recording control file exists
+        if not RECORDING_CONTROL_FILE.exists():
+            return
+        
+        try:
+            # Read the control file to determine action
+            with open(RECORDING_CONTROL_FILE, 'r') as f:
+                action = f.read().strip().lower()
+            
+            # Clear the file immediately to prevent duplicate processing
+            RECORDING_CONTROL_FILE.unlink()
+            
+            if action == "start":
+                # Start recording if not already recording
+                if not self.is_recording:
+                    print("[CONTROL] Recording start requested by tray script", flush=True)
+                    self._start_recording()
+                else:
+                    print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
+            elif action == "stop":
+                # Stop recording if currently recording
+                if self.is_recording:
+                    print("[CONTROL] Recording stop requested by tray script", flush=True)
+                    self._stop_recording()
+                else:
+                    print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
+            else:
+                print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
+                
+        except Exception as e:
+            print(f"[CONTROL] Error processing recording control: {e}", flush=True)
+            # Try to clear the file even if there was an error
+            try:
+                if RECORDING_CONTROL_FILE.exists():
+                    RECORDING_CONTROL_FILE.unlink()
+            except Exception:
+                pass
+
     def _attempt_recovery_if_needed(self):
         """
         Check for recovery request from tray script and attempt recovery once per error state.
@@ -1272,6 +1312,8 @@ class hyprwhsprApp:
         try:
             # Keep the application running
             while True:
+                # Check for recording control requests from tray script (non-blocking)
+                self._check_recording_control()
                 # Check for recovery requests from tray script (non-blocking)
                 self._attempt_recovery_if_needed()
                 time.sleep(1)

@@ -458,6 +458,35 @@ toggle_hyprwhspr() {
     fi
 }
 
+# Function to control recording (start/stop)
+control_recording() {
+    local control_file="$HOME/.config/hyprwhspr/recording_control"
+    
+    # Check if currently recording
+    if is_hyprwhspr_recording; then
+        # Stop recording
+        echo "stop" > "$control_file"
+        show_notification "hyprwhspr" "Stopping recording..." "low"
+    else
+        # Start recording - ensure service is running first
+        if ! is_hyprwhspr_running; then
+            if can_start_recording; then
+                echo "Starting hyprwhspr service..."
+                systemctl --user start hyprwhspr.service
+                # Wait a moment for service to initialize
+                sleep 0.5
+            else
+                show_notification "hyprwhspr" "No microphone available" "critical"
+                return 1
+            fi
+        fi
+        
+        # Write start command to control file
+        echo "start" > "$control_file"
+        show_notification "hyprwhspr" "Starting recording..." "normal"
+    fi
+}
+
 # Function to start ydotoold if needed
 start_ydotoold() {
     if ! is_ydotoold_running; then
@@ -562,13 +591,13 @@ emit_json() {
             text="$icon ERR"
             case "$reason" in
                 mic_unavailable)
-                    tooltip="hyprwhspr: Microphone not available\n\nMicrophone hardware is present but cannot capture audio.\nThis often happens after suspend/resume or boot.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Toggle service\nRight-click: Restart service"
+                    tooltip="hyprwhspr: Microphone not available\n\nMicrophone hardware is present but cannot capture audio.\nThis often happens after suspend/resume or boot.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Start recording\nRight-click: Restart service"
                     ;;
                 mic_no_audio)
-                    tooltip="hyprwhspr: Recording but no audio input\n\nRecording is active but microphone is not providing audio.\nThis indicates the mic needs to be reconnected.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Toggle service\nRight-click: Restart service"
+                    tooltip="hyprwhspr: Recording but no audio input\n\nRecording is active but microphone is not providing audio.\nThis indicates the mic needs to be reconnected.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Start recording\nRight-click: Restart service"
                     ;;
                 *)
-            tooltip="hyprwhspr: Issue detected${reason:+ ($reason)}\n\nLeft-click: Toggle service\nRight-click: Restart service"
+            tooltip="hyprwhspr: Issue detected${reason:+ ($reason)}\n\nLeft-click: Start recording\nRight-click: Restart service"
 ;;
             esac
             class="error"
@@ -576,17 +605,17 @@ emit_json() {
         "ready")
             icon=""
             text="$icon"
-            tooltip="hyprwhspr: Ready to record\n\nLeft-click: Toggle service\nRight-click: Restart service"
+            tooltip="hyprwhspr: Ready to record\n\nLeft-click: Start recording\nRight-click: Restart service"
             ;;
         "stopped")
             icon=""
             text="$icon"
-            tooltip="hyprwhspr: Stopped\n\nLeft-click: Start service\nRight-click: Restart service"
+            tooltip="hyprwhspr: Stopped\n\nLeft-click: Start recording\nRight-click: Restart service"
             ;;
         *)
             icon="󰆉"
             text="$icon"
-            tooltip="hyprwhspr: Unknown state\n\nLeft-click: Toggle service\nRight-click: Restart service"
+            tooltip="hyprwhspr: Unknown state\n\nLeft-click: Start recording\nRight-click: Restart service"
             class="error"
             state="error"
             ;;
@@ -721,6 +750,11 @@ case "${1:-status}" in
         IFS=: read -r s r <<<"$(get_current_state)"
         emit_json "$s" "$r" "$(mic_tooltip_line)"
         ;;
+    "record")
+        control_recording
+        IFS=: read -r s r <<<"$(get_current_state)"
+        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        ;;
     "start")
         if ! is_hyprwhspr_running; then
             if can_start_recording; then
@@ -763,7 +797,7 @@ case "${1:-status}" in
         emit_json "$s" "$r" "$(mic_tooltip_line)"
         ;;
     *)
-        echo "Usage: $0 [status|toggle|start|stop|ydotoold|restart|health]"
+        echo "Usage: $0 [status|toggle|record|start|stop|ydotoold|restart|health]"
         echo ""
         echo "Commands:"
         echo "  status    - Show current status (JSON output)"

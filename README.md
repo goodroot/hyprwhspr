@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Latest local models with GPU support**: Whisper turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
-- **Themed visualizer via mic-osd** - Visual feedback when recording, matched to your Omarcy theme
+- **Themed visualizer** - Visualizes your voice, matched to your Omarchy theme
 - **Supports any cloud API** -  Use a cloud stt service or any custom localhost model
 - **Custom word overides and prompts** - Hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
@@ -410,9 +410,8 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 **Waybar icon click interactions**:
 
-- **Left-click**: Toggle Hyprwhspr on/off
-- **Right-click**: Start Hyprwhspr (if not running)
-- **Middle-click**: Restart Hyprwhspr
+- **Left-click**: Start/stop recording (auto-starts service if needed)
+- **Right-click**: Restart Hyprwhspr service
 
 ## Whisper (OpenAI)
 
