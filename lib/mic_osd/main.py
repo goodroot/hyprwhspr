@@ -83,7 +83,22 @@ class MicOSD:
         # Start audio monitoring
         if not self.audio_monitor:
             self.audio_monitor = AudioMonitor(samplerate=44100, blocksize=1024)
-        self.audio_monitor.start()
+        
+        try:
+            self.audio_monitor.start()
+        except RuntimeError as e:
+            # Audio monitoring failed (e.g., mic unavailable)
+            # Hide window and reset state to prevent hanging
+            print(f"[MIC-OSD] Failed to start audio monitoring: {e}", flush=True)
+            self.visible = False
+            self.window.set_visible(False)
+            
+            # Stop update timer if it was started
+            if self.update_timer_id:
+                GLib.source_remove(self.update_timer_id)
+                self.update_timer_id = None
+            
+            return  # Exit early - don't start timer
         
         # Start update timer (60 FPS)
         if not self.update_timer_id:
