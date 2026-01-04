@@ -840,14 +840,9 @@ def setup_command():
     # Check for MISE interference
     mise_active, mise_details = _check_mise_active()
     if mise_active:
-        log_warning("MISE (runtime version manager) is currently active!")
-        log_warning("This may cause installation errors like 'setuptools not installed'.")
-        log_warning("\nDetected MISE indicators:")
-        print(f"    {mise_details}")
-        log_warning("\nTo fix this, deactivate MISE before continuing:")
-        print("    mise deactivate")
-        print("    # or permanently: mise unuse -g python")
-        print()
+        log_warning("Warning! MISE is active. This may cause installation errors.")
+        log_warning("To fix: mise deactivate (or: mise unuse -g python)")
+        print() 
 
         if not Confirm.ask("Continue anyway? (not recommended)", default=False):
             log_info("Setup cancelled. Please deactivate MISE and try again.")

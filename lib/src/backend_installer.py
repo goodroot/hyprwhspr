@@ -864,11 +864,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
 
     # Check for MISE interference
     if _check_mise_active():
-        log_warning("MISE (runtime version manager) is currently active!")
-        log_warning("This may cause build errors like 'setuptools not installed'.")
-        log_warning("Consider deactivating MISE first:")
-        log_warning("  mise deactivate")
-        log_warning("  # or permanently: mise unuse -g python")
+        log_warning("Warning! MISE is active. This may cause build errors.")
+        log_warning("To fix: mise deactivate (or: mise unuse -g python)")
 
     # Validate backend type
     if backend_type not in ['cpu', 'nvidia', 'amd', 'parakeet']:
