@@ -1800,7 +1800,13 @@ def setup_waybar(mode: str = 'install'):
                 config['modules-right'] = []
             
             if 'custom/hyprwhspr' not in config['modules-right']:
-                config['modules-right'].insert(0, 'custom/hyprwhspr')
+                # Try to insert after group/tray-expander
+                try:
+                    tray_index = config['modules-right'].index('group/tray-expander')
+                    config['modules-right'].insert(tray_index + 1, 'custom/hyprwhspr')
+                except ValueError:
+                    # group/tray-expander not found, append to end
+                    config['modules-right'].append('custom/hyprwhspr')
             
             # Write back
             with open(waybar_config, 'w', encoding='utf-8') as f:
