@@ -549,6 +549,17 @@ hyprwhspr setup
 
 It's fairly common in Arch and other distros for the microphone to need to be plugged in and set each time you log in and out of your session, including during a restart. Within sound options, ensure that the microphone is indeed set. The sound utility will show feedback from the microphone if it is.
 
+**I updated and something is weird...**
+
+Uninstall everything and setup fresh.
+
+Brute force. And effective.
+
+```bash
+hyprwhspr uninstall
+hyprwhsp setup
+```
+
 **Hotkey not working:**
 
 ```bash
