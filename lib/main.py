@@ -486,6 +486,8 @@ class hyprwhsprApp:
             # Set flag immediately to prevent duplicate starts
             self.is_recording = True
         
+        print("Recording started", flush=True)
+        
         try:
             # Clear zero-volume signal file when starting a new recording
             # This allows waybar to recover immediately on successful start
@@ -655,6 +657,8 @@ class hyprwhsprApp:
         if not self.is_recording:
             return
 
+        print("Recording stopped", flush=True)
+        
         try:
             self.is_recording = False
             
