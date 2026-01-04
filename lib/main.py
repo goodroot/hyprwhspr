@@ -574,6 +574,15 @@ class hyprwhsprApp:
                         self._notify_zero_volume("Microphone stream unstable - please wait a moment and try recording again", log_level="WARN")
                     return
                 
+                # Recording is confirmed working - abort any in-progress recovery and clear background retries
+                try:
+                    self.audio_capture.abort_recovery()
+                except Exception:
+                    pass
+                if self._background_recovery_needed.is_set():
+                    print("[HEALTH] Recording succeeded - canceling background recovery", flush=True)
+                    self._background_recovery_needed.clear()
+                
                 # Stream is working and stable - start monitoring
                 self._start_audio_level_monitoring()
                     
@@ -754,6 +763,11 @@ class hyprwhsprApp:
                 with self._mic_state_lock:
                     self._mic_disconnected = False
                 self._clear_error_state_signals()
+            try:
+                # Ensure any active recovery is aborted once user activity proves health
+                self.audio_capture.abort_recovery()
+            except Exception:
+                pass
         except Exception as e:
             print(f"[ERROR] Text injection failed: {e}")
 
@@ -1135,10 +1149,10 @@ class hyprwhsprApp:
     def _background_recovery_retry(self):
         """
         Background thread that retries recovery after suspend/resume.
-        Retries every 5 seconds for up to 30 seconds (6 attempts).
+        Retries every 2 seconds for up to 12 seconds (6 attempts).
         """
         max_attempts = 6
-        retry_interval = 5  # seconds
+        retry_interval = 2  # seconds
 
         for attempt in range(1, max_attempts + 1):
             # Check if we should stop (service shutting down or recovery no longer needed)
@@ -1158,14 +1172,9 @@ class hyprwhsprApp:
 
             # Don't attempt recovery if user is actively recording/processing
             if self.is_recording or self.is_processing:
-                # Wait briefly and check again
-                for _ in range(3):
-                    time.sleep(1)
-                    if not (self.is_recording or self.is_processing):
-                        break
-                # Still active? Skip this attempt - system is clearly working
-                if self.is_recording or self.is_processing:
-                    continue
+                # User activity proves system health - skip this attempt
+                time.sleep(retry_interval)
+                continue
 
             # Attempt recovery
             if self.audio_capture.recover_audio_capture(f'background_retry_{attempt}'):

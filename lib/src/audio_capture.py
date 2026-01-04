@@ -63,6 +63,7 @@ class AudioCapture:
         self._cleanup_complete = threading.Event()  # Signals when cleanup finishes
         self._cleanup_complete.set()  # Initialize as set (no cleanup in progress on startup)
         self._abort_cleanup = False  # Flag to signal stuck threads to abort cleanup
+        self._abort_recovery = threading.Event()  # Flag to abort recovery mid-flight
         
         # Initialize sounddevice
         self._initialize_sounddevice()
@@ -335,6 +336,21 @@ class AudioCapture:
         
         if self.is_recording:
             return True
+
+        # If a recovery is in progress, wait briefly for cleanup to complete
+        recovery_waited = False
+        if getattr(self, "recovery_in_progress", False):
+            recovery_waited = self._cleanup_complete.wait(timeout=3.0)
+            if not recovery_waited:
+                # Recovery is blocking - abort it and proceed
+                print("[RECOVERY] Recording requested while recovery running - aborting recovery", flush=True)
+                self.abort_recovery()
+        elif not self._cleanup_complete.is_set():
+            # Recovery recently ran; wait briefly for cleanup
+            recovery_waited = self._cleanup_complete.wait(timeout=3.0)
+        
+        if not self._cleanup_complete.is_set():
+            print("[RECOVERY] Cleanup still not complete before recording, proceeding cautiously", flush=True)
         
         # Validate device ID still exists (works for configured and system default)
         if self.device_id is not None:
@@ -753,21 +769,24 @@ class AudioCapture:
             if self.recovery_in_progress:
                 print(f"[RECOVERY] Recovery already in progress, skipping")
                 return False
-            
+
             # Check cooldown period - prevent rapid recovery attempts
             current_time = time.monotonic()
-            if current_time - self._last_recovery_attempt_time < 2.0:
-                print(f"[RECOVERY] Recovery attempted too recently (cooldown: {2.0 - (current_time - self._last_recovery_attempt_time):.1f}s remaining), skipping")
+            cooldown = 0.5 if "hotplug" in reason else 2.0
+            if current_time - self._last_recovery_attempt_time < cooldown:
+                print(f"[RECOVERY] Recovery attempted too recently (cooldown: {cooldown - (current_time - self._last_recovery_attempt_time):.1f}s remaining), skipping")
                 return False
-            
+
             # Check if previous recovery's cleanup is still in progress
             if not self._cleanup_complete.is_set():
-                print(f"[RECOVERY] Previous recovery cleanup still in progress, skipping")
-                return False
-            
+                waited = self._cleanup_complete.wait(timeout=3.0)
+                if not waited:
+                    print(f"[RECOVERY] Previous recovery cleanup still in progress after 3s, proceeding anyway", flush=True)
+
             # Set recovery in progress and update attempt time
             self.recovery_in_progress = True
             self._last_recovery_attempt_time = current_time
+            self._abort_recovery.clear()
         
         try:
             print(f"[RECOVERY] Starting recovery ({reason})", flush=True)
@@ -779,6 +798,12 @@ class AudioCapture:
             with self.lock:
                 was_recording = self.is_recording
                 self.is_recording = False
+
+            # Check for abort request before proceeding
+            if self._abort_recovery.is_set():
+                print("[RECOVERY] Aborted before teardown", flush=True)
+                self._cleanup_complete.set()
+                return False
 
             # Signal thread to abort cleanup if it's stuck
             self._abort_cleanup = True
@@ -813,6 +838,12 @@ class AudioCapture:
                             if self.record_thread.is_alive():
                                 self.record_thread = None  # Abandon zombie thread
 
+            # Abort check after teardown
+            if self._abort_recovery.is_set():
+                print("[RECOVERY] Aborted during teardown", flush=True)
+                self._cleanup_complete.set()
+                return False
+
             # Reset abort flag for next recovery
             self._abort_cleanup = False
 
@@ -830,6 +861,11 @@ class AudioCapture:
             except Exception as e:
                 print(f"[RECOVERY] Failed to re-enumerate devices: {e}", flush=True)
                 # Set cleanup complete flag so next recovery can proceed
+                self._cleanup_complete.set()
+                return False
+
+            if self._abort_recovery.is_set():
+                print("[RECOVERY] Aborted after device re-enumeration", flush=True)
                 self._cleanup_complete.set()
                 return False
 
@@ -852,6 +888,17 @@ class AudioCapture:
                 self.recovery_in_progress = False
             # Reset cleanup flags for next recovery attempt
             self._abort_cleanup = False
+            self._abort_recovery.clear()
+
+    def abort_recovery(self):
+        """Abort any in-progress recovery immediately."""
+        with self.recovery_lock:
+            if not self.recovery_in_progress:
+                return
+            self._abort_recovery.set()
+            self.recovery_in_progress = False
+        # Unblock any waits
+        self._cleanup_complete.set()
     
     def list_devices(self):
         """List available audio input devices"""

@@ -398,8 +398,7 @@ check_recovery_result() {
         echo "${current_time}:${status}:${reason}" > "$notification_lock" 2>/dev/null
     fi
 
-    # Remove result file after showing notification
-    rm -f "$result_file" 2>/dev/null
+    # Keep result file for short grace period; stale results are cleared above
 }
 
 # Function to toggle hyprwhspr
