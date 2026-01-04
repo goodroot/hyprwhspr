@@ -96,6 +96,36 @@ USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
 PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', USER_HOME / '.local' / 'share')) / 'pywhispercpp' / 'models'
 
 
+def _check_mise_active() -> tuple[bool, str]:
+    """
+    Check if MISE (runtime version manager) is active in the current environment.
+
+    Returns:
+        Tuple of (is_active, details_message)
+    """
+    indicators = []
+
+    # Check for MISE environment variables
+    if os.environ.get('MISE_SHELL'):
+        indicators.append(f"MISE_SHELL={os.environ['MISE_SHELL']}")
+    if os.environ.get('__MISE_ACTIVATE'):
+        indicators.append("__MISE_ACTIVATE is set")
+
+    # Check if Python is being managed by MISE
+    python_path = shutil.which('python3') or shutil.which('python')
+    if python_path and '.local/share/mise' in python_path:
+        indicators.append(f"Python path: {python_path}")
+
+    # Check if mise binary is managing this session
+    if shutil.which('mise') and os.environ.get('MISE_DATA_DIR'):
+        indicators.append(f"MISE_DATA_DIR={os.environ['MISE_DATA_DIR']}")
+
+    is_active = len(indicators) > 0
+    details = "\n    ".join(indicators) if indicators else ""
+
+    return is_active, details
+
+
 def _strip_jsonc(text: str) -> str:
     """Strip // and /* */ comments from JSONC while preserving strings."""
     result = []
@@ -806,6 +836,22 @@ def setup_command():
     print("="*60)
     print("\nThis setup will guide you through configuring hyprwhspr.")
     print("Skip any step by answering 'no'.\n")
+
+    # Check for MISE interference
+    mise_active, mise_details = _check_mise_active()
+    if mise_active:
+        log_warning("MISE (runtime version manager) is currently active!")
+        log_warning("This may cause installation errors like 'setuptools not installed'.")
+        log_warning("\nDetected MISE indicators:")
+        print(f"    {mise_details}")
+        log_warning("\nTo fix this, deactivate MISE before continuing:")
+        print("    mise deactivate")
+        print("    # or permanently: mise unuse -g python")
+        print()
+
+        if not Confirm.ask("Continue anyway? (not recommended)", default=False):
+            log_info("Setup cancelled. Please deactivate MISE and try again.")
+            return
     
     # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
     backend_result = _prompt_backend_selection()

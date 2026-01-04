@@ -48,6 +48,29 @@ PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
 PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
 
 
+def _check_mise_active() -> bool:
+    """
+    Check if MISE (runtime version manager) is active in the current environment.
+
+    Returns:
+        True if MISE is active, False otherwise
+    """
+    # Check for MISE environment variables
+    if os.environ.get('MISE_SHELL') or os.environ.get('__MISE_ACTIVATE'):
+        return True
+
+    # Check if Python is being managed by MISE
+    python_path = shutil.which('python3') or shutil.which('python')
+    if python_path and '.local/share/mise' in python_path:
+        return True
+
+    # Check if mise binary is managing this session
+    if shutil.which('mise') and os.environ.get('MISE_DATA_DIR'):
+        return True
+
+    return False
+
+
 # ==================== State Management ====================
 
 def init_state():
@@ -836,9 +859,17 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
     """
     init_state()
     set_install_state('in_progress')
-    
+
     log_info(f"Installing {backend_type.upper()} backend...")
-    
+
+    # Check for MISE interference
+    if _check_mise_active():
+        log_warning("MISE (runtime version manager) is currently active!")
+        log_warning("This may cause build errors like 'setuptools not installed'.")
+        log_warning("Consider deactivating MISE first:")
+        log_warning("  mise deactivate")
+        log_warning("  # or permanently: mise unuse -g python")
+
     # Validate backend type
     if backend_type not in ['cpu', 'nvidia', 'amd', 'parakeet']:
         error_msg = f"Invalid backend type: {backend_type}"
