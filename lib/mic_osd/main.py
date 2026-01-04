@@ -9,6 +9,8 @@ Supports two modes:
 
 import sys
 import signal
+import os
+from pathlib import Path
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -18,6 +20,18 @@ from .window import OSDWindow, load_css
 from .audio import AudioMonitor
 from .visualizations import VISUALIZATIONS
 from .theme import ThemeWatcher
+
+# Import RECORDING_STATUS_FILE path with fallback for daemon context
+try:
+    from ..src.paths import RECORDING_STATUS_FILE
+except ImportError:
+    try:
+        from src.paths import RECORDING_STATUS_FILE
+    except ImportError:
+        # Fallback: construct path manually if imports fail
+        home = Path.home()
+        xdg_config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
+        RECORDING_STATUS_FILE = xdg_config / 'hyprwhspr' / 'recording_status'
 
 
 class MicOSD:
@@ -101,6 +115,29 @@ class MicOSD:
             
             return  # Exit early - don't start timer
         
+        # Verify that audio stream is actually receiving audio (not just zeros)
+        # This prevents showing window when mic is unplugged but stream opens successfully
+        import time
+        verification_start = time.monotonic()
+        verification_duration = 0.25  # 250ms verification period
+        max_zero_level = 1e-6  # Threshold for considering audio as zero (very small)
+        audio_detected = False
+        
+        while time.monotonic() - verification_start < verification_duration:
+            level = self.audio_monitor.get_level()
+            if level > max_zero_level:
+                audio_detected = True
+                break
+            time.sleep(0.01)  # Check every 10ms
+        
+        if not audio_detected:
+            # Stream is returning zeros - mic likely unavailable
+            print("[MIC-OSD] Audio stream returning zeros - hiding window", flush=True)
+            self.audio_monitor.stop()
+            self.visible = False
+            self.window.set_visible(False)
+            return  # Exit early - don't start timers
+        
         # Start update timer (60 FPS)
         if not self.update_timer_id:
             self.update_timer_id = GLib.timeout_add(16, self._update)
@@ -165,11 +202,34 @@ class MicOSD:
     
     def _auto_hide_callback(self):
         """Auto-hide callback triggered after 30 seconds of visibility."""
-        if self.visible:
-            print("[MIC-OSD] Auto-hiding window after 30 second timeout", flush=True)
+        if not self.visible:
+            self._auto_hide_timeout_id = None
+            return False  # Don't repeat
+        
+        # Check if recording is still active before hiding
+        # This prevents hiding during normal long recordings
+        recording_active = False
+        try:
+            if RECORDING_STATUS_FILE.exists():
+                with open(RECORDING_STATUS_FILE, 'r') as f:
+                    status = f.read().strip()
+                    if status == 'true':
+                        recording_active = True
+        except Exception:
+            # File read error - assume not recording, allow hide
+            pass
+        
+        if recording_active:
+            # Recording is still active - reset timeout instead of hiding
+            print("[MIC-OSD] Recording active - resetting auto-hide timeout", flush=True)
+            self._auto_hide_timeout_id = GLib.timeout_add_seconds(30, self._auto_hide_callback)
+            return False  # Don't repeat (new timeout already set)
+        else:
+            # Recording not active - window is stuck, hide it
+            print("[MIC-OSD] Auto-hiding window after 30 second timeout (recording not active)", flush=True)
             self._hide()
-        self._auto_hide_timeout_id = None
-        return False  # Don't repeat
+            self._auto_hide_timeout_id = None
+            return False  # Don't repeat
     
     def _on_theme_changed(self):
         """Called when the Omarchy theme changes."""
