@@ -278,6 +278,13 @@ class hyprwhsprApp:
                         return
                     self._last_hotplug_add_time = current_time
 
+                # Check if background recovery is already running (e.g., after suspend/resume)
+                # If so, let it handle the recovery instead of competing
+                if self._background_recovery_needed.is_set():
+                    print(f"[HOTPLUG] Background recovery already active - device will be picked up on next retry", flush=True)
+                    # Don't write failure result - let background recovery handle it
+                    return
+
                 print(f"[HOTPLUG] Triggering recovery in 0.5s (let drivers settle)...", flush=True)
 
                 # Give drivers a moment to settle before attempting recovery
