@@ -1462,7 +1462,7 @@ def omarchy_command():
     log_info("Configuring Omarchy defaults...")
     config = ConfigManager()
     config.set_setting('recording_mode', 'auto')
-    config.set_setting('grab_keys', False)
+    config.set_setting('grab_keys', True)
     config.set_setting('transcription_backend', 'pywhispercpp')
     config.set_setting('mic_osd_enabled', True)
     config.save_config()
