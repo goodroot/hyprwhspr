@@ -399,9 +399,9 @@ def detect_gpu_type() -> str:
     3. Fallback to CPU if no GPU detected
     """
     try:
-        from .output_control import log_debug
+        from .output_control import log_debug, log_info
     except ImportError:
-        from output_control import log_debug
+        from output_control import log_debug, log_info
 
     # 1. Check for NVIDIA GPU
     # First check for actual NVIDIA hardware via lspci (like Omarchy does)
@@ -413,29 +413,35 @@ def detect_gpu_type() -> str:
             if 'nvidia' not in lspci_output:
                 log_debug("No NVIDIA hardware detected via lspci")
                 # Skip nvidia-smi check entirely - no hardware present
-            elif shutil.which('nvidia-smi'):
-                # Hardware detected, now verify with nvidia-smi
-                try:
-                    result = run_command(
-                        ['timeout', '2s', 'nvidia-smi', '-L'],
-                        capture_output=True,
-                        check=False,
-                        verbose=False
-                    )
-                    if result and result.returncode == 0 and result.stdout:
-                        # Verify output actually lists a GPU (not just error messages)
-                        # nvidia-smi -L outputs: "GPU 0: NVIDIA GeForce RTX 4070..."
-                        output = result.stdout.decode('utf-8', errors='ignore').strip()
-                        output_lower = output.lower()
-                        # Look for "GPU N:" pattern which indicates an actual GPU listing
-                        # This won't match "No devices were found" or other error messages
-                        if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
-                            log_debug(f"NVIDIA GPU detected: {output.splitlines()[0][:60]}")
-                            return 'nvidia'
-                        else:
-                            log_debug(f"nvidia-smi present but no GPU detected (output: {output[:100]})")
-                except Exception as e:
-                    log_debug(f"nvidia-smi check failed: {e}")
+            else:
+                log_debug("NVIDIA hardware found in lspci")
+                nvidia_smi_path = shutil.which('nvidia-smi')
+                if not nvidia_smi_path:
+                    log_info("NVIDIA hardware present but nvidia-smi not in PATH - check MISE or environment")
+                    log_debug(f"Current PATH: {os.environ.get('PATH', 'not set')[:200]}")
+                else:
+                    # Hardware detected, now verify with nvidia-smi
+                    try:
+                        result = run_command(
+                            ['timeout', '2s', 'nvidia-smi', '-L'],
+                            capture_output=True,
+                            check=False,
+                            verbose=False
+                        )
+                        if result and result.returncode == 0 and result.stdout:
+                            # Verify output actually lists a GPU (not just error messages)
+                            # nvidia-smi -L outputs: "GPU 0: NVIDIA GeForce RTX 4070..."
+                            output = result.stdout.decode('utf-8', errors='ignore').strip()
+                            output_lower = output.lower()
+                            # Look for "GPU N:" pattern which indicates an actual GPU listing
+                            # This won't match "No devices were found" or other error messages
+                            if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
+                                log_debug(f"NVIDIA GPU detected: {output.splitlines()[0][:60]}")
+                                return 'nvidia'
+                            else:
+                                log_debug(f"nvidia-smi present but no GPU detected (output: {output[:100]})")
+                    except Exception as e:
+                        log_debug(f"nvidia-smi check failed: {e}")
     except Exception as e:
         log_debug(f"lspci check failed: {e}")
 
@@ -484,22 +490,7 @@ def setup_vulkan_support() -> bool:
     """
     log_info("Setting up Vulkan support...")
 
-    # 1. Check if vulkaninfo already exists and works
-    if shutil.which('vulkaninfo'):
-        try:
-            result = run_command(
-                ['timeout', '5s', 'vulkaninfo', '--summary'],
-                capture_output=True,
-                check=False,
-                verbose=False
-            )
-            if result and result.returncode == 0:
-                log_info("Vulkan already available")
-                return True
-        except:
-            pass
-
-    # 2. Install Vulkan dependencies
+    # 1. Install Vulkan dependencies (both runtime and development headers)
     log_info("Installing Vulkan dependencies...")
     vulkan_pkgs = ['vulkan-headers', 'vulkan-icd-loader', 'shaderc', 'vulkan-tools']
 
@@ -514,7 +505,7 @@ def setup_vulkan_support() -> bool:
         log_error(f"Failed to install Vulkan dependencies: {e}")
         return False
 
-    # 3. Verify Vulkan is now available
+    # 2. Verify Vulkan is now available
     if not shutil.which('vulkaninfo'):
         log_warning("vulkaninfo not available after installation")
         return False
