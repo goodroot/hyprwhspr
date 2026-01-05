@@ -34,7 +34,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **[Omarchy](https://omarchy.org/)** or **[Arch Linux](https://archlinux.org/)**
 - **NVIDIA GPU** (optional, for CUDA acceleration)
-- **AMD GPU** (optional, for Vulkan acceleration)
+- **AMD/Intel GPU** (optional, for Vulkan acceleration)
 
 ### Quick start
 
@@ -462,7 +462,7 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 **GPU Acceleration (NVIDIA & AMD):**
 
-- NVIDIA (CUDA) and AMD (Vulkan) are detected automatically; pywhispercpp will use GPU when selected
+- NVIDIA (CUDA) and AMD/Intel (Vulkan) are detected automatically; pywhispercpp will use GPU when selected
 
 **CPU performance options** - improve cpu transcription speed:
 

@@ -434,7 +434,7 @@ def _prompt_backend_selection():
     print("PyWhisperCPP (Local in-memory default, very fast):")
     print("  [1] CPU - CPU-only, works on all systems")
     print("  [2] NVIDIA - NVIDIA GPU acceleration (CUDA)")
-    print("  [3] AMD - AMD GPU acceleration (Vulkan)")
+    print("  [3] AMD/Intel - AMD/Intel GPU acceleration (Vulkan)")
     print()
     print("REST API (Remote - Cloud API or localhost):")
     print("  [4] Configure cloud provider or custom backend")
@@ -464,8 +464,8 @@ def _prompt_backend_selection():
                 backend_names = {
                     'cpu': 'CPU',
                     'nvidia': 'NVIDIA (CUDA)',
-                    'amd': 'AMD (Vulkan)',
-                    'vulkan': 'AMD (Vulkan)',
+                    'amd': 'AMD/Intel (Vulkan)',
+                    'vulkan': 'AMD/Intel (Vulkan)',
                     'parakeet': 'Parakeet',
                     'rest-api': 'REST API',
                     'realtime-ws': 'Realtime WebSocket',
@@ -533,8 +533,8 @@ def _prompt_backend_selection():
             backend_names = {
                 'cpu': 'CPU',
                 'nvidia': 'NVIDIA (CUDA)',
-                'amd': 'AMD (Vulkan)',
-                'vulkan': 'AMD (Vulkan)',
+                'amd': 'AMD/Intel (Vulkan)',
+                'vulkan': 'AMD/Intel (Vulkan)',
                 'parakeet': 'Parakeet',
                 'rest-api': 'REST API',
                 'realtime-ws': 'Realtime WebSocket'
@@ -865,16 +865,16 @@ def setup_command():
     print("\nThis setup will guide you through configuring hyprwhspr.")
     print("Skip any step by answering 'no'.\n")
 
-    # Check for MISE interference
-    mise_active, mise_details = _check_mise_active()
+    # Check for MISE interference and handle automatically
+    mise_active, _ = _check_mise_active()
     if mise_active:
-        log_warning("Warning! MISE is active. This may cause installation errors.")
-        log_warning("To fix: mise deactivate (or: mise unuse -g python)")
-        print() 
-
-        if not Confirm.ask("Continue anyway? (not recommended)", default=False):
-            log_info("Setup cancelled. Please deactivate MISE and try again.")
-            return
+        # Try to deactivate MISE (may be a shell function)
+        if shutil.which('mise'):
+            try:
+                run_command(['bash', '-c', 'mise deactivate'], check=False, capture_output=True)
+            except Exception:
+                pass
+        log_info("MISE deactivated for installation")
     
     # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
     backend_result = _prompt_backend_selection()

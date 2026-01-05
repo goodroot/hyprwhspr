@@ -382,7 +382,7 @@ class WhisperManager:
                 except (subprocess.TimeoutExpired, Exception):
                     pass
         elif backend_config in ['amd', 'vulkan']:
-            # Check for Vulkan first (new default for AMD)
+            # Check for Vulkan first (new default for AMD/Intel)
             if shutil.which('vulkaninfo'):
                 try:
                     result = subprocess.run(['vulkaninfo', '--summary'],
@@ -391,7 +391,7 @@ class WhisperManager:
                     if result and result.returncode == 0:
                         output = result.stdout.lower() if result.stdout else ''
                         if 'llvmpipe' not in output and 'software' not in output:
-                            return "Vulkan (AMD)"
+                            return "Vulkan (AMD/Intel)"
                 except (subprocess.TimeoutExpired, Exception):
                     pass
             # Fallback: check for ROCm (backward compatibility)
