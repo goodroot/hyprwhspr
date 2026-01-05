@@ -920,7 +920,6 @@ def setup_command():
                     default=False
                 )
                 if cleanup_main_venv:
-                    import shutil
                     log_info("Removing main venv...")
                     shutil.rmtree(VENV_DIR)
                     log_success("Main venv removed")
@@ -929,7 +928,6 @@ def setup_command():
             # User wants to remove venv when switching to cloud backend
             if VENV_DIR.exists():
                 log_info("Removing venv as requested...")
-                import shutil
                 shutil.rmtree(VENV_DIR)
                 log_success("Venv removed")
     
