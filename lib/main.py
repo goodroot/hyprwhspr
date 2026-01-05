@@ -1257,7 +1257,7 @@ class hyprwhsprApp:
                 backend_reinit_success = True
 
                 # Backends that use pywhispercpp (model in memory, CUDA context)
-                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd']
+                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
                 if backend in pywhispercpp_variants:
                     if not self.whisper_manager._reinitialize_model():
                         print("[SUSPEND] Recovery failed - model reinitialization failed", flush=True)
@@ -1344,7 +1344,7 @@ class hyprwhsprApp:
                 backend_reinit_success = True
 
                 # Backends that use pywhispercpp (model in memory, CUDA context)
-                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd']
+                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
                 if backend in pywhispercpp_variants:
                     if not self.whisper_manager._reinitialize_model():
                         backend_reinit_success = False

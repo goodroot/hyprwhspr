@@ -272,7 +272,7 @@ def _detect_current_backend() -> Optional[str]:
     Detect currently installed backend.
     
     Returns:
-        'cpu', 'nvidia', 'amd', 'parakeet', 'rest-api', or None if not detected
+        'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'rest-api', or None if not detected
     """
     # First check config file
     try:
@@ -309,7 +309,7 @@ def _detect_current_backend() -> Optional[str]:
             return 'rest-api'
         if backend == 'realtime-ws':
             return 'realtime-ws'
-        if backend in ['cpu', 'nvidia', 'amd', 'pywhispercpp']:
+        if backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']:
             # Verify it's actually installed in venv
             venv_python = VENV_DIR / 'bin' / 'python'
             if venv_python.exists():
@@ -353,7 +353,7 @@ def _cleanup_backend(backend_type: str) -> bool:
     Clean up an installed backend.
     
     Args:
-        backend_type: 'cpu', 'nvidia', 'amd', 'parakeet', or 'remote'
+        backend_type: 'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', or 'remote'
     
     Returns:
         True if cleanup succeeded
@@ -435,7 +435,7 @@ def _prompt_backend_selection():
     print("PyWhisperCPP (Local in-memory default, very fast):")
     print("  [1] CPU - CPU-only, works on all systems")
     print("  [2] NVIDIA - NVIDIA GPU acceleration (CUDA)")
-    print("  [3] AMD - AMD GPU acceleration (ROCm)")
+    print("  [3] AMD - AMD GPU acceleration (Vulkan)")
     print()
     print("REST API (Remote - Cloud API or localhost):")
     print("  [4] Configure cloud provider or custom backend")
@@ -453,7 +453,7 @@ def _prompt_backend_selection():
             backend_map = {
                 '1': 'cpu',
                 '2': 'nvidia',
-                '3': 'amd',
+                '3': 'vulkan',
                 '4': 'rest-api',
                 '5': 'realtime-ws',
                 '6': 'parakeet'
@@ -465,7 +465,8 @@ def _prompt_backend_selection():
                 backend_names = {
                     'cpu': 'CPU',
                     'nvidia': 'NVIDIA (CUDA)',
-                    'amd': 'AMD (ROCm)',
+                    'amd': 'AMD (Vulkan)',
+                    'vulkan': 'AMD (Vulkan)',
                     'parakeet': 'Parakeet',
                     'rest-api': 'REST API',
                     'realtime-ws': 'Realtime WebSocket',
@@ -533,7 +534,8 @@ def _prompt_backend_selection():
             backend_names = {
                 'cpu': 'CPU',
                 'nvidia': 'NVIDIA (CUDA)',
-                'amd': 'AMD (ROCm)',
+                'amd': 'AMD (Vulkan)',
+                'vulkan': 'AMD (Vulkan)',
                 'parakeet': 'Parakeet',
                 'rest-api': 'REST API',
                 'realtime-ws': 'Realtime WebSocket'
@@ -907,7 +909,7 @@ def setup_command():
                 log_warning("Failed to clean up old backend, continuing anyway...")
         
         # Also handle cleanup when switching TO Parakeet FROM local
-        if backend == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd']:
+        if backend == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan']:
             if VENV_DIR.exists():
                 cleanup_main_venv = Confirm.ask(
                     "Remove the old local backend venv to free up space?", 
@@ -2582,7 +2584,7 @@ def backend_repair_command():
         if choice == '1':
             # Detect backend type from config
             current_backend = _detect_current_backend()
-            if current_backend and current_backend in ['cpu', 'nvidia', 'amd']:
+            if current_backend and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan']:
                 log_info(f"Reinstalling {current_backend.upper()} backend...")
                 # Use force_rebuild=True to ensure clean reinstall
                 if install_backend(current_backend, force_rebuild=True):

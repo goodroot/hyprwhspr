@@ -381,7 +381,20 @@ class WhisperManager:
                         return "CUDA (NVIDIA)"
                 except (subprocess.TimeoutExpired, Exception):
                     pass
-        elif backend_config == 'amd':
+        elif backend_config in ['amd', 'vulkan']:
+            # Check for Vulkan first (new default for AMD)
+            if shutil.which('vulkaninfo'):
+                try:
+                    result = subprocess.run(['vulkaninfo', '--summary'],
+                                           capture_output=True,
+                                           timeout=2)
+                    if result and result.returncode == 0:
+                        output = result.stdout.lower() if result.stdout else ''
+                        if 'llvmpipe' not in output and 'software' not in output:
+                            return "Vulkan (AMD)"
+                except (subprocess.TimeoutExpired, Exception):
+                    pass
+            # Fallback: check for ROCm (backward compatibility)
             if shutil.which('rocm-smi') or os.path.exists('/opt/rocm'):
                 try:
                     result = subprocess.run(['rocm-smi', '--showproductname'],
@@ -994,8 +1007,8 @@ class WhisperManager:
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
         backend = normalize_backend(backend)
 
-        # Only reinitialize for pywhispercpp and its variants (cpu, nvidia, amd)
-        pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd']
+        # Only reinitialize for pywhispercpp and its variants (cpu, nvidia, vulkan/amd)
+        pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
         if backend not in pywhispercpp_variants:
             return True
         
