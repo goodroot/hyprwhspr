@@ -20,13 +20,13 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
 - **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
-- **Latest local models with GPU support**: Turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
+- **Latest models**: Turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? 
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
 - **Themed visualizer** - Visualizes your voice, matched to your Omarchy theme
-- **Supports any cloud API** -  Use a cloud stt service or any custom localhost model
-- **Custom word overides and prompts** - Hot keys, common words, and more
+- **REST API** -  Securely connect clouds model or any model on localhost
+- **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
-- **Auto-paste anywhere** - Pastes in active buffer without additional keypresses
+- **Auto-paste anywhere** - Instant paste into any active buffer 
 
 ## Quick start
 
@@ -104,7 +104,7 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr validate` - Validate installation
 - `hyprwhspr backend` - Backend management (repair/reset)
 - `hyprwhspr state` - State management (show/validate/reset)
-- `hyprwhspr uninstall` - Completely remove hyprwhspr and all user data
+- `hyprwhspr uninstall` - Completely remove hyprwhspr and all data
 
 ## Usage
 
@@ -135,7 +135,7 @@ Edit `~/.config/hyprwhspr/config.json`:
 ```jsonc
 {
     "primary_shortcut": "SUPER+ALT+D",
-    "model": "base.en"
+    "model": "base"
 }
 ```
 
@@ -165,24 +165,6 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
-
-**Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
-
-Two modes available:
-
-- **transcribe** (default) - Pure speech-to-text, more expensive than HTTP
-- **converse** - Voice-to-AI: speak and get AI responses
-
-```jsonc
-{
-    "transcription_backend": "realtime-ws",
-    "websocket_provider": "openai",
-    "websocket_model": "gpt-realtime-mini-2025-12-15",
-    "realtime_mode": "transcribe",       // "transcribe" or "converse"
-    "realtime_timeout": 30,              // Completion timeout (seconds)
-    "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
-}
-```
 
 **REST API** - use any ASR backend via HTTP API (local or cloud):
 
@@ -228,6 +210,26 @@ Or connect to any backend, local or cloud, via your own custom backend:
 }
 ```
 
+**Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
+
+> Experimental! 
+
+Two modes available:
+
+- **transcribe** (default) - Pure speech-to-text, more expensive than HTTP
+- **converse** - Voice-to-AI: speak and get AI responses
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "openai",
+    "websocket_model": "gpt-realtime-mini-2025-12-15",
+    "realtime_mode": "transcribe",       // "transcribe" or "converse"
+    "realtime_timeout": 30,              // Completion timeout (seconds)
+    "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
+}
+```
+
 **Custom hotkey** - extensive key support:
 
 ```json
@@ -265,6 +267,8 @@ Examples:
 
 **Themed visualizer** - visual feedback, matches your Omarchy theme:
 
+> Highly recommended!
+
 ```json
 {
   "mic_osd_enabled": true,
@@ -276,7 +280,7 @@ Examples:
 ```json
 {
     "word_overrides": {
-        "hyperwhisper": "hyprwhspr",
+        "hyper  swhisper": "hyprwhspr",
         "omarchie": "Omarchy"
     }
 }
@@ -308,7 +312,9 @@ Examples:
 - **Supported formats**: `.ogg`, `.wav`, `.mp3`
 - **Fallback**: Uses defaults if custom files don't exist
 
-**Text replacement:** Automatically converts spoken words to symbols / punctuation:
+**Text replacement:** 
+
+Automatically converts spoken words to symbols / punctuation:
 
 **Punctuation:**
 
@@ -360,7 +366,7 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 
 ```jsonc
 {
-    "paste_mode": "ctrl_shift"   // "super" | "ctrl_shift" | "ctrl"  (default: "ctrl_shift")
+    "paste_mode": "ctrl_shift"   // "ctrl_shift" | "ctrl" | "super" (default: "ctrl_shift")
 }
 ```
 
@@ -368,11 +374,13 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 
 - **`"ctrl_shift"`** (default) — Sends Ctrl+Shift+V. Works in most terminals.
 
-- **`"super"`** — Sends Super+V. Omarchy default. Maybe finicky.
-
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
 
+- **`"super"`** — Sends Super+V. Omarchy default. Maybe finicky.
+
 **Auto-submit** - automatically press Enter after pasting:
+
+> aka Dictation YOLO
 
 ```jsonc
 {
@@ -381,6 +389,8 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 ```
 
 Useful for chat applications, search boxes, or any input where you want to submit immediately after dictation.
+
+... Be careful!
 
 **Add dynamic tray icon** to your `~/.config/waybar/config`:
 
@@ -412,13 +422,11 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 ## Whisper (OpenAI)
 
-**Default model installed:** `ggml-base.en.bin` (~148MB) to `~/.local/share/pywhispercpp/models/`
+**Default model installed:** `ggml-base.bin` (~175MB) to `~/.local/share/pywhispercpp/models/`
 
 **GPU Acceleration (NVIDIA & AMD):**
 
 - NVIDIA (CUDA) and AMD (ROCm) are detected automatically; pywhispercpp will use GPU when selected
-
-- **⚠️ AMD ROCm 7.x / HIPBLAS** ROCm 7.0+ introduced breaking changes to hipBLAS datatype signatures. As of now, ggml’s HIP backend is compatible with ROCm 6.x, but ROCm 7.x will fail to build with errors and fallback to CPU.
 
 **CPU performance options** - improve cpu transcription speed:
 
@@ -519,27 +527,10 @@ Select Parakeet within `hyprwhspr setup`.
 
 ### Reset Installation
 
-If you're having persistent issues, you can completely reset hyprwhspr:
+If you're having persistent issues, completely reset hyprwhspr:
 
 ```bash
-# Stop services
-systemctl --user stop hyprwhspr ydotool
-
-# Remove runtime data
-rm -rf ~/.local/share/hyprwhspr/
-
-# Remove user config
-rm -rf ~/.config/hyprwhspr/
-
-# Remove system files
-sudo rm -rf /usr/lib/hyprwhspr/
-```
-
-And then...
-
-```bash
-# Then reinstall fresh via AUR
-yay -S hyprwhspr
+hyprwhspr uninstall
 hyprwhspr setup
 ```
 
@@ -547,7 +538,7 @@ hyprwhspr setup
 
 **I heard the sound, but don't see text!** 
 
-It's fairly common in Arch and other distros for the microphone to need to be plugged in and set each time you log in and out of your session, including during a restart. Within sound options, ensure that the microphone is indeed set. The sound utility will show feedback from the microphone if it is.
+It's common in Arch and other distros for the microphone to need to be plugged in and set each time you log in and out of your session, including during a restart. Reseat your microphone as prompted if it fails under these conditions. Also, ithin sound options, ensure that the microphone is indeed set. The sound utility will show feedback from the select microphone if it is.
 
 **I updated and something is weird...**
 

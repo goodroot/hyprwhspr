@@ -126,6 +126,33 @@ def _check_mise_active() -> tuple[bool, str]:
     return is_active, details
 
 
+def _create_mise_free_environment() -> dict:
+    """
+    Create environment with MISE deactivated for subprocesses.
+
+    This prevents MISE from interfering with Python version detection
+    during pip install operations.
+
+    Returns:
+        Environment dict suitable for subprocess.run(env=...)
+    """
+    env = os.environ.copy()
+
+    # Remove MISE-related environment variables
+    mise_vars = ['MISE_SHELL', '__MISE_ACTIVATE', 'MISE_DATA_DIR']
+    for var in mise_vars:
+        env.pop(var, None)
+
+    # Clean PATH of MISE entries
+    path = env.get('PATH', '')
+    if '.local/share/mise' in path:
+        paths = path.split(':')
+        paths = [p for p in paths if '.local/share/mise' not in p]
+        env['PATH'] = ':'.join(paths)
+
+    return env
+
+
 def _strip_jsonc(text: str) -> str:
     """Strip // and /* */ comments from JSONC while preserving strings."""
     result = []
@@ -1355,6 +1382,150 @@ def setup_command():
         sys.exit(1)
 
 
+# ==================== Omarchy Commands ====================
+
+def _auto_download_model():
+    """Auto-download base model without prompts"""
+    try:
+        from .backend_installer import download_pywhispercpp_model
+    except ImportError:
+        from backend_installer import download_pywhispercpp_model
+
+    log_info("Downloading base Whisper model...")
+    if download_pywhispercpp_model('base'):
+        log_success("Model downloaded")
+    else:
+        log_warning("Model download failed - can download later with: hyprwhspr model download")
+
+
+def omarchy_command():
+    """
+    Fully automatic Omarchy setup - zero prompts.
+
+    This command:
+    1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU)
+    2. Installs appropriate backend (CUDA for NVIDIA, Vulkan for others, CPU fallback)
+    3. Configures Omarchy defaults (auto recording mode, Waybar integration)
+    4. Sets up and starts systemd service
+    5. Validates installation
+
+    All without user interaction.
+    """
+    # Import functions we need
+    try:
+        from .backend_installer import detect_gpu_type, install_backend
+        from .config_manager import ConfigManager
+    except ImportError:
+        from backend_installer import detect_gpu_type, install_backend
+        from config_manager import ConfigManager
+
+    # 1. Print banner
+    print("\n" + "="*60)
+    print("hyprwhspr omarchy - Automatic Omarchy Setup")
+    print("="*60)
+    print("\nFully automatic installation - no prompts required!\n")
+
+    # 2. Check and handle MISE
+    mise_active, mise_details = _check_mise_active()
+    mise_free_env = None
+    if mise_active:
+        log_warning("MISE detected - will be temporarily deactivated for installation")
+        log_warning(f"Details:\n    {mise_details}")
+        mise_free_env = _create_mise_free_environment()
+        # Note: install_backend() already handles MISE warnings
+
+    # 3. Auto-detect GPU type
+    log_info("Detecting hardware...")
+    gpu_type = detect_gpu_type()  # Returns 'nvidia', 'vulkan', or 'cpu'
+
+    # gpu_type is already the backend name
+    backend = gpu_type
+
+    gpu_descriptions = {
+        'nvidia': 'NVIDIA GPU with CUDA acceleration',
+        'vulkan': 'GPU with Vulkan acceleration (AMD/Intel/other)',
+        'cpu': 'CPU-only (no GPU detected)'
+    }
+
+    log_success(f"Detected: {gpu_descriptions[gpu_type]}")
+    log_info(f"Installing: {backend.upper()} backend")
+
+    # 4. Install backend
+    print("\n" + "="*60)
+    print("Backend Installation")
+    print("="*60)
+
+    if not install_backend(backend, force_rebuild=False):
+        log_error("Backend installation failed")
+        return False
+
+    # 5. Configure Omarchy defaults
+    log_info("Configuring Omarchy defaults...")
+    config = ConfigManager()
+    config.set_setting('recording_mode', 'auto')
+    config.set_setting('grab_keys', False)
+    config.set_setting('transcription_backend', 'pywhispercpp')
+    config.set_setting('mic_osd_enabled', True)
+    config.save_config()
+    log_success("Configuration saved")
+
+    # 6. Download model (for local backends)
+    if backend in ['cpu', 'nvidia', 'vulkan']:
+        _auto_download_model()
+
+    # 7. Waybar integration (if detected)
+    print("\n" + "="*60)
+    print("Waybar Integration")
+    print("="*60)
+
+    waybar_config = Path.home() / '.config' / 'waybar' / 'config.jsonc'
+    if waybar_config.exists():
+        log_info("Waybar detected - installing integration...")
+        waybar_command('install')
+    else:
+        log_info("Waybar not detected - skipping")
+
+    # 8. Systemd service
+    print("\n" + "="*60)
+    print("Systemd Service")
+    print("="*60)
+
+    systemd_command('install')
+
+    try:
+        from .output_control import run_command
+    except ImportError:
+        from output_control import run_command
+
+    try:
+        # Use MISE-free environment if MISE was detected
+        env = mise_free_env if mise_free_env else None
+        run_command(['systemctl', '--user', 'enable', 'hyprwhspr.service'], check=True, env=env)
+        run_command(['systemctl', '--user', 'start', 'hyprwhspr.service'], check=True, env=env)
+        log_success("Service enabled and started")
+    except Exception as e:
+        log_warning(f"Could not start service: {e}")
+
+    # 9. Validate
+    print("\n" + "="*60)
+    print("Validation")
+    print("="*60)
+    validate_command()
+
+    # 10. Completion
+    print("\n" + "="*60)
+    print("Setup Complete!")
+    print("="*60)
+    print("\nOmarchy setup completed successfully!")
+    print("\nNext steps:")
+    print("  1. Log out and back in (for group permissions)")
+    print("  2. Press Super+Alt+D to start dictating")
+    print("  3. Tap (<400ms) to toggle, hold (>=400ms) for push-to-talk")
+    print("\nFor help: hyprwhspr --help")
+
+    return True
+
+
 # ==================== Config Commands ====================
 
 def config_command(action: str):
@@ -1413,12 +1584,12 @@ def setup_config(backend: Optional[str] = None, model: Optional[str] = None, rem
                 for key, value in remote_config.items():
                     existing_config[key] = value
             
-            # Update model if provided, otherwise default to base.en if missing
+            # Update model if provided, otherwise default to base if missing
             if model:
                 existing_config['model'] = model
             elif 'model' not in existing_config and not remote_config:
                 # Only set default model if not using remote backend
-                existing_config['model'] = 'base.en'
+                existing_config['model'] = 'base'
             
             # Add audio_feedback if missing
             if 'audio_feedback' not in existing_config:
@@ -2052,7 +2223,7 @@ def mic_osd_status():
 
 # ==================== Model Commands ====================
 
-def model_command(action: str, model_name: str = 'base.en'):
+def model_command(action: str, model_name: str = 'base'):
     """Handle model subcommands"""
     if action == 'download':
         download_model(model_name)
@@ -2064,7 +2235,7 @@ def model_command(action: str, model_name: str = 'base.en'):
         log_error(f"Unknown model action: {action}")
 
 
-def download_model(model_name: str = 'base.en'):
+def download_model(model_name: str = 'base'):
     """Download pywhispercpp model with progress feedback"""
     log_info(f"Downloading pywhispercpp model: {model_name}")
     
@@ -2693,7 +2864,7 @@ def validate_command():
             print("")
         
         # Check base model (only for local backends)
-        model_file = PYWHISPERCPP_MODELS_DIR / 'ggml-base.en.bin'
+        model_file = PYWHISPERCPP_MODELS_DIR / 'ggml-base.bin'
         if model_file.exists():
             log_success(f"✓ Base model exists: {model_file}")
         else:

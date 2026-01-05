@@ -19,6 +19,7 @@ except ImportError:
 
 from cli_commands import (
     setup_command,
+    omarchy_command,
     config_command,
     waybar_command,
     mic_osd_command,
@@ -58,7 +59,10 @@ def main():
     
     # setup command
     subparsers.add_parser('setup', help='Full initial setup')
-    
+
+    # omarchy command
+    subparsers.add_parser('omarchy', help='Fully automatic Omarchy setup')
+
     # config command
     config_parser = subparsers.add_parser('config', help='Configuration management')
     config_subparsers = config_parser.add_subparsers(dest='config_action', help='Config actions')
@@ -93,7 +97,7 @@ def main():
     model_parser = subparsers.add_parser('model', help='Model management')
     model_subparsers = model_parser.add_subparsers(dest='model_action', help='Model actions')
     model_download_parser = model_subparsers.add_parser('download', help='Download model')
-    model_download_parser.add_argument('name', nargs='?', default='base.en', help='Model name (default: base.en)')
+    model_download_parser.add_argument('name', nargs='?', default='base', help='Model name (default: base)')
     model_subparsers.add_parser('list', help='List available models')
     model_subparsers.add_parser('status', help='Check installed models')
     
@@ -156,6 +160,8 @@ def main():
     try:
         if args.command == 'setup':
             setup_command()
+        elif args.command == 'omarchy':
+            omarchy_command()
         elif args.command == 'config':
             if not args.config_action:
                 config_parser.print_help()
@@ -180,7 +186,7 @@ def main():
             if not args.model_action:
                 model_parser.print_help()
                 sys.exit(1)
-            model_name = getattr(args, 'name', 'base.en')
+            model_name = getattr(args, 'name', 'base')
             model_command(args.model_action, model_name)
         elif args.command == 'status':
             status_command()

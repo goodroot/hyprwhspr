@@ -32,7 +32,7 @@ if [[ "$1" == "help" ]]; then
 fi
 
 # Subcommands: route to CLI if recognized
-if [[ "$1" =~ ^(setup|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd)$ ]]; then
+if [[ "$1" =~ ^(setup|omarchy|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd)$ ]]; then
   exec python "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 
