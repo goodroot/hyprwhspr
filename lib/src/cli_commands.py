@@ -33,9 +33,9 @@ except ImportError:
     from paths import CONFIG_DIR, CONFIG_FILE
 
 try:
-    from .backend_utils import BACKEND_DISPLAY_NAMES
+    from .backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
 except ImportError:
-    from backend_utils import BACKEND_DISPLAY_NAMES
+    from backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
 
 try:
     from .backend_installer import (
@@ -321,9 +321,8 @@ def _detect_current_backend() -> Optional[str]:
                         text=True
                     )
                     if result.returncode == 0:
-                        # Try to detect which variant by checking build artifacts or imports
-                        # For now, trust config - could enhance later
-                        return backend
+                        # Normalize backend before returning (handles 'amd' -> 'vulkan')
+                        return normalize_backend(backend)
                 except Exception:
                     pass
     except Exception:
@@ -901,15 +900,20 @@ def setup_command():
     
     current_backend = _detect_current_backend()
     
+    # Normalize backends for comparison (handles 'amd' -> 'vulkan' mapping)
+    if current_backend:
+        current_backend = normalize_backend(current_backend)
+    backend_normalized = normalize_backend(backend)
+    
     # Handle backend switching
-    if current_backend and current_backend != backend:
+    if current_backend and current_backend != backend_normalized:
         if current_backend not in ['rest-api', 'remote', 'realtime-ws']:
             # Switching from local to something else
             if not _cleanup_backend(current_backend):
                 log_warning("Failed to clean up old backend, continuing anyway...")
         
         # Also handle cleanup when switching TO Parakeet FROM local
-        if backend == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan']:
+        if backend_normalized == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan']:
             if VENV_DIR.exists():
                 cleanup_main_venv = Confirm.ask(
                     "Remove the old local backend venv to free up space?", 
@@ -921,7 +925,7 @@ def setup_command():
                     shutil.rmtree(VENV_DIR)
                     log_success("Main venv removed")
         
-        if cleanup_venv and backend in ['rest-api', 'remote', 'realtime-ws']:
+        if cleanup_venv and backend_normalized in ['rest-api', 'remote', 'realtime-ws']:
             # User wants to remove venv when switching to cloud backend
             if VENV_DIR.exists():
                 log_info("Removing venv as requested...")
@@ -931,41 +935,42 @@ def setup_command():
     
     # Step 1.5: Backend installation (if not cloud backend)
     parakeet_installed = False
-    if backend not in ['rest-api', 'remote', 'realtime-ws']:
+    if backend_normalized not in ['rest-api', 'remote', 'realtime-ws']:
         # Skip installation section if user selected the same backend and declined reinstalling
-        if current_backend == backend and not wants_reinstall:
+        if current_backend == backend_normalized and not wants_reinstall:
             # User already said "no" to reinstalling in the selection step, skip installation section
             # If Parakeet is already installed, mark it as installed so REST API auto-configuration works
-            if backend == 'parakeet' and current_backend == 'parakeet':
+            if backend_normalized == 'parakeet' and current_backend == 'parakeet':
                 parakeet_installed = True
         else:
             # New backend selected, or user wants to reinstall existing backend
             print("\n" + "="*60)
             print("Backend Installation")
             print("="*60)
-            if backend == 'parakeet':
+            if backend_normalized == 'parakeet':
                 print("\nThis will install the Parakeet backend.")
                 print("This will create a separate virtual environment and install dependencies.")
                 print("Parakeet runs as a local REST API server that hyprwhspr connects to.")
             else:
-                print(f"\nThis will install the {backend.upper()} backend for pywhispercpp.")
+                print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
             if not Confirm.ask("Proceed with backend installation?", default=True):
                 log_warning("Skipping backend installation. You can install it later.")
                 log_warning("Backend installation is required for local transcription to work.")
             else:
                 # Pass force_rebuild=True when reinstalling to ensure clean venv
-                if not install_backend(backend, force_rebuild=wants_reinstall):
+                # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
+                if not install_backend(backend_normalized, force_rebuild=wants_reinstall):
                     log_error("Backend installation failed. Setup cannot continue.")
                     return
                 
-                if backend == 'parakeet':
+                if backend_normalized == 'parakeet':
                     parakeet_installed = True
     
     # Step 2: Provider/model selection (if REST API backend or parakeet)
     remote_config = None
     selected_model = None
-    if backend == 'parakeet':
+    if backend_normalized == 'parakeet':
         # Auto-configure REST API for parakeet (always needed, regardless of installation status)
         # If installation was skipped, user can install Parakeet later, but config should be set up now
         log_info("Auto-configuring REST API for Parakeet...")
@@ -979,7 +984,7 @@ def setup_command():
         if not parakeet_installed:
             log_warning("Parakeet backend is not installed. Install it later to use this configuration.")
         # Note about manual start will be shown later if systemd is not set up
-    elif backend in ['rest-api', 'remote']:
+    elif backend_normalized in ['rest-api', 'remote']:
         # Prompt for remote provider selection
         provider_result = _prompt_remote_provider_selection()
         if not provider_result:
@@ -995,7 +1000,7 @@ def setup_command():
         except Exception as e:
             log_error(f"Failed to generate remote configuration: {e}")
             return
-    elif backend == 'realtime-ws':
+    elif backend_normalized == 'realtime-ws':
         # Prompt for remote provider selection (filter for realtime models)
         provider_result = _prompt_remote_provider_selection(filter_realtime=True)
         if not provider_result:
@@ -1077,7 +1082,7 @@ def setup_command():
         log_info(f"Realtime mode: {realtime_mode}")
     
     # Step 1.4: Ensure venv and base dependencies for cloud backends
-    if backend in ['rest-api', 'remote', 'realtime-ws']:
+    if backend_normalized in ['rest-api', 'remote', 'realtime-ws']:
         print("\n" + "="*60)
         print("Python Environment Setup")
         print("="*60)
@@ -1271,9 +1276,9 @@ def setup_command():
     try:
         # Step 1: Config
         if remote_config:
-            setup_config(backend=backend, remote_config=remote_config)
+            setup_config(backend=backend_normalized, remote_config=remote_config)
         else:
-            setup_config(backend=backend, model=selected_model)
+            setup_config(backend=backend_normalized, model=selected_model)
         
         # Check if running manually before systemd setup
         if _is_running_manually():
