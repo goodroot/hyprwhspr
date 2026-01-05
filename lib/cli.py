@@ -61,7 +61,7 @@ def main():
     subparsers.add_parser('setup', help='Full initial setup')
 
     # omarchy command
-    subparsers.add_parser('omarchy', help='Fully automatic Omarchy setup')
+    subparsers.add_parser('omarchy', help='Automated Omarchy setup')
 
     # config command
     config_parser = subparsers.add_parser('config', help='Configuration management')

@@ -1400,7 +1400,7 @@ def _auto_download_model():
 
 def omarchy_command():
     """
-    Fully automatic Omarchy setup - zero prompts.
+    Automated Omarchy setup
 
     This command:
     1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU)
@@ -1421,9 +1421,8 @@ def omarchy_command():
 
     # 1. Print banner
     print("\n" + "="*60)
-    print("hyprwhspr omarchy - Automatic Omarchy Setup")
+    print("hyprwhspr + omarchy - native stt")
     print("="*60)
-    print("\nFully automatic installation - no prompts required!\n")
 
     # 2. Check and handle MISE
     mise_active, mise_details = _check_mise_active()

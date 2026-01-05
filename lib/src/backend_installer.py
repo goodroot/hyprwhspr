@@ -372,7 +372,10 @@ def detect_gpu_type() -> str:
     2. Check for ANY GPU via vulkaninfo (AMD/Intel/ARM iGPUs and discrete GPUs)
     3. Fallback to CPU if no GPU detected
     """
-    from .output_control import log_debug
+    try:
+        from .output_control import log_debug
+    except ImportError:
+        from output_control import log_debug
 
     # 1. Check for NVIDIA GPU
     if shutil.which('nvidia-smi'):

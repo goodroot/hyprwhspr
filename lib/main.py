@@ -1569,4 +1569,18 @@ def main():
 
 
 if __name__ == "__main__":
+    # Safety check: if a CLI subcommand was passed, redirect to CLI instead of starting the service
+    # This handles cases where an old bin/hyprwhspr wrapper doesn't recognize newer CLI subcommands
+    CLI_SUBCOMMANDS = ['setup', 'omarchy', 'config', 'waybar', 'systemd', 'status',
+                       'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd']
+    if len(sys.argv) > 1 and sys.argv[1] in CLI_SUBCOMMANDS:
+        print(f"[REDIRECT] Detected CLI subcommand '{sys.argv[1]}', redirecting to CLI...")
+        # Execute CLI with same arguments
+        # Note: os.execv's args list becomes argv in the new process.
+        # argparse.parse_args() parses from sys.argv[1:], so sys.argv[0] should be the script path.
+        # The first element of the args list becomes sys.argv[0] in the new process.
+        cli_path = Path(__file__).parent / 'cli.py'
+        os.execv(sys.executable, [str(cli_path)] + sys.argv[1:])
+
     main()
+    
