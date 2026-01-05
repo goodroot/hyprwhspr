@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
 - **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
-- **Latest local models with GPU support**: Whisper turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
+- **Latest local models with GPU support**: Turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? Use GPU for incredible speed
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
 - **Themed visualizer** - Visualizes your voice, matched to your Omarchy theme
 - **Supports any cloud API** -  Use a cloud stt service or any custom localhost model
@@ -697,5 +697,3 @@ For pull requests, also best to start with an issue.
 ---
 
 **Built with ❤️ in 🇨🇦 for the Omarchy community**
-
-*Integrated and natural speech-to-text.*
