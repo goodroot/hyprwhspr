@@ -283,12 +283,14 @@ Enable in config (`~/.config/hyprwhspr/config.json`):
 Add bindings to `~/.config/hypr/hyprland.conf`:
 
 ```bash
-# Toggle Mode (Recommended)
-bindd = SUPER ALT, D, Speech-to-text, exec, ~/.config/hyprland/hyprwhspr-tray.sh toggle
+# Toggle mode
+# Press once to start, press again to stop
+bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record
 ```
 
 ```bash
-# Push-to-Talk Mode
+# Push-to-Talk mode
+# Hold key to record, release to stop
 bind = SUPER ALT, D, exec, echo "start" > ~/.config/hyprwhspr/recording_control
 bindr = SUPER ALT, D, exec, echo "stop" > ~/.config/hyprwhspr/recording_control
 ```

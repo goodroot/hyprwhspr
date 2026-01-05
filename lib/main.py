@@ -112,6 +112,10 @@ class hyprwhsprApp:
         self._background_recovery_thread = None  # Background thread handle
         self._background_recovery_stop = threading.Event()  # Signal to stop background recovery
 
+        # Recording control FIFO (for immediate push-to-talk response)
+        self._recording_control_thread = None  # Background thread handle for FIFO listener
+        self._recording_control_stop = threading.Event()  # Signal to stop FIFO listener
+
         # Hybrid tap/hold mode state tracking (auto mode)
         recording_mode = self.config.get_setting('recording_mode', 'toggle')
         if recording_mode == 'auto':
@@ -137,6 +141,9 @@ class hyprwhsprApp:
 
         # Set up suspend/resume monitoring
         self._setup_suspend_monitor()
+
+        # Set up recording control FIFO (for immediate push-to-talk response)
+        self._setup_recording_control_fifo()
 
         # Pre-initialize mic-osd daemon (eliminates latency on recording)
         self._mic_osd_runner = None
@@ -980,8 +987,45 @@ class hyprwhsprApp:
             # Thread will exit when is_recording becomes False
             pass
 
+    def _setup_recording_control_fifo(self):
+        """Create named pipe (FIFO) for immediate recording control"""
+        try:
+            # Ensure config directory exists
+            RECORDING_CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Check if existing file is a FIFO (if regular file, remove it)
+            if RECORDING_CONTROL_FILE.exists():
+                if not RECORDING_CONTROL_FILE.is_fifo():
+                    # Old regular file - remove it
+                    try:
+                        RECORDING_CONTROL_FILE.unlink()
+                        print("[INIT] Removed old recording_control file (replacing with FIFO)", flush=True)
+                    except Exception as e:
+                        print(f"[WARN] Failed to remove old recording_control file: {e}", flush=True)
+                        return
+                else:
+                    # Already a FIFO, we're good
+                    print("[INIT] Recording control FIFO already exists", flush=True)
+                    return
+            
+            # Create FIFO if it doesn't exist
+            os.mkfifo(str(RECORDING_CONTROL_FILE))
+            print(f"[INIT] Created recording control FIFO: {RECORDING_CONTROL_FILE}", flush=True)
+            
+        except OSError as e:
+            # Handle permission errors, read-only filesystem, etc.
+            print(f"[WARN] Failed to create recording control FIFO: {e}", flush=True)
+            print("[WARN] Recording control will fall back to file polling (1 second delay)", flush=True)
+        except Exception as e:
+            print(f"[WARN] Unexpected error creating recording control FIFO: {e}", flush=True)
+
     def _check_recording_control(self):
-        """Check for recording control requests from tray script and start/stop recording"""
+        """
+        Check for recording control requests from tray script and start/stop recording
+        
+        DEPRECATED: This method is replaced by _recording_control_listener() which uses
+        a FIFO for immediate response. Kept for reference/fallback only.
+        """
         # Check if recording control file exists
         if not RECORDING_CONTROL_FILE.exists():
             return
@@ -1019,6 +1063,64 @@ class hyprwhsprApp:
                     RECORDING_CONTROL_FILE.unlink()
             except Exception:
                 pass
+
+    def _recording_control_listener(self):
+        """Listen on FIFO for recording control commands (blocking, immediate)"""
+        while not self._recording_control_stop.is_set():
+            try:
+                # Check if FIFO exists, recreate if needed
+                if not RECORDING_CONTROL_FILE.exists() or not RECORDING_CONTROL_FILE.is_fifo():
+                    if self._recording_control_stop.is_set():
+                        break
+                    # Recreate FIFO
+                    try:
+                        if RECORDING_CONTROL_FILE.exists():
+                            RECORDING_CONTROL_FILE.unlink()
+                        os.mkfifo(str(RECORDING_CONTROL_FILE))
+                        print("[CONTROL] Recreated recording control FIFO", flush=True)
+                    except Exception as e:
+                        print(f"[CONTROL] Failed to recreate FIFO: {e}", flush=True)
+                        # Wait a bit before retrying
+                        time.sleep(1)
+                        continue
+                
+                # Open FIFO for reading (blocks until writer appears)
+                with open(RECORDING_CONTROL_FILE, 'r') as f:
+                    action = f.read().strip().lower()
+                
+                if not action:
+                    continue
+                
+                # Process action immediately
+                if action == "start":
+                    if not self.is_recording:
+                        print("[CONTROL] Recording start requested (immediate)", flush=True)
+                        self._start_recording()
+                    else:
+                        print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
+                elif action == "stop":
+                    if self.is_recording:
+                        print("[CONTROL] Recording stop requested (immediate)", flush=True)
+                        self._stop_recording()
+                    else:
+                        print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
+                else:
+                    print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
+                    
+            except FileNotFoundError:
+                # FIFO was deleted - will be recreated on next iteration
+                if not self._recording_control_stop.is_set():
+                    print("[CONTROL] FIFO deleted, will recreate on next iteration", flush=True)
+                    time.sleep(0.1)  # Brief pause before retrying
+            except OSError as e:
+                # Permission errors, broken pipe, etc.
+                if not self._recording_control_stop.is_set():
+                    print(f"[CONTROL] FIFO error: {e}, retrying...", flush=True)
+                    time.sleep(0.1)  # Brief pause before retrying
+            except Exception as e:
+                if not self._recording_control_stop.is_set():
+                    print(f"[CONTROL] Error in FIFO listener: {e}", flush=True)
+                    time.sleep(0.1)  # Brief pause before retrying
 
     def _attempt_recovery_if_needed(self):
         """
@@ -1318,6 +1420,18 @@ class hyprwhsprApp:
             except Exception:
                 pass
 
+        # Start FIFO listener thread for immediate recording control
+        if RECORDING_CONTROL_FILE.exists() and RECORDING_CONTROL_FILE.is_fifo():
+            self._recording_control_thread = threading.Thread(
+                target=self._recording_control_listener,
+                daemon=True,
+                name="RecordingControlListener"
+            )
+            self._recording_control_thread.start()
+            print("[INIT] Started recording control FIFO listener", flush=True)
+        else:
+            print("[WARN] Recording control FIFO not available, using fallback polling", flush=True)
+
         # Give microphone 1 second to fully initialize before checking for recovery
         # This prevents spurious errors on startup if device is still settling
         time.sleep(1)
@@ -1325,8 +1439,7 @@ class hyprwhsprApp:
         try:
             # Keep the application running
             while True:
-                # Check for recording control requests from tray script (non-blocking)
-                self._check_recording_control()
+                # Recording control now handled by FIFO listener thread (immediate)
                 # Check for recovery requests from tray script (non-blocking)
                 self._attempt_recovery_if_needed()
                 time.sleep(1)
@@ -1343,6 +1456,21 @@ class hyprwhsprApp:
     def _cleanup(self):
         """Clean up resources when shutting down"""
         try:
+            # Stop recording control FIFO listener thread
+            if hasattr(self, '_recording_control_stop'):
+                self._recording_control_stop.set()
+                if hasattr(self, '_recording_control_thread') and self._recording_control_thread and self._recording_control_thread.is_alive():
+                    print("[SHUTDOWN] Stopping recording control FIFO listener...", flush=True)
+                    # Unblock the FIFO reader by opening it for write (non-blocking) if thread is stuck
+                    try:
+                        fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
+                        os.close(fd)
+                    except (OSError, FileNotFoundError):
+                        pass  # FIFO might not exist or already closed
+                    self._recording_control_thread.join(timeout=1.0)
+                    if self._recording_control_thread.is_alive():
+                        print("[WARN] Recording control thread did not stop cleanly", flush=True)
+
             # Stop background recovery thread
             if hasattr(self, '_background_recovery_stop'):
                 self._background_recovery_stop.set()
