@@ -7,6 +7,9 @@ import sys
 import threading
 import select
 import time
+import subprocess
+import json
+import re
 from typing import Callable, Optional, List, Set, Dict
 from pathlib import Path
 
@@ -17,6 +20,87 @@ except ImportError:
 
 evdev = require_package('evdev')
 from evdev import InputDevice, categorize, ecodes, UInput
+
+
+# Layout detection for non-QWERTY keyboard layouts
+# X11 keycode = evdev keycode + 8
+_X11_TO_EVDEV_OFFSET = 8
+_layout_map_cache = None
+
+
+def _get_layout_from_hyprland() -> tuple[str, str]:
+    """Get keyboard layout and variant from Hyprland"""
+    try:
+        result = subprocess.run(
+            ['hyprctl', 'devices', '-j'],
+            capture_output=True, text=True, timeout=2
+        )
+        devices = json.loads(result.stdout)
+        for kb in devices.get('keyboards', []):
+            layout = kb.get('layout', '')
+            variant = kb.get('variant', '')
+            if layout:
+                return layout, variant
+    except Exception:
+        pass
+    return 'us', ''
+
+
+def _compile_and_parse_keymap(layout: str, variant: str = '') -> dict[str, int]:
+    """
+    Compile XKB keymap and parse character → evdev keycode mapping.
+
+    Uses xkbcli to compile the keymap for the given layout/variant,
+    then parses the output to build a mapping from characters to
+    their physical evdev keycodes.
+
+    This enables shortcuts like "SUPER+D" to work correctly on any
+    keyboard layout (Colemak, Dvorak, Workman, etc.) by finding which
+    physical key produces the character 'd' in that layout.
+    """
+    try:
+        cmd = ['xkbcli', 'compile-keymap', '--layout', layout]
+        if variant:
+            cmd.extend(['--variant', variant])
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        keymap_text = result.stdout
+    except Exception:
+        return {}
+
+    char_to_evdev = {}
+
+    # Parse XKB key name → X11 keycode from keycodes section
+    xkb_to_x11 = {}
+    for match in re.finditer(r'<(\w+)>\s*=\s*(\d+)', keymap_text):
+        xkb_name, x11_code = match.groups()
+        xkb_to_x11[xkb_name] = int(x11_code)
+
+    # Parse key symbols: key <AD01> { [ q, Q, ... ] };
+    for match in re.finditer(r'key\s+<(\w+)>\s*\{\s*\[\s*(\w+)', keymap_text):
+        xkb_name, char = match.groups()
+        # Only map single lowercase letters
+        if len(char) == 1 and char.islower() and xkb_name in xkb_to_x11:
+            char_to_evdev[char] = xkb_to_x11[xkb_name] - _X11_TO_EVDEV_OFFSET
+
+    return char_to_evdev
+
+
+def _get_layout_map() -> dict[str, int]:
+    """
+    Get cached character → evdev keycode map for current keyboard layout.
+
+    Returns a dict mapping lowercase letters to their physical evdev keycodes.
+    For QWERTY this is a no-op (returns empty dict, falling back to defaults).
+    For other layouts like Colemak, 'd' might map to KEY_G (evdev 34).
+    """
+    global _layout_map_cache
+    if _layout_map_cache is None:
+        layout, variant = _get_layout_from_hyprland()
+        _layout_map_cache = _compile_and_parse_keymap(layout, variant)
+        if _layout_map_cache and (layout != 'us' or variant):
+            layout_name = f"{layout}/{variant}" if variant else layout
+            print(f"[LAYOUT] Detected {layout_name}, using layout-aware key mapping")
+    return _layout_map_cache
 
 
 # Key aliases mapping to evdev KEY_* constants
@@ -315,16 +399,26 @@ class GlobalShortcuts:
     
     def _string_to_keycode(self, key_string: str) -> Optional[int]:
         """Convert a human-friendly key string into an evdev keycode.
-        
-        Tries local aliases first, then falls back to evdev-style KEY_* names.
-        This hybrid approach supports both user-friendly names (ctrl, super, etc.)
-        and direct evdev key names (KEY_COMMA, KEY_1, etc.).
-        
+
+        For single letter keys, uses layout-aware mapping to find the correct
+        physical key for non-QWERTY layouts (Colemak, Dvorak, Workman, etc.).
+
+        For other keys, tries local aliases first, then falls back to evdev-style
+        KEY_* names. This hybrid approach supports both user-friendly names
+        (ctrl, super, etc.) and direct evdev key names (KEY_COMMA, KEY_1, etc.).
+
         Returns None if no matching keycode is found.
         """
         original = key_string
         key_string = key_string.lower().strip()
-        
+
+        # 0. For single letter keys, use layout-aware mapping
+        #    This handles non-QWERTY layouts like Colemak, Dvorak, Workman, etc.
+        if len(key_string) == 1 and key_string.isalpha():
+            layout_map = _get_layout_map()
+            if key_string in layout_map:
+                return layout_map[key_string]
+
         # 1. Try alias mapping first, easy names
         if key_string in KEY_ALIASES:
             key_name = KEY_ALIASES[key_string]
@@ -334,14 +428,14 @@ class GlobalShortcuts:
             key_name = key_string.upper()
             if not key_name.startswith('KEY_'):
                 key_name = f'KEY_{key_name}'
-        
+
         # 3. Look up the keycode in evdev's complete mapping
         code = ecodes.ecodes.get(key_name)
 
         if code is None:
             print(f"Warning: Unknown key string '{original}' (resolved to '{key_name}')")
             return None
-        
+
         return code
     
     def _keycode_to_name(self, keycode: int) -> str:
@@ -780,9 +874,18 @@ def normalize_key_name(key_name: str) -> str:
     return key_name.lower().strip().replace(' ', '')
 
 def _string_to_keycode_standalone(key_string: str) -> Optional[int]:
-    """Standalone version of string to keycode conversion for use outside GlobalShortcuts class"""
+    """Standalone version of string to keycode conversion for use outside GlobalShortcuts class.
+
+    Includes layout-aware mapping for non-QWERTY keyboard layouts.
+    """
     key_string = key_string.lower().strip()
-    
+
+    # 0. For single letter keys, use layout-aware mapping
+    if len(key_string) == 1 and key_string.isalpha():
+        layout_map = _get_layout_map()
+        if key_string in layout_map:
+            return layout_map[key_string]
+
     # 1. Try alias mapping first, easy names
     if key_string in KEY_ALIASES:
         key_name = KEY_ALIASES[key_string]
@@ -791,13 +894,13 @@ def _string_to_keycode_standalone(key_string: str) -> Optional[int]:
         key_name = key_string.upper()
         if not key_name.startswith('KEY_'):
             key_name = f'KEY_{key_name}'
-    
+
     # 3. Look up the keycode in evdev's complete mapping
     code = ecodes.ecodes.get(key_name)
-    
+
     if code is None:
         return None
-    
+
     return code
 
 def _parse_key_combination_standalone(key_string: str) -> Set[int]:
