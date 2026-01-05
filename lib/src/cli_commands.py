@@ -2233,6 +2233,82 @@ def mic_osd_status():
     return enabled and deps_available
 
 
+# ==================== Bluetooth Commands ====================
+
+
+def bluetooth_command(action):
+    '''Handle bluetooth subcommands'''
+    if action == 'enable':
+        bluetooth_enable()
+    elif action == 'disable':
+        bluetooth_disable()
+    elif action == 'status':
+        bluetooth_status()
+    else:
+        log_error(f'Unknown bluetooth action: {action}')
+
+
+def bluetooth_enable():
+    '''Enable Bluetooth profile auto-switching during recording'''
+    config = ConfigManager()
+    config.set_setting('bluetooth_auto_switch', True)
+    config.save_config()
+    log_success('Bluetooth profile auto-switching enabled')
+    log_info('BT headsets will switch to mic profile during recording')
+    return True
+
+
+def bluetooth_disable():
+    '''Disable Bluetooth profile auto-switching'''
+    config = ConfigManager()
+    config.set_setting('bluetooth_auto_switch', False)
+    config.save_config()
+    log_success('Bluetooth profile auto-switching disabled')
+    return True
+
+
+def bluetooth_status():
+    '''Check Bluetooth profile manager status'''
+    config = ConfigManager()
+    enabled = config.get_setting('bluetooth_auto_switch', True)
+
+    try:
+        from .bluetooth_manager import BluetoothProfileManager
+    except ImportError:
+        from bluetooth_manager import BluetoothProfileManager
+
+    manager = BluetoothProfileManager(enabled=enabled)
+    status = manager.get_status()
+    manager.cleanup()
+
+    print('\nBluetooth Profile Manager Status:')
+    print(f'  Enabled in config: {"Yes" if enabled else "No"}')
+    print(f'  pulsectl available: {"Yes" if status["available"] else "No"}')
+
+    if status["bluetooth_card"]:
+        print(f'  Connected BT card: {status["bluetooth_card"]}')
+        print(f'  Current profile: {status["current_profile"]}')
+        print(
+            f'  Headset profile available: {"Yes" if status["headset_profile_available"] else "No"}'
+        )
+
+        if enabled and status["headset_profile_available"]:
+            log_success('Auto-switching will work during recording')
+        elif not enabled:
+            log_info(
+                "Auto-switching is disabled (use \'hyprwhspr bluetooth enable\' to enable)"
+            )
+        else:
+            log_warning('No headset-head-unit profile available on this device')
+    else:
+        log_info('No Bluetooth audio device connected')
+
+    if status["saved_profile"]:
+        print(f'  Saved profile (will restore): {status["saved_profile"]}')
+
+    return enabled and status["available"]
+
+
 # ==================== Model Commands ====================
 
 def model_command(action: str, model_name: str = 'base'):

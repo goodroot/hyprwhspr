@@ -60,7 +60,9 @@ class ConfigManager:
             'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
             # Post-paste behavior
-            'auto_submit': False                 # Send Enter key after pasting text (for chat/search inputs)
+            'auto_submit': False                 # Send Enter key after pasting text (for chat/search inputs),
+            # Bluetooth profile auto-switching
+            'bluetooth_auto_switch': True,  # Auto-switch BT headset to mic profile during recording
         }
         
         # Set up config directory and file path

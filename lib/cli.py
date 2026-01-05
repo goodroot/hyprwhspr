@@ -23,6 +23,7 @@ from cli_commands import (
     config_command,
     waybar_command,
     mic_osd_command,
+    bluetooth_command,
     systemd_command,
     model_command,
     status_command,
@@ -83,6 +84,21 @@ def main():
     mic_osd_subparsers.add_parser('enable', help='Enable visualization during recording')
     mic_osd_subparsers.add_parser('disable', help='Disable visualization')
     mic_osd_subparsers.add_parser('status', help='Check mic-osd status')
+
+    # bluetooth command
+    bluetooth_parser = subparsers.add_parser(
+        'bluetooth', help='Bluetooth profile auto-switching'
+    )
+    bluetooth_subparsers = bluetooth_parser.add_subparsers(
+        dest='bluetooth_action', help='Bluetooth actions'
+    )
+    bluetooth_subparsers.add_parser(
+        'enable', help='Enable auto-switching during recording'
+    )
+    bluetooth_subparsers.add_parser(
+        'disable', help='Disable auto-switching'
+    )
+    bluetooth_subparsers.add_parser('status', help='Check Bluetooth status')
     
     # systemd command
     systemd_parser = subparsers.add_parser('systemd', help='Systemd service management')
@@ -177,6 +193,11 @@ def main():
                 mic_osd_parser.print_help()
                 sys.exit(1)
             mic_osd_command(args.mic_osd_action)
+        elif args.command == 'bluetooth':
+            if not args.bluetooth_action:
+                bluetooth_parser.print_help()
+                sys.exit(1)
+            bluetooth_command(args.bluetooth_action)
         elif args.command == 'systemd':
             if not args.systemd_action:
                 systemd_parser.print_help()

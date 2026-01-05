@@ -57,6 +57,7 @@ from paths import (
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE
 )
 from backend_utils import normalize_backend
+from bluetooth_manager import BluetoothProfileManager
 
 class hyprwhsprApp:
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
@@ -149,6 +150,10 @@ class hyprwhsprApp:
                         self._mic_osd_runner = runner
             except Exception:
                 pass
+
+        # Initialize Bluetooth profile manager for auto-switching during recording
+        bt_enabled = self.config.get_setting('bluetooth_auto_switch', True)
+        self._bluetooth_manager = BluetoothProfileManager(enabled=bt_enabled)
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -501,6 +506,9 @@ class hyprwhsprApp:
             # Clear zero-volume signal file when starting a new recording
             # This allows waybar to recover immediately on successful start
             self._clear_zero_volume_signal()
+
+            # Switch Bluetooth headset to mic-enabled profile (if applicable)
+            self._bluetooth_manager.switch_to_headset_profile()
             
             # Write recording status to file for tray script
             self._write_recording_status(True)
@@ -550,10 +558,12 @@ class hyprwhsprApp:
                 if not verify_and_play_sound():
                     # Stream broken - stop recording (thread will clean up stream)
                     self.audio_capture.stop_recording()
+                    self._bluetooth_manager.restore_profile()
 
                     # Reset state
                     self.is_recording = False
                     self._write_recording_status(False)
+                    self._bluetooth_manager.restore_profile()
                     
                     # Hide mic-osd visualization
                     self._hide_mic_osd()
@@ -575,8 +585,10 @@ class hyprwhsprApp:
                 if not verify_stream_stable():
                     # Stream stopped working shortly after starting
                     self.audio_capture.stop_recording()
+                    self._bluetooth_manager.restore_profile()
                     self.is_recording = False
                     self._write_recording_status(False)
+                    self._bluetooth_manager.restore_profile()
                     
                     # Hide mic-osd visualization
                     self._hide_mic_osd()
@@ -619,12 +631,14 @@ class hyprwhsprApp:
                 # Stop recording (will clean up if thread started)
                 try:
                     self.audio_capture.stop_recording()
+                    self._bluetooth_manager.restore_profile()
                 except Exception:
                     pass  # Ignore if already stopped
 
                 # Reset state - fail fast, don't attempt recovery
                 self.is_recording = False
                 self._write_recording_status(False)
+                self._bluetooth_manager.restore_profile()
                 self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
                 return
             
@@ -643,6 +657,7 @@ class hyprwhsprApp:
 
             self.is_recording = False
             self._write_recording_status(False)
+            self._bluetooth_manager.restore_profile()
 
     def _cancel_recording_muted(self):
         """Cancel recording early due to muted microphone"""
@@ -654,7 +669,9 @@ class hyprwhsprApp:
             self._hide_mic_osd()
             self._stop_audio_level_monitoring()
             self._write_recording_status(False)
+            self._bluetooth_manager.restore_profile()
             self.audio_capture.stop_recording()
+            self._bluetooth_manager.restore_profile()
             self.audio_manager.play_error_sound()
             # Note: No desktop notification - tray will detect muted state via audio level monitoring
         except Exception as e:
@@ -664,6 +681,7 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
+                self._bluetooth_manager.restore_profile()
             except Exception:
                 pass  # Best effort cleanup
 
@@ -685,6 +703,7 @@ class hyprwhsprApp:
             
             # Write recording status to file for tray script
             self._write_recording_status(False)
+            self._bluetooth_manager.restore_profile()
             
             # Check backend type
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
@@ -692,6 +711,7 @@ class hyprwhsprApp:
             
             # Stop audio capture
             audio_data = self.audio_capture.stop_recording()
+            self._bluetooth_manager.restore_profile()
 
             # Check for zero-volume or broken stream
             if audio_data is None:
@@ -723,6 +743,7 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
+                self._bluetooth_manager.restore_profile()
 
                 # Close WebSocket if using realtime-ws backend
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
@@ -1116,12 +1137,14 @@ class hyprwhsprApp:
                         print("[RECOVERY] Failed to restart recording after recovery - start_recording() returned False", flush=True)
                         self.is_recording = False
                         self._write_recording_status(False)
+                        self._bluetooth_manager.restore_profile()
                         return
                     self._start_audio_level_monitoring()
                 except Exception as e:
                     print(f"[RECOVERY] Failed to restart recording after recovery: {e}", flush=True)
                     self.is_recording = False
                     self._write_recording_status(False)
+                    self._bluetooth_manager.restore_profile()
         else:
             print("[RECOVERY] Recovery failed - please reseat your USB microphone", flush=True)
 
@@ -1385,6 +1408,11 @@ class hyprwhsprApp:
             # Stop audio capture
             if self.is_recording:
                 self.audio_capture.stop_recording()
+                self._bluetooth_manager.restore_profile()
+
+            # Cleanup Bluetooth profile manager (restore profile if needed)
+            if hasattr(self, '_bluetooth_manager') and self._bluetooth_manager:
+                self._bluetooth_manager.cleanup()
 
             # Cleanup whisper manager (closes WebSocket connections, etc.)
             if self.whisper_manager:
