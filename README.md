@@ -536,6 +536,12 @@ hyprwhspr setup
 
 ### Common issues
 
+**Something is weird...**
+
+Right click the Waybar microphone next to the tray to restart the service.
+
+Still weird? Proceed.
+
 **I heard the sound, but don't see text!** 
 
 It's common in Arch and other distros for the microphone to need to be plugged in and set each time you log in and out of your session, including during a restart. Reseat your microphone as prompted if it fails under these conditions. Also, ithin sound options, ensure that the microphone is indeed set. The sound utility will show feedback from the select microphone if it is.
