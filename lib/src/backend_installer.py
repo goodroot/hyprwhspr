@@ -406,21 +406,23 @@ def detect_gpu_type() -> str:
     # 1. Check for NVIDIA GPU
     # First check for actual NVIDIA hardware via lspci (like Omarchy does)
     # This prevents false positives when nvidia-utils is installed but no GPU exists
+    print("[DEBUG GPU] Starting NVIDIA detection...", flush=True)
     try:
         result = run_command(['lspci'], capture_output=True, check=False, verbose=False)
         if result and result.returncode == 0:
             lspci_output = result.stdout.decode('utf-8', errors='ignore').lower()
+            print(f"[DEBUG GPU] lspci output (first 300 chars): {result.stdout.decode('utf-8', errors='ignore')[:300]}", flush=True)
             if 'nvidia' not in lspci_output:
-                log_info("[GPU Detection] No NVIDIA hardware in lspci")
+                print("[DEBUG GPU] No 'nvidia' keyword found in lspci", flush=True)
                 # Skip nvidia-smi check entirely - no hardware present
             else:
-                log_info("[GPU Detection] NVIDIA hardware found in lspci")
+                print("[DEBUG GPU] 'nvidia' keyword FOUND in lspci!", flush=True)
                 nvidia_smi_path = shutil.which('nvidia-smi')
+                print(f"[DEBUG GPU] nvidia-smi path: {nvidia_smi_path}", flush=True)
                 if not nvidia_smi_path:
-                    log_info("[GPU Detection] nvidia-smi not in PATH")
-                    log_info(f"[GPU Detection] PATH: {os.environ.get('PATH', 'not set')[:200]}")
+                    print(f"[DEBUG GPU] PATH={os.environ.get('PATH', 'not set')[:300]}", flush=True)
                 else:
-                    log_info(f"[GPU Detection] nvidia-smi found at: {nvidia_smi_path}")
+                    print(f"[DEBUG GPU] nvidia-smi found at: {nvidia_smi_path}", flush=True)
                     # Hardware detected, now verify with nvidia-smi
                     try:
                         result = run_command(
