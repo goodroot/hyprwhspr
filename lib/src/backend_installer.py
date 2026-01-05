@@ -249,11 +249,24 @@ def install_system_dependencies():
 def setup_nvidia_support() -> bool:
     """Setup NVIDIA/CUDA support. Returns True if CUDA is available."""
     log_info("GPU check…")
-    
+
+    # First check for actual NVIDIA hardware via lspci (like Omarchy does)
+    # This prevents false positives when nvidia-utils is installed but no GPU exists
+    try:
+        result = run_command(['lspci'], capture_output=True, check=False, verbose=False)
+        if result and result.returncode == 0:
+            lspci_output = result.stdout.decode('utf-8', errors='ignore').lower()
+            if 'nvidia' not in lspci_output:
+                log_info("No NVIDIA hardware detected via lspci (CPU mode)")
+                return False
+    except Exception:
+        # If lspci fails, continue to nvidia-smi check
+        pass
+
     if not shutil.which('nvidia-smi'):
         log_info("No NVIDIA GPU detected (CPU mode)")
         return False
-    
+
     # Test nvidia-smi
     try:
         result = run_command(['timeout', '2s', 'nvidia-smi', '-L'], check=False, capture_output=True)
@@ -391,28 +404,40 @@ def detect_gpu_type() -> str:
         from output_control import log_debug
 
     # 1. Check for NVIDIA GPU
-    if shutil.which('nvidia-smi'):
-        try:
-            result = run_command(
-                ['timeout', '2s', 'nvidia-smi', '-L'],
-                capture_output=True,
-                check=False,
-                verbose=False
-            )
-            if result and result.returncode == 0 and result.stdout:
-                # Verify output actually lists a GPU (not just error messages)
-                # nvidia-smi -L outputs: "GPU 0: NVIDIA GeForce RTX 4070..."
-                output = result.stdout.decode('utf-8', errors='ignore').strip()
-                output_lower = output.lower()
-                # Look for "GPU N:" pattern which indicates an actual GPU listing
-                # This won't match "No devices were found" or other error messages
-                if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
-                    log_debug(f"NVIDIA GPU detected: {output.splitlines()[0][:60]}")
-                    return 'nvidia'
-                else:
-                    log_debug(f"nvidia-smi present but no GPU detected (output: {output[:100]})")
-        except Exception as e:
-            log_debug(f"nvidia-smi check failed: {e}")
+    # First check for actual NVIDIA hardware via lspci (like Omarchy does)
+    # This prevents false positives when nvidia-utils is installed but no GPU exists
+    try:
+        result = run_command(['lspci'], capture_output=True, check=False, verbose=False)
+        if result and result.returncode == 0:
+            lspci_output = result.stdout.decode('utf-8', errors='ignore').lower()
+            if 'nvidia' not in lspci_output:
+                log_debug("No NVIDIA hardware detected via lspci")
+                # Skip nvidia-smi check entirely - no hardware present
+            elif shutil.which('nvidia-smi'):
+                # Hardware detected, now verify with nvidia-smi
+                try:
+                    result = run_command(
+                        ['timeout', '2s', 'nvidia-smi', '-L'],
+                        capture_output=True,
+                        check=False,
+                        verbose=False
+                    )
+                    if result and result.returncode == 0 and result.stdout:
+                        # Verify output actually lists a GPU (not just error messages)
+                        # nvidia-smi -L outputs: "GPU 0: NVIDIA GeForce RTX 4070..."
+                        output = result.stdout.decode('utf-8', errors='ignore').strip()
+                        output_lower = output.lower()
+                        # Look for "GPU N:" pattern which indicates an actual GPU listing
+                        # This won't match "No devices were found" or other error messages
+                        if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
+                            log_debug(f"NVIDIA GPU detected: {output.splitlines()[0][:60]}")
+                            return 'nvidia'
+                        else:
+                            log_debug(f"nvidia-smi present but no GPU detected (output: {output[:100]})")
+                except Exception as e:
+                    log_debug(f"nvidia-smi check failed: {e}")
+    except Exception as e:
+        log_debug(f"lspci check failed: {e}")
 
     # 2. Check for ANY GPU via Vulkan
     # First check if vulkaninfo is installed
