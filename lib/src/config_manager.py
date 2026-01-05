@@ -22,6 +22,7 @@ class ConfigManager:
             'primary_shortcut': 'SUPER+ALT+D',
             'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' (hybrid tap/hold)
             'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
+            'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
             # Audio device persistence (for reliable device matching across reboots)
             'audio_device_id': None,        # PortAudio device index (can change on reboot)
             'audio_device_name': None,      # Human-readable device name (more stable)

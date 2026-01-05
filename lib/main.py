@@ -155,6 +155,15 @@ class hyprwhsprApp:
 
     def _setup_global_shortcuts(self):
         """Initialize global keyboard shortcuts"""
+        # Check if using Hyprland compositor bindings instead
+        use_hypr_bindings = self.config.get_setting("use_hypr_bindings", False)
+        if use_hypr_bindings:
+            print("[INFO] Using Hyprland compositor bindings (evdev shortcuts disabled)", flush=True)
+            print("[INFO] Configure bindings in ~/.config/hypr/hyprland.conf", flush=True)
+            print("[INFO] Use ~/.config/hyprwhspr/recording_control file API for control", flush=True)
+            self.global_shortcuts = None
+            return
+
         try:
             shortcut_key = self.config.get_setting("primary_shortcut", "Super+Alt+D")
             recording_mode = self.config.get_setting("recording_mode", "toggle")
@@ -1285,17 +1294,21 @@ class hyprwhsprApp:
             print("[ERROR] Failed to initialize Whisper.")
             return False
         
-        # Start global shortcuts
+        # Start global shortcuts (unless using Hyprland compositor bindings)
+        use_hypr_bindings = self.config.get_setting("use_hypr_bindings", False)
         if self.global_shortcuts:
             if not self.global_shortcuts.start():
                 print("[ERROR] Failed to start global shortcuts!")
                 print("[ERROR] Check permissions: you may need to be in 'input' group")
                 return False
+            print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
+        elif use_hypr_bindings:
+            # Using Hyprland bindings - global_shortcuts is intentionally None
+            print("\n[READY] hyprwhspr ready - using Hyprland compositor bindings", flush=True)
         else:
+            # global_shortcuts is None but we're not using Hyprland bindings - this is an error
             print("[ERROR] Global shortcuts not initialized!")
             return False
-        
-        print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
 
         # Clean up any stale recovery file (tray script no longer creates these)
         if RECOVERY_REQUESTED_FILE.exists():

@@ -265,6 +265,40 @@ Examples:
 - `"F12"` - Just F12 (no modifier)
 - `"RCTRL+RSHIFT+ENTER"` - Right Ctrl + Right Shift + Enter
 
+**Hyprland native input bindings:**
+
+Use Hyprland's compositor bindings instead of evdev keyboard grabbing.
+
+Omarchy native, better compatibility with keyboard remappers.
+
+Enable in config (`~/.config/hyprwhspr/config.json`):
+
+```json
+{
+  "use_hypr_bindings": true,
+  "grab_keys": false
+}
+```
+
+Add bindings to `~/.config/hypr/hyprland.conf`:
+
+```bash
+# Toggle Mode (Recommended)
+bindd = SUPER ALT, D, Speech-to-text, exec, ~/.config/hyprland/hyprwhspr-tray.sh toggle
+```
+
+```bash
+# Push-to-Talk Mode
+bind = SUPER ALT, D, exec, echo "start" > ~/.config/hyprwhspr/recording_control
+bindr = SUPER ALT, D, exec, echo "stop" > ~/.config/hyprwhspr/recording_control
+```
+
+Restart service to lock in changes:
+
+```bash
+systemctl --user restart hyprwhspr
+```
+
 **Themed visualizer** - visual feedback, matches your Omarchy theme:
 
 > Highly recommended!

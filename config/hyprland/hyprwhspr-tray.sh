@@ -474,12 +474,12 @@ toggle_hyprwhspr() {
 # Function to control recording (start/stop)
 control_recording() {
     local control_file="$HOME/.config/hyprwhspr/recording_control"
-    
+
     # Check if currently recording
     if is_hyprwhspr_recording; then
         # Stop recording
         echo "stop" > "$control_file"
-        show_notification "hyprwhspr" "Stopping recording..." "low"
+        # No notification - Waybar icon change provides visual feedback
     else
         # Start recording - ensure service is running first
         if ! is_hyprwhspr_running; then
@@ -493,10 +493,10 @@ control_recording() {
                 return 1
             fi
         fi
-        
+
         # Write start command to control file
         echo "start" > "$control_file"
-        show_notification "hyprwhspr" "Starting recording..." "normal"
+        # No notification - Waybar icon change provides visual feedback
     fi
 }
 

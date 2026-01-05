@@ -2894,12 +2894,27 @@ def validate_command():
             else:
                 log_error("✗ Parakeet script missing")
                 all_ok = False
-    
+
+    # Validate configuration for potential conflicts
+    try:
+        from .config_manager import ConfigManager
+        config = ConfigManager()
+        use_hypr_bindings = config.get_setting('use_hypr_bindings', False)
+        grab_keys = config.get_setting('grab_keys', False)
+
+        if use_hypr_bindings:
+            log_info("ℹ Using Hyprland compositor bindings (evdev disabled)")
+            if grab_keys:
+                log_warning("⚠ Warning: use_hypr_bindings=true but grab_keys=true")
+                log_warning("  Recommendation: Set grab_keys=false when using compositor bindings")
+    except Exception:
+        pass  # Config validation is optional, don't fail if it errors
+
     if all_ok:
         log_success("Validation passed")
     else:
         log_error("Validation failed - some components are missing")
-    
+
     return all_ok
 
 
