@@ -1511,7 +1511,20 @@ def omarchy_command():
     print("="*60)
     validate_command()
 
-    # 10. Completion
+    # 10. Restart service for clean initialization
+    print("\n" + "="*60)
+    print("Service Restart")
+    print("="*60)
+    log_info("Restarting service to ensure clean initialization...")
+
+    # Check if service is actually running before restarting
+    if _is_service_running_via_systemd():
+        systemd_restart()
+        log_success("Service restarted with clean state")
+    else:
+        log_warning("Service not running - skipping restart")
+
+    # 11. Completion
     print("\n" + "="*60)
     print("Setup Complete!")
     print("="*60)

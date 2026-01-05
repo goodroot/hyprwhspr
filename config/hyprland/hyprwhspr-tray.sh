@@ -407,7 +407,20 @@ check_recovery_result() {
         if [[ "$status" == "success" ]]; then
             case "$reason" in
                 hotplug)
-                    show_notification "hyprwhspr" "Microphone reconnected successfully" "normal"
+                    # Auto-restart service after hotplug to ensure clean state
+                    # Only restart if not currently recording (avoid interrupting user)
+                    sleep 1.5  # Let device enumeration fully settle
+                    if ! is_hyprwhspr_recording; then
+                        echo "Auto-restarting service after mic reconnection..." >&2
+                        show_notification "hyprwhspr" "Microphone reconnected - restarting service..." "normal"
+                        systemctl --user restart hyprwhspr.service
+                        # Give service a moment to restart before showing ready notification
+                        sleep 0.5
+                        show_notification "hyprwhspr" "Ready to record" "low"
+                    else
+                        echo "Skipping auto-restart (recording in progress)" >&2
+                        show_notification "hyprwhspr" "Microphone reconnected successfully" "normal"
+                    fi
                     ;;
                 mic_unavailable|mic_no_audio)
                     show_notification "hyprwhspr" "Microphone recovered successfully" "normal"
