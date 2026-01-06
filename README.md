@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 ---
 
 - **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
-- **Local, very fast defaults** - Instant and accurate speech recognition via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
+- **Local, very fast defaults** - Instant, private and accurate performance via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Latest models**: Turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? 
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
 - **Themed visualizer** - Visualizes your voice, matched to your Omarchy theme
@@ -41,9 +41,6 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 On the AUR:
 
 ```bash
-# If Mise manages Python, deactivate for session:
-mise deactivate
-
 # Install for stable
 yay -S hyprwhspr
 
@@ -54,6 +51,9 @@ yay -S hyprwhspr-git
 Then run through the interactive setup:
 
 ```bash
+# Auto installer - detects strong defaults
+hyprwhspr install auto
+
 # Run interactive setup
 hyprwhspr setup
 ```
