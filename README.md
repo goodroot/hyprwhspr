@@ -41,7 +41,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 If you are using MISE first deactive it for current session by running
 
 ```bash
-mise deactivate
+mise unuse -g python
 ```
 
 On the AUR:
