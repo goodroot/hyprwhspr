@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-    <b>Native speech-to-text for Arch / Omarchy</b> - Fast, accurate and easy system-wide dictation
+    <b>Native speech-to-text for Arch / Omarchy</b> - Fast, accurate and private system-wide dictation
 </p>
 
 <p align="center">
@@ -48,7 +48,7 @@ yay -S hyprwhspr
 yay -S hyprwhspr-git
 ```
 
-Then run through the interactive setup:
+Then run the auto installer, or perform your own:
 
 ```bash
 # Auto installer - detects strong defaults
