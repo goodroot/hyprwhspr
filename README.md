@@ -34,7 +34,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **[Omarchy](https://omarchy.org/)** or **[Arch Linux](https://archlinux.org/)**
 - **NVIDIA GPU** (optional, for CUDA acceleration)
-- **AMD/Intel GPU** (optional, for Vulkan acceleration)
+- **AMD/Intel GPU / APU** (optional, for Vulkan acceleration)
 
 ### Quick start
 
