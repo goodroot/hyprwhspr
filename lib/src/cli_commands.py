@@ -1387,7 +1387,7 @@ def setup_command():
         sys.exit(1)
 
 
-# ==================== Omarchy Commands ====================
+# ==================== Install Commands ====================
 
 def _auto_download_model():
     """Auto-download base model without prompts"""
@@ -1405,12 +1405,12 @@ def _auto_download_model():
 
 def omarchy_command():
     """
-    Automated Omarchy setup
+    Automated setup
 
     This command:
     1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU)
     2. Installs appropriate backend (CUDA for NVIDIA, Vulkan for others, CPU fallback)
-    3. Configures Omarchy defaults (auto recording mode, Waybar integration)
+    3. Configures defaults (auto recording mode, Waybar integration)
     4. Sets up and starts systemd service
     5. Validates installation
 
@@ -1426,7 +1426,7 @@ def omarchy_command():
 
     # 1. Print banner
     print("\n" + "="*60)
-    print("hyprwhspr + omarchy - native stt")
+    print("hyprwhspr - automated setup")
     print("="*60)
 
     # 2. Check and handle MISE
@@ -1463,8 +1463,8 @@ def omarchy_command():
         log_error("Backend installation failed")
         return False
 
-    # 5. Configure Omarchy defaults
-    log_info("Configuring Omarchy defaults...")
+    # 5. Configure defaults
+    log_info("Configuring defaults...")
     config = ConfigManager()
     config.set_setting('recording_mode', 'auto')
     config.set_setting('use_hypr_bindings', True)  # Enable Hyprland compositor bindings
@@ -1512,7 +1512,7 @@ def omarchy_command():
                     # Check for existing hyprwhspr bindings
                     if ('hyprwhspr-tray.sh record' in content and 'SUPER ALT, D' in content) or \
                        ('# hyprwhspr' in content and 'bindd' in content and 'SUPER ALT, D' in content) or \
-                       ('# added by hyprwhspr omarchy' in content):
+                       ('# added by hyprwhspr install auto' in content):
                         bindings_exist = True
         except Exception as e:
             log_warning(f"Could not read {target_file}: {e}")
@@ -1524,7 +1524,7 @@ def omarchy_command():
             # Append bindings to file
             try:
                 with open(target_file, 'a', encoding='utf-8') as f:
-                    f.write('\n# hyprwhspr - Toggle mode (added by hyprwhspr omarchy)\n')
+                    f.write('\n# hyprwhspr - Toggle mode (added by hyprwhspr install auto)\n')
                     f.write('# Press once to start, press again to stop\n')
                     f.write('bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record\n')
                 log_success(f"Added Hyprland bindings to {target_file}")
@@ -1596,7 +1596,7 @@ def omarchy_command():
     print("\n" + "="*60)
     print("Setup Complete!")
     print("="*60)
-    print("\nOmarchy setup completed successfully!")
+    print("\nAutomated setup completed successfully!")
     print("\nNext steps:")
     print("  1. Log out and back in (for group permissions)")
     print("  2. Press Super+Alt+D to start dictating")

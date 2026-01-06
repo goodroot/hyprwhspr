@@ -60,8 +60,10 @@ def main():
     # setup command
     subparsers.add_parser('setup', help='Full initial setup')
 
-    # omarchy command
-    subparsers.add_parser('omarchy', help='Automated Omarchy setup')
+    # install command
+    install_parser = subparsers.add_parser('install', help='Installation management')
+    install_subparsers = install_parser.add_subparsers(dest='install_action', help='Install actions')
+    install_subparsers.add_parser('auto', help='Automated setup')
 
     # config command
     config_parser = subparsers.add_parser('config', help='Configuration management')
@@ -160,8 +162,12 @@ def main():
     try:
         if args.command == 'setup':
             setup_command()
-        elif args.command == 'omarchy':
-            omarchy_command()
+        elif args.command == 'install':
+            if not args.install_action:
+                install_parser.print_help()
+                sys.exit(1)
+            if args.install_action == 'auto':
+                omarchy_command()
         elif args.command == 'config':
             if not args.config_action:
                 config_parser.print_help()
