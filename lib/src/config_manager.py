@@ -22,6 +22,7 @@ class ConfigManager:
             'primary_shortcut': 'SUPER+ALT+D',
             'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' (hybrid tap/hold)
             'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
+            'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
             # Audio device persistence (for reliable device matching across reboots)
             'audio_device_id': None,        # PortAudio device index (can change on reboot)
             'audio_device_name': None,      # Human-readable device name (more stable)
@@ -40,7 +41,7 @@ class ConfigManager:
             # Back-compat for older configs (used only if paste_mode is absent):
             'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
             # Transcription backend settings
-            'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"amd") or "rest-api"
+            'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"vulkan"/"amd") or "rest-api"
             'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
             'rest_api_provider': None,          # Provider identifier for credential lookup (e.g., 'openai', 'groq', 'custom')
             'rest_api_key': None,              # DEPRECATED: Optional API key for authentication (kept for backward compatibility)

@@ -53,7 +53,7 @@ from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
-    RECORDING_STATUS_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
+    RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE
 )
 from backend_utils import normalize_backend
@@ -112,6 +112,10 @@ class hyprwhsprApp:
         self._background_recovery_thread = None  # Background thread handle
         self._background_recovery_stop = threading.Event()  # Signal to stop background recovery
 
+        # Recording control FIFO (for immediate push-to-talk response)
+        self._recording_control_thread = None  # Background thread handle for FIFO listener
+        self._recording_control_stop = threading.Event()  # Signal to stop FIFO listener
+
         # Hybrid tap/hold mode state tracking (auto mode)
         recording_mode = self.config.get_setting('recording_mode', 'toggle')
         if recording_mode == 'auto':
@@ -138,6 +142,9 @@ class hyprwhsprApp:
         # Set up suspend/resume monitoring
         self._setup_suspend_monitor()
 
+        # Set up recording control FIFO (for immediate push-to-talk response)
+        self._setup_recording_control_fifo()
+
         # Pre-initialize mic-osd daemon (eliminates latency on recording)
         self._mic_osd_runner = None
         if self.config.get_setting('mic_osd_enabled', True):
@@ -155,6 +162,15 @@ class hyprwhsprApp:
 
     def _setup_global_shortcuts(self):
         """Initialize global keyboard shortcuts"""
+        # Check if using Hyprland compositor bindings instead
+        use_hypr_bindings = self.config.get_setting("use_hypr_bindings", False)
+        if use_hypr_bindings:
+            print("[INFO] Using Hyprland compositor bindings (evdev shortcuts disabled)", flush=True)
+            print("[INFO] Configure bindings in ~/.config/hypr/hyprland.conf", flush=True)
+            print("[INFO] Use ~/.config/hyprwhspr/recording_control file API for control", flush=True)
+            self.global_shortcuts = None
+            return
+
         try:
             shortcut_key = self.config.get_setting("primary_shortcut", "Super+Alt+D")
             recording_mode = self.config.get_setting("recording_mode", "toggle")
@@ -486,6 +502,8 @@ class hyprwhsprApp:
             # Set flag immediately to prevent duplicate starts
             self.is_recording = True
         
+        print("Recording started", flush=True)
+        
         try:
             # Clear zero-volume signal file when starting a new recording
             # This allows waybar to recover immediately on successful start
@@ -493,9 +511,6 @@ class hyprwhsprApp:
             
             # Write recording status to file for tray script
             self._write_recording_status(True)
-            
-            # Show mic-osd visualization if enabled
-            self._show_mic_osd()
             
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
@@ -546,6 +561,9 @@ class hyprwhsprApp:
                     # Reset state
                     self.is_recording = False
                     self._write_recording_status(False)
+                    
+                    # Hide mic-osd visualization
+                    self._hide_mic_osd()
 
                     # Check if we know the microphone was disconnected
                     with self._mic_state_lock:
@@ -557,12 +575,18 @@ class hyprwhsprApp:
                         self._notify_zero_volume("Microphone not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
                     return  # Don't attempt recovery during user-initiated recording
                 
+                # Stream is verified working - show mic-osd visualization
+                self._show_mic_osd()
+                
                 # Additional stability check - verify stream continues working
                 if not verify_stream_stable():
                     # Stream stopped working shortly after starting
                     self.audio_capture.stop_recording()
                     self.is_recording = False
                     self._write_recording_status(False)
+                    
+                    # Hide mic-osd visualization
+                    self._hide_mic_osd()
 
                     # Check if we know the microphone was disconnected
                     with self._mic_state_lock:
@@ -655,6 +679,8 @@ class hyprwhsprApp:
         if not self.is_recording:
             return
 
+        print("Recording stopped", flush=True)
+        
         try:
             self.is_recording = False
             
@@ -961,6 +987,141 @@ class hyprwhsprApp:
             # Thread will exit when is_recording becomes False
             pass
 
+    def _setup_recording_control_fifo(self):
+        """Create named pipe (FIFO) for immediate recording control"""
+        try:
+            # Ensure config directory exists
+            RECORDING_CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Check if existing file is a FIFO (if regular file, remove it)
+            if RECORDING_CONTROL_FILE.exists():
+                if not RECORDING_CONTROL_FILE.is_fifo():
+                    # Old regular file - remove it
+                    try:
+                        RECORDING_CONTROL_FILE.unlink()
+                        print("[INIT] Removed old recording_control file (replacing with FIFO)", flush=True)
+                    except Exception as e:
+                        print(f"[WARN] Failed to remove old recording_control file: {e}", flush=True)
+                        return
+                else:
+                    # Already a FIFO, we're good
+                    print("[INIT] Recording control FIFO already exists", flush=True)
+                    return
+            
+            # Create FIFO if it doesn't exist
+            os.mkfifo(str(RECORDING_CONTROL_FILE))
+            print(f"[INIT] Created recording control FIFO: {RECORDING_CONTROL_FILE}", flush=True)
+            
+        except OSError as e:
+            # Handle permission errors, read-only filesystem, etc.
+            print(f"[WARN] Failed to create recording control FIFO: {e}", flush=True)
+            print("[WARN] Recording control will fall back to file polling (1 second delay)", flush=True)
+        except Exception as e:
+            print(f"[WARN] Unexpected error creating recording control FIFO: {e}", flush=True)
+
+    def _check_recording_control(self):
+        """
+        Check for recording control requests from tray script and start/stop recording
+        
+        DEPRECATED: This method is replaced by _recording_control_listener() which uses
+        a FIFO for immediate response. Kept for reference/fallback only.
+        """
+        # Check if recording control file exists
+        if not RECORDING_CONTROL_FILE.exists():
+            return
+        
+        try:
+            # Read the control file to determine action
+            with open(RECORDING_CONTROL_FILE, 'r') as f:
+                action = f.read().strip().lower()
+            
+            # Clear the file immediately to prevent duplicate processing
+            RECORDING_CONTROL_FILE.unlink()
+            
+            if action == "start":
+                # Start recording if not already recording
+                if not self.is_recording:
+                    print("[CONTROL] Recording start requested by tray script", flush=True)
+                    self._start_recording()
+                else:
+                    print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
+            elif action == "stop":
+                # Stop recording if currently recording
+                if self.is_recording:
+                    print("[CONTROL] Recording stop requested by tray script", flush=True)
+                    self._stop_recording()
+                else:
+                    print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
+            else:
+                print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
+                
+        except Exception as e:
+            print(f"[CONTROL] Error processing recording control: {e}", flush=True)
+            # Try to clear the file even if there was an error
+            try:
+                if RECORDING_CONTROL_FILE.exists():
+                    RECORDING_CONTROL_FILE.unlink()
+            except Exception:
+                pass
+
+    def _recording_control_listener(self):
+        """Listen on FIFO for recording control commands (blocking, immediate)"""
+        while not self._recording_control_stop.is_set():
+            try:
+                # Check if FIFO exists, recreate if needed
+                if not RECORDING_CONTROL_FILE.exists() or not RECORDING_CONTROL_FILE.is_fifo():
+                    if self._recording_control_stop.is_set():
+                        break
+                    # Recreate FIFO
+                    try:
+                        if RECORDING_CONTROL_FILE.exists():
+                            RECORDING_CONTROL_FILE.unlink()
+                        os.mkfifo(str(RECORDING_CONTROL_FILE))
+                        print("[CONTROL] Recreated recording control FIFO", flush=True)
+                    except Exception as e:
+                        print(f"[CONTROL] Failed to recreate FIFO: {e}", flush=True)
+                        # Wait a bit before retrying
+                        time.sleep(1)
+                        continue
+                
+                # Open FIFO for reading (blocks until writer appears)
+                with open(RECORDING_CONTROL_FILE, 'r') as f:
+                    action = f.read().strip().lower()
+                
+                if not action:
+                    continue
+                
+                # Process action immediately
+                if action == "start":
+                    if not self.is_recording:
+                        print("[CONTROL] Recording start requested (immediate)", flush=True)
+                        self._start_recording()
+                    else:
+                        print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
+                elif action == "stop":
+                    if self.is_recording:
+                        print("[CONTROL] Recording stop requested (immediate)", flush=True)
+                        self._stop_recording()
+                    else:
+                        print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
+                else:
+                    print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
+                    
+            except FileNotFoundError:
+                # FIFO was deleted - will be recreated on next iteration
+                if not self._recording_control_stop.is_set():
+                    print("[CONTROL] FIFO deleted, will recreate on next iteration", flush=True)
+                    time.sleep(0.1)  # Brief pause before retrying
+            except OSError as e:
+                # Permission errors, broken pipe, etc.
+                if not self._recording_control_stop.is_set():
+                    print(f"[CONTROL] FIFO error: {e}, retrying...", flush=True)
+                    time.sleep(0.1)  # Brief pause before retrying
+            except Exception as e:
+                if not self._recording_control_stop.is_set():
+                    print(f"[CONTROL] Error in FIFO listener: {e}", flush=True)
+                    time.sleep(0.1)  # Brief pause before retrying
+
     def _attempt_recovery_if_needed(self):
         """
         Check for recovery request from tray script and attempt recovery once per error state.
@@ -1096,7 +1257,7 @@ class hyprwhsprApp:
                 backend_reinit_success = True
 
                 # Backends that use pywhispercpp (model in memory, CUDA context)
-                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd']
+                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
                 if backend in pywhispercpp_variants:
                     if not self.whisper_manager._reinitialize_model():
                         print("[SUSPEND] Recovery failed - model reinitialization failed", flush=True)
@@ -1183,7 +1344,7 @@ class hyprwhsprApp:
                 backend_reinit_success = True
 
                 # Backends that use pywhispercpp (model in memory, CUDA context)
-                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd']
+                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
                 if backend in pywhispercpp_variants:
                     if not self.whisper_manager._reinitialize_model():
                         backend_reinit_success = False
@@ -1235,17 +1396,21 @@ class hyprwhsprApp:
             print("[ERROR] Failed to initialize Whisper.")
             return False
         
-        # Start global shortcuts
+        # Start global shortcuts (unless using Hyprland compositor bindings)
+        use_hypr_bindings = self.config.get_setting("use_hypr_bindings", False)
         if self.global_shortcuts:
             if not self.global_shortcuts.start():
                 print("[ERROR] Failed to start global shortcuts!")
                 print("[ERROR] Check permissions: you may need to be in 'input' group")
                 return False
+            print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
+        elif use_hypr_bindings:
+            # Using Hyprland bindings - global_shortcuts is intentionally None
+            print("\n[READY] hyprwhspr ready - using Hyprland compositor bindings", flush=True)
         else:
+            # global_shortcuts is None but we're not using Hyprland bindings - this is an error
             print("[ERROR] Global shortcuts not initialized!")
             return False
-        
-        print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
 
         # Clean up any stale recovery file (tray script no longer creates these)
         if RECOVERY_REQUESTED_FILE.exists():
@@ -1255,6 +1420,18 @@ class hyprwhsprApp:
             except Exception:
                 pass
 
+        # Start FIFO listener thread for immediate recording control
+        if RECORDING_CONTROL_FILE.exists() and RECORDING_CONTROL_FILE.is_fifo():
+            self._recording_control_thread = threading.Thread(
+                target=self._recording_control_listener,
+                daemon=True,
+                name="RecordingControlListener"
+            )
+            self._recording_control_thread.start()
+            print("[INIT] Started recording control FIFO listener", flush=True)
+        else:
+            print("[WARN] Recording control FIFO not available, using fallback polling", flush=True)
+
         # Give microphone 1 second to fully initialize before checking for recovery
         # This prevents spurious errors on startup if device is still settling
         time.sleep(1)
@@ -1262,6 +1439,7 @@ class hyprwhsprApp:
         try:
             # Keep the application running
             while True:
+                # Recording control now handled by FIFO listener thread (immediate)
                 # Check for recovery requests from tray script (non-blocking)
                 self._attempt_recovery_if_needed()
                 time.sleep(1)
@@ -1278,6 +1456,21 @@ class hyprwhsprApp:
     def _cleanup(self):
         """Clean up resources when shutting down"""
         try:
+            # Stop recording control FIFO listener thread
+            if hasattr(self, '_recording_control_stop'):
+                self._recording_control_stop.set()
+                if hasattr(self, '_recording_control_thread') and self._recording_control_thread and self._recording_control_thread.is_alive():
+                    print("[SHUTDOWN] Stopping recording control FIFO listener...", flush=True)
+                    # Unblock the FIFO reader by opening it for write (non-blocking) if thread is stuck
+                    try:
+                        fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
+                        os.close(fd)
+                    except (OSError, FileNotFoundError):
+                        pass  # FIFO might not exist or already closed
+                    self._recording_control_thread.join(timeout=1.0)
+                    if self._recording_control_thread.is_alive():
+                        print("[WARN] Recording control thread did not stop cleanly", flush=True)
+
             # Stop background recovery thread
             if hasattr(self, '_background_recovery_stop'):
                 self._background_recovery_stop.set()
@@ -1517,4 +1710,15 @@ def main():
 
 
 if __name__ == "__main__":
+    # Safety check: if a CLI subcommand was passed, redirect to CLI instead of starting the service
+    # This handles cases where an old bin/hyprwhspr wrapper doesn't recognize newer CLI subcommands
+    CLI_SUBCOMMANDS = ['setup', 'install', 'config', 'waybar', 'systemd', 'status',
+                       'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd']
+    if len(sys.argv) > 1 and sys.argv[1] in CLI_SUBCOMMANDS:
+        print(f"[REDIRECT] Detected CLI subcommand '{sys.argv[1]}', redirecting to CLI...")
+        # Execute CLI with same arguments
+        cli_path = Path(__file__).parent / 'cli.py'
+        os.execv(sys.executable, [sys.executable, str(cli_path)] + sys.argv[1:])
+
     main()
+    

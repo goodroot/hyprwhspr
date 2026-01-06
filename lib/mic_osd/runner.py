@@ -154,19 +154,54 @@ sys.exit(main())
                 # PID exists, send hide signal
                 os.kill(self._orphaned_daemon_pid, signal.SIGUSR2)
                 return
-            except (ProcessLookupError, OSError):
-                # Orphaned daemon is dead, clean up
+            except (ProcessLookupError, OSError) as e:
+                # Orphaned daemon is dead, clean up and log warning
+                print(f"[MIC-OSD] Orphaned daemon (PID {self._orphaned_daemon_pid}) is dead, cleaning up: {e}", flush=True)
                 self._process = None
                 self._orphaned_daemon_pid = None
+                # Clean up stale PID file
+                if MIC_OSD_PID_FILE.exists():
+                    try:
+                        MIC_OSD_PID_FILE.unlink()
+                    except Exception:
+                        pass
                 return
         
-        # For normal daemons, use poll() to check if process is alive
+        # For normal daemons, verify process is actually alive before signaling
         if self._process.poll() is not None:
+            # Process is dead, clean up
+            print(f"[MIC-OSD] Daemon process (PID {self._process.pid}) is dead, cleaning up", flush=True)
+            self._process = None
+            self._orphaned_daemon_pid = None
+            # Clean up stale PID file
+            if MIC_OSD_PID_FILE.exists():
+                try:
+                    MIC_OSD_PID_FILE.unlink()
+                except Exception:
+                    pass
             return
         
+        # Verify process is actually alive before sending signal
+        try:
+            os.kill(self._process.pid, 0)
+        except (ProcessLookupError, OSError) as e:
+            # Process is dead, clean up
+            print(f"[MIC-OSD] Daemon process (PID {self._process.pid}) is dead, cleaning up: {e}", flush=True)
+            self._process = None
+            self._orphaned_daemon_pid = None
+            # Clean up stale PID file
+            if MIC_OSD_PID_FILE.exists():
+                try:
+                    MIC_OSD_PID_FILE.unlink()
+                except Exception:
+                    pass
+            return
+        
+        # Process is alive, send hide signal
         try:
             os.kill(self._process.pid, signal.SIGUSR2)
-        except (ProcessLookupError, OSError):
+        except (ProcessLookupError, OSError) as e:
+            print(f"[MIC-OSD] Failed to send SIGUSR2 to daemon (PID {self._process.pid}): {e}", flush=True)
             self._process = None
             self._orphaned_daemon_pid = None
     

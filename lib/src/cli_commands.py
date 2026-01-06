@@ -33,9 +33,9 @@ except ImportError:
     from paths import CONFIG_DIR, CONFIG_FILE
 
 try:
-    from .backend_utils import BACKEND_DISPLAY_NAMES
+    from .backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
 except ImportError:
-    from backend_utils import BACKEND_DISPLAY_NAMES
+    from backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
 
 try:
     from .backend_installer import (
@@ -94,6 +94,63 @@ USER_HOME = Path.home()
 USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
 USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
 PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', USER_HOME / '.local' / 'share')) / 'pywhispercpp' / 'models'
+
+
+def _check_mise_active() -> tuple[bool, str]:
+    """
+    Check if MISE (runtime version manager) is active in the current environment.
+
+    Returns:
+        Tuple of (is_active, details_message)
+    """
+    indicators = []
+
+    # Check for MISE environment variables
+    if os.environ.get('MISE_SHELL'):
+        indicators.append(f"MISE_SHELL={os.environ['MISE_SHELL']}")
+    if os.environ.get('__MISE_ACTIVATE'):
+        indicators.append("__MISE_ACTIVATE is set")
+
+    # Check if Python is being managed by MISE
+    python_path = shutil.which('python3') or shutil.which('python')
+    if python_path and '.local/share/mise' in python_path:
+        indicators.append(f"Python path: {python_path}")
+
+    # Check if mise binary is managing this session
+    if shutil.which('mise') and os.environ.get('MISE_DATA_DIR'):
+        indicators.append(f"MISE_DATA_DIR={os.environ['MISE_DATA_DIR']}")
+
+    is_active = len(indicators) > 0
+    details = "\n    ".join(indicators) if indicators else ""
+
+    return is_active, details
+
+
+def _create_mise_free_environment() -> dict:
+    """
+    Create environment with MISE deactivated for subprocesses.
+
+    This prevents MISE from interfering with Python version detection
+    during pip install operations.
+
+    Returns:
+        Environment dict suitable for subprocess.run(env=...)
+    """
+    env = os.environ.copy()
+
+    # Remove MISE-related environment variables
+    mise_vars = ['MISE_SHELL', '__MISE_ACTIVATE', 'MISE_DATA_DIR']
+    for var in mise_vars:
+        env.pop(var, None)
+
+    # Clean PATH of MISE entries
+    path = env.get('PATH', '')
+    if '.local/share/mise' in path:
+        paths = path.split(':')
+        paths = [p for p in paths if '.local/share/mise' not in p]
+        env['PATH'] = ':'.join(paths)
+
+    return env
 
 
 def _strip_jsonc(text: str) -> str:
@@ -215,7 +272,7 @@ def _detect_current_backend() -> Optional[str]:
     Detect currently installed backend.
     
     Returns:
-        'cpu', 'nvidia', 'amd', 'parakeet', 'rest-api', or None if not detected
+        'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'rest-api', or None if not detected
     """
     # First check config file
     try:
@@ -252,7 +309,7 @@ def _detect_current_backend() -> Optional[str]:
             return 'rest-api'
         if backend == 'realtime-ws':
             return 'realtime-ws'
-        if backend in ['cpu', 'nvidia', 'amd', 'pywhispercpp']:
+        if backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']:
             # Verify it's actually installed in venv
             venv_python = VENV_DIR / 'bin' / 'python'
             if venv_python.exists():
@@ -264,9 +321,8 @@ def _detect_current_backend() -> Optional[str]:
                         text=True
                     )
                     if result.returncode == 0:
-                        # Try to detect which variant by checking build artifacts or imports
-                        # For now, trust config - could enhance later
-                        return backend
+                        # Normalize backend before returning (handles 'amd' -> 'vulkan')
+                        return normalize_backend(backend)
                 except Exception:
                     pass
     except Exception:
@@ -296,7 +352,7 @@ def _cleanup_backend(backend_type: str) -> bool:
     Clean up an installed backend.
     
     Args:
-        backend_type: 'cpu', 'nvidia', 'amd', 'parakeet', or 'remote'
+        backend_type: 'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', or 'remote'
     
     Returns:
         True if cleanup succeeded
@@ -378,7 +434,7 @@ def _prompt_backend_selection():
     print("PyWhisperCPP (Local in-memory default, very fast):")
     print("  [1] CPU - CPU-only, works on all systems")
     print("  [2] NVIDIA - NVIDIA GPU acceleration (CUDA)")
-    print("  [3] AMD - AMD GPU acceleration (ROCm)")
+    print("  [3] AMD/Intel - AMD/Intel GPU acceleration (Vulkan)")
     print()
     print("REST API (Remote - Cloud API or localhost):")
     print("  [4] Configure cloud provider or custom backend")
@@ -396,7 +452,7 @@ def _prompt_backend_selection():
             backend_map = {
                 '1': 'cpu',
                 '2': 'nvidia',
-                '3': 'amd',
+                '3': 'vulkan',
                 '4': 'rest-api',
                 '5': 'realtime-ws',
                 '6': 'parakeet'
@@ -408,7 +464,8 @@ def _prompt_backend_selection():
                 backend_names = {
                     'cpu': 'CPU',
                     'nvidia': 'NVIDIA (CUDA)',
-                    'amd': 'AMD (ROCm)',
+                    'amd': 'AMD/Intel (Vulkan)',
+                    'vulkan': 'AMD/Intel (Vulkan)',
                     'parakeet': 'Parakeet',
                     'rest-api': 'REST API',
                     'realtime-ws': 'Realtime WebSocket',
@@ -476,7 +533,8 @@ def _prompt_backend_selection():
             backend_names = {
                 'cpu': 'CPU',
                 'nvidia': 'NVIDIA (CUDA)',
-                'amd': 'AMD (ROCm)',
+                'amd': 'AMD/Intel (Vulkan)',
+                'vulkan': 'AMD/Intel (Vulkan)',
                 'parakeet': 'Parakeet',
                 'rest-api': 'REST API',
                 'realtime-ws': 'Realtime WebSocket'
@@ -806,6 +864,17 @@ def setup_command():
     print("="*60)
     print("\nThis setup will guide you through configuring hyprwhspr.")
     print("Skip any step by answering 'no'.\n")
+
+    # Check for MISE interference and handle automatically
+    mise_active, _ = _check_mise_active()
+    if mise_active:
+        # Try to deactivate MISE (may be a shell function)
+        if shutil.which('mise'):
+            try:
+                run_command(['bash', '-c', 'mise deactivate'], check=False, capture_output=True)
+            except Exception:
+                pass
+        log_info("MISE deactivated for installation")
     
     # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
     backend_result = _prompt_backend_selection()
@@ -831,71 +900,75 @@ def setup_command():
     
     current_backend = _detect_current_backend()
     
+    # Normalize backends for comparison (handles 'amd' -> 'vulkan' mapping)
+    if current_backend:
+        current_backend = normalize_backend(current_backend)
+    backend_normalized = normalize_backend(backend)
+    
     # Handle backend switching
-    if current_backend and current_backend != backend:
+    if current_backend and current_backend != backend_normalized:
         if current_backend not in ['rest-api', 'remote', 'realtime-ws']:
             # Switching from local to something else
             if not _cleanup_backend(current_backend):
                 log_warning("Failed to clean up old backend, continuing anyway...")
         
         # Also handle cleanup when switching TO Parakeet FROM local
-        if backend == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd']:
+        if backend_normalized == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan']:
             if VENV_DIR.exists():
                 cleanup_main_venv = Confirm.ask(
                     "Remove the old local backend venv to free up space?", 
                     default=False
                 )
                 if cleanup_main_venv:
-                    import shutil
                     log_info("Removing main venv...")
                     shutil.rmtree(VENV_DIR)
                     log_success("Main venv removed")
         
-        if cleanup_venv and backend in ['rest-api', 'remote', 'realtime-ws']:
+        if cleanup_venv and backend_normalized in ['rest-api', 'remote', 'realtime-ws']:
             # User wants to remove venv when switching to cloud backend
             if VENV_DIR.exists():
                 log_info("Removing venv as requested...")
-                import shutil
                 shutil.rmtree(VENV_DIR)
                 log_success("Venv removed")
     
     # Step 1.5: Backend installation (if not cloud backend)
     parakeet_installed = False
-    if backend not in ['rest-api', 'remote', 'realtime-ws']:
+    if backend_normalized not in ['rest-api', 'remote', 'realtime-ws']:
         # Skip installation section if user selected the same backend and declined reinstalling
-        if current_backend == backend and not wants_reinstall:
+        if current_backend == backend_normalized and not wants_reinstall:
             # User already said "no" to reinstalling in the selection step, skip installation section
             # If Parakeet is already installed, mark it as installed so REST API auto-configuration works
-            if backend == 'parakeet' and current_backend == 'parakeet':
+            if backend_normalized == 'parakeet' and current_backend == 'parakeet':
                 parakeet_installed = True
         else:
             # New backend selected, or user wants to reinstall existing backend
             print("\n" + "="*60)
             print("Backend Installation")
             print("="*60)
-            if backend == 'parakeet':
+            if backend_normalized == 'parakeet':
                 print("\nThis will install the Parakeet backend.")
                 print("This will create a separate virtual environment and install dependencies.")
                 print("Parakeet runs as a local REST API server that hyprwhspr connects to.")
             else:
-                print(f"\nThis will install the {backend.upper()} backend for pywhispercpp.")
+                print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
             if not Confirm.ask("Proceed with backend installation?", default=True):
                 log_warning("Skipping backend installation. You can install it later.")
                 log_warning("Backend installation is required for local transcription to work.")
             else:
                 # Pass force_rebuild=True when reinstalling to ensure clean venv
-                if not install_backend(backend, force_rebuild=wants_reinstall):
+                # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
+                if not install_backend(backend_normalized, force_rebuild=wants_reinstall):
                     log_error("Backend installation failed. Setup cannot continue.")
                     return
                 
-                if backend == 'parakeet':
+                if backend_normalized == 'parakeet':
                     parakeet_installed = True
     
     # Step 2: Provider/model selection (if REST API backend or parakeet)
     remote_config = None
     selected_model = None
-    if backend == 'parakeet':
+    if backend_normalized == 'parakeet':
         # Auto-configure REST API for parakeet (always needed, regardless of installation status)
         # If installation was skipped, user can install Parakeet later, but config should be set up now
         log_info("Auto-configuring REST API for Parakeet...")
@@ -909,7 +982,7 @@ def setup_command():
         if not parakeet_installed:
             log_warning("Parakeet backend is not installed. Install it later to use this configuration.")
         # Note about manual start will be shown later if systemd is not set up
-    elif backend in ['rest-api', 'remote']:
+    elif backend_normalized in ['rest-api', 'remote']:
         # Prompt for remote provider selection
         provider_result = _prompt_remote_provider_selection()
         if not provider_result:
@@ -925,7 +998,7 @@ def setup_command():
         except Exception as e:
             log_error(f"Failed to generate remote configuration: {e}")
             return
-    elif backend == 'realtime-ws':
+    elif backend_normalized == 'realtime-ws':
         # Prompt for remote provider selection (filter for realtime models)
         provider_result = _prompt_remote_provider_selection(filter_realtime=True)
         if not provider_result:
@@ -1007,7 +1080,7 @@ def setup_command():
         log_info(f"Realtime mode: {realtime_mode}")
     
     # Step 1.4: Ensure venv and base dependencies for cloud backends
-    if backend in ['rest-api', 'remote', 'realtime-ws']:
+    if backend_normalized in ['rest-api', 'remote', 'realtime-ws']:
         print("\n" + "="*60)
         print("Python Environment Setup")
         print("="*60)
@@ -1201,9 +1274,9 @@ def setup_command():
     try:
         # Step 1: Config
         if remote_config:
-            setup_config(backend=backend, remote_config=remote_config)
+            setup_config(backend=backend_normalized, remote_config=remote_config)
         else:
-            setup_config(backend=backend, model=selected_model)
+            setup_config(backend=backend_normalized, model=selected_model)
         
         # Check if running manually before systemd setup
         if _is_running_manually():
@@ -1314,6 +1387,225 @@ def setup_command():
         sys.exit(1)
 
 
+# ==================== Install Commands ====================
+
+def _auto_download_model():
+    """Auto-download base model without prompts"""
+    try:
+        from .backend_installer import download_pywhispercpp_model
+    except ImportError:
+        from backend_installer import download_pywhispercpp_model
+
+    log_info("Downloading base Whisper model...")
+    if download_pywhispercpp_model('base'):
+        log_success("Model downloaded")
+    else:
+        log_warning("Model download failed - can download later with: hyprwhspr model download")
+
+
+def omarchy_command():
+    """
+    Automated setup
+
+    This command:
+    1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU)
+    2. Installs appropriate backend (CUDA for NVIDIA, Vulkan for others, CPU fallback)
+    3. Configures defaults (auto recording mode, Waybar integration)
+    4. Sets up and starts systemd service
+    5. Validates installation
+
+    All without user interaction.
+    """
+    # Import functions we need
+    try:
+        from .backend_installer import detect_gpu_type, install_backend
+        from .config_manager import ConfigManager
+    except ImportError:
+        from backend_installer import detect_gpu_type, install_backend
+        from config_manager import ConfigManager
+
+    # 1. Print banner
+    print("\n" + "="*60)
+    print("hyprwhspr - automated setup")
+    print("="*60)
+
+    # 2. Check and handle MISE
+    mise_active, mise_details = _check_mise_active()
+    mise_free_env = None
+    if mise_active:
+        log_warning("MISE detected - will be temporarily deactivated for installation")
+        log_warning(f"Details:\n    {mise_details}")
+        mise_free_env = _create_mise_free_environment()
+        # Note: install_backend() already handles MISE warnings
+
+    # 3. Auto-detect GPU type
+    log_info("Detecting hardware...")
+    gpu_type = detect_gpu_type()  # Returns 'nvidia', 'vulkan', or 'cpu'
+
+    # gpu_type is already the backend name
+    backend = gpu_type
+
+    gpu_descriptions = {
+        'nvidia': 'NVIDIA GPU with CUDA acceleration',
+        'vulkan': 'GPU with Vulkan acceleration (AMD/Intel/other)',
+        'cpu': 'CPU-only (no GPU detected)'
+    }
+
+    log_success(f"Detected: {gpu_descriptions[gpu_type]}")
+    log_info(f"Installing: {backend.upper()} backend")
+
+    # 4. Install backend
+    print("\n" + "="*60)
+    print("Backend Installation")
+    print("="*60)
+
+    if not install_backend(backend, force_rebuild=False):
+        log_error("Backend installation failed")
+        return False
+
+    # 5. Configure defaults
+    log_info("Configuring defaults...")
+    config = ConfigManager()
+    config.set_setting('recording_mode', 'auto')
+    config.set_setting('use_hypr_bindings', True)  # Enable Hyprland compositor bindings
+    config.set_setting('grab_keys', False)  # Disable evdev (Omarchy native)
+    config.set_setting('transcription_backend', 'pywhispercpp')
+    config.set_setting('mic_osd_enabled', True)
+    config.save_config()
+    log_success("Configuration saved")
+
+    # 5.5. Add Hyprland bindings
+    print("\n" + "="*60)
+    print("Hyprland Bindings")
+    print("="*60)
+    
+    hypr_config_dir = USER_HOME / '.config' / 'hypr'
+    bindings_file = hypr_config_dir / 'bindings.conf'
+    hyprland_conf = hypr_config_dir / 'hyprland.conf'
+    
+    # Determine which file to use
+    target_file = None
+    if bindings_file.exists():
+        target_file = bindings_file
+        log_info(f"Found bindings file: {bindings_file}")
+    elif hyprland_conf.exists():
+        target_file = hyprland_conf
+        log_info(f"Found hyprland.conf, using it instead: {hyprland_conf}")
+    else:
+        # Create bindings.conf if neither exists
+        target_file = bindings_file
+        try:
+            hypr_config_dir.mkdir(parents=True, exist_ok=True)
+            log_info(f"Creating bindings file: {bindings_file}")
+        except Exception as e:
+            log_warning(f"Could not create Hyprland config directory: {e}")
+            log_warning("Skipping Hyprland bindings setup - see README for manual setup")
+            target_file = None
+    
+    if target_file:
+        # Check if bindings already exist
+        bindings_exist = False
+        try:
+            if target_file.exists():
+                with open(target_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Check for existing hyprwhspr bindings
+                    if ('hyprwhspr-tray.sh record' in content and 'SUPER ALT, D' in content) or \
+                       ('# hyprwhspr' in content and 'bindd' in content and 'SUPER ALT, D' in content) or \
+                       ('# added by hyprwhspr install auto' in content):
+                        bindings_exist = True
+        except Exception as e:
+            log_warning(f"Could not read {target_file}: {e}")
+            log_warning("Skipping duplicate check - will attempt to add bindings")
+        
+        if bindings_exist:
+            log_info("Hyprland bindings already exist, skipping")
+        else:
+            # Append bindings to file
+            try:
+                with open(target_file, 'a', encoding='utf-8') as f:
+                    f.write('\n# hyprwhspr - Toggle mode (added by hyprwhspr install auto)\n')
+                    f.write('# Press once to start, press again to stop\n')
+                    f.write('bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record\n')
+                log_success(f"Added Hyprland bindings to {target_file}")
+                log_info("Restart Hyprland or reload config to apply bindings")
+            except PermissionError:
+                log_warning(f"Permission denied writing to {target_file}")
+                log_warning("Could not add bindings automatically - see README for manual setup")
+            except Exception as e:
+                log_warning(f"Could not write to {target_file}: {e}")
+                log_warning("Could not add bindings automatically - see README for manual setup")
+
+    # 6. Download model (for local backends)
+    if backend in ['cpu', 'nvidia', 'vulkan']:
+        _auto_download_model()
+
+    # 7. Waybar integration (if detected)
+    print("\n" + "="*60)
+    print("Waybar Integration")
+    print("="*60)
+
+    waybar_config = Path.home() / '.config' / 'waybar' / 'config.jsonc'
+    if waybar_config.exists():
+        log_info("Waybar detected - installing integration...")
+        waybar_command('install')
+    else:
+        log_info("Waybar not detected - skipping")
+
+    # 8. Systemd service
+    print("\n" + "="*60)
+    print("Systemd Service")
+    print("="*60)
+
+    systemd_command('install')
+
+    try:
+        from .output_control import run_command
+    except ImportError:
+        from output_control import run_command
+
+    try:
+        # Use MISE-free environment if MISE was detected
+        env = mise_free_env if mise_free_env else None
+        run_command(['systemctl', '--user', 'enable', 'hyprwhspr.service'], check=True, env=env)
+        run_command(['systemctl', '--user', 'start', 'hyprwhspr.service'], check=True, env=env)
+        log_success("Service enabled and started")
+    except Exception as e:
+        log_warning(f"Could not start service: {e}")
+
+    # 9. Validate
+    print("\n" + "="*60)
+    print("Validation")
+    print("="*60)
+    validate_command()
+
+    # 10. Restart service for clean initialization
+    print("\n" + "="*60)
+    print("Service Restart")
+    print("="*60)
+    log_info("Restarting service to ensure clean initialization...")
+
+    # Check if service is actually running before restarting
+    if _is_service_running_via_systemd():
+        systemd_restart()
+        log_success("Service restarted with clean state")
+    else:
+        log_warning("Service not running - skipping restart")
+
+    # 11. Completion
+    print("\n" + "="*60)
+    print("Setup Complete!")
+    print("="*60)
+    print("\nAutomated setup completed successfully!")
+    print("\nNext steps:")
+    print("  1. Log out and back in (for group permissions)")
+    print("  2. Press Super+Alt+D to start dictating")
+    print("  3. Tap (<400ms) to toggle, hold (>=400ms) for push-to-talk")
+    print("\nFor help: hyprwhspr --help")
+
+    return True
+
+
 # ==================== Config Commands ====================
 
 def config_command(action: str):
@@ -1372,12 +1664,12 @@ def setup_config(backend: Optional[str] = None, model: Optional[str] = None, rem
                 for key, value in remote_config.items():
                     existing_config[key] = value
             
-            # Update model if provided, otherwise default to base.en if missing
+            # Update model if provided, otherwise default to base if missing
             if model:
                 existing_config['model'] = model
             elif 'model' not in existing_config and not remote_config:
                 # Only set default model if not using remote backend
-                existing_config['model'] = 'base.en'
+                existing_config['model'] = 'base'
             
             # Add audio_feedback if missing
             if 'audio_feedback' not in existing_config:
@@ -1775,9 +2067,8 @@ def setup_waybar(mode: str = 'install'):
                 "interval": 1,
                 "return-type": "json",
                 "exec-on-event": True,
-                "on-click": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh toggle",
+                "on-click": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh record",
                 "on-click-right": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh restart",
-                "on-click-middle": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh restart",
                 "tooltip": True
             }
         }
@@ -1801,7 +2092,13 @@ def setup_waybar(mode: str = 'install'):
                 config['modules-right'] = []
             
             if 'custom/hyprwhspr' not in config['modules-right']:
-                config['modules-right'].insert(0, 'custom/hyprwhspr')
+                # Try to insert after group/tray-expander
+                try:
+                    tray_index = config['modules-right'].index('group/tray-expander')
+                    config['modules-right'].insert(tray_index + 1, 'custom/hyprwhspr')
+                except ValueError:
+                    # group/tray-expander not found, append to end
+                    config['modules-right'].append('custom/hyprwhspr')
             
             # Write back
             with open(waybar_config, 'w', encoding='utf-8') as f:
@@ -2006,7 +2303,7 @@ def mic_osd_status():
 
 # ==================== Model Commands ====================
 
-def model_command(action: str, model_name: str = 'base.en'):
+def model_command(action: str, model_name: str = 'base'):
     """Handle model subcommands"""
     if action == 'download':
         download_model(model_name)
@@ -2018,7 +2315,7 @@ def model_command(action: str, model_name: str = 'base.en'):
         log_error(f"Unknown model action: {action}")
 
 
-def download_model(model_name: str = 'base.en'):
+def download_model(model_name: str = 'base'):
     """Download pywhispercpp model with progress feedback"""
     log_info(f"Downloading pywhispercpp model: {model_name}")
     
@@ -2353,7 +2650,7 @@ def backend_repair_command():
         if choice == '1':
             # Detect backend type from config
             current_backend = _detect_current_backend()
-            if current_backend and current_backend in ['cpu', 'nvidia', 'amd']:
+            if current_backend and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan']:
                 log_info(f"Reinstalling {current_backend.upper()} backend...")
                 # Use force_rebuild=True to ensure clean reinstall
                 if install_backend(current_backend, force_rebuild=True):
@@ -2647,7 +2944,7 @@ def validate_command():
             print("")
         
         # Check base model (only for local backends)
-        model_file = PYWHISPERCPP_MODELS_DIR / 'ggml-base.en.bin'
+        model_file = PYWHISPERCPP_MODELS_DIR / 'ggml-base.bin'
         if model_file.exists():
             log_success(f"✓ Base model exists: {model_file}")
         else:
@@ -2665,12 +2962,27 @@ def validate_command():
             else:
                 log_error("✗ Parakeet script missing")
                 all_ok = False
-    
+
+    # Validate configuration for potential conflicts
+    try:
+        from .config_manager import ConfigManager
+        config = ConfigManager()
+        use_hypr_bindings = config.get_setting('use_hypr_bindings', False)
+        grab_keys = config.get_setting('grab_keys', False)
+
+        if use_hypr_bindings:
+            log_info("ℹ Using Hyprland compositor bindings (evdev disabled)")
+            if grab_keys:
+                log_warning("⚠ Warning: use_hypr_bindings=true but grab_keys=true")
+                log_warning("  Recommendation: Set grab_keys=false when using compositor bindings")
+    except Exception:
+        pass  # Config validation is optional, don't fail if it errors
+
     if all_ok:
         log_success("Validation passed")
     else:
         log_error("Validation failed - some components are missing")
-    
+
     return all_ok
 
 
@@ -2691,7 +3003,9 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         items_to_remove.append(f"Systemd service: {SERVICE_NAME}")
     if (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {PARAKEET_SERVICE_NAME}")
-    
+    if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
+        items_to_remove.append(f"Systemd service: {RESUME_SERVICE_NAME} (deprecated)")
+
     # Waybar integration
     waybar_module = USER_HOME / '.config' / 'waybar' / 'hyprwhspr-module.jsonc'
     if waybar_module.exists():
@@ -2771,7 +3085,14 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             run_command(['systemctl', '--user', 'disable', PARAKEET_SERVICE_NAME], check=False)
             (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).unlink(missing_ok=True)
             log_success(f"Removed {PARAKEET_SERVICE_NAME}")
-        
+
+        # Stop and disable deprecated resume service
+        if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
+            run_command(['systemctl', '--user', 'stop', RESUME_SERVICE_NAME], check=False)
+            run_command(['systemctl', '--user', 'disable', RESUME_SERVICE_NAME], check=False)
+            (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).unlink(missing_ok=True)
+            log_success(f"Removed {RESUME_SERVICE_NAME}")
+
         # Reload systemd daemon
         run_command(['systemctl', '--user', 'daemon-reload'], check=False)
     except Exception as e:

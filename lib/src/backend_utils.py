@@ -6,6 +6,7 @@ def normalize_backend(backend: str) -> str:
     Maps old backend names to new names:
     - 'local' -> 'pywhispercpp'
     - 'remote' -> 'rest-api'
+    - 'amd' -> 'vulkan' (AMD/Intel now uses Vulkan instead of ROCm)
 
     Args:
         backend: Backend name (may use old naming)
@@ -17,6 +18,8 @@ def normalize_backend(backend: str) -> str:
         return 'pywhispercpp'
     elif backend == 'remote':
         return 'rest-api'
+    elif backend == 'amd':
+        return 'vulkan'
     return backend
 
 
@@ -28,6 +31,7 @@ BACKEND_DISPLAY_NAMES = {
     'realtime-ws': 'Realtime WebSocket',
     'cpu': 'CPU (pywhispercpp)',
     'nvidia': 'NVIDIA GPU (pywhispercpp)',
-    'amd': 'AMD GPU (pywhispercpp)',
+    'amd': 'AMD/Intel GPU (Vulkan) (pywhispercpp)',
+    'vulkan': 'AMD/Intel GPU (Vulkan) (pywhispercpp)',
     'parakeet': 'Parakeet TDT',
 }

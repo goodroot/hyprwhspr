@@ -407,7 +407,20 @@ check_recovery_result() {
         if [[ "$status" == "success" ]]; then
             case "$reason" in
                 hotplug)
-                    show_notification "hyprwhspr" "Microphone reconnected successfully" "normal"
+                    # Auto-restart service after hotplug to ensure clean state
+                    # Only restart if not currently recording (avoid interrupting user)
+                    sleep 1.5  # Let device enumeration fully settle
+                    if ! is_hyprwhspr_recording; then
+                        echo "Auto-restarting service after mic reconnection..." >&2
+                        show_notification "hyprwhspr" "Microphone reconnected - restarting service..." "normal"
+                        systemctl --user restart hyprwhspr.service
+                        # Give service a moment to restart before showing ready notification
+                        sleep 0.5
+                        show_notification "hyprwhspr" "Ready to record" "low"
+                    else
+                        echo "Skipping auto-restart (recording in progress)" >&2
+                        show_notification "hyprwhspr" "Microphone reconnected successfully" "normal"
+                    fi
                     ;;
                 mic_unavailable|mic_no_audio)
                     show_notification "hyprwhspr" "Microphone recovered successfully" "normal"
@@ -442,26 +455,55 @@ check_recovery_result() {
 # Function to toggle hyprwhspr
 toggle_hyprwhspr() {
     if is_hyprwhspr_running; then
-        echo "Stopping hyprwhspr..."
+        echo "Stopping hyprwhspr..." >&2
         systemctl --user stop hyprwhspr.service
         show_notification "hyprwhspr" "Stopped" "low"
     else
         if can_start_recording; then
-            echo "Starting hyprwhspr..."
+            echo "Starting hyprwhspr..." >&2
             systemctl --user start hyprwhspr.service
             show_notification "hyprwhspr" "Started" "normal"
         else
-            echo "Cannot start hyprwhspr - no microphone available"
+            echo "Cannot start hyprwhspr - no microphone available" >&2
             show_notification "hyprwhspr" "No microphone available" "critical"
             return 1
         fi
     fi
 }
 
+# Function to control recording (start/stop)
+control_recording() {
+    local control_file="$HOME/.config/hyprwhspr/recording_control"
+
+    # Check if currently recording
+    if is_hyprwhspr_recording; then
+        # Stop recording
+        echo "stop" > "$control_file"
+        # No notification - Waybar icon change provides visual feedback
+    else
+        # Start recording - ensure service is running first
+        if ! is_hyprwhspr_running; then
+            if can_start_recording; then
+                echo "Starting hyprwhspr service..." >&2
+                systemctl --user start hyprwhspr.service
+                # Wait a moment for service to initialize
+                sleep 0.5
+            else
+                show_notification "hyprwhspr" "No microphone available" "critical"
+                return 1
+            fi
+        fi
+
+        # Write start command to control file
+        echo "start" > "$control_file"
+        # No notification - Waybar icon change provides visual feedback
+    fi
+}
+
 # Function to start ydotoold if needed
 start_ydotoold() {
     if ! is_ydotoold_running; then
-        echo "Starting ydotoold..."
+        echo "Starting ydotoold..." >&2
         systemctl --user start ydotool.service  # Using system service
         sleep 1
         if is_ydotoold_running; then
@@ -480,7 +522,7 @@ check_service_health() {
         
         if [ "$service_status" = "activating" ]; then
             # Service is stuck starting, restart it
-            echo "Service stuck in activating state, restarting..."
+            echo "Service stuck in activating state, restarting..." >&2
             systemctl --user restart hyprwhspr.service
             return 1
         fi
@@ -494,67 +536,15 @@ check_service_health() {
     return 0
 }
 
-# Function to get audio level visualization
-get_audio_level_viz() {
-    local level_file="$HOME/.config/hyprwhspr/audio_level"
-    
-    if [[ ! -f "$level_file" ]]; then
-        echo ""
-        return
-    fi
-    
-    local level
-    level=$(cat "$level_file" 2>/dev/null || echo "0")
-    
-    # Convert level (0.0-1.0) to multi-segment dot visualization
-    # Using smaller Unicode characters for pixel-like appearance
-    local num_segments=12
-    local inactive_char="·"  # middle dot for inactive segments
-    local active_char="▪"    # small square for active segments
-    
-    # Apply non-linear scaling for better sensitivity to lower levels
-    # Using square root curve: makes quiet sounds more visible
-    # This maps low levels (0.0-0.3) to more segments for better responsiveness
-    local active_segments=$(awk -v l="$level" -v n="$num_segments" 'BEGIN {
-        # Apply square root scaling for better sensitivity
-        # This makes lower levels fill more segments
-        scaled = sqrt(l) * n
-        segs = int(scaled + 0.5)  # Round to nearest integer
-        if (segs > n) segs = n
-        if (segs < 0) segs = 0
-        print segs
-    }')
-    
-    # Build the visualization string
-    local viz=""
-    local i
-    for ((i=0; i<num_segments; i++)); do
-        if [ $i -lt $active_segments ]; then
-            viz="${viz}${active_char}"
-        else
-            viz="${viz}${inactive_char}"
-        fi
-    done
-    
-    echo "$viz"
-}
-
 # Function to emit JSON output for waybar with granular error classes
 emit_json() {
     local state="$1" reason="${2:-}" custom_tooltip="${3:-}"
     local icon text tooltip class="$state"
-    local audio_viz=""
-    
-    # Get audio visualization if recording
-    if [[ "$state" == "recording" ]]; then
-        audio_viz=$(get_audio_level_viz)
-        [[ -n "$audio_viz" ]] && audio_viz=" $audio_viz"
-    fi
     
     case "$state" in
         "recording")
             icon=""
-            text="$icon$audio_viz"
+            text="$icon"
             tooltip="hyprwhspr: Currently recording\n\nLeft-click: Stop recording\nRight-click: Restart service"
             ;;
         "error")
@@ -562,13 +552,13 @@ emit_json() {
             text="$icon ERR"
             case "$reason" in
                 mic_unavailable)
-                    tooltip="hyprwhspr: Microphone not available\n\nMicrophone hardware is present but cannot capture audio.\nThis often happens after suspend/resume or boot.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Toggle service\nRight-click: Restart service"
+                    tooltip="hyprwhspr: Microphone not available\n\nMicrophone hardware is present but cannot capture audio.\nThis often happens after suspend/resume or boot.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Start recording\nRight-click: Restart service"
                     ;;
                 mic_no_audio)
-                    tooltip="hyprwhspr: Recording but no audio input\n\nRecording is active but microphone is not providing audio.\nThis indicates the mic needs to be reconnected.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Toggle service\nRight-click: Restart service"
+                    tooltip="hyprwhspr: Recording but no audio input\n\nRecording is active but microphone is not providing audio.\nThis indicates the mic needs to be reconnected.\n\nPlease unplug and replug your USB microphone.\n\nLeft-click: Start recording\nRight-click: Restart service"
                     ;;
                 *)
-            tooltip="hyprwhspr: Issue detected${reason:+ ($reason)}\n\nLeft-click: Toggle service\nRight-click: Restart service"
+            tooltip="hyprwhspr: Issue detected${reason:+ ($reason)}\n\nLeft-click: Start recording\nRight-click: Restart service"
 ;;
             esac
             class="error"
@@ -576,17 +566,17 @@ emit_json() {
         "ready")
             icon=""
             text="$icon"
-            tooltip="hyprwhspr: Ready to record\n\nLeft-click: Toggle service\nRight-click: Restart service"
+            tooltip="hyprwhspr: Ready to record\n\nLeft-click: Start recording\nRight-click: Restart service"
             ;;
         "stopped")
             icon=""
             text="$icon"
-            tooltip="hyprwhspr: Stopped\n\nLeft-click: Start service\nRight-click: Restart service"
+            tooltip="hyprwhspr: Stopped\n\nLeft-click: Start recording\nRight-click: Restart service"
             ;;
         *)
             icon="󰆉"
             text="$icon"
-            tooltip="hyprwhspr: Unknown state\n\nLeft-click: Toggle service\nRight-click: Restart service"
+            tooltip="hyprwhspr: Unknown state\n\nLeft-click: Start recording\nRight-click: Restart service"
             class="error"
             state="error"
             ;;
@@ -719,7 +709,18 @@ case "${1:-status}" in
     "toggle")
         toggle_hyprwhspr
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
+        ;;
+    "record")
+        control_recording
+        IFS=: read -r s r <<<"$(get_current_state)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "start")
         if ! is_hyprwhspr_running; then
@@ -731,7 +732,10 @@ case "${1:-status}" in
             fi
         fi
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "stop")
         if is_hyprwhspr_running; then
@@ -739,31 +743,43 @@ case "${1:-status}" in
             show_notification "hyprwhspr" "Stopped" "low"
         fi
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "ydotoold")
         start_ydotoold
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "restart")
         systemctl --user restart hyprwhspr.service
         show_notification "hyprwhspr" "Restarted" "normal"
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     "health")
         check_service_health
         if [ $? -eq 0 ]; then
-            echo "Service health check passed"
+            echo "Service health check passed" >&2
         else
-            echo "Service health check failed, attempting recovery"
+            echo "Service health check failed, attempting recovery" >&2
         fi
         IFS=: read -r s r <<<"$(get_current_state)"
-        emit_json "$s" "$r" "$(mic_tooltip_line)"
+        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
+        if [ ! -t 1 ]; then
+            emit_json "$s" "$r" "$(mic_tooltip_line)"
+        fi
         ;;
     *)
-        echo "Usage: $0 [status|toggle|start|stop|ydotoold|restart|health]"
+        echo "Usage: $0 [status|toggle|record|start|stop|ydotoold|restart|health]"
         echo ""
         echo "Commands:"
         echo "  status    - Show current status (JSON output)"

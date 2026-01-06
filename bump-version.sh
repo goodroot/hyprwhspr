@@ -19,7 +19,7 @@ fi
 NEW_VERSION="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HYPRWHSPR_REPO="$SCRIPT_DIR"
-AUR_REPO="$SCRIPT_DIR/../aur-aur/hyprwhspr"
+AUR_REPO="$SCRIPT_DIR/../aur/hyprwhspr"
 
 # Validate we're in the right directory
 if [ ! -f "$HYPRWHSPR_REPO/lib/cli.py" ]; then

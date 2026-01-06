@@ -256,38 +256,32 @@ class AudioManager:
     
     def play_start_sound(self) -> bool:
         """Play the recording start sound"""
-        print(f"🔊 play_start_sound called - enabled: {self.enabled}, available: {self.start_sound_available}")
         if not self.enabled or not self.start_sound_available:
-            print(f"❌ Start sound blocked - enabled: {self.enabled}, available: {self.start_sound_available}")
             return False
         
-        print(f"🔊 Playing start sound: {self.start_sound} (volume: {self.start_volume})")
         result = self._play_sound(self.start_sound, self.start_volume)
-        print(f"🔊 Start sound result: {'Success' if result else 'Failed'}")
+        if not result:
+            print(f"Failed to play start sound: {self.start_sound}")
         return result
     
     def play_stop_sound(self) -> bool:
         """Play the recording stop sound"""
-        print(f"🔊 play_stop_sound called - enabled: {self.enabled}, available: {self.stop_sound_available}")
         if not self.enabled or not self.stop_sound_available:
-            print(f"❌ Stop sound blocked - enabled: {self.enabled}, available: {self.stop_sound_available}")
             return False
 
-        print(f"🔊 Playing stop sound: {self.stop_sound} (volume: {self.stop_volume})")
         result = self._play_sound(self.stop_sound, self.stop_volume)
-        print(f"🔊 Stop sound result: {'Success' if result else 'Failed'}")
+        if not result:
+            print(f"Failed to play stop sound: {self.stop_sound}")
         return result
 
     def play_error_sound(self) -> bool:
         """Play the error sound (e.g., for blank audio or failed transcription)"""
-        print(f"🔊 play_error_sound called - enabled: {self.enabled}, available: {self.error_sound_available}")
         if not self.enabled or not self.error_sound_available:
-            print(f"❌ Error sound blocked - enabled: {self.enabled}, available: {self.error_sound_available}")
             return False
 
-        print(f"🔊 Playing error sound: {self.error_sound} (volume: {self.error_volume})")
         result = self._play_sound(self.error_sound, self.error_volume)
-        print(f"🔊 Error sound result: {'Success' if result else 'Failed'}")
+        if not result:
+            print(f"Failed to play error sound: {self.error_sound}")
         return result
 
     def set_audio_feedback(self, enabled: bool):

@@ -48,6 +48,36 @@ PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
 PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
 
 
+def _safe_decode(output) -> str:
+    """Safely decode output from run_command which may be string or bytes."""
+    if isinstance(output, bytes):
+        return output.decode('utf-8', errors='ignore')
+    return output
+
+
+def _check_mise_active() -> bool:
+    """
+    Check if MISE (runtime version manager) is active in the current environment.
+
+    Returns:
+        True if MISE is active, False otherwise
+    """
+    # Check for MISE environment variables
+    if os.environ.get('MISE_SHELL') or os.environ.get('__MISE_ACTIVATE'):
+        return True
+
+    # Check if Python is being managed by MISE
+    python_path = shutil.which('python3') or shutil.which('python')
+    if python_path and '.local/share/mise' in python_path:
+        return True
+
+    # Check if mise binary is managing this session
+    if shutil.which('mise') and os.environ.get('MISE_DATA_DIR'):
+        return True
+
+    return False
+
+
 # ==================== State Management ====================
 
 def init_state():
@@ -181,7 +211,7 @@ def detect_cuda_host_compiler() -> Optional[str]:
     try:
         result = run_command(['gcc', '-dumpfullversion'], check=False, capture_output=True)
         if result.returncode == 0:
-            gcc_version = result.stdout.strip().decode()
+            gcc_version = _safe_decode(result.stdout).strip()
             gcc_major = int(gcc_version.split('.')[0])
             
             # If GCC >= 15, prefer gcc14 if present
@@ -226,21 +256,47 @@ def install_system_dependencies():
 def setup_nvidia_support() -> bool:
     """Setup NVIDIA/CUDA support. Returns True if CUDA is available."""
     log_info("GPU check…")
-    
+
+    # First check for actual NVIDIA hardware via lspci (like Omarchy does)
+    # This prevents false positives when nvidia-utils is installed but no GPU exists
+    try:
+        result = run_command(['lspci'], capture_output=True, check=False, verbose=False)
+        if result and result.returncode == 0:
+            lspci_output = _safe_decode(result.stdout).lower()
+            if 'nvidia' not in lspci_output:
+                log_info("No NVIDIA hardware detected via lspci (CPU mode)")
+                return False
+    except Exception:
+        # If lspci fails, continue to nvidia-smi check
+        pass
+
     if not shutil.which('nvidia-smi'):
         log_info("No NVIDIA GPU detected (CPU mode)")
         return False
-    
+
     # Test nvidia-smi
     try:
         result = run_command(['timeout', '2s', 'nvidia-smi', '-L'], check=False, capture_output=True)
         if result.returncode != 0:
             log_warning("nvidia-smi found but not responding (no GPU hardware or driver issue)")
             return False
+
+        # Verify output actually lists a GPU
+        # nvidia-smi -L outputs: "GPU 0: NVIDIA GeForce RTX 4070..."
+        if result.stdout:
+            output = _safe_decode(result.stdout).strip()
+            output_lower = output.lower()
+            # Look for "GPU N:" pattern which indicates an actual GPU listing
+            if not ('gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower):
+                log_info("nvidia-smi present but no NVIDIA GPU hardware detected (CPU mode)")
+                return False
+        else:
+            log_warning("nvidia-smi returned no output (no GPU hardware)")
+            return False
     except Exception:
         log_warning("nvidia-smi found but not responding")
         return False
-    
+
     log_success("NVIDIA GPU detected")
     
     # Check for nvcc
@@ -277,7 +333,7 @@ def setup_nvidia_support() -> bool:
             try:
                 result = run_command(['gcc', '-dumpfullversion'], check=False, capture_output=True)
                 if result.returncode == 0:
-                    gcc_version = result.stdout.strip().decode()
+                    gcc_version = _safe_decode(result.stdout).strip()
                     gcc_major = int(gcc_version.split('.')[0])
                     if gcc_major >= 15:
                         log_warning(f"GCC {gcc_major} with NVCC can fail; consider:")
@@ -333,6 +389,161 @@ def setup_amd_support() -> bool:
         return False
     
     return True
+
+
+def detect_gpu_type() -> str:
+    """
+    Auto-detect GPU type for automatic backend selection.
+
+    Returns:
+        'nvidia': NVIDIA discrete GPU detected (will use CUDA)
+        'vulkan': Any other GPU detected (AMD discrete, AMD APU iGPU, Intel iGPU, etc.)
+        'cpu': No GPU capability detected
+
+    Detection strategy:
+    1. Check for NVIDIA GPU via nvidia-smi
+    2. Check for ANY GPU via vulkaninfo (AMD/Intel/ARM iGPUs and discrete GPUs)
+    3. Fallback to CPU if no GPU detected
+    """
+    try:
+        from .output_control import log_debug, log_info
+    except ImportError:
+        from output_control import log_debug, log_info
+
+    # 1. Check for NVIDIA GPU
+    # First check for actual NVIDIA hardware via lspci (like Omarchy does)
+    # This prevents false positives when nvidia-utils is installed but no GPU exists
+    try:
+        result = run_command(['lspci'], capture_output=True, check=False, verbose=False)
+        if result and result.returncode == 0:
+            lspci_output = _safe_decode(result.stdout).lower()
+            if 'nvidia' not in lspci_output:
+                # Skip nvidia-smi check entirely - no hardware present
+                pass
+            else:
+                nvidia_smi_path = shutil.which('nvidia-smi')
+                if nvidia_smi_path:
+                    # Hardware detected, now verify with nvidia-smi
+                    try:
+                        result = run_command(
+                            ['timeout', '2s', 'nvidia-smi', '-L'],
+                            capture_output=True,
+                            check=False,
+                            verbose=False
+                        )
+                        if result:
+                            log_info(f"[GPU Detection] nvidia-smi exit code: {result.returncode}")
+                            if result.returncode == 0 and result.stdout:
+                                # Verify output actually lists a GPU (not just error messages)
+                                # nvidia-smi -L outputs: "GPU 0: NVIDIA GeForce RTX 4070..."
+                                output = _safe_decode(result.stdout).strip()
+                                output_lower = output.lower()
+                                log_info(f"[GPU Detection] nvidia-smi output: {output[:100]}")
+                                # Look for "GPU N:" pattern which indicates an actual GPU listing
+                                # This won't match "No devices were found" or other error messages
+                                if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
+                                    log_info(f"[GPU Detection] ✓ NVIDIA GPU confirmed: {output.splitlines()[0][:60]}")
+                                    return 'nvidia'
+                                else:
+                                    log_info(f"[GPU Detection] nvidia-smi ran but no GPU pattern found")
+                            else:
+                                log_info(f"[GPU Detection] nvidia-smi failed or no output")
+                                if result.stderr:
+                                    stderr_str = _safe_decode(result.stderr)
+                                    log_info(f"[GPU Detection] stderr: {stderr_str[:100]}")
+                    except Exception as e:
+                        log_info(f"[GPU Detection] nvidia-smi exception: {e}")
+    except Exception as e:
+        log_debug(f"lspci check failed: {e}")
+
+    # 2. Check for ANY GPU via Vulkan
+    # First check if vulkaninfo is installed
+    if not shutil.which('vulkaninfo'):
+        # Try to install Vulkan tools to check for GPU
+        try:
+            log_debug("vulkaninfo not found, installing vulkan-tools for detection")
+            run_sudo_command(['pacman', '-S', '--needed', '--noconfirm', 'vulkan-tools'], check=False, verbose=False)
+        except:
+            pass
+
+    if shutil.which('vulkaninfo'):
+        try:
+            result = run_command(
+                ['timeout', '5s', 'vulkaninfo', '--summary'],
+                capture_output=True,
+                check=False,
+                verbose=False
+            )
+            if result and result.returncode == 0 and result.stdout:
+                # Check if output mentions GPU/device
+                output = result.stdout.lower()
+                if 'gpu' in output or 'device' in output:
+                    # Further check: look for actual GPU device (not just software renderer)
+                    if 'llvmpipe' not in output and 'software' not in output:
+                        log_debug("GPU detected via vulkaninfo")
+                        return 'vulkan'
+        except Exception as e:
+            log_debug(f"vulkaninfo check failed: {e}")
+
+    # 3. Fallback to CPU
+    log_debug("No GPU detected, falling back to CPU")
+    return 'cpu'
+
+
+def setup_vulkan_support() -> bool:
+    """
+    Setup Vulkan support for GPU acceleration.
+    Works with AMD, Intel, and other non-NVIDIA GPUs (discrete and integrated).
+
+    Returns:
+        True if Vulkan is available and configured
+        False if Vulkan setup failed
+    """
+    log_info("Setting up Vulkan support...")
+
+    # 1. Install Vulkan dependencies (both runtime and development headers)
+    log_info("Installing Vulkan dependencies...")
+    vulkan_pkgs = ['vulkan-headers', 'vulkan-icd-loader', 'shaderc', 'vulkan-tools']
+
+    try:
+        if not run_sudo_command(
+            ['pacman', '-S', '--needed', '--noconfirm'] + vulkan_pkgs,
+            check=False
+        ):
+            log_warning("Failed to install some Vulkan packages")
+            return False
+    except Exception as e:
+        log_error(f"Failed to install Vulkan dependencies: {e}")
+        return False
+
+    # 2. Verify Vulkan is now available
+    if not shutil.which('vulkaninfo'):
+        log_warning("vulkaninfo not available after installation")
+        return False
+
+    try:
+        result = run_command(
+            ['timeout', '5s', 'vulkaninfo', '--summary'],
+            capture_output=True,
+            check=False,
+            verbose=False
+        )
+        if not result or result.returncode != 0:
+            log_warning("Vulkan installed but vulkaninfo check failed")
+            return False
+
+        # Check for actual GPU (not software renderer)
+        output = result.stdout.lower()
+        if 'llvmpipe' in output or 'software' in output:
+            log_warning("Only software Vulkan renderer detected (no GPU)")
+            return False
+
+        log_success("Vulkan support configured successfully")
+        return True
+
+    except Exception as e:
+        log_error(f"Vulkan verification failed: {e}")
+        return False
 
 
 # ==================== Python Environment ====================
@@ -634,9 +845,121 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
         return False, True
 
 
+def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
+    """Install pywhispercpp with Vulkan support.
+
+    Uses GGML_VULKAN=1 environment variable to enable Vulkan acceleration.
+    Works with AMD/Intel/ARM GPUs (discrete and integrated).
+
+    Returns:
+        True if installation succeeded
+        False if installation failed
+    """
+    log_info("Installing pywhispercpp with Vulkan support...")
+
+    # Clean build artifacts if they exist (to avoid Python version mismatches)
+    if PYWHISPERCPP_SRC_DIR.exists():
+        log_info("Cleaning existing build artifacts...")
+        import shutil
+        # Remove common build directories
+        build_dirs = [
+            PYWHISPERCPP_SRC_DIR / 'build',
+            PYWHISPERCPP_SRC_DIR / 'dist',
+            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'build',
+            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'ggml' / 'build',
+        ]
+        for build_dir in build_dirs:
+            if build_dir.exists():
+                shutil.rmtree(build_dir, ignore_errors=True)
+
+        # Remove egg-info directories
+        for egg_info in PYWHISPERCPP_SRC_DIR.glob('*.egg-info'):
+            if egg_info.is_dir():
+                shutil.rmtree(egg_info, ignore_errors=True)
+
+        # Remove CMake cache files (these can cache Python version)
+        for cmake_cache in PYWHISPERCPP_SRC_DIR.rglob('CMakeCache.txt'):
+            cmake_cache.unlink(missing_ok=True)
+        for cmake_files in PYWHISPERCPP_SRC_DIR.rglob('CMakeFiles'):
+            if cmake_files.is_dir():
+                shutil.rmtree(cmake_files, ignore_errors=True)
+
+        # Clean __pycache__ directories
+        for pycache in PYWHISPERCPP_SRC_DIR.rglob('__pycache__'):
+            if pycache.is_dir():
+                shutil.rmtree(pycache, ignore_errors=True)
+
+    # Clone or update pywhispercpp sources
+    if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
+        log_info(f"Cloning pywhispercpp sources (v1.4.0) → {PYWHISPERCPP_SRC_DIR}")
+        PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
+        verbosity = OutputController.get_verbosity()
+        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
+        run_command([
+            'git', 'clone', '--recurse-submodules',
+            'https://github.com/Absadiki/pywhispercpp.git',
+            str(PYWHISPERCPP_SRC_DIR)
+        ], check=True, verbose=verbose)
+        run_command([
+            'git', '-C', str(PYWHISPERCPP_SRC_DIR),
+            'checkout', PYWHISPERCPP_PINNED_COMMIT
+        ], check=True, verbose=verbose)
+        run_command([
+            'git', '-C', str(PYWHISPERCPP_SRC_DIR),
+            'submodule', 'update', '--init', '--recursive'
+        ], check=True, verbose=verbose)
+    else:
+        log_info(f"Updating pywhispercpp sources to v1.4.0 in {PYWHISPERCPP_SRC_DIR}")
+        verbosity = OutputController.get_verbosity()
+        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
+        try:
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'],
+                       check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT],
+                       check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'],
+                       check=False, verbose=verbose)
+        except Exception as e:
+            log_warning(f"Could not update pywhispercpp repository to v1.4.0: {e}")
+
+    # Set up Vulkan environment
+    env = os.environ.copy()
+    env['GGML_VULKAN'] = '1'
+
+    # Force CMake to use venv's Python (critical for correct Python version detection)
+    venv_python = VENV_DIR / 'bin' / 'python'
+    env['CMAKE_ARGS'] = f"-DPython3_EXECUTABLE={venv_python}"
+    env['PYTHON_EXECUTABLE'] = str(venv_python)
+
+    # Ensure venv's bin is first in PATH so CMake finds the right tools
+    venv_bin = str(VENV_DIR / 'bin')
+    env['PATH'] = f"{venv_bin}:{env.get('PATH', '')}"
+
+    # Build with Vulkan support
+    log_info("Building pywhispercpp with Vulkan via pip")
+    try:
+        # Only use -v flag if verbose mode is enabled
+        verbosity = OutputController.get_verbosity()
+        pip_args = [
+            str(pip_bin), 'install',
+            '-e', str(PYWHISPERCPP_SRC_DIR),
+            '--no-cache-dir',
+            '--force-reinstall'
+        ]
+        if verbosity.value >= VerbosityLevel.VERBOSE.value:
+            pip_args.append('-v')
+
+        run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
+        log_success("pywhispercpp installed with Vulkan acceleration via pip")
+        return True
+    except subprocess.CalledProcessError as e:
+        log_error(f"Failed to install pywhispercpp with Vulkan: {e}")
+        return False
+
+
 # ==================== Model Download ====================
 
-def download_pywhispercpp_model(model_name: str = 'base.en') -> bool:
+def download_pywhispercpp_model(model_name: str = 'base') -> bool:
     """Download pywhispercpp model with progress feedback"""
     log_info(f"Downloading pywhispercpp model: {model_name}…")
     
@@ -836,11 +1159,16 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
     """
     init_state()
     set_install_state('in_progress')
-    
+
     log_info(f"Installing {backend_type.upper()} backend...")
-    
+
+    # Check for MISE interference
+    if _check_mise_active():
+        log_warning("Warning! MISE is active. This may cause build errors.")
+        log_warning("To fix: mise deactivate (or: mise unuse -g python)")
+
     # Validate backend type
-    if backend_type not in ['cpu', 'nvidia', 'amd', 'parakeet']:
+    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'parakeet']:
         error_msg = f"Invalid backend type: {backend_type}"
         log_error(error_msg)
         set_install_state('failed', error_msg)
@@ -862,7 +1190,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         # Setup GPU support if needed
         enable_cuda = False
         enable_rocm = False
-        
+        enable_vulkan = False
+
         if backend_type == 'nvidia':
             enable_cuda = setup_nvidia_support()
             if not enable_cuda:
@@ -872,6 +1201,11 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             enable_rocm = setup_amd_support()
             if not enable_rocm:
                 log_warning("AMD backend selected but ROCm not available, falling back to CPU")
+                backend_type = 'cpu'
+        elif backend_type == 'vulkan':
+            enable_vulkan = setup_vulkan_support()
+            if not enable_vulkan:
+                log_warning("Vulkan backend selected but Vulkan not available, falling back to CPU")
                 backend_type = 'cpu'
         elif backend_type == 'parakeet':
             # Parakeet uses separate venv and REST API
@@ -929,8 +1263,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         # Install pywhispercpp if needed
         if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed:
             log_info("Installing Python dependencies (requirements.txt changed or deps missing)")
-            
-            if enable_cuda or enable_rocm:
+
+            if enable_cuda or enable_rocm or enable_vulkan:
                 # GPU build path: install everything except pywhispercpp first
                 log_info("Installing base Python dependencies (excluding pywhispercpp)...")
                 # Use a writable temp directory instead of system directory
@@ -1010,12 +1344,23 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                             if cleanup_on_failure:
                                 log_info("Cleaning up partial installation...")
                                 try:
-                                    run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'], 
+                                    run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'],
                                               check=False, capture_output=True)
                                 except Exception:
                                     pass
                             set_install_state('failed', error_msg)
                             return False
+                elif enable_vulkan:
+                    if not install_pywhispercpp_vulkan(pip_bin):
+                        # Vulkan build failed - fall back to CPU-only
+                        log_warning("Vulkan build failed - falling back to CPU-only installation")
+                        log_info("Installing pywhispercpp with CPU-only support...")
+                        if not install_pywhispercpp_cpu(pip_bin, requirements_file):
+                            error_msg = "Failed to install pywhispercpp (CPU-only fallback)"
+                            log_error(error_msg)
+                            set_install_state('failed', error_msg)
+                            return False
+                        log_success("pywhispercpp installed (CPU-only mode)")
             else:
                 # CPU-only path: install everything normally
                 if not install_pywhispercpp_cpu(pip_bin, requirements_file):
@@ -1030,7 +1375,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             log_info("Python dependencies up to date (skipping pip install)")
         
         # Download base model
-        if not download_pywhispercpp_model('base.en'):
+        if not download_pywhispercpp_model('base'):
             log_warning("Model download failed, but backend installation succeeded")
             # Don't fail the whole installation if model download fails
         
