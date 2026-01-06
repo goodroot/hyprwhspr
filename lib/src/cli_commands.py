@@ -1467,11 +1467,74 @@ def omarchy_command():
     log_info("Configuring Omarchy defaults...")
     config = ConfigManager()
     config.set_setting('recording_mode', 'auto')
-    config.set_setting('grab_keys', True)
+    config.set_setting('use_hypr_bindings', True)  # Enable Hyprland compositor bindings
+    config.set_setting('grab_keys', False)  # Disable evdev (Omarchy native)
     config.set_setting('transcription_backend', 'pywhispercpp')
     config.set_setting('mic_osd_enabled', True)
     config.save_config()
     log_success("Configuration saved")
+
+    # 5.5. Add Hyprland bindings
+    print("\n" + "="*60)
+    print("Hyprland Bindings")
+    print("="*60)
+    
+    hypr_config_dir = USER_HOME / '.config' / 'hypr'
+    bindings_file = hypr_config_dir / 'bindings.conf'
+    hyprland_conf = hypr_config_dir / 'hyprland.conf'
+    
+    # Determine which file to use
+    target_file = None
+    if bindings_file.exists():
+        target_file = bindings_file
+        log_info(f"Found bindings file: {bindings_file}")
+    elif hyprland_conf.exists():
+        target_file = hyprland_conf
+        log_info(f"Found hyprland.conf, using it instead: {hyprland_conf}")
+    else:
+        # Create bindings.conf if neither exists
+        target_file = bindings_file
+        try:
+            hypr_config_dir.mkdir(parents=True, exist_ok=True)
+            log_info(f"Creating bindings file: {bindings_file}")
+        except Exception as e:
+            log_warning(f"Could not create Hyprland config directory: {e}")
+            log_warning("Skipping Hyprland bindings setup - see README for manual setup")
+            target_file = None
+    
+    if target_file:
+        # Check if bindings already exist
+        bindings_exist = False
+        try:
+            if target_file.exists():
+                with open(target_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Check for existing hyprwhspr bindings
+                    if ('hyprwhspr-tray.sh record' in content and 'SUPER ALT, D' in content) or \
+                       ('# hyprwhspr' in content and 'bindd' in content and 'SUPER ALT, D' in content) or \
+                       ('# added by hyprwhspr omarchy' in content):
+                        bindings_exist = True
+        except Exception as e:
+            log_warning(f"Could not read {target_file}: {e}")
+            log_warning("Skipping duplicate check - will attempt to add bindings")
+        
+        if bindings_exist:
+            log_info("Hyprland bindings already exist, skipping")
+        else:
+            # Append bindings to file
+            try:
+                with open(target_file, 'a', encoding='utf-8') as f:
+                    f.write('\n# hyprwhspr - Toggle mode (added by hyprwhspr omarchy)\n')
+                    f.write('# Press once to start, press again to stop\n')
+                    f.write('bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record\n')
+                log_success(f"Added Hyprland bindings to {target_file}")
+                log_info("Restart Hyprland or reload config to apply bindings")
+            except PermissionError:
+                log_warning(f"Permission denied writing to {target_file}")
+                log_warning("Could not add bindings automatically - see README for manual setup")
+            except Exception as e:
+                log_warning(f"Could not write to {target_file}: {e}")
+                log_warning("Could not add bindings automatically - see README for manual setup")
 
     # 6. Download model (for local backends)
     if backend in ['cpu', 'nvidia', 'vulkan']:
