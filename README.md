@@ -730,4 +730,4 @@ For pull requests, also best to start with an issue.
 
 ---
 
-**Built with ❤️ in 🇨🇦 for the Omarchy community**
+**Built with ❤️ in 🇨🇦**
