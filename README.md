@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-    <b>Native speech-to-text for Arch / Omarchy</b> - Fast, accurate and private system-wide dictation
+    <b>Native speech-to-text for Arch Linux</b> - Fast, accurate and private system-wide dictation
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
 </p>
 
  <p align="center">
-    <i>Matches your theme!</i>
+    <i>Great for Vanilla Arch, CachyOS, Omarchy, others</i>
  </p>
 
 https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
@@ -32,7 +32,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ### Prerequisites
 
-- **[Omarchy](https://omarchy.org/)** or **[Arch Linux](https://archlinux.org/)**
+- **[Arch Linux](https://archlinux.org/)** based system
 - **NVIDIA GPU** (optional, for CUDA acceleration)
 - **AMD/Intel GPU / APU** (optional, for Vulkan acceleration)
 
@@ -51,20 +51,21 @@ yay -S hyprwhspr-git
 Then run the auto installer, or perform your own:
 
 ```bash
-# Auto installer - detects strong defaults
+# Auto installer - uses recommended defaults
 hyprwhspr install auto
 
 # Run interactive setup
 hyprwhspr setup
 ```
-> ⚠️ Mise issue? You may need to disable Mise first: `mise unuse -g python`
+
+> ⚠️ Omarchy install issue? You may need to disable Mise first: `mise unuse -g python`
 
 **The setup will walk you through the process:**
 
 1. ✅ Configure transcription backend (pywhispercpp, Parakeet-v3, REST API, or Realtime WebSocket)
 2. ✅ Download models (if using pywhispercpp backend)
-3. ✅ Configure themed visualizer for maximum coolness
-4. ✅ Configure Waybar integration (if Waybar is installed)
+3. ✅ Configure themed visualizer for maximum coolness (optional)
+4. ✅ Configure Waybar integration (optional)
 5. ✅ Set up systemd user services 
 6. ✅ Set up permissions
 7. ✅ Validate installation
@@ -270,7 +271,7 @@ Examples:
 
 Use Hyprland's compositor bindings instead of evdev keyboard grabbing.
 
-Omarchy native, better compatibility with keyboard remappers.
+Somtimes better compatibility with keyboard remappers.
 
 Enable in config (`~/.config/hyprwhspr/config.json`):
 
@@ -302,7 +303,7 @@ Restart service to lock in changes:
 systemctl --user restart hyprwhspr
 ```
 
-**Themed visualizer** - visual feedback, matches your Omarchy theme:
+**Themed visualizer** - visual feedback, will auto-match Omarchy themes:
 
 > Highly recommended!
 
@@ -317,8 +318,7 @@ systemctl --user restart hyprwhspr
 ```json
 {
     "word_overrides": {
-        "hyper  swhisper": "hyprwhspr",
-        "omarchie": "Omarchy"
+        "hyper whisper": "hyprwhspr",
     }
 }
 ```
@@ -413,7 +413,7 @@ _Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whisp
 
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
 
-- **`"super"`** — Sends Super+V. Omarchy default. Maybe finicky.
+- **`"super"`** — Sends Super+V. Maybe finicky.
 
 **Auto-submit** - automatically press Enter after pasting:
 
