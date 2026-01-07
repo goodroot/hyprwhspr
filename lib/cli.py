@@ -58,12 +58,14 @@ def main():
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
     # setup command
-    subparsers.add_parser('setup', help='Full initial setup')
+    setup_parser = subparsers.add_parser('setup', help='Full initial setup')
+    setup_subparsers = setup_parser.add_subparsers(dest='setup_action', help='Setup actions')
+    setup_subparsers.add_parser('auto', help='Automated setup')
 
     # install command
     install_parser = subparsers.add_parser('install', help='Installation management')
     install_subparsers = install_parser.add_subparsers(dest='install_action', help='Install actions')
-    install_subparsers.add_parser('auto', help='Automated setup')
+    install_subparsers.add_parser('auto', help=argparse.SUPPRESS)  # Hidden for backwards compatibility, use 'setup auto' instead
 
     # config command
     config_parser = subparsers.add_parser('config', help='Configuration management')
@@ -161,13 +163,21 @@ def main():
     # Route to appropriate command handler
     try:
         if args.command == 'setup':
-            setup_command()
+            if hasattr(args, 'setup_action') and args.setup_action == 'auto':
+                if not omarchy_command():
+                    sys.exit(1)
+            elif hasattr(args, 'setup_action') and args.setup_action:
+                setup_parser.print_help()
+                sys.exit(1)
+            else:
+                setup_command()
         elif args.command == 'install':
             if not args.install_action:
                 install_parser.print_help()
                 sys.exit(1)
             if args.install_action == 'auto':
-                omarchy_command()
+                if not omarchy_command():
+                    sys.exit(1)
         elif args.command == 'config':
             if not args.config_action:
                 config_parser.print_help()

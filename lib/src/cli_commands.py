@@ -1191,6 +1191,24 @@ def setup_command():
         print("\nDependencies not found. Install python-gobject and gtk4-layer-shell to enable.")
         setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
     
+    # Step 3c: Hyprland compositor bindings
+    print("\n" + "="*60)
+    print("Hyprland Compositor Bindings")
+    print("="*60)
+    print("\nUse Hyprland's native compositor bindings instead of evdev keyboard grabbing.")
+    print("Better compatibility with keyboard remappers.")
+    print("Requires adding bindings to ~/.config/hypr/hyprland.conf or bindings.conf")
+    
+    hypr_config_dir = USER_HOME / '.config' / 'hypr'
+    hypr_config_exists = (hypr_config_dir / 'hyprland.conf').exists() or (hypr_config_dir / 'bindings.conf').exists()
+    
+    if hypr_config_exists:
+        print(f"\nHyprland configuration detected at: {hypr_config_dir}")
+        setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=True)
+    else:
+        print("\nHyprland configuration not found.")
+        setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=False)
+    
     # Step 4: Systemd setup
     print("\n" + "="*60)
     print("Systemd Service")
@@ -1248,6 +1266,7 @@ def setup_command():
         print(f"Model: {selected_model}")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
+    print(f"Hyprland compositor bindings: {'Yes' if setup_hyprland_choice else 'No'}")
     if backend == 'parakeet':
         if setup_systemd_choice:
             print("Systemd services: Yes (ydotool + Parakeet + hyprwhspr)")
@@ -1295,6 +1314,27 @@ def setup_command():
         else:
             mic_osd_disable()
             log_info("Mic-OSD visualization disabled")
+        
+        # Step 2c: Hyprland compositor bindings
+        if setup_hyprland_choice:
+            print("\n" + "="*60)
+            print("Hyprland Compositor Bindings")
+            print("="*60)
+            # Update config to use Hyprland bindings
+            config = ConfigManager()
+            config.set_setting('use_hypr_bindings', True)
+            config.set_setting('grab_keys', False)
+            config.save_config()
+            log_success("Configuration updated for Hyprland compositor bindings")
+            
+            # Add bindings to Hyprland config file
+            if _setup_hyprland_bindings():
+                log_success("Hyprland bindings added to config file")
+            else:
+                log_warning("Could not add Hyprland bindings automatically")
+                log_warning("See README for manual setup instructions")
+        else:
+            log_info("Skipping Hyprland compositor bindings setup")
         
         # Step 3: Systemd
         if setup_systemd_choice:
@@ -1403,6 +1443,176 @@ def _auto_download_model():
         log_warning("Model download failed - can download later with: hyprwhspr model download")
 
 
+def _setup_hyprland_bindings() -> bool:
+    """
+    Set up Hyprland compositor bindings in config file.
+    
+    Returns:
+        True if bindings were added successfully, False otherwise
+    """
+    hypr_config_dir = USER_HOME / '.config' / 'hypr'
+    bindings_file = hypr_config_dir / 'bindings.conf'
+    hyprland_conf = hypr_config_dir / 'hyprland.conf'
+    
+    # Determine which file to use
+    target_file = None
+    if bindings_file.exists():
+        target_file = bindings_file
+        log_info(f"Found bindings file: {bindings_file}")
+    elif hyprland_conf.exists():
+        target_file = hyprland_conf
+        log_info(f"Found hyprland.conf, using it instead: {hyprland_conf}")
+    else:
+        # Create bindings.conf if neither exists
+        target_file = bindings_file
+        try:
+            hypr_config_dir.mkdir(parents=True, exist_ok=True)
+            log_info(f"Creating bindings file: {bindings_file}")
+        except Exception as e:
+            log_warning(f"Could not create Hyprland config directory: {e}")
+            log_warning("Skipping Hyprland bindings setup - see README for manual setup")
+            return False
+    
+    if target_file:
+        # Check if bindings already exist
+        bindings_exist = False
+        try:
+            if target_file.exists():
+                with open(target_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Check for existing hyprwhspr bindings
+                    if ('hyprwhspr-tray.sh record' in content and 'SUPER ALT, D' in content) or \
+                       ('# hyprwhspr' in content and 'bindd' in content and 'SUPER ALT, D' in content) or \
+                       ('# added by hyprwhspr' in content):
+                        bindings_exist = True
+        except Exception as e:
+            log_warning(f"Could not read {target_file}: {e}")
+            log_warning("Skipping duplicate check - will attempt to add bindings")
+        
+        if bindings_exist:
+            log_info("Hyprland bindings already exist, skipping")
+            return True
+        else:
+            # Append bindings to file
+            try:
+                with open(target_file, 'a', encoding='utf-8') as f:
+                    f.write('\n# hyprwhspr - Toggle mode (added by hyprwhspr setup)\n')
+                    f.write('# Press once to start, press again to stop\n')
+                    f.write('bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record\n')
+                log_success(f"Added Hyprland bindings to {target_file}")
+                log_info("Restart Hyprland or reload config to apply bindings")
+                return True
+            except PermissionError:
+                log_warning(f"Permission denied writing to {target_file}")
+                log_warning("Could not add bindings automatically - see README for manual setup")
+                return False
+            except Exception as e:
+                log_warning(f"Could not write to {target_file}: {e}")
+                log_warning("Could not add bindings automatically - see README for manual setup")
+                return False
+    
+    return False
+
+
+def _verify_installation_step(step_name: str, verify_func) -> bool:
+    """
+    Generic helper to verify an installation step.
+    
+    Args:
+        step_name: Human-readable name of the step
+        verify_func: Function that returns True if verification passes, False otherwise
+        
+    Returns:
+        True if verification passes, False otherwise
+    """
+    try:
+        if verify_func():
+            log_success(f"✓ {step_name} verified")
+            return True
+        else:
+            log_error(f"✗ {step_name} verification failed")
+            return False
+    except Exception as e:
+        log_error(f"✗ {step_name} verification error: {e}")
+        return False
+
+
+def _verify_backend_installation(backend: str) -> bool:
+    """
+    Verify that backend is actually importable from venv.
+    
+    Args:
+        backend: Backend name (e.g., 'nvidia', 'vulkan', 'cpu')
+        
+    Returns:
+        True if backend is importable, False otherwise
+    """
+    if backend not in ['cpu', 'nvidia', 'vulkan']:
+        # For non-local backends, skip import check
+        return True
+    
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        return False
+    
+    try:
+        result = subprocess.run(
+            [str(venv_python), '-c', 'import pywhispercpp'],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _verify_config_created() -> bool:
+    """
+    Verify that config file exists and contains expected settings.
+    
+    Returns:
+        True if config is valid, False otherwise
+    """
+    config_file = CONFIG_FILE
+    if not config_file.exists():
+        return False
+    
+    try:
+        config = ConfigManager()
+        # Check that essential settings exist
+        backend = config.get_setting('transcription_backend')
+        recording_mode = config.get_setting('recording_mode')
+        return backend is not None and recording_mode is not None
+    except Exception:
+        return False
+
+
+def _verify_service_running() -> bool:
+    """
+    Verify that systemd service is actually running.
+    
+    Returns:
+        True if service is active, False otherwise
+    """
+    return _is_service_running_via_systemd()
+
+
+def _verify_model_downloaded(model_name: str = 'base') -> bool:
+    """
+    Verify that model file exists and is readable.
+    
+    Args:
+        model_name: Model name (default: 'base')
+        
+    Returns:
+        True if model file exists, False otherwise
+    """
+    model_file = PYWHISPERCPP_MODELS_DIR / f'ggml-{model_name}.bin'
+    return model_file.exists() and model_file.is_file()
+
+
 def omarchy_command():
     """
     Automated setup
@@ -1415,6 +1625,9 @@ def omarchy_command():
     5. Validates installation
 
     All without user interaction.
+    
+    Note: Hyprland compositor bindings are NOT configured by default.
+    Use 'hyprwhspr setup' for interactive setup with Hyprland compositor options.
     """
     # Import functions we need
     try:
@@ -1462,83 +1675,38 @@ def omarchy_command():
     if not install_backend(backend, force_rebuild=False):
         log_error("Backend installation failed")
         return False
+    
+    # 4.5. Verify backend installation
+    print("\n" + "="*60)
+    print("Verifying Backend Installation")
+    print("="*60)
+    if not _verify_installation_step("Backend installation", lambda: _verify_backend_installation(backend)):
+        log_error("Backend installation verification failed - installation may be incomplete")
+        return False
 
     # 5. Configure defaults
     log_info("Configuring defaults...")
     config = ConfigManager()
     config.set_setting('recording_mode', 'auto')
-    config.set_setting('use_hypr_bindings', True)  # Enable Hyprland compositor bindings
-    config.set_setting('grab_keys', False)  # Disable evdev (Omarchy native)
+    # Note: use_hypr_bindings and grab_keys are NOT set by default in auto installer
+    # Users can configure Hyprland compositor bindings via interactive setup
     config.set_setting('transcription_backend', 'pywhispercpp')
     config.set_setting('mic_osd_enabled', True)
     config.save_config()
     log_success("Configuration saved")
-
-    # 5.5. Add Hyprland bindings
-    print("\n" + "="*60)
-    print("Hyprland Bindings")
-    print("="*60)
     
-    hypr_config_dir = USER_HOME / '.config' / 'hypr'
-    bindings_file = hypr_config_dir / 'bindings.conf'
-    hyprland_conf = hypr_config_dir / 'hyprland.conf'
-    
-    # Determine which file to use
-    target_file = None
-    if bindings_file.exists():
-        target_file = bindings_file
-        log_info(f"Found bindings file: {bindings_file}")
-    elif hyprland_conf.exists():
-        target_file = hyprland_conf
-        log_info(f"Found hyprland.conf, using it instead: {hyprland_conf}")
-    else:
-        # Create bindings.conf if neither exists
-        target_file = bindings_file
-        try:
-            hypr_config_dir.mkdir(parents=True, exist_ok=True)
-            log_info(f"Creating bindings file: {bindings_file}")
-        except Exception as e:
-            log_warning(f"Could not create Hyprland config directory: {e}")
-            log_warning("Skipping Hyprland bindings setup - see README for manual setup")
-            target_file = None
-    
-    if target_file:
-        # Check if bindings already exist
-        bindings_exist = False
-        try:
-            if target_file.exists():
-                with open(target_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    # Check for existing hyprwhspr bindings
-                    if ('hyprwhspr-tray.sh record' in content and 'SUPER ALT, D' in content) or \
-                       ('# hyprwhspr' in content and 'bindd' in content and 'SUPER ALT, D' in content) or \
-                       ('# added by hyprwhspr install auto' in content):
-                        bindings_exist = True
-        except Exception as e:
-            log_warning(f"Could not read {target_file}: {e}")
-            log_warning("Skipping duplicate check - will attempt to add bindings")
-        
-        if bindings_exist:
-            log_info("Hyprland bindings already exist, skipping")
-        else:
-            # Append bindings to file
-            try:
-                with open(target_file, 'a', encoding='utf-8') as f:
-                    f.write('\n# hyprwhspr - Toggle mode (added by hyprwhspr install auto)\n')
-                    f.write('# Press once to start, press again to stop\n')
-                    f.write('bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record\n')
-                log_success(f"Added Hyprland bindings to {target_file}")
-                log_info("Restart Hyprland or reload config to apply bindings")
-            except PermissionError:
-                log_warning(f"Permission denied writing to {target_file}")
-                log_warning("Could not add bindings automatically - see README for manual setup")
-            except Exception as e:
-                log_warning(f"Could not write to {target_file}: {e}")
-                log_warning("Could not add bindings automatically - see README for manual setup")
+    # 5.5. Verify config creation
+    if not _verify_installation_step("Config creation", _verify_config_created):
+        log_error("Config verification failed - configuration may be incomplete")
+        return False
 
     # 6. Download model (for local backends)
     if backend in ['cpu', 'nvidia', 'vulkan']:
         _auto_download_model()
+        # 6.5. Verify model download
+        if not _verify_installation_step("Model download", lambda: _verify_model_downloaded('base')):
+            log_warning("Model download verification failed - model may not be available")
+            log_warning("You can download it later with: hyprwhspr model download")
 
     # 7. Waybar integration (if detected)
     print("\n" + "="*60)
@@ -1572,6 +1740,14 @@ def omarchy_command():
         log_success("Service enabled and started")
     except Exception as e:
         log_warning(f"Could not start service: {e}")
+    
+    # 8.5. Verify service is running
+    print("\n" + "="*60)
+    print("Verifying Service Status")
+    print("="*60)
+    if not _verify_installation_step("Service running", _verify_service_running):
+        log_warning("Service verification failed - service may not be running")
+        log_warning("Check service status with: systemctl --user status hyprwhspr")
 
     # 9. Validate
     print("\n" + "="*60)
