@@ -38,7 +38,8 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ### Quick start
 
-If you are using MISE first deactive it for current session by running
+You may need to disable Mise first:
+
 ```bash
 mise unuse -g python
 ```
