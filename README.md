@@ -52,7 +52,7 @@ Then run the auto installer, or perform your own:
 
 ```bash
 # Auto installer - uses recommended defaults
-hyprwhspr install auto
+hyprwhspr setup auto
 
 # Run interactive setup
 hyprwhspr setup
