@@ -5,6 +5,7 @@ CLI command implementations for hyprwhspr
 import os
 import sys
 import json
+import paths
 import subprocess
 import getpass
 import shutil
@@ -2618,9 +2619,14 @@ def status_command():
     
     # Check user config
     print("\n[User Config]")
-    config_file = USER_CONFIG_DIR / 'config.json'
+    config_file = paths.CONFIG_FILE
     if config_file.exists():
         log_success(f"Config exists: {config_file}")
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                json.load(f)
+        except json.JSONDecodeError as e:
+            log_warning(f"Config file is invalid, hyprwhspr will be using default config. Please check config line {e.lineno}, column  {e.colno}.")
     else:
         log_warning("Config file not found")
     
