@@ -35,6 +35,21 @@ def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] 
 
 # Constants
 HYPRWHSPR_ROOT = os.environ.get('HYPRWHSPR_ROOT', '/usr/lib/hyprwhspr')
+
+# Runtime HYPRWHSPR_ROOT auto-correction for mise compatibility
+# If running under mise Python but AUR installation exists, automatically use it
+if '.local/share/mise' in sys.executable:
+    aur_install_path = Path('/usr/lib/hyprwhspr')
+    if aur_install_path.exists():
+        # Verify it's a valid installation
+        if (aur_install_path / 'bin' / 'hyprwhspr').exists() and (aur_install_path / 'lib' / 'main.py').exists():
+            # Only override if HYPRWHSPR_ROOT wasn't explicitly set to a different value
+            # (i.e., it's not in environment, or it's already set to the AUR path)
+            current_root = os.environ.get('HYPRWHSPR_ROOT')
+            if current_root is None or current_root == '/usr/lib/hyprwhspr':
+                os.environ['HYPRWHSPR_ROOT'] = '/usr/lib/hyprwhspr'
+                HYPRWHSPR_ROOT = '/usr/lib/hyprwhspr'
+
 USER_BASE = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share')) / 'hyprwhspr'
 VENV_DIR = USER_BASE / 'venv'
 PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share')) / 'pywhispercpp' / 'models'
@@ -76,6 +91,124 @@ def _check_mise_active() -> bool:
         return True
 
     return False
+
+
+def _create_mise_free_environment() -> dict:
+    """
+    Create environment with MISE deactivated for subprocesses.
+
+    This prevents MISE from interfering with Python version detection
+    during pip install operations and venv creation.
+
+    Returns:
+        Environment dict suitable for subprocess.run(env=...)
+    """
+    env = os.environ.copy()
+
+    # Remove MISE-related environment variables
+    mise_vars = ['MISE_SHELL', '__MISE_ACTIVATE', 'MISE_DATA_DIR']
+    for var in mise_vars:
+        env.pop(var, None)
+
+    # Clean PATH of MISE entries
+    path = env.get('PATH', '')
+    if '.local/share/mise' in path:
+        paths = path.split(':')
+        paths = [p for p in paths if '.local/share/mise' not in p]
+        
+        # If all paths were filtered out, fall back to essential system paths
+        # This prevents empty PATH which would break subprocess execution
+        if not paths:
+            essential_paths = ['/usr/bin', '/usr/local/bin', '/bin', '/usr/sbin', '/sbin']
+            paths = [p for p in essential_paths if os.path.exists(p)]
+            # If even essential paths don't exist (unlikely), at least set a minimal PATH
+            if not paths:
+                paths = ['/usr/bin', '/bin']
+        
+        env['PATH'] = ':'.join(paths)
+
+    return env
+
+
+def _get_system_python() -> str:
+    """
+    Get the system Python path, avoiding mise-managed Python.
+
+    When mise is active, this function uses a mise-free environment
+    to find the actual system Python (typically /usr/bin/python3).
+
+    Returns:
+        Path to system Python executable, or sys.executable as fallback
+    """
+    # Common system Python paths (Arch Linux)
+    system_paths = ['/usr/bin/python3', '/usr/bin/python']
+    
+    # Check if current Python is mise-managed
+    current_is_mise = '.local/share/mise' in sys.executable
+    
+    # If mise is active, use mise-free environment to find system Python
+    if _check_mise_active() or current_is_mise:
+        mise_free_env = _create_mise_free_environment()
+        
+        # Try system paths first
+        for python_path in system_paths:
+            if os.path.exists(python_path) and os.access(python_path, os.X_OK):
+                # Verify it's actually Python
+                try:
+                    result = run_command(
+                        [python_path, '--version'],
+                        check=False,
+                        capture_output=True,
+                        env=mise_free_env
+                    )
+                    if result.returncode == 0:
+                        return python_path
+                except Exception:
+                    continue
+        
+        # Fallback: check additional common system paths directly
+        # (more robust than relying on 'which' command which may not be available)
+        additional_paths = [
+            '/usr/local/bin/python3',
+            '/usr/local/bin/python',
+            '/bin/python3',
+            '/bin/python'
+        ]
+        for python_path in additional_paths:
+            if os.path.exists(python_path) and os.access(python_path, os.X_OK):
+                try:
+                    result = run_command(
+                        [python_path, '--version'],
+                        check=False,
+                        capture_output=True,
+                        env=mise_free_env
+                    )
+                    if result.returncode == 0:
+                        return python_path
+                except Exception:
+                    continue
+        
+        # Last resort: try 'which' command if available
+        try:
+            result = run_command(
+                ['which', 'python3'],
+                check=False,
+                capture_output=True,
+                env=mise_free_env
+            )
+            if result.returncode == 0 and result.stdout:
+                found_path = result.stdout.strip()
+                if found_path and os.path.exists(found_path) and '.local/share/mise' not in found_path:
+                    return found_path
+        except Exception:
+            pass
+        
+        # If we couldn't find system Python but mise is active, warn about fallback
+        if (_check_mise_active() or current_is_mise) and '.local/share/mise' in sys.executable:
+            log_warning("Could not find system Python - falling back to current Python (may be mise-managed)")
+    
+    # Default: return current executable (may be mise-managed, but better than nothing)
+    return sys.executable
 
 
 # ==================== State Management ====================
@@ -562,6 +695,15 @@ def setup_python_venv(force_rebuild: bool = False) -> Path:
         log_error(f"requirements.txt not found at {requirements_file}")
         raise FileNotFoundError(f"requirements.txt not found at {requirements_file}")
 
+    # Check if mise is active - if so, use system Python for venv creation
+    mise_active = _check_mise_active()
+    python_executable = sys.executable
+    
+    if mise_active:
+        log_info("MISE detected - using system Python for venv creation")
+        python_executable = _get_system_python()
+        log_info(f"Using system Python: {python_executable}")
+
     # Check if venv exists and if Python version matches
     venv_needs_recreation = force_rebuild
     if force_rebuild:
@@ -572,21 +714,48 @@ def setup_python_venv(force_rebuild: bool = False) -> Path:
             try:
                 # Check Python version in venv
                 result = run_command([str(venv_python), '--version'], check=False, capture_output=True)
-                venv_version = result.stdout.strip() if result.returncode == 0 else ""
-                current_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+                venv_version = result.stdout.strip() if result.returncode == 0 and result.stdout else ""
                 
-                # Extract major.minor from venv version string (e.g., "Python 3.11.5" -> "3.11")
+                # Get version of python_executable (system Python when mise is active, otherwise current Python)
+                python_exec_version_result = run_command(
+                    [python_executable, '--version'],
+                    check=False,
+                    capture_output=True
+                )
+                python_exec_version = python_exec_version_result.stdout.strip() if python_exec_version_result.returncode == 0 and python_exec_version_result.stdout else ""
+                
+                # Extract major.minor from both version strings
+                import re
                 venv_major_minor = ""
                 if venv_version:
-                    import re
                     match = re.search(r'(\d+)\.(\d+)', venv_version)
                     if match:
                         venv_major_minor = f"{match.group(1)}.{match.group(2)}"
                 
-                # Check if versions match (major.minor)
-                if venv_major_minor and venv_major_minor != current_version:
-                    log_warning(f"Venv Python version mismatch: venv has {venv_version}, current is Python {current_version}")
-                    log_info("Recreating venv to match current Python version...")
+                python_exec_major_minor = ""
+                if python_exec_version:
+                    match = re.search(r'(\d+)\.(\d+)', python_exec_version)
+                    if match:
+                        python_exec_major_minor = f"{match.group(1)}.{match.group(2)}"
+                
+                # If we couldn't get python_exec version, handle based on whether it's the same as current Python
+                if not python_exec_major_minor:
+                    if python_executable == sys.executable:
+                        # Same Python, safe to use sys.version_info as fallback
+                        python_exec_major_minor = f"{sys.version_info.major}.{sys.version_info.minor}"
+                        python_exec_version = f"Python {python_exec_major_minor} (from sys.version_info)"
+                    else:
+                        # Different Python - can't verify version, be conservative and recreate venv
+                        log_warning(f"Could not determine version of target Python ({python_executable})")
+                        log_warning("Cannot verify venv Python version compatibility - will recreate venv to be safe")
+                        venv_needs_recreation = True
+                        # Skip version comparison since we don't have valid data
+                        python_exec_major_minor = None
+                
+                # Check if versions match (major.minor) - only if we have valid version data
+                if python_exec_major_minor and venv_major_minor and venv_major_minor != python_exec_major_minor:
+                    log_warning(f"Venv Python version mismatch: venv has {venv_version}, target Python is {python_exec_version}")
+                    log_info("Recreating venv to match target Python version...")
                     venv_needs_recreation = True
             except Exception:
                 # If we can't check, assume it's fine
@@ -602,7 +771,7 @@ def setup_python_venv(force_rebuild: bool = False) -> Path:
             shutil.rmtree(VENV_DIR)
         log_info(f"Creating venv at {VENV_DIR}")
         VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
-        run_command([sys.executable, '-m', 'venv', str(VENV_DIR)], check=True)
+        run_command([python_executable, '-m', 'venv', str(VENV_DIR)], check=True)
     else:
         log_info(f"Venv already exists at {VENV_DIR}")
     
@@ -612,7 +781,7 @@ def setup_python_venv(force_rebuild: bool = False) -> Path:
         log_error(f"pip not found in venv at {VENV_DIR}")
         raise FileNotFoundError(f"pip not found in venv")
     
-    # Upgrade pip and wheel
+    # Upgrade pip and wheel (mise-free env applied automatically via run_command)
     run_command([str(pip_bin), 'install', '--upgrade', 'pip', 'wheel'], check=True)
     
     return pip_bin
@@ -703,7 +872,11 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     
     # Build with CUDA support
     log_info("Building pywhispercpp with CUDA (ggml CUDA) via pip - may take several minutes")
-    env = os.environ.copy()
+    # Start with mise-free environment if mise is active, otherwise use current environment
+    if _check_mise_active():
+        env = _create_mise_free_environment()
+    else:
+        env = os.environ.copy()
     env['GGML_CUDA'] = 'ON'
     
     # Force CMake to use venv's Python (critical for correct Python version detection)
@@ -806,7 +979,11 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
     
     # Set up ROCm environment
     rocm_path = os.environ.get('ROCM_PATH', '/opt/rocm')
-    env = os.environ.copy()
+    # Start with mise-free environment if mise is active, otherwise use current environment
+    if _check_mise_active():
+        env = _create_mise_free_environment()
+    else:
+        env = os.environ.copy()
     env['ROCM_PATH'] = rocm_path
     env['PATH'] = f"{rocm_path}/bin:" + env.get('PATH', '')
     env['GGML_HIPBLAS'] = 'ON'
@@ -923,7 +1100,11 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
             log_warning(f"Could not update pywhispercpp repository to v1.4.0: {e}")
 
     # Set up Vulkan environment
-    env = os.environ.copy()
+    # Start with mise-free environment if mise is active, otherwise use current environment
+    if _check_mise_active():
+        env = _create_mise_free_environment()
+    else:
+        env = os.environ.copy()
     env['GGML_VULKAN'] = '1'
 
     # Force CMake to use venv's Python (critical for correct Python version detection)
@@ -1022,6 +1203,15 @@ def setup_parakeet_venv(force_rebuild: bool = False) -> Path:
         log_error(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
         raise FileNotFoundError(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
 
+    # Check if mise is active - if so, use system Python for venv creation
+    mise_active = _check_mise_active()
+    python_executable = sys.executable
+    
+    if mise_active:
+        log_info("MISE detected - using system Python for Parakeet venv creation")
+        python_executable = _get_system_python()
+        log_info(f"Using system Python: {python_executable}")
+
     # Check if venv exists and if Python version matches
     venv_needs_recreation = force_rebuild
     if force_rebuild:
@@ -1032,21 +1222,48 @@ def setup_parakeet_venv(force_rebuild: bool = False) -> Path:
             try:
                 # Check Python version in venv
                 result = run_command([str(venv_python), '--version'], check=False, capture_output=True)
-                venv_version = result.stdout.strip() if result.returncode == 0 else ""
-                current_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+                venv_version = result.stdout.strip() if result.returncode == 0 and result.stdout else ""
                 
-                # Extract major.minor from venv version string (e.g., "Python 3.11.5" -> "3.11")
+                # Get version of python_executable (system Python when mise is active, otherwise current Python)
+                python_exec_version_result = run_command(
+                    [python_executable, '--version'],
+                    check=False,
+                    capture_output=True
+                )
+                python_exec_version = python_exec_version_result.stdout.strip() if python_exec_version_result.returncode == 0 and python_exec_version_result.stdout else ""
+                
+                # Extract major.minor from both version strings
+                import re
                 venv_major_minor = ""
                 if venv_version:
-                    import re
                     match = re.search(r'(\d+)\.(\d+)', venv_version)
                     if match:
                         venv_major_minor = f"{match.group(1)}.{match.group(2)}"
                 
-                # Check if versions match (major.minor)
-                if venv_major_minor and venv_major_minor != current_version:
-                    log_warning(f"Parakeet venv Python version mismatch: venv has {venv_version}, current is Python {current_version}")
-                    log_info("Recreating venv to match current Python version...")
+                python_exec_major_minor = ""
+                if python_exec_version:
+                    match = re.search(r'(\d+)\.(\d+)', python_exec_version)
+                    if match:
+                        python_exec_major_minor = f"{match.group(1)}.{match.group(2)}"
+                
+                # If we couldn't get python_exec version, handle based on whether it's the same as current Python
+                if not python_exec_major_minor:
+                    if python_executable == sys.executable:
+                        # Same Python, safe to use sys.version_info as fallback
+                        python_exec_major_minor = f"{sys.version_info.major}.{sys.version_info.minor}"
+                        python_exec_version = f"Python {python_exec_major_minor} (from sys.version_info)"
+                    else:
+                        # Different Python - can't verify version, be conservative and recreate venv
+                        log_warning(f"Could not determine version of target Python ({python_executable})")
+                        log_warning("Cannot verify venv Python version compatibility - will recreate venv to be safe")
+                        venv_needs_recreation = True
+                        # Skip version comparison since we don't have valid data
+                        python_exec_major_minor = None
+                
+                # Check if versions match (major.minor) - only if we have valid version data
+                if python_exec_major_minor and venv_major_minor and venv_major_minor != python_exec_major_minor:
+                    log_warning(f"Parakeet venv Python version mismatch: venv has {venv_version}, target Python is {python_exec_version}")
+                    log_info("Recreating venv to match target Python version...")
                     venv_needs_recreation = True
             except Exception:
                 # If we can't check, assume it's fine
@@ -1062,7 +1279,7 @@ def setup_parakeet_venv(force_rebuild: bool = False) -> Path:
             shutil.rmtree(PARAKEET_VENV_DIR)
         log_info(f"Creating Parakeet venv at {PARAKEET_VENV_DIR}")
         PARAKEET_VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
-        run_command([sys.executable, '-m', 'venv', str(PARAKEET_VENV_DIR)], check=True)
+        run_command([python_executable, '-m', 'venv', str(PARAKEET_VENV_DIR)], check=True)
     else:
         log_info(f"Parakeet venv already exists at {PARAKEET_VENV_DIR}")
     
@@ -1072,7 +1289,7 @@ def setup_parakeet_venv(force_rebuild: bool = False) -> Path:
         log_error(f"pip not found in Parakeet venv at {PARAKEET_VENV_DIR}")
         raise FileNotFoundError(f"pip not found in Parakeet venv")
     
-    # Upgrade pip and wheel
+    # Upgrade pip and wheel (mise-free env applied automatically via run_command)
     run_command([str(pip_bin), 'install', '--upgrade', 'pip', 'wheel'], check=True)
     
     return pip_bin
