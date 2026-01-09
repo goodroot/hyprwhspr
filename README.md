@@ -11,7 +11,7 @@
 </p>
 
  <p align="center">
-    <i>Great for Vanilla Arch, CachyOS, Omarchy, others</i>
+    <i>Great for Vanilla Arch, CachyOS, SteamOS, Omarchy, others</i>
  </p>
 
 https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991

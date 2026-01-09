@@ -58,6 +58,9 @@ class WhisperManager:
         self._realtime_client = None
         self._realtime_streaming_callback = None
 
+        # ONNX-ASR model (CPU-optimized)
+        self._onnx_asr_model = None
+
         # Thread safety for model operations
         self._model_lock = threading.Lock()
 
@@ -75,6 +78,47 @@ class WhisperManager:
             # Check which backend is configured
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
             backend = normalize_backend(backend)  # Backward compatibility
+
+            # Configure ONNX-ASR backend (CPU-optimized)
+            if backend == 'onnx-asr':
+                try:
+                    import onnx_asr
+                except ImportError:
+                    print('ERROR: onnx-asr not installed. Run: hyprwhspr setup')
+                    print('ERROR: Select option [1] ONNX Parakeet CTC to install')
+                    return False
+
+                model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-ctc-0.6b')
+                quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
+                use_vad = self.config.get_setting('onnx_asr_use_vad', True)
+
+                print(f'[BACKEND] Loading onnx-asr model: {model_name}', flush=True)
+
+                try:
+                    # Load model with optional quantization
+                    if quantization:
+                        self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
+                    else:
+                        self._onnx_asr_model = onnx_asr.load_model(model_name)
+
+                    # Add VAD for long audio handling (>30s)
+                    if use_vad:
+                        print('[BACKEND] Loading Silero VAD for long audio support', flush=True)
+                        vad = onnx_asr.load_vad('silero')
+                        self._onnx_asr_model = self._onnx_asr_model.with_vad(vad)
+
+                    print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad})', flush=True)
+
+                except Exception as e:
+                    print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    return False
+
+                # onnx-asr doesn't use current_model in the same way
+                self.current_model = None
+                self.ready = True
+                return True
 
             # Configure Realtime WebSocket backend
             if backend == 'realtime-ws':
@@ -802,6 +846,49 @@ class WhisperManager:
             print(f'[REALTIME] Transcription failed: {e}')
             return ""
 
+    def _transcribe_onnx_asr(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
+        """
+        Transcribe audio using onnx-asr backend (CPU-optimized).
+
+        Args:
+            audio_data: NumPy array of audio samples (float32)
+            sample_rate: Sample rate of the audio data (should be 16000)
+
+        Returns:
+            Transcribed text string
+        """
+        if not self._onnx_asr_model:
+            print('[ONNX-ASR] Model not loaded')
+            return ""
+
+        try:
+            audio_duration = len(audio_data) / sample_rate
+            print(f'[ONNX-ASR] Transcribing {audio_duration:.2f}s of audio', flush=True)
+
+            # onnx-asr accepts numpy arrays directly (float32)
+            # It handles resampling internally if needed
+            import time
+            start_time = time.time()
+            result = self._onnx_asr_model.recognize(audio_data)
+            elapsed = time.time() - start_time
+
+            # Result may be string or object with .text attribute
+            if hasattr(result, 'text'):
+                transcription = result.text
+            else:
+                transcription = str(result)
+
+            rtf = elapsed / audio_duration if audio_duration > 0 else 0
+            print(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s (RTF: {rtf:.2f})', flush=True)
+
+            return transcription.strip()
+
+        except Exception as e:
+            print(f'[ONNX-ASR] Transcription failed: {e}', flush=True)
+            import traceback
+            traceback.print_exc()
+            return ""
+
     def get_realtime_streaming_callback(self) -> Optional[Callable]:
         """
         Get the streaming callback for realtime-ws backend.
@@ -920,6 +1007,10 @@ class WhisperManager:
             # Note: Audio was already streamed via callback during capture
             # This just commits and waits for the result
             return self._transcribe_realtime(audio_data, sample_rate)
+
+        if backend == 'onnx-asr':
+            # Use ONNX-ASR transcription (CPU-optimized)
+            return self._transcribe_onnx_asr(audio_data, sample_rate)
 
         # Use model lock to prevent concurrent transcription calls
         # This prevents crashes from concurrent access to the whisper model

@@ -1366,6 +1366,34 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
         return False
 
 
+# ==================== ONNX-ASR Installation ====================
+
+def install_onnx_asr(pip_bin: Path) -> bool:
+    """
+    Install onnx-asr into the main venv.
+
+    onnx-asr is a CPU-optimized ASR library using ONNX runtime.
+    It provides significantly better CPU performance than whisper.cpp.
+
+    Args:
+        pip_bin: Path to pip binary in the venv
+
+    Returns:
+        True if installation succeeded, False otherwise
+    """
+    log_info("Installing onnx-asr (CPU-optimized)...")
+    try:
+        # Install onnx-asr with CPU backend and HuggingFace hub support
+        # [cpu] = onnxruntime for CPU
+        # [hub] = huggingface_hub for model downloads
+        run_command([str(pip_bin), 'install', 'onnx-asr[cpu,hub]'], check=True)
+        log_success("onnx-asr installed")
+        return True
+    except subprocess.CalledProcessError as e:
+        log_error(f"Failed to install onnx-asr: {e}")
+        return False
+
+
 # ==================== Main Installation Function ====================
 
 def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_rebuild: bool = False) -> bool:
@@ -1373,7 +1401,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
     Main function to install backend.
 
     Args:
-        backend_type: One of 'cpu', 'nvidia', 'amd', 'parakeet'
+        backend_type: One of 'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr'
         cleanup_on_failure: Whether to clean up partial installations on failure
         force_rebuild: If True, delete and recreate venv even if it exists
 
@@ -1391,7 +1419,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         log_warning("To fix: mise deactivate (or: mise unuse -g python)")
 
     # Validate backend type
-    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'parakeet']:
+    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr']:
         error_msg = f"Invalid backend type: {backend_type}"
         log_error(error_msg)
         set_install_state('failed', error_msg)
@@ -1459,7 +1487,69 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             set_install_state('completed')
             log_success("Parakeet backend installation completed!")
             return True
-        
+        elif backend_type == 'onnx-asr':
+            # ONNX-ASR uses main venv with onnx-asr package
+            # Setup main venv
+            venv_existed = VENV_DIR.exists()
+            pip_bin = setup_python_venv(force_rebuild=force_rebuild)
+            if (force_rebuild or not venv_existed) and VENV_DIR.exists():
+                created_items['venv_created'] = True
+                created_items['venv_path'] = str(VENV_DIR)
+
+            # Install base requirements first
+            requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
+            log_info("Installing base dependencies...")
+            try:
+                run_command([str(pip_bin), 'install', '-r', str(requirements_file)], check=True)
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Failed to install base dependencies: {e}"
+                log_error(error_msg)
+                if cleanup_on_failure:
+                    log_info("Cleaning up partial installation...")
+                    _cleanup_partial_installation(created_items, pip_bin)
+                set_install_state('failed', error_msg)
+                return False
+
+            # Install onnx-asr on top
+            if not install_onnx_asr(pip_bin):
+                error_msg = "Failed to install onnx-asr"
+                log_error(error_msg)
+                if cleanup_on_failure:
+                    log_info("Cleaning up partial installation...")
+                    _cleanup_partial_installation(created_items, pip_bin)
+                set_install_state('failed', error_msg)
+                return False
+
+            # Pre-download models so they're ready on first use
+            log_info("Downloading ONNX-ASR model and VAD (this may take a moment)...")
+            venv_python = VENV_DIR / 'bin' / 'python'
+            try:
+                # Download and cache the ASR model + Silero VAD
+                # This mirrors what happens at runtime but ensures everything is ready
+                download_script = '''
+import onnx_asr
+print("Downloading Parakeet CTC model...", flush=True)
+model = onnx_asr.load_model("nemo-parakeet-ctc-0.6b", quantization="int8")
+print("Downloading Silero VAD...", flush=True)
+vad = onnx_asr.load_vad("silero")
+print("Models cached successfully", flush=True)
+'''
+                run_command([str(venv_python), '-c', download_script], check=True)
+                log_success("Models downloaded and cached")
+            except subprocess.CalledProcessError as e:
+                log_warning(f"Model download failed: {e}")
+                log_warning("Models will be downloaded on first use instead")
+                # Don't fail installation - models can still be downloaded on first use
+
+            # Store requirements hash
+            cur_req_hash = compute_file_hash(requirements_file)
+            set_state("requirements_hash", cur_req_hash)
+
+            # Installation successful for ONNX-ASR
+            set_install_state('completed')
+            log_success("ONNX-ASR backend installation completed!")
+            return True
+
         # Setup Python venv (for cpu/nvidia/amd backends)
         venv_existed = VENV_DIR.exists()
         pip_bin = setup_python_venv(force_rebuild=force_rebuild)

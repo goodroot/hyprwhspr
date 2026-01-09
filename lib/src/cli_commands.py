@@ -271,9 +271,9 @@ def _validate_hyprwhspr_root() -> bool:
 def _detect_current_backend() -> Optional[str]:
     """
     Detect currently installed backend.
-    
+
     Returns:
-        'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'rest-api', or None if not detected
+        'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr', 'rest-api', or None if not detected
     """
     # First check config file
     try:
@@ -310,6 +310,22 @@ def _detect_current_backend() -> Optional[str]:
             return 'rest-api'
         if backend == 'realtime-ws':
             return 'realtime-ws'
+        if backend == 'onnx-asr':
+            # Verify onnx-asr is actually installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'import onnx_asr; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'onnx-asr'
+                except Exception:
+                    pass
+            # onnx-asr configured but not installed - fall through to return None
         if backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']:
             # Verify it's actually installed in venv
             venv_python = VENV_DIR / 'bin' / 'python'
@@ -351,10 +367,10 @@ def _detect_current_backend() -> Optional[str]:
 def _cleanup_backend(backend_type: str) -> bool:
     """
     Clean up an installed backend.
-    
+
     Args:
-        backend_type: 'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', or 'remote'
-    
+        backend_type: 'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr', or 'remote'
+
     Returns:
         True if cleanup succeeded
     """
@@ -388,18 +404,39 @@ def _cleanup_backend(backend_type: str) -> bool:
         
         log_success("Parakeet backend cleaned up")
         return True
-    
+
+    if backend_type == 'onnx-asr':
+        log_info("Cleaning up ONNX-ASR backend...")
+        venv_python = VENV_DIR / 'bin' / 'python'
+        if not venv_python.exists():
+            log_info("No venv found, nothing to clean")
+            return True
+        try:
+            pip_bin = VENV_DIR / 'bin' / 'pip'
+            if pip_bin.exists():
+                # Uninstall onnx-asr
+                subprocess.run(
+                    [str(pip_bin), 'uninstall', '-y', 'onnx-asr'],
+                    check=False,
+                    capture_output=True
+                )
+                log_success("ONNX-ASR backend cleaned up")
+            return True
+        except Exception as e:
+            log_warning(f"Cleanup warning: {e}")
+            return True  # Don't fail on cleanup errors
+
     if backend_type in ['rest-api', 'remote']:
         # REST API doesn't have venv, nothing to clean
         return True
-    
+
     log_info(f"Cleaning up {backend_type.upper()} backend...")
-    
+
     venv_python = VENV_DIR / 'bin' / 'python'
     if not venv_python.exists():
         log_info("No venv found, nothing to clean")
         return True
-    
+
     try:
         pip_bin = VENV_DIR / 'bin' / 'pip'
         if pip_bin.exists():
@@ -419,63 +456,66 @@ def _cleanup_backend(backend_type: str) -> bool:
 def _prompt_backend_selection():
     """Prompt user for backend selection with current state detection"""
     current_backend = _detect_current_backend()
-    
+
     print("\n" + "="*60)
     print("Backend Selection")
     print("="*60)
-    
+
     if current_backend:
         backend_names = BACKEND_DISPLAY_NAMES
         print(f"\nCurrent backend: {backend_names.get(current_backend, current_backend)}")
     else:
         print("\nNo backend currently configured.")
-    
+
     print("\nChoose your transcription backend:")
     print()
-    print("PyWhisperCPP (Local in-memory default, very fast):")
-    print("  [1] CPU - CPU-only, works on all systems")
-    print("  [2] NVIDIA - NVIDIA GPU acceleration (CUDA)")
-    print("  [3] AMD/Intel - AMD/Intel GPU acceleration (Vulkan)")
+    print("Local In-Memory Backends:")
+    print("  [1] ONNX Parakeet CTC - Best for CPU-only (Intel/AMD), ~11x realtime")
+    print("  [2] Whisper (CPU)     - whisper.cpp, works everywhere, ~6x realtime")
+    print("  [3] Whisper (NVIDIA)  - whisper.cpp + CUDA, fast on NVIDIA GPUs")
+    print("  [4] Whisper (Vulkan)  - whisper.cpp + Vulkan, AMD/Intel GPUs")
     print()
-    print("REST API (Remote - Cloud API or localhost):")
-    print("  [4] Configure cloud provider or custom backend")
+    print("Cloud/REST Backends:")
+    print("  [5] REST API          - OpenAI, Groq, or custom endpoint")
+    print("  [6] Realtime WS       - Low-latency streaming (experimental)")
     print()
-    print("Realtime WebSocket (Low-latency cloud streaming transcription):")
-    print("  [5] Realtime WebSocket (OpenAI)")
+    print("Local REST Server:")
+    print("  [7] Parakeet TDT      - NVIDIA NeMo model (requires CUDA, ~10GB VRAM)")
     print()
-    print("Parakeet (Local REST Server - Latest NVIDIA Parakeet model):")
-    print("  [6] NVIDIA Parakeet model")
-    print()
-    
+
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7'], default='1')
             backend_map = {
-                '1': 'cpu',
-                '2': 'nvidia',
-                '3': 'vulkan',
-                '4': 'rest-api',
-                '5': 'realtime-ws',
-                '6': 'parakeet'
+                '1': 'onnx-asr',
+                '2': 'cpu',
+                '3': 'nvidia',
+                '4': 'vulkan',
+                '5': 'rest-api',
+                '6': 'realtime-ws',
+                '7': 'parakeet'
             }
             selected = backend_map[choice]
-            
+
+            # Backend display names for warnings/messages
+            backend_names = {
+                'onnx-asr': 'ONNX Parakeet CTC',
+                'cpu': 'Whisper CPU',
+                'nvidia': 'Whisper NVIDIA (CUDA)',
+                'amd': 'Whisper AMD/Intel (Vulkan)',
+                'vulkan': 'Whisper AMD/Intel (Vulkan)',
+                'parakeet': 'Parakeet TDT',
+                'rest-api': 'REST API',
+                'realtime-ws': 'Realtime WebSocket',
+                'pywhispercpp': 'pywhispercpp'
+            }
+
             # Warn if switching to different backend
             if current_backend and current_backend != selected:
-                backend_names = {
-                    'cpu': 'CPU',
-                    'nvidia': 'NVIDIA (CUDA)',
-                    'amd': 'AMD/Intel (Vulkan)',
-                    'vulkan': 'AMD/Intel (Vulkan)',
-                    'parakeet': 'Parakeet',
-                    'rest-api': 'REST API',
-                    'realtime-ws': 'Realtime WebSocket',
-                    'pywhispercpp': 'pywhispercpp'
-                }
                 print(f"\n⚠️  Switching from {backend_names.get(current_backend, current_backend)} to {backend_names.get(selected, selected)}")
-                
+
                 if selected == 'parakeet':
-                    print("Parakeet uses a separate venv and runs as a local REST server.")
+                    print("Parakeet TDT uses a separate venv and runs as a local REST server.")
                     if current_backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
                         print("This will uninstall the current backend.")
                         if not Confirm.ask("Continue?", default=True):
@@ -493,54 +533,42 @@ def _prompt_backend_selection():
                     else:
                         print("The local backend venv will no longer be needed.")
                         cleanup_venv = Confirm.ask("Remove the venv to free up space?", default=False)
-                    backend_names = BACKEND_DISPLAY_NAMES
-                    print(f"\n✓ Selected: {backend_names[selected]}")
+                    print(f"\n✓ Selected: {BACKEND_DISPLAY_NAMES.get(selected, selected)}")
                     return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
-            
+
             # If re-selecting same backend, offer reinstall option
-            if current_backend == selected and selected not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
-                backend_names = BACKEND_DISPLAY_NAMES
-                print(f"\n{backend_names.get(selected)} backend is already installed.")
+            # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr
+            local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr']
+            if current_backend == selected and selected in local_install_backends:
+                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
                 if not reinstall:
                     print("Keeping existing installation.")
                     return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
                 # If yes to reinstall, continue to return with wants_reinstall=True
             elif current_backend == selected and selected == 'parakeet':
-                backend_names = BACKEND_DISPLAY_NAMES
-                print(f"\n{backend_names.get(selected)} backend is already installed.")
+                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
                 if not reinstall:
                     print("Keeping existing installation.")
                     return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
                 # If yes to reinstall, continue to return with wants_reinstall=True
             elif current_backend == selected and selected == 'realtime-ws':
-                backend_names = BACKEND_DISPLAY_NAMES
-                print(f"\n{backend_names.get(selected)} backend is already configured.")
+                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already configured.")
                 reconfigure = Confirm.ask("Reconfigure backend?", default=False)
                 if not reconfigure:
                     print("Keeping existing configuration.")
                     return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
                 # If yes to reconfigure, continue to return with wants_reinstall=True for correct state tracking
             elif current_backend == selected and selected in ['rest-api', 'remote']:
-                backend_names = BACKEND_DISPLAY_NAMES
-                print(f"\n{backend_names.get(selected)} backend is already configured.")
+                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already configured.")
                 reconfigure = Confirm.ask("Reconfigure backend?", default=False)
                 if not reconfigure:
                     print("Keeping existing configuration.")
                     return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
                 # If yes to reconfigure, continue to return with wants_reinstall=True for correct state tracking
-            
-            backend_names = {
-                'cpu': 'CPU',
-                'nvidia': 'NVIDIA (CUDA)',
-                'amd': 'AMD/Intel (Vulkan)',
-                'vulkan': 'AMD/Intel (Vulkan)',
-                'parakeet': 'Parakeet',
-                'rest-api': 'REST API',
-                'realtime-ws': 'Realtime WebSocket'
-            }
-            print(f"\n✓ Selected: {backend_names[selected]}")
+
+            print(f"\n✓ Selected: {backend_names.get(selected, selected)}")
             # Check if user wants to reinstall/reconfigure (same backend selected and they said yes)
             # For local backends: wants_reinstall means reinstall
             # For cloud backends: wants_reinstall means reconfigure (correctly tracks user intent)
@@ -914,7 +942,7 @@ def setup_command():
                 log_warning("Failed to clean up old backend, continuing anyway...")
         
         # Also handle cleanup when switching TO Parakeet FROM local
-        if backend_normalized == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan']:
+        if backend_normalized == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr']:
             if VENV_DIR.exists():
                 cleanup_main_venv = Confirm.ask(
                     "Remove the old local backend venv to free up space?", 
@@ -1147,9 +1175,9 @@ def setup_command():
         else:
             log_info("Base Python dependencies up to date")
     
-    elif backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
+    elif backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr']:
         # Local backend - prompt for model selection
-        # Note: Parakeet doesn't use Whisper models, it's handled via REST API auto-configuration
+        # Note: Parakeet and ONNX-ASR don't use Whisper models, they have their own models
         selected_model = _prompt_model_selection()
     
     # Step 3: Waybar integration
@@ -1541,24 +1569,30 @@ def _verify_installation_step(step_name: str, verify_func) -> bool:
 def _verify_backend_installation(backend: str) -> bool:
     """
     Verify that backend is actually importable from venv.
-    
+
     Args:
-        backend: Backend name (e.g., 'nvidia', 'vulkan', 'cpu')
-        
+        backend: Backend name (e.g., 'nvidia', 'vulkan', 'cpu', 'onnx-asr')
+
     Returns:
         True if backend is importable, False otherwise
     """
-    if backend not in ['cpu', 'nvidia', 'vulkan']:
+    if backend not in ['cpu', 'nvidia', 'vulkan', 'onnx-asr']:
         # For non-local backends, skip import check
         return True
-    
+
     venv_python = VENV_DIR / 'bin' / 'python'
     if not venv_python.exists():
         return False
-    
+
+    # Choose the module to import based on backend
+    if backend == 'onnx-asr':
+        import_module = 'onnx_asr'
+    else:
+        import_module = 'pywhispercpp'
+
     try:
         result = subprocess.run(
-            [str(venv_python), '-c', 'import pywhispercpp'],
+            [str(venv_python), '-c', f'import {import_module}'],
             check=False,
             capture_output=True,
             text=True,
@@ -2776,24 +2810,42 @@ def backend_repair_command():
                 log_warning("Venv Python binary cannot be executed")
                 venv_corrupted = True
     
-    # Check pywhispercpp installation
-    pywhispercpp_missing = False
-    if venv_python.exists() and not venv_corrupted:
+    # Check backend module installation based on configured backend
+    backend_missing = False
+    backend_module = None
+    configured_backend = None
+
+    # Get the configured backend to know which module to check
+    try:
+        config_manager = ConfigManager()
+        configured_backend = config_manager.get_setting('transcription_backend', 'pywhispercpp')
+        configured_backend = normalize_backend(configured_backend)
+    except Exception:
+        pass
+
+    # Determine which module to check based on backend
+    if configured_backend == 'onnx-asr':
+        backend_module = 'onnx_asr'
+    elif configured_backend in ['cpu', 'nvidia', 'vulkan', 'amd', 'pywhispercpp']:
+        backend_module = 'pywhispercpp'
+    # For rest-api, realtime-ws, parakeet - no local module to check
+
+    if backend_module and venv_python.exists() and not venv_corrupted:
         try:
             result = subprocess.run(
-                [str(venv_python), '-c', 'import pywhispercpp'],
+                [str(venv_python), '-c', f'import {backend_module}'],
                 check=False,
                 capture_output=True,
                 text=True,
                 timeout=5
             )
             if result.returncode != 0:
-                log_warning("pywhispercpp is not installed in venv")
-                pywhispercpp_missing = True
+                log_warning(f"{backend_module} is not installed in venv (required for {configured_backend} backend)")
+                backend_missing = True
         except Exception:
             pass
-    
-    if not venv_corrupted and not pywhispercpp_missing:
+
+    if not venv_corrupted and not backend_missing:
         log_success("No issues detected")
         return True
     
@@ -2821,21 +2873,20 @@ def backend_repair_command():
             setup_python_venv()
             log_success("Venv recreated")
     
-    if pywhispercpp_missing:
+    if backend_missing:
         print("\nIssues found:")
-        print("  • pywhispercpp is not installed")
+        print(f"  • {backend_module} is not installed (required for {configured_backend} backend)")
         print("\nOptions:")
-        print("  [1] Reinstall backend (detect and install)")
+        print("  [1] Reinstall backend")
         print("  [2] Skip (manual repair required)")
-        
+
         choice = Prompt.ask("Select option", choices=['1', '2'], default='1')
         if choice == '1':
-            # Detect backend type from config
-            current_backend = _detect_current_backend()
-            if current_backend and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan']:
-                log_info(f"Reinstalling {current_backend.upper()} backend...")
+            # Use the configured backend for reinstallation
+            if configured_backend and configured_backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr']:
+                log_info(f"Reinstalling {configured_backend.upper()} backend...")
                 # Use force_rebuild=True to ensure clean reinstall
-                if install_backend(current_backend, force_rebuild=True):
+                if install_backend(configured_backend, force_rebuild=True):
                     log_success("Backend reinstalled successfully")
                 else:
                     log_error("Backend reinstallation failed")
