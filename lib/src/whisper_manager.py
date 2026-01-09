@@ -8,6 +8,7 @@ import shutil
 import sys
 import threading
 import time
+import types
 import wave
 import re
 import io
@@ -867,16 +868,36 @@ class WhisperManager:
 
             # onnx-asr accepts numpy arrays directly (float32)
             # It handles resampling internally if needed
-            import time
             start_time = time.time()
             result = self._onnx_asr_model.recognize(audio_data)
             elapsed = time.time() - start_time
 
-            # Result may be string or object with .text attribute
-            if hasattr(result, 'text'):
-                transcription = result.text
+            # When VAD is enabled, recognize() returns a generator of segments
+            if isinstance(result, types.GeneratorType):
+                # Collect all segments and combine their text
+                segments = list(result)
+                if not segments:
+                    transcription = ""
+                else:
+                    # Extract text from each segment
+                    segment_texts = []
+                    for seg in segments:
+                        if hasattr(seg, 'text'):
+                            segment_texts.append(seg.text)
+                        elif isinstance(seg, str):
+                            segment_texts.append(seg)
+                        else:
+                            # Fallback: try to get text representation
+                            segment_texts.append(str(seg))
+                    transcription = ' '.join(segment_texts)
             else:
-                transcription = str(result)
+                # No VAD - direct result (string or object with .text attribute)
+                if hasattr(result, 'text'):
+                    transcription = result.text
+                elif isinstance(result, str):
+                    transcription = result
+                else:
+                    transcription = str(result)
 
             rtf = elapsed / audio_duration if audio_duration > 0 else 0
             print(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s (RTF: {rtf:.2f})', flush=True)

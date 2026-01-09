@@ -978,6 +978,10 @@ def setup_command():
                 print("\nThis will install the Parakeet backend.")
                 print("This will create a separate virtual environment and install dependencies.")
                 print("Parakeet runs as a local REST API server that hyprwhspr connects to.")
+            elif backend_normalized == 'onnx-asr':
+                print("\nThis will install the ONNX-ASR backend for hyprwhspr.")
+                print("This is a CPU-optimized ASR backend using ONNX runtime.")
+                print("This may take several minutes as it downloads models and dependencies.")
             else:
                 print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
