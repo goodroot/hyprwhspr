@@ -22,8 +22,8 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Local, very fast defaults** - Instant, private and accurate performance via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
 - **Latest models**: Turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? 
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
-- **Themed visualizer** - Visualizes your voice, matched to your Omarchy theme
-- **REST API** -  Securely connect clouds model or any model on localhost
+- **Themed visualizer** - Visualizes your voice, will automatchy Omarchy theme
+- **REST API** -  Securely connects cloud model or any model on localhost
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
 - **Auto-paste anywhere** - Instant paste into any active buffer 
@@ -58,7 +58,7 @@ hyprwhspr setup auto
 hyprwhspr setup
 ```
 
-> ⚠️ Omarchy install issue? You may need to disable Mise first: `mise unuse -g python`
+> ⚠️ Omarchy install issue? You may need to disable Mise first: `mise unuse -g python` | https://github.com/goodroot/hyprwhspr/issues/75
 
 **The setup will walk you through the process:**
 
