@@ -1514,11 +1514,26 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 created_items['venv_path'] = str(VENV_DIR)
 
             # Detect GPU availability for onnx-asr
+            # Note: onnx-asr only needs NVIDIA drivers (nvidia-smi), not CUDA toolkit
+            # Unlike pywhispercpp which needs nvcc to build, onnx-asr uses pre-built ONNX Runtime
             enable_gpu = False
-            if setup_nvidia_support():
-                enable_gpu = True
-                log_info("CUDA detected - will install onnx-asr with GPU support")
-            else:
+            if shutil.which('nvidia-smi'):
+                try:
+                    result = run_command(['timeout', '2s', 'nvidia-smi', '-L'], check=False, capture_output=True)
+                    if result.returncode == 0 and result.stdout:
+                        output = _safe_decode(result.stdout).strip().lower()
+                        # Check for "GPU N:" pattern which indicates an actual GPU listing
+                        if 'gpu 0:' in output or 'gpu 1:' in output or 'gpu 2:' in output or 'gpu 3:' in output:
+                            enable_gpu = True
+                            log_info("NVIDIA GPU detected - will install onnx-asr with GPU support")
+                        else:
+                            log_info("nvidia-smi present but no NVIDIA GPU hardware detected")
+                    else:
+                        log_info("nvidia-smi found but not responding")
+                except Exception:
+                    log_info("nvidia-smi check failed")
+            
+            if not enable_gpu:
                 log_info("No CUDA detected - will install onnx-asr (CPU-optimized)")
 
             # Install base requirements first
