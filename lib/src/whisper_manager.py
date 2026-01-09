@@ -80,7 +80,7 @@ class WhisperManager:
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
             backend = normalize_backend(backend)  # Backward compatibility
 
-            # Configure ONNX-ASR backend (CPU-optimized)
+            # Configure ONNX-ASR backend (CPU or GPU-optimized)
             if backend == 'onnx-asr':
                 try:
                     import onnx_asr
@@ -89,14 +89,26 @@ class WhisperManager:
                     print('ERROR: Select option [1] ONNX Parakeet to install')
                     return False
 
+                # Detect GPU availability at runtime
+                use_gpu = False
+                try:
+                    import onnxruntime
+                    available_providers = onnxruntime.get_available_providers()
+                    if 'CUDAExecutionProvider' in available_providers or 'TensorrtExecutionProvider' in available_providers:
+                        use_gpu = True
+                        print('[BACKEND] GPU acceleration available for onnx-asr', flush=True)
+                except Exception:
+                    pass
+
                 model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
                 quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
                 use_vad = self.config.get_setting('onnx_asr_use_vad', True)
 
-                print(f'[BACKEND] Loading onnx-asr model: {model_name}', flush=True)
+                print(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})', flush=True)
 
                 try:
                     # Load model with optional quantization
+                    # onnx-asr automatically uses GPU providers if available
                     if quantization:
                         self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
                     else:
@@ -108,7 +120,7 @@ class WhisperManager:
                         vad = onnx_asr.load_vad('silero')
                         self._onnx_asr_model = self._onnx_asr_model.with_vad(vad)
 
-                    print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad})', flush=True)
+                    print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}, gpu={use_gpu})', flush=True)
 
                 except Exception as e:
                     print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)

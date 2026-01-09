@@ -132,11 +132,13 @@ PY
         # Fast timeout check - verify onnx_asr is importable
         # Uses absolute path to venv Python (resilient to MISE/PATH issues)
         if [[ -f "$venv_python" ]]; then
-            timeout 0.5s "$venv_python" -c 'import onnx_asr' >/dev/null 2>&1 && return 0
+            # Only return success if import actually succeeds
+            if timeout 0.5s "$venv_python" -c 'import onnx_asr' >/dev/null 2>&1; then
+                return 0
+            fi
         fi
-        # If venv check fails, assume OK (service will fail if truly missing)
-        # This prevents blocking tray updates due to transient import issues or MISE interference
-        return 0
+        # If venv doesn't exist or import fails, return failure
+        return 1
     fi
 
     # Only read model setting for pywhispercpp backends

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | most accurate local models | realtime cloud streaming | stylish visuals
+    instant performance | whisper/parakeet/REST api | built for Arch | stylish visuals
 </p>
 
  <p align="center">
@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
 - **Local, very fast defaults** - Instant, private and accurate performance via in memory [Whisper](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#whisper-models)
-- **Latest models**: Turbo-v3? [Parakeet-v3](https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#parakeet-nvidia)? 
+- **Latest models**: Turbo-v3? Parakeet TDT V3? Optimized for top speed
 - **Conversation mode** - Send text to Cloud API and receive LLM response in return
 - **Themed visualizer** - Visualizes your voice, will automatchy Omarchy theme
 - **REST API** -  Securely connects cloud model or any model on localhost
@@ -62,7 +62,7 @@ hyprwhspr setup
 
 **The setup will walk you through the process:**
 
-1. ✅ Configure transcription backend (pywhispercpp, Parakeet-v3, REST API, or Realtime WebSocket)
+1. ✅ Configure transcription backend (Parakeet TDT V3, pywhispercpp, REST API, or Realtime WebSocket)
 2. ✅ Download models (if using pywhispercpp backend)
 3. ✅ Configure themed visualizer for maximum coolness (optional)
 4. ✅ Configure Waybar integration (optional)
@@ -169,10 +169,6 @@ Edit `~/.config/hyprwhspr/config.json`:
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
 **REST API** - use any ASR backend via HTTP API (local or cloud):
-
-**Local Parakeet v3**
-
-Fastest, latest, and apparently the best! GPU accel recommended, not required.
 
 **OpenAI**
 

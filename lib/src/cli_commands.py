@@ -301,12 +301,6 @@ def _detect_current_backend() -> Optional[str]:
             return 'cpu'  # Fallback
         
         if backend == 'rest-api':
-            # Check if it's parakeet by checking endpoint URL
-            endpoint = config_manager.get_setting('rest_endpoint_url', '')
-            if endpoint == 'http://127.0.0.1:8080/transcribe':
-                # Check if parakeet venv exists
-                if PARAKEET_VENV_DIR.exists():
-                    return 'parakeet'
             return 'rest-api'
         if backend == 'realtime-ws':
             return 'realtime-ws'
@@ -369,7 +363,7 @@ def _cleanup_backend(backend_type: str) -> bool:
     Clean up an installed backend.
 
     Args:
-        backend_type: 'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr', or 'remote'
+        backend_type: 'cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr', or 'remote'
 
     Returns:
         True if cleanup succeeded
@@ -470,7 +464,7 @@ def _prompt_backend_selection():
     print("\nChoose your transcription backend:")
     print()
     print("Local In-Memory Backends:")
-    print("  [1] Parakeet TDT V3   - Best for CPU-only (Intel/AMD), ~9.5x realtime via onnx-asr")
+    print("  [1] Parakeet TDT V3   - Best for CPU/GPU (Intel/AMD/NVIDIA), ~9.5x realtime via onnx-asr")
     print("  [2] Whisper (CPU)     - whisper.cpp, works everywhere, ~6x realtime")
     print("  [3] Whisper (NVIDIA)  - whisper.cpp + CUDA, fast on NVIDIA GPUs")
     print("  [4] Whisper (Vulkan)  - whisper.cpp + Vulkan, AMD/Intel GPUs")
@@ -479,32 +473,27 @@ def _prompt_backend_selection():
     print("  [5] REST API          - OpenAI, Groq, or custom endpoint")
     print("  [6] Realtime WS       - Low-latency streaming (experimental)")
     print()
-    print("Local REST Server:")
-    print("  [7] Parakeet TDT      - NVIDIA NeMo model (requires CUDA, ~10GB VRAM)")
-    print()
 
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6'], default='1')
             backend_map = {
                 '1': 'onnx-asr',
                 '2': 'cpu',
                 '3': 'nvidia',
                 '4': 'vulkan',
                 '5': 'rest-api',
-                '6': 'realtime-ws',
-                '7': 'parakeet'
+                '6': 'realtime-ws'
             }
             selected = backend_map[choice]
 
             # Backend display names for warnings/messages
             backend_names = {
-                'onnx-asr': 'ONNX Parakeet TDT V3',
+                'onnx-asr': 'Parakeet TDT V3 (onnx-asr)',
                 'cpu': 'Whisper CPU',
                 'nvidia': 'Whisper NVIDIA (CUDA)',
                 'amd': 'Whisper AMD/Intel (Vulkan)',
                 'vulkan': 'Whisper AMD/Intel (Vulkan)',
-                'parakeet': 'Parakeet TDT',
                 'rest-api': 'REST API',
                 'realtime-ws': 'Realtime WebSocket',
                 'pywhispercpp': 'pywhispercpp'
@@ -514,25 +503,15 @@ def _prompt_backend_selection():
             if current_backend and current_backend != selected:
                 print(f"\n⚠️  Switching from {backend_names.get(current_backend, current_backend)} to {backend_names.get(selected, selected)}")
 
-                if selected == 'parakeet':
-                    print("Parakeet TDT uses a separate venv and runs as a local REST server.")
-                    if current_backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
-                        print("This will uninstall the current backend.")
-                        if not Confirm.ask("Continue?", default=True):
-                            continue
-                elif current_backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet'] and selected not in ['rest-api', 'remote', 'realtime-ws', 'parakeet']:
+                if current_backend not in ['rest-api', 'remote', 'realtime-ws'] and selected not in ['rest-api', 'remote', 'realtime-ws']:
                     print("This will uninstall the current backend and install the new one.")
                     if not Confirm.ask("Continue?", default=True):
                         continue
                 elif selected in ['rest-api', 'realtime-ws']:
                     backend_type_name = 'REST API' if selected == 'rest-api' else 'Realtime WebSocket'
                     print(f"Switching to {backend_type_name} backend.")
-                    if current_backend == 'parakeet':
-                        print("The Parakeet venv will no longer be needed.")
-                        cleanup_venv = Confirm.ask("Remove the Parakeet venv to free up space?", default=False)
-                    else:
-                        print("The local backend venv will no longer be needed.")
-                        cleanup_venv = Confirm.ask("Remove the venv to free up space?", default=False)
+                    print("The local backend venv will no longer be needed.")
+                    cleanup_venv = Confirm.ask("Remove the venv to free up space?", default=False)
                     print(f"\n✓ Selected: {BACKEND_DISPLAY_NAMES.get(selected, selected)}")
                     return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
 
@@ -934,6 +913,33 @@ def setup_command():
         current_backend = normalize_backend(current_backend)
     backend_normalized = normalize_backend(backend)
     
+    # Check for Parakeet REST backend migration
+    # Detect parakeet by checking endpoint URL and venv existence
+    # (since _detect_current_backend() no longer returns 'parakeet')
+    is_parakeet_config = False
+    if current_backend == 'rest-api':
+        config_manager = ConfigManager()
+        endpoint = config_manager.get_setting('rest_endpoint_url', '')
+        if endpoint == 'http://127.0.0.1:8080/transcribe' and PARAKEET_VENV_DIR.exists():
+            is_parakeet_config = True
+    
+    if is_parakeet_config:
+        log_info("Parakeet REST backend detected.")
+        if Confirm.ask("\nMigrate to in-process onnx-asr backend (GPU-accelerated, no REST server)?", default=True):
+            backend_normalized = 'onnx-asr'
+            backend = 'onnx-asr'
+            log_info("Migrating to onnx-asr backend...")
+            # Clean up Parakeet REST service
+            if _cleanup_backend('parakeet'):
+                log_success("Parakeet REST backend cleaned up")
+            log_info("Will install onnx-asr backend instead")
+        else:
+            log_warning("Keeping Parakeet REST backend. Note: Parakeet REST is deprecated.")
+            log_warning("Consider migrating to onnx-asr for better performance and simpler setup.")
+            # Preserve Parakeet backend to prevent cleanup
+            backend_normalized = 'parakeet'
+            backend = 'parakeet'
+    
     # Handle backend switching
     if current_backend and current_backend != backend_normalized:
         if current_backend not in ['rest-api', 'remote', 'realtime-ws']:
@@ -941,17 +947,6 @@ def setup_command():
             if not _cleanup_backend(current_backend):
                 log_warning("Failed to clean up old backend, continuing anyway...")
         
-        # Also handle cleanup when switching TO Parakeet FROM local
-        if backend_normalized == 'parakeet' and current_backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr']:
-            if VENV_DIR.exists():
-                cleanup_main_venv = Confirm.ask(
-                    "Remove the old local backend venv to free up space?", 
-                    default=False
-                )
-                if cleanup_main_venv:
-                    log_info("Removing main venv...")
-                    shutil.rmtree(VENV_DIR)
-                    log_success("Main venv removed")
         
         if cleanup_venv and backend_normalized in ['rest-api', 'remote', 'realtime-ws']:
             # User wants to remove venv when switching to cloud backend
@@ -961,24 +956,17 @@ def setup_command():
                 log_success("Venv removed")
     
     # Step 1.5: Backend installation (if not cloud backend)
-    parakeet_installed = False
     if backend_normalized not in ['rest-api', 'remote', 'realtime-ws']:
         # Skip installation section if user selected the same backend and declined reinstalling
         if current_backend == backend_normalized and not wants_reinstall:
             # User already said "no" to reinstalling in the selection step, skip installation section
-            # If Parakeet is already installed, mark it as installed so REST API auto-configuration works
-            if backend_normalized == 'parakeet' and current_backend == 'parakeet':
-                parakeet_installed = True
+            pass
         else:
             # New backend selected, or user wants to reinstall existing backend
             print("\n" + "="*60)
             print("Backend Installation")
             print("="*60)
-            if backend_normalized == 'parakeet':
-                print("\nThis will install the Parakeet backend.")
-                print("This will create a separate virtual environment and install dependencies.")
-                print("Parakeet runs as a local REST API server that hyprwhspr connects to.")
-            elif backend_normalized == 'onnx-asr':
+            if backend_normalized == 'onnx-asr':
                 print("\nThis will install the ONNX-ASR backend for hyprwhspr.")
                 print("This is a CPU-optimized ASR backend using ONNX runtime.")
                 print("This may take several minutes as it downloads models and dependencies.")
@@ -995,27 +983,11 @@ def setup_command():
                     log_error("Backend installation failed. Setup cannot continue.")
                     return
                 
-                if backend_normalized == 'parakeet':
-                    parakeet_installed = True
     
-    # Step 2: Provider/model selection (if REST API backend or parakeet)
+    # Step 2: Provider/model selection (if REST API backend)
     remote_config = None
     selected_model = None
-    if backend_normalized == 'parakeet':
-        # Auto-configure REST API for parakeet (always needed, regardless of installation status)
-        # If installation was skipped, user can install Parakeet later, but config should be set up now
-        log_info("Auto-configuring REST API for Parakeet...")
-        remote_config = {
-            'transcription_backend': 'rest-api',
-            'rest_endpoint_url': 'http://127.0.0.1:8080/transcribe',
-            'rest_headers': {},
-            'rest_body': {}
-        }
-        log_success("Parakeet REST API configuration ready")
-        if not parakeet_installed:
-            log_warning("Parakeet backend is not installed. Install it later to use this configuration.")
-        # Note about manual start will be shown later if systemd is not set up
-    elif backend_normalized in ['rest-api', 'remote']:
+    if backend_normalized in ['rest-api', 'remote']:
         # Prompt for remote provider selection
         provider_result = _prompt_remote_provider_selection()
         if not provider_result:
@@ -1181,7 +1153,7 @@ def setup_command():
     
     elif backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr']:
         # Local backend - prompt for model selection
-        # Note: Parakeet and ONNX-ASR don't use Whisper models, they have their own models
+        # Note: ONNX-ASR doesn't use Whisper models, it has its own models
         selected_model = _prompt_model_selection()
     
     # Step 3: Waybar integration
@@ -1246,18 +1218,11 @@ def setup_command():
     print("\n" + "="*60)
     print("Systemd Service")
     print("="*60)
-    if backend == 'parakeet':
-        print("\nSystemd user services will run both hyprwhspr and the Parakeet server in the background.")
-        print("This will enable/configure:")
-        print("  • ydotool.service (required dependency, provides paste)")
-        print("  • parakeet-tdt-0.6b-v3.service (Parakeet REST API server)")
-        print("  • hyprwhspr.service (main application)")
-    else:
-        print("\nSystemd user service will run hyprwhspr in the background.")
-        print("This will enable/configure:")
-        print("  • ydotool.service (required dependency, provides paste)")
-        print("  • hyprwhspr.service (main application)")
-    setup_systemd_choice = Confirm.ask("Set up systemd user service" + ("s" if backend == 'parakeet' else ""), default=True)
+    print("\nSystemd user service will run hyprwhspr in the background.")
+    print("This will enable/configure:")
+    print("  • ydotool.service (required dependency, provides paste)")
+    print("  • hyprwhspr.service (main application)")
+    setup_systemd_choice = Confirm.ask("Set up systemd user service?", default=True)
     
     # Step 5: Permissions setup
     print("\n" + "="*60)
@@ -1273,10 +1238,7 @@ def setup_command():
     print("Setup Summary")
     print("="*60)
     print(f"\nBackend: {backend}")
-    if backend == 'parakeet' and remote_config:
-        print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
-        print("Model: parakeet-tdt-0.6b-v3")
-    elif remote_config:
+    if remote_config:
         print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
         if remote_config.get('rest_body'):
             model_name = remote_config['rest_body'].get('model', 'N/A')
@@ -1300,16 +1262,10 @@ def setup_command():
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
     print(f"Hyprland compositor bindings: {'Yes' if setup_hyprland_choice else 'No'}")
-    if backend == 'parakeet':
-        if setup_systemd_choice:
-            print("Systemd services: Yes (ydotool + Parakeet + hyprwhspr)")
-        else:
-            print("Systemd services: No")
+    if setup_systemd_choice:
+        print("Systemd services: Yes (ydotool + hyprwhspr)")
     else:
-        if setup_systemd_choice:
-            print("Systemd services: Yes (ydotool + hyprwhspr)")
-        else:
-            print("Systemd service: No")
+        print("Systemd service: No")
     print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
     print()
     
@@ -1442,9 +1398,6 @@ def setup_command():
                 print("  Parakeet server will start automatically via systemd")
             print("  Press hotkey to start dictation!")
         else:
-            if backend == 'parakeet':
-                print("  Start the Parakeet server manually:")
-                print(f"    {PARAKEET_VENV_DIR / 'bin' / 'python'} {PARAKEET_SCRIPT}")
             print("  Run hyprwhspr manually or set up systemd service later")
             print("  Press hotkey to start dictation!")
         print()
@@ -1966,62 +1919,8 @@ def setup_systemd(mode: str = 'install'):
         log_error(f"Main executable not found or not executable: {main_exec}")
         return False
     
-    # Detect current backend to determine if Parakeet service is needed
-    current_backend = _detect_current_backend()
-    is_parakeet = current_backend == 'parakeet'
-    
     # Create user systemd directory
     USER_SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
-    
-    # Handle Parakeet service if needed
-    if is_parakeet:
-        # Validate Parakeet components exist
-        if not PARAKEET_SCRIPT.exists():
-            log_error(f"Parakeet script not found at {PARAKEET_SCRIPT}")
-            return False
-        if not PARAKEET_VENV_DIR.exists():
-            log_error(f"Parakeet venv not found at {PARAKEET_VENV_DIR}")
-            return False
-        
-        # Clean old Parakeet service file first (following venv cleanup pattern)
-        parakeet_service_dest = USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME
-        if parakeet_service_dest.exists():
-            log_info("Removing existing Parakeet service file...")
-            # Stop and disable service if it's active
-            run_command(['systemctl', '--user', 'stop', PARAKEET_SERVICE_NAME], check=False)
-            run_command(['systemctl', '--user', 'disable', PARAKEET_SERVICE_NAME], check=False)
-            # Remove the service file
-            try:
-                parakeet_service_dest.unlink()
-            except Exception as e:
-                log_warning(f"Failed to remove old Parakeet service file: {e}")
-        
-        # Read Parakeet service template
-        parakeet_service_source = Path(HYPRWHSPR_ROOT) / 'config' / 'systemd' / PARAKEET_SERVICE_NAME
-        if not parakeet_service_source.exists():
-            log_error(f"Parakeet service template not found: {parakeet_service_source}")
-            return False
-        
-        try:
-            with open(parakeet_service_source, 'r', encoding='utf-8') as f:
-                parakeet_service_content = f.read()
-            
-            # Substitute paths
-            parakeet_service_content = parakeet_service_content.replace('/usr/lib/hyprwhspr', HYPRWHSPR_ROOT)
-            parakeet_service_content = parakeet_service_content.replace('/home/USER', str(USER_HOME))
-            parakeet_service_content = parakeet_service_content.replace(
-                '/home/USER/.local/share/hyprwhspr/parakeet-venv',
-                str(PARAKEET_VENV_DIR)
-            )
-            
-            # Write substituted content
-            with open(parakeet_service_dest, 'w', encoding='utf-8') as f:
-                f.write(parakeet_service_content)
-            
-            log_success("Parakeet service file created with correct paths")
-        except IOError as e:
-            log_error(f"Failed to read/write Parakeet service file: {e}")
-            return False
     
     # Read hyprwhspr service file template and substitute paths
     service_source = Path(HYPRWHSPR_ROOT) / 'config' / 'systemd' / SERVICE_NAME
@@ -2039,39 +1938,6 @@ def setup_systemd(mode: str = 'install'):
         # Substitute hardcoded path with actual HYPRWHSPR_ROOT
         service_content = service_content.replace('/usr/lib/hyprwhspr', HYPRWHSPR_ROOT)
         
-        # Conditionally inject Parakeet dependencies if Parakeet is configured
-        if is_parakeet:
-            # Add Parakeet service to After= line
-            if 'After=' in service_content:
-                # Find the After= line and add parakeet service
-                lines = service_content.split('\n')
-                for i, line in enumerate(lines):
-                    if line.startswith('After='):
-                        # Check if parakeet service is already in the line
-                        if PARAKEET_SERVICE_NAME not in line:
-                            lines[i] = line.rstrip() + ' ' + PARAKEET_SERVICE_NAME
-                        break
-                service_content = '\n'.join(lines)
-            
-            # Add Parakeet service to Wants= line (or create it if it doesn't exist)
-            if 'Wants=' in service_content:
-                lines = service_content.split('\n')
-                for i, line in enumerate(lines):
-                    if line.startswith('Wants='):
-                        # Check if parakeet service is already in the line
-                        if PARAKEET_SERVICE_NAME not in line:
-                            lines[i] = line.rstrip() + ' ' + PARAKEET_SERVICE_NAME
-                        break
-                service_content = '\n'.join(lines)
-            else:
-                # Insert Wants= line after After= line
-                lines = service_content.split('\n')
-                for i, line in enumerate(lines):
-                    if line.startswith('After='):
-                        lines.insert(i + 1, f'Wants={PARAKEET_SERVICE_NAME}')
-                        break
-                service_content = '\n'.join(lines)
-        
         # Write substituted content to user directory
         with open(service_dest, 'w', encoding='utf-8') as f:
             f.write(service_content)
@@ -2087,8 +1953,6 @@ def setup_systemd(mode: str = 'install'):
     if mode in ('install', 'enable'):
         # Enable & start services
         run_command(['systemctl', '--user', 'enable', '--now', YDOTOOL_UNIT], check=False)
-        if is_parakeet:
-            run_command(['systemctl', '--user', 'enable', '--now', PARAKEET_SERVICE_NAME], check=False)
 
         # Check if hyprwhspr service was already running before enabling
         service_was_running = False
@@ -2113,8 +1977,6 @@ def setup_systemd(mode: str = 'install'):
         else:
             log_success("Systemd user services enabled and started")
     elif mode == 'disable':
-        if is_parakeet:
-            run_command(['systemctl', '--user', 'disable', '--now', PARAKEET_SERVICE_NAME], check=False)
         run_command(['systemctl', '--user', 'disable', '--now', SERVICE_NAME], check=False)
         # Disable suspend/resume service if it exists
         log_success("Systemd user service disabled")
@@ -2124,16 +1986,7 @@ def setup_systemd(mode: str = 'install'):
 
 def systemd_status():
     """Show systemd service status"""
-    # Check if Parakeet backend is configured
-    current_backend = _detect_current_backend()
-    is_parakeet = current_backend == 'parakeet'
-
     try:
-        if is_parakeet:
-            # Show status for all services
-            log_info("Parakeet service status:")
-            run_command(['systemctl', '--user', 'status', PARAKEET_SERVICE_NAME], check=False)
-            print()  # Add spacing
 
         log_info("hyprwhspr service status:")
         run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
@@ -2193,22 +2046,10 @@ def _is_running_manually() -> bool:
 
 def systemd_restart():
     """Restart systemd service"""
-    # Check if Parakeet backend is configured
-    current_backend = _detect_current_backend()
-    is_parakeet = current_backend == 'parakeet'
-    
     log_info("Restarting service...")
     try:
-        if is_parakeet:
-            # Restart both services
-            run_command(['systemctl', '--user', 'restart', PARAKEET_SERVICE_NAME], check=False)
-            log_success("Parakeet service restarted")
-            run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
-            log_success("hyprwhspr service restarted")
-        else:
-            # Restart hyprwhspr only
-            run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
-            log_success("Service restarted")
+        run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
+        log_success("Service restarted")
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to restart service: {e}")
 

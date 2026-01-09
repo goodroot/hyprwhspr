@@ -27,12 +27,11 @@ def normalize_backend(backend: str) -> str:
 # Single source of truth for user-facing backend names
 BACKEND_DISPLAY_NAMES = {
     'pywhispercpp': 'Local (pywhispercpp)',
-    'onnx-asr': 'ONNX Parakeet TDT V3 (CPU-optimized)',
+    'onnx-asr': 'Parakeet TDT V3 (onnx-asr, CPU/GPU)',
     'rest-api': 'REST API',
     'realtime-ws': 'Realtime WebSocket (experimental)',
     'cpu': 'Whisper CPU (pywhispercpp)',
     'nvidia': 'Whisper NVIDIA (CUDA)',
     'amd': 'Whisper AMD/Intel (Vulkan)',
     'vulkan': 'Whisper AMD/Intel (Vulkan)',
-    'parakeet': 'Parakeet TDT (NVIDIA)',
 }

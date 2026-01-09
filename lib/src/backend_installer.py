@@ -1368,30 +1368,47 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
 
 # ==================== ONNX-ASR Installation ====================
 
-def install_onnx_asr(pip_bin: Path) -> bool:
+def install_onnx_asr(pip_bin: Path, enable_gpu: bool = False) -> bool:
     """
     Install onnx-asr into the main venv.
 
-    onnx-asr is a CPU-optimized ASR library using ONNX runtime.
-    It provides significantly better CPU performance than whisper.cpp.
+    onnx-asr is an ASR library using ONNX runtime, supporting both CPU and GPU.
+    It provides significantly better performance than whisper.cpp.
 
     Args:
         pip_bin: Path to pip binary in the venv
+        enable_gpu: If True, install GPU support (CUDA/TensorRT)
 
     Returns:
         True if installation succeeded, False otherwise
     """
-    log_info("Installing onnx-asr (CPU-optimized)...")
-    try:
-        # Install onnx-asr with CPU backend and HuggingFace hub support
-        # [cpu] = onnxruntime for CPU
-        # [hub] = huggingface_hub for model downloads
-        run_command([str(pip_bin), 'install', 'onnx-asr[cpu,hub]'], check=True)
-        log_success("onnx-asr installed")
-        return True
-    except subprocess.CalledProcessError as e:
-        log_error(f"Failed to install onnx-asr: {e}")
-        return False
+    if enable_gpu:
+        log_info("Installing onnx-asr with GPU support (CUDA/TensorRT)...")
+        try:
+            # Install onnx-asr with GPU backend and HuggingFace hub support
+            # [cuda] = onnxruntime-gpu for CUDA/TensorRT
+            # [hub] = huggingface_hub for model downloads
+            run_command([str(pip_bin), 'install', 'onnx-asr[cuda,hub]'], check=True)
+            log_success("onnx-asr installed with GPU support")
+            return True
+        except subprocess.CalledProcessError as e:
+            log_error(f"Failed to install onnx-asr with GPU support: {e}")
+            log_warning("Falling back to CPU-only installation...")
+            # Fall back to CPU installation
+            enable_gpu = False
+    
+    if not enable_gpu:
+        log_info("Installing onnx-asr (CPU-optimized)...")
+        try:
+            # Install onnx-asr with CPU backend and HuggingFace hub support
+            # [cpu] = onnxruntime for CPU
+            # [hub] = huggingface_hub for model downloads
+            run_command([str(pip_bin), 'install', 'onnx-asr[cpu,hub]'], check=True)
+            log_success("onnx-asr installed")
+            return True
+        except subprocess.CalledProcessError as e:
+            log_error(f"Failed to install onnx-asr: {e}")
+            return False
 
 
 # ==================== Main Installation Function ====================
@@ -1496,6 +1513,14 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 created_items['venv_created'] = True
                 created_items['venv_path'] = str(VENV_DIR)
 
+            # Detect GPU availability for onnx-asr
+            enable_gpu = False
+            if setup_nvidia_support():
+                enable_gpu = True
+                log_info("CUDA detected - will install onnx-asr with GPU support")
+            else:
+                log_info("No CUDA detected - will install onnx-asr (CPU-optimized)")
+
             # Install base requirements first
             requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
             log_info("Installing base dependencies...")
@@ -1510,8 +1535,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 set_install_state('failed', error_msg)
                 return False
 
-            # Install onnx-asr on top
-            if not install_onnx_asr(pip_bin):
+            # Install onnx-asr on top (with GPU support if available)
+            if not install_onnx_asr(pip_bin, enable_gpu=enable_gpu):
                 error_msg = "Failed to install onnx-asr"
                 log_error(error_msg)
                 if cleanup_on_failure:
