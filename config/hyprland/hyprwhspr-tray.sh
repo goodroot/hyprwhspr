@@ -126,6 +126,19 @@ PY
         return 0
     fi
 
+    # Check onnx-asr availability (lightweight, non-blocking)
+    if [[ "$backend" == "onnx-asr" ]]; then
+        local venv_python="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
+        # Fast timeout check - verify onnx_asr is importable
+        # Uses absolute path to venv Python (resilient to MISE/PATH issues)
+        if [[ -f "$venv_python" ]]; then
+            timeout 0.5s "$venv_python" -c 'import onnx_asr' >/dev/null 2>&1 && return 0
+        fi
+        # If venv check fails, assume OK (service will fail if truly missing)
+        # This prevents blocking tray updates due to transient import issues or MISE interference
+        return 0
+    fi
+
     # Only read model setting for pywhispercpp backends
     local model_path
     model_path=$(python - <<'PY' "$cfg" 2>/dev/null
