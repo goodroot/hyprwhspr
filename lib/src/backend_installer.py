@@ -1332,7 +1332,13 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
             base_deps.append('cuda-python>=12.3')
         
         run_command([str(pip_bin), 'install'] + base_deps, check=True)
-        
+
+        # Re-pin ml_dtypes and numpy after nemo_toolkit installation
+        # nemo_toolkit's dependency resolution can downgrade ml_dtypes to 0.4.x
+        # which lacks float4_e2m1fn required by onnx
+        log_info("Re-pinning ml_dtypes and numpy versions...")
+        run_command([str(pip_bin), 'install', '--upgrade', 'ml_dtypes>=0.5.4', 'numpy>=1.22,<2.4'], check=True)
+
         # Install torch with appropriate CUDA support
         if enable_cuda:
             log_info("Installing PyTorch with CUDA 12.1 support... May take a moment.")
