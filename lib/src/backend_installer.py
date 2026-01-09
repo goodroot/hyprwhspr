@@ -1528,8 +1528,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 # This mirrors what happens at runtime but ensures everything is ready
                 download_script = '''
 import onnx_asr
-print("Downloading Parakeet CTC model...", flush=True)
-model = onnx_asr.load_model("nemo-parakeet-ctc-0.6b", quantization="int8")
+print("Downloading Parakeet TDT V3 model...", flush=True)
+model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", quantization="int8")
 print("Downloading Silero VAD...", flush=True)
 vad = onnx_asr.load_vad("silero")
 print("Models cached successfully", flush=True)

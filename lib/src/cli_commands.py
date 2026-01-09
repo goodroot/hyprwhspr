@@ -470,7 +470,7 @@ def _prompt_backend_selection():
     print("\nChoose your transcription backend:")
     print()
     print("Local In-Memory Backends:")
-    print("  [1] ONNX Parakeet CTC - Best for CPU-only (Intel/AMD), ~11x realtime")
+    print("  [1] ONNX Parakeet TDT V3 - Best for CPU-only (Intel/AMD), ~9.5x realtime, includes punctuation")
     print("  [2] Whisper (CPU)     - whisper.cpp, works everywhere, ~6x realtime")
     print("  [3] Whisper (NVIDIA)  - whisper.cpp + CUDA, fast on NVIDIA GPUs")
     print("  [4] Whisper (Vulkan)  - whisper.cpp + Vulkan, AMD/Intel GPUs")
@@ -499,7 +499,7 @@ def _prompt_backend_selection():
 
             # Backend display names for warnings/messages
             backend_names = {
-                'onnx-asr': 'ONNX Parakeet CTC',
+                'onnx-asr': 'ONNX Parakeet TDT V3',
                 'cpu': 'Whisper CPU',
                 'nvidia': 'Whisper NVIDIA (CUDA)',
                 'amd': 'Whisper AMD/Intel (Vulkan)',
@@ -3072,6 +3072,8 @@ def validate_command():
     # Detect current backend to determine what to validate
     current_backend = _detect_current_backend()
     is_rest_api = current_backend in ['rest-api', 'parakeet', 'remote', 'realtime-ws']
+    is_onnx_asr = current_backend == 'onnx-asr'
+    is_pywhispercpp = current_backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']
     
     # Check static files
     required_files = [
@@ -3122,8 +3124,45 @@ def validate_command():
         log_error("✗ sounddevice not available")
         all_ok = False
     
-    # Check pywhispercpp (only for local backends)
-    if not is_rest_api:
+    # Check backend-specific packages
+    if is_onnx_asr:
+        # Check onnx-asr availability
+        onnx_asr_available = False
+        if venv_python.exists():
+            try:
+                result = subprocess.run(
+                    [str(venv_python), '-c', 'import onnx_asr'],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    onnx_asr_available = True
+            except Exception:
+                pass
+        
+        # Fallback: check in current environment if not found in venv
+        if not onnx_asr_available:
+            try:
+                import onnx_asr  # noqa: F401
+                onnx_asr_available = True
+            except ImportError:
+                onnx_asr_available = False
+        
+        if onnx_asr_available:
+            log_success("✓ onnx-asr available")
+        else:
+            log_warning("⚠ onnx-asr not available")
+            print("")
+            print("To use ONNX-ASR backend, run: hyprwhspr setup")
+            print("This will install the ONNX-ASR backend.")
+            print("")
+        
+        # Skip model file check for onnx-asr (uses different model format)
+        
+    elif is_pywhispercpp:
+        # Check pywhispercpp (only for pywhispercpp backends)
         pywhispercpp_available = False
         
         if venv_python.exists():
@@ -3180,7 +3219,7 @@ def validate_command():
             print("(or use REST API backend by setting 'transcription_backend': 'rest-api' in config.json)")
             print("")
         
-        # Check base model (only for local backends)
+        # Check base model (only for pywhispercpp backends)
         model_file = PYWHISPERCPP_MODELS_DIR / 'ggml-base.bin'
         if model_file.exists():
             log_success(f"✓ Base model exists: {model_file}")

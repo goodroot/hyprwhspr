@@ -57,7 +57,7 @@ class ConfigManager:
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
             'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
             # ONNX-ASR backend settings (CPU-optimized)
-            'onnx_asr_model': 'nemo-parakeet-ctc-0.6b',  # Fastest English model for CPU
+            'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
             'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
             'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
             # Visual feedback settings

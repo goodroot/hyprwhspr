@@ -86,10 +86,10 @@ class WhisperManager:
                     import onnx_asr
                 except ImportError:
                     print('ERROR: onnx-asr not installed. Run: hyprwhspr setup')
-                    print('ERROR: Select option [1] ONNX Parakeet CTC to install')
+                    print('ERROR: Select option [1] ONNX Parakeet to install')
                     return False
 
-                model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-ctc-0.6b')
+                model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
                 quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
                 use_vad = self.config.get_setting('onnx_asr_use_vad', True)
 
