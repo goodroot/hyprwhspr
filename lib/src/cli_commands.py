@@ -470,7 +470,7 @@ def _prompt_backend_selection():
     print("\nChoose your transcription backend:")
     print()
     print("Local In-Memory Backends:")
-    print("  [1] ONNX Parakeet TDT V3 - Best for CPU-only (Intel/AMD), ~9.5x realtime, includes punctuation")
+    print("  [1] ONNX Parakeet TDT V3 - Best for CPU-only (Intel/AMD), ~9.5x realtime")
     print("  [2] Whisper (CPU)     - whisper.cpp, works everywhere, ~6x realtime")
     print("  [3] Whisper (NVIDIA)  - whisper.cpp + CUDA, fast on NVIDIA GPUs")
     print("  [4] Whisper (Vulkan)  - whisper.cpp + Vulkan, AMD/Intel GPUs")

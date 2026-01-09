@@ -879,6 +879,13 @@ class WhisperManager:
                 if not segments:
                     transcription = ""
                 else:
+                    # Debug: log segment structure to diagnose punctuation issues
+                    if segments:
+                        first_seg = segments[0]
+                        print(f'[ONNX-ASR] DEBUG: First segment type={type(first_seg)}, attrs={dir(first_seg) if hasattr(first_seg, "__dict__") else "N/A"}', flush=True)
+                        if hasattr(first_seg, '__dict__'):
+                            print(f'[ONNX-ASR] DEBUG: First segment dict={first_seg.__dict__}', flush=True)
+                    
                     # Extract text from each segment
                     segment_texts = []
                     for seg in segments:
@@ -890,6 +897,7 @@ class WhisperManager:
                             # Fallback: try to get text representation
                             segment_texts.append(str(seg))
                     transcription = ' '.join(segment_texts)
+                    print(f'[ONNX-ASR] DEBUG: Combined transcription (before strip): {transcription!r}', flush=True)
             else:
                 # No VAD - direct result (string or object with .text attribute)
                 if hasattr(result, 'text'):
