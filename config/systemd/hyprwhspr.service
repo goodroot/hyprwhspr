@@ -2,6 +2,8 @@
 Description=hyprwhspr stt
 Documentation=https://github.com/goodroot/hyprwhspr
 After=graphical-session.target pipewire.service ydotool.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 Requires=ydotool.service
 Wants=pipewire.service
 
