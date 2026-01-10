@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | whisper/parakeet/REST api | stylish visuals
+    instant performance | parakeet/whisper/REST api | stylish visuals
 </p>
 
  <p align="center">
@@ -19,8 +19,9 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 ---
 
 - **Optimized for Arch Linux** - Seamless integration with Arch Linux via the AUR
-- **Local, very fast defaults** - Instant, private and accurate performance via in- smemory models
+- **Local, very fast defaults** - Instant, private and accurate performance via in-memory models
 - **Latest models**: Turbo-v3? Parakeet TDT V3? Optimized for top speed
+- **onnx-asr for wild CPU speeds**: No GPU? Optimized for great speed on any hardwared
 - **REST API** -  Securely connects cloud model or any model on localhost
 - **Themed visualizer** - Visualizes your voice, will automatchy Omarchy theme
 - **Word overides and prompts** - Custom hot keys, common words, and more
@@ -50,14 +51,9 @@ yay -S hyprwhspr-git
 Then run the auto installer, or perform your own:
 
 ```bash
-# Auto installer - uses recommended defaults
-hyprwhspr setup auto
-
 # Run interactive setup
 hyprwhspr setup
 ```
-
-> ⚠️ Omarchy install issue? You may need to disable Mise first: `mise unuse -g python` | https://github.com/goodroot/hyprwhspr/issues/75
 
 **The setup will walk you through the process:**
 
@@ -178,8 +174,6 @@ Bring an API key from OpenAI, and choose from:
 - **GPT-4o Mini Transcribe (2025-12-15)** - Updated version of the faster, lighter transcription model
 - **GPT Audio Mini (2025-12-15)** - General purpose audio model
 - **Whisper 1** - Legacy Whisper model
-
-> For realtime streaming transcription, use the `realtime-ws` backend (see above) with **GPT Realtime Mini (2025-12-15)**.
 
 **Groq**
 
@@ -452,9 +446,19 @@ Useful for chat applications, search boxes, or any input where you want to submi
 - **Left-click**: Start/stop recording (auto-starts service if needed)
 - **Right-click**: Restart Hyprwhspr service
 
+## Parakeet (Nvidia)
+
+Parakeet V3 via [onnx-asr](https://github.com/istupakov/onnx-asr) is a fantastic project.
+
+It provides very strong accuracy and nigh unbelievable speed on modest CPUs.
+
+Also great for GPUs.
+
+Select Parakeet V3 within `hyprwhspr setup`.
+
 ## Whisper (OpenAI)
 
-**Default model installed:** `ggml-base.bin` (~175MB) to `~/.local/share/pywhispercpp/models/`
+**Default multi-lingual model installed:** `ggml-base.bin` (~175MB) to `~/.local/share/pywhispercpp/models/`
 
 **GPU Acceleration (NVIDIA & AMD):**
 
@@ -549,11 +553,6 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
   
 - `"Transcribe as an ornery pirate on the cusp of scurvy."`
 
-## Parakeet (Nvidia)
-
-Whisper is the default, but any model works via API.
-
-Select Parakeet within `hyprwhspr setup`.
 
 ## Troubleshooting
 
