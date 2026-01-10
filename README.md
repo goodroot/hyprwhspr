@@ -22,8 +22,8 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Local, very fast defaults** - Instant, private and accurate performance via in-memory models
 - **Latest models** - Turbo-v3? Parakeet TDT V3? Latest and greatest
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
-- **REST API** - Securely connects cloud model or any model on localhost
-- **Themed visualizer** - Visualizes your voice, will automatchy Omarchy theme
+- **REST API** - Securely connect to cloud models or your own localhost models
+- **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
 - **Auto-paste anywhere** - Instant paste into any active buffer 
