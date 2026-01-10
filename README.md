@@ -26,7 +26,8 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
-- **Auto-paste anywhere** - Instant paste into any active buffer 
+- **Auto-paste anywhere** - Instant paste into any active buffer, or even auto enter (optional)
+- **Audio ducking 🦆** - Mutes system volume on record (optional)
 
 ## Quick start
 
