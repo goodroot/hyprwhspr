@@ -89,14 +89,30 @@ class WhisperManager:
                     print('ERROR: Select option [1] ONNX Parakeet to install')
                     return False
 
-                # Detect GPU availability at runtime
+                # Suppress ONNX Runtime verbose error logging
+                # Errors about missing CUDA libraries are expected and will fall back to CPU
+                import os
+                import logging
+                import sys
+                import contextlib
+                from io import StringIO
+                
+                # Set ONNX Runtime log level to suppress warnings/errors
+                os.environ['ORT_LOGGING_LEVEL'] = '4'  # 4 = FATAL (suppress ERROR/WARNING/INFO)
+                
+                # Detect GPU availability at runtime (but don't claim it if libraries aren't available)
                 use_gpu = False
                 try:
                     import onnxruntime
+                    # Suppress ONNX Runtime Python logging
+                    logging.getLogger('onnxruntime').setLevel(logging.CRITICAL)
+                    
+                    # Check if providers are listed (but they may not actually work)
                     available_providers = onnxruntime.get_available_providers()
                     if 'CUDAExecutionProvider' in available_providers or 'TensorrtExecutionProvider' in available_providers:
+                        # Note: We'll let onnx-asr try to use GPU, but it will fall back to CPU
+                        # if libraries aren't available. We won't claim GPU support upfront.
                         use_gpu = True
-                        print('[BACKEND] GPU acceleration available for onnx-asr', flush=True)
                 except Exception:
                     pass
 
@@ -109,10 +125,13 @@ class WhisperManager:
                 try:
                     # Load model with optional quantization
                     # onnx-asr automatically uses GPU providers if available
-                    if quantization:
-                        self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
-                    else:
-                        self._onnx_asr_model = onnx_asr.load_model(model_name)
+                    # Suppress stderr during model loading to avoid CUDA library error spam
+                    # These errors are harmless - ONNX Runtime will fall back to CPU automatically
+                    with contextlib.redirect_stderr(StringIO()):
+                        if quantization:
+                            self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
+                        else:
+                            self._onnx_asr_model = onnx_asr.load_model(model_name)
 
                     # Add VAD for long audio handling (>30s)
                     if use_vad:
