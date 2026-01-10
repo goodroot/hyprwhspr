@@ -364,23 +364,49 @@ def detect_cuda_host_compiler() -> Optional[str]:
 # ==================== System Dependencies ====================
 
 def install_system_dependencies():
-    """Install system dependencies needed for backend compilation"""
-    log_info("Ensuring system dependencies...")
-    
-    # Only install build dependencies, not waybar (CLI handles that)
+    """Install system dependencies needed for backend compilation.
+
+    On Arch Linux, automatically installs missing packages via pacman.
+    On other distributions, skips automatic installation and provides guidance.
+    """
+    log_info("Checking system dependencies...")
+
+    # Check if we're on an Arch-based system
+    if not shutil.which('pacman'):
+        # Not Arch - check for essential build tools and provide guidance
+        missing = []
+        if not shutil.which('cmake'):
+            missing.append('cmake')
+        if not shutil.which('make'):
+            missing.append('make')
+        if not shutil.which('git'):
+            missing.append('git')
+        if not shutil.which('gcc') and not shutil.which('cc'):
+            missing.append('gcc/build-essential')
+
+        if missing:
+            log_warning(f"Missing build tools: {', '.join(missing)}")
+            log_info("Please install these using your distribution's package manager:")
+            log_info("  Debian/Ubuntu: sudo apt install cmake make git build-essential python3-dev")
+            log_info("  Fedora: sudo dnf install cmake make git gcc-c++ python3-devel")
+            log_info("  openSUSE: sudo zypper install cmake make git gcc-c++ python3-devel")
+        else:
+            log_success("Build tools available")
+        return
+
+    # Arch Linux path - install via pacman
     pkgs = ['cmake', 'make', 'git', 'base-devel', 'python', 'curl']
-    
+
     to_install = []
     for pkg in pkgs:
-        try:
-            run_command(['pacman', '-Q', pkg], check=False, capture_output=True)
-        except subprocess.CalledProcessError:
+        result = run_command(['pacman', '-Q', pkg], check=False, capture_output=True)
+        if result.returncode != 0:
             to_install.append(pkg)
-    
+
     if to_install:
         log_info(f"Installing: {' '.join(to_install)}")
         run_sudo_command(['pacman', '-S', '--needed', '--noconfirm'] + to_install, check=False)
-    
+
     log_success("Dependencies ready")
 
 
@@ -445,13 +471,25 @@ def setup_nvidia_support() -> bool:
         os.environ['CUDACXX'] = nvcc_path
         log_success("CUDA toolkit present")
     else:
-        log_warning("CUDA toolkit not found; installing…")
-        run_sudo_command(['pacman', '-S', '--needed', '--noconfirm', 'cuda'], check=False)
-        
+        log_warning("CUDA toolkit not found")
+        # Try to install on Arch, provide guidance on other distros
+        if shutil.which('pacman'):
+            log_info("Installing CUDA toolkit...")
+            run_sudo_command(['pacman', '-S', '--needed', '--noconfirm', 'cuda'], check=False)
+        else:
+            log_info("Please install CUDA toolkit using your distribution's package manager:")
+            log_info("  Debian/Ubuntu: sudo apt install nvidia-cuda-toolkit")
+            log_info("  Fedora: sudo dnf install cuda")
+            log_info("  Or download from: https://developer.nvidia.com/cuda-downloads")
+
         if Path('/opt/cuda/bin/nvcc').exists():
             os.environ['PATH'] = '/opt/cuda/bin:' + os.environ.get('PATH', '')
             os.environ['CUDACXX'] = '/opt/cuda/bin/nvcc'
             log_success("CUDA installed")
+        elif Path('/usr/bin/nvcc').exists():
+            # Common path on Debian/Ubuntu
+            os.environ['CUDACXX'] = '/usr/bin/nvcc'
+            log_success("CUDA toolkit found")
         else:
             log_warning("nvcc still not visible; will build CPU-only")
             return False
@@ -507,8 +545,19 @@ def setup_amd_support() -> bool:
         os.environ['PATH'] = f"{rocm_path}/bin:" + os.environ.get('PATH', '')
         log_success("ROCm toolkit present")
     else:
-        log_warning("ROCm not found; installing...")
-        run_sudo_command(['yay', '-S', '--needed', '--noconfirm', 'rocm-hip-sdk', 'rocm-opencl-sdk'], check=False)
+        log_warning("ROCm not found")
+        # Try to install on Arch (requires AUR helper), provide guidance on other distros
+        if shutil.which('yay'):
+            log_info("Installing ROCm toolkit...")
+            run_sudo_command(['yay', '-S', '--needed', '--noconfirm', 'rocm-hip-sdk', 'rocm-opencl-sdk'], check=False)
+        elif shutil.which('pacman'):
+            log_info("ROCm requires an AUR helper (yay) on Arch Linux")
+            log_info("Install yay first, then re-run setup")
+        else:
+            log_info("Please install ROCm using your distribution's package manager:")
+            log_info("  Ubuntu: Follow https://rocm.docs.amd.com/en/latest/deploy/linux/installer/install.html")
+            log_info("  Fedora: sudo dnf install rocm-hip rocm-opencl")
+
         if Path(rocm_path).exists():
             os.environ['ROCM_PATH'] = rocm_path
             os.environ['PATH'] = f"{rocm_path}/bin:" + os.environ.get('PATH', '')
@@ -592,12 +641,13 @@ def detect_gpu_type() -> str:
     # 2. Check for ANY GPU via Vulkan
     # First check if vulkaninfo is installed
     if not shutil.which('vulkaninfo'):
-        # Try to install Vulkan tools to check for GPU
-        try:
-            log_debug("vulkaninfo not found, installing vulkan-tools for detection")
-            run_sudo_command(['pacman', '-S', '--needed', '--noconfirm', 'vulkan-tools'], check=False, verbose=False)
-        except:
-            pass
+        # Try to install Vulkan tools to check for GPU (Arch only, silent on other distros)
+        if shutil.which('pacman'):
+            try:
+                log_debug("vulkaninfo not found, installing vulkan-tools for detection")
+                run_sudo_command(['pacman', '-S', '--needed', '--noconfirm', 'vulkan-tools'], check=False, verbose=False)
+            except:
+                pass
 
     if shutil.which('vulkaninfo'):
         try:
@@ -635,19 +685,36 @@ def setup_vulkan_support() -> bool:
     log_info("Setting up Vulkan support...")
 
     # 1. Install Vulkan dependencies (both runtime and development headers)
-    log_info("Installing Vulkan dependencies...")
-    vulkan_pkgs = ['vulkan-headers', 'vulkan-icd-loader', 'shaderc', 'vulkan-tools']
-
-    try:
-        if not run_sudo_command(
-            ['pacman', '-S', '--needed', '--noconfirm'] + vulkan_pkgs,
-            check=False
-        ):
-            log_warning("Failed to install some Vulkan packages")
+    if shutil.which('pacman'):
+        log_info("Installing Vulkan dependencies...")
+        vulkan_pkgs = ['vulkan-headers', 'vulkan-icd-loader', 'shaderc', 'vulkan-tools']
+        try:
+            result = run_sudo_command(
+                ['pacman', '-S', '--needed', '--noconfirm'] + vulkan_pkgs,
+                check=False
+            )
+            if not result or result.returncode != 0:
+                log_warning("Failed to install some Vulkan packages")
+                return False
+        except Exception as e:
+            log_error(f"Failed to install Vulkan dependencies: {e}")
             return False
-    except Exception as e:
-        log_error(f"Failed to install Vulkan dependencies: {e}")
-        return False
+    else:
+        # Check if Vulkan development files are available
+        log_info("Checking for Vulkan development files...")
+        # Look for vulkan headers in common locations
+        vulkan_header_paths = [
+            '/usr/include/vulkan/vulkan.h',
+            '/usr/local/include/vulkan/vulkan.h',
+        ]
+        has_vulkan_dev = any(Path(p).exists() for p in vulkan_header_paths)
+        if not has_vulkan_dev:
+            log_warning("Vulkan development headers not found")
+            log_info("Please install Vulkan development packages:")
+            log_info("  Debian/Ubuntu: sudo apt install libvulkan-dev vulkan-tools shaderc")
+            log_info("  Fedora: sudo dnf install vulkan-headers vulkan-loader-devel shaderc")
+            log_info("  openSUSE: sudo zypper install vulkan-devel shaderc")
+            return False
 
     # 2. Verify Vulkan is now available
     if not shutil.which('vulkaninfo'):
@@ -666,7 +733,7 @@ def setup_vulkan_support() -> bool:
             return False
 
         # Check for actual GPU (not software renderer)
-        output = result.stdout.lower()
+        output = _safe_decode(result.stdout).lower()
         if 'llvmpipe' in output or 'software' in output:
             log_warning("Only software Vulkan renderer detected (no GPU)")
             return False

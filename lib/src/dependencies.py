@@ -26,10 +26,14 @@ def require_package(
         return __import__(module_name)
     except (ImportError, ModuleNotFoundError) as e:
         pkg = package_name or f"python-{module_name}"
-        hint = install_hint or f"pacman -S {pkg}    # system-wide on Arch"
-
         print(f"ERROR: {pkg} is not available in this Python environment.", file=sys.stderr)
         print(f"ImportError: {e}", file=sys.stderr)
         print("\nThis is a required dependency. Please install it:", file=sys.stderr)
-        print(f"  {hint}", file=sys.stderr)
+        if install_hint:
+            print(f"  {install_hint}", file=sys.stderr)
+        else:
+            print(f"  Arch:          pacman -S {pkg}", file=sys.stderr)
+            print(f"  Debian/Ubuntu: apt install python3-{module_name}", file=sys.stderr)
+            print(f"  Fedora:        dnf install python3-{module_name}", file=sys.stderr)
+            print(f"  Or via pip:    pip install {module_name}", file=sys.stderr)
         sys.exit(1)

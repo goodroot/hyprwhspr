@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-    <b>Native speech-to-text for Arch Linux</b> - Fast, accurate and private system-wide dictation
+    <b>Native speech-to-text for Linux</b> - Fast, accurate and private system-wide dictation
 </p>
 
 <p align="center">
@@ -11,14 +11,14 @@
 </p>
 
  <p align="center">
-    <i>Great for Vanilla Arch, CachyOS, SteamOS, Omarchy, others</i>
+    <i>Supports Arch, Debian, Ubuntu, Fedora, openSUSE and more</i>
  </p>
 
 https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
-- **Optimized for Arch Linux** - Install via the AUR then run a short guided a setup
+- **Built for Linux** - Native AUR package for Arch, or use Debian/Ubuntu/Fedora/openSUSE
 - **Local, very fast defaults** - Instant, private and accurate performance via in-memory models
 - **Latest models** - Turbo-v3? Parakeet TDT V3? Latest and greatest
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
@@ -32,11 +32,12 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ### Prerequisites
 
-- **[Arch Linux](https://archlinux.org/)** based system
+- **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, etc.)
+- **Wayland compositor** (Hyprland recommended, but works with others)
 - **NVIDIA GPU** (optional, for CUDA acceleration)
 - **AMD/Intel GPU / APU** (optional, for Vulkan acceleration)
 
-### Quick start
+### Quick start (Arch Linux)
 
 On the AUR:
 
@@ -86,6 +87,75 @@ yay -Syu hyprwhspr
 # If needed, re-run setup (idempotent)
 hyprwhspr setup
 ```
+
+### Other Linux distros
+
+hyprwhspr can run on any Linux distribution with systemd. 
+
+Install dependencies manually, then use the setup script.
+
+**Debian / Ubuntu:**
+
+```bash
+# Install system dependencies
+sudo apt install python3 python3-pip python3-venv git cmake make build-essential \
+    python3-dev python3-sounddevice python3-numpy python3-scipy python3-evdev \
+    python3-pyperclip python3-requests python3-psutil python3-rich \
+    python3-gi gir1.2-gtk-4.0 pipewire pipewire-pulse ydotool
+
+# Clone and run setup
+git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
+cd ~/hyprwhspr
+./bin/hyprwhspr setup
+```
+
+**Fedora:**
+
+```bash
+# Install system dependencies
+sudo dnf install python3 python3-pip python3-devel git cmake make gcc-c++ \
+    python3-sounddevice python3-numpy python3-scipy python3-evdev \
+    python3-pyperclip python3-requests python3-psutil python3-rich \
+    python3-gobject gtk4 pipewire pipewire-pulseaudio ydotool
+
+# Clone and run setup
+git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
+cd ~/hyprwhspr
+./bin/hyprwhspr setup
+```
+
+**openSUSE:**
+
+```bash
+# Install system dependencies
+sudo zypper install python3 python3-pip python3-devel git cmake make gcc-c++ \
+    python3-sounddevice python3-numpy python3-scipy python3-evdev \
+    python3-pyperclip python3-requests python3-psutil python3-rich \
+    python3-gobject typelib-1_0-Gtk-4_0 pipewire pipewire-pulseaudio ydotool
+
+# Clone and run setup
+git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
+cd ~/hyprwhspr
+./bin/hyprwhspr setup
+```
+
+**Post-installation (all distros):**
+
+The setup wizard handles most configuration automatically:
+
+- Creates `~/.local/bin/hyprwhspr` symlink (so the command works from anywhere)
+- Configures systemd services
+- Sets up permissions (groups, udev rules)
+
+After setup completes:
+
+```bash
+# Log out and back in for group permissions to take effect
+# Then verify everything is running:
+hyprwhspr status
+```
+
+> **Note:** On non-Arch systems, the setup will guide you through any missing dependencies. GPU acceleration (CUDA/Vulkan) requires additional packages - the setup will provide instructions.
 
 ### CLI Commands
 

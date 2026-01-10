@@ -18,9 +18,11 @@ except (ImportError, ModuleNotFoundError) as e:
     # Hard fail – rich is required for the CLI
     print("ERROR: python-rich is not available in this Python environment.", file=sys.stderr)
     print(f"ImportError: {e}", file=sys.stderr)
-    print("\nTry installing it, for example:", file=sys.stderr)
-    print("  pacman -S python-rich    # system-wide on Arch", file=sys.stderr)
-    print("  pip install rich>=13.0.0  # or via pip", file=sys.stderr)
+    print("\nTry installing it using your package manager:", file=sys.stderr)
+    print("  Arch:          pacman -S python-rich", file=sys.stderr)
+    print("  Debian/Ubuntu: apt install python3-rich", file=sys.stderr)
+    print("  Fedora:        dnf install python3-rich", file=sys.stderr)
+    print("  Or via pip:    pip install rich>=13.0.0", file=sys.stderr)
     sys.exit(1)
 
 try:
@@ -865,6 +867,59 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
     return config
 
 
+def _setup_command_symlink():
+    """Offer to create ~/.local/bin/hyprwhspr symlink for git clone installs"""
+    # Only relevant for non-package installs (git clones)
+    if HYPRWHSPR_ROOT == '/usr/lib/hyprwhspr':
+        return  # Package install, symlink not needed
+
+    local_bin = USER_HOME / '.local' / 'bin'
+    symlink_path = local_bin / 'hyprwhspr'
+    source_path = Path(HYPRWHSPR_ROOT) / 'bin' / 'hyprwhspr'
+
+    # Check if symlink already exists and points to correct location
+    if symlink_path.is_symlink():
+        try:
+            if symlink_path.resolve() == source_path.resolve():
+                log_info(f"Command symlink already configured: {symlink_path}")
+                return
+        except Exception:
+            pass
+
+    # Check if there's already a hyprwhspr in PATH that's not our symlink
+    existing = shutil.which('hyprwhspr')
+    if existing and Path(existing).resolve() != source_path.resolve():
+        log_info(f"hyprwhspr already in PATH: {existing}")
+        return
+
+    print("\n" + "="*60)
+    print("Command Setup")
+    print("="*60)
+    print(f"\nInstallation detected at: {HYPRWHSPR_ROOT}")
+    print(f"Create symlink so 'hyprwhspr' command works from anywhere?")
+    print(f"  {symlink_path} -> {source_path}")
+
+    if Confirm.ask("Create command symlink?", default=True):
+        try:
+            local_bin.mkdir(parents=True, exist_ok=True)
+            # Remove existing symlink if it points elsewhere
+            if symlink_path.exists() or symlink_path.is_symlink():
+                symlink_path.unlink()
+            symlink_path.symlink_to(source_path)
+            log_success(f"Created symlink: {symlink_path}")
+
+            # Check if ~/.local/bin is in PATH
+            path_dirs = os.environ.get('PATH', '').split(':')
+            if str(local_bin) not in path_dirs:
+                log_warning(f"{local_bin} is not in your PATH")
+                log_info("Add this to ~/.bashrc or ~/.zshrc:")
+                log_info(f'  export PATH="$HOME/.local/bin:$PATH"')
+        except Exception as e:
+            log_warning(f"Failed to create symlink: {e}")
+            log_info(f"You can create it manually:")
+            log_info(f"  ln -sf {source_path} {symlink_path}")
+
+
 def setup_command():
     """Interactive full initial setup"""
     print("\n" + "="*60)
@@ -883,7 +938,10 @@ def setup_command():
             except Exception:
                 pass
         log_info("MISE deactivated for installation")
-    
+
+    # Setup command symlink for git clone installs
+    _setup_command_symlink()
+
     # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
     backend_result = _prompt_backend_selection()
     if not backend_result:
