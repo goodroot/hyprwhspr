@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **Optimized for Arch Linux** - Install via the AUR then run a short guided a setup
 - **Local, very fast defaults** - Instant, private and accurate performance via in-memory models
-- **Latest models** - Turbo-v3? Parakeet TDT V3? Optimized for top speed
+- **Latest models** - Turbo-v3? Parakeet TDT V3? Latest and greatest
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **REST API** - Securely connects cloud model or any model on localhost
 - **Themed visualizer** - Visualizes your voice, will automatchy Omarchy theme
