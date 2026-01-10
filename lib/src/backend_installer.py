@@ -1385,8 +1385,11 @@ def install_onnx_asr(pip_bin: Path, enable_gpu: bool = False) -> bool:
     if enable_gpu:
         log_info("Installing onnx-asr with GPU support (CUDA/TensorRT)...")
         try:
+            # Explicitly install onnxruntime-gpu first to ensure it's available
+            log_info("Installing onnxruntime-gpu...")
+            run_command([str(pip_bin), 'install', 'onnxruntime-gpu'], check=True)
             # Install onnx-asr with GPU backend and HuggingFace hub support
-            # [cuda] = onnxruntime-gpu for CUDA/TensorRT
+            # [cuda] = onnxruntime-gpu for CUDA/TensorRT (but we install it explicitly above)
             # [hub] = huggingface_hub for model downloads
             run_command([str(pip_bin), 'install', 'onnx-asr[cuda,hub]'], check=True)
             log_success("onnx-asr installed with GPU support")
