@@ -65,7 +65,7 @@ class ConfigManager:
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
             # Audio ducking settings
             'audio_ducking': False,              # Reduce system volume during recording
-            'audio_ducking_percent': 70,         # How much to reduce BY (70 = reduce to 30% of original)
+            'audio_ducking_percent': 50,         # How much to reduce BY (50 = reduce to 50% of original)
             # Post-paste behavior
             'auto_submit': False                 # Send Enter key after pasting text (for chat/search inputs)
         }

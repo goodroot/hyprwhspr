@@ -1254,8 +1254,29 @@ def setup_command():
     else:
         print("\nDependencies not found. Install python-gobject and gtk4-layer-shell to enable.")
         setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
-    
-    # Step 3c: Hyprland compositor bindings
+
+    # Step 3c: Audio ducking setup
+    print("\n" + "="*60)
+    print("Audio Ducking")
+    print("="*60)
+    print("\nAutomatically reduces system volume while recording to prevent")
+    print("audio interference with your microphone.")
+
+    setup_audio_ducking_choice = Confirm.ask("Enable audio ducking?", default=True)
+    audio_ducking_percent = 50  # Default
+    if setup_audio_ducking_choice:
+        print("\nHow much to reduce volume BY during recording?")
+        print("  50 = reduce to 50% of original (recommended)")
+        print("  70 = reduce to 30% of original (aggressive)")
+        print("  30 = reduce to 70% of original (subtle)")
+        ducking_input = Prompt.ask("Reduction percentage", default="50")
+        try:
+            audio_ducking_percent = max(0, min(100, int(ducking_input)))
+        except ValueError:
+            audio_ducking_percent = 50
+            log_warning("Invalid input, using default 50%")
+
+    # Step 3d: Hyprland compositor bindings
     print("\n" + "="*60)
     print("Hyprland Compositor Bindings")
     print("="*60)
@@ -1320,6 +1341,10 @@ def setup_command():
         print(f"Model: {selected_model}")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
+    if setup_audio_ducking_choice:
+        print(f"Audio ducking: Yes ({audio_ducking_percent}% reduction)")
+    else:
+        print("Audio ducking: No")
     print(f"Hyprland compositor bindings: {'Yes' if setup_hyprland_choice else 'No'}")
     if setup_systemd_choice:
         print("Systemd services: Yes (ydotool + hyprwhspr)")
@@ -1362,8 +1387,18 @@ def setup_command():
         else:
             mic_osd_disable()
             log_info("Mic-OSD visualization disabled")
-        
-        # Step 2c: Hyprland compositor bindings
+
+        # Step 2c: Audio ducking
+        config = ConfigManager()
+        config.set_setting('audio_ducking', setup_audio_ducking_choice)
+        if setup_audio_ducking_choice:
+            config.set_setting('audio_ducking_percent', audio_ducking_percent)
+            log_success(f"Audio ducking enabled ({audio_ducking_percent}% reduction)")
+        else:
+            log_info("Audio ducking disabled")
+        config.save_config()
+
+        # Step 2d: Hyprland compositor bindings
         if setup_hyprland_choice:
             print("\n" + "="*60)
             print("Hyprland Compositor Bindings")
