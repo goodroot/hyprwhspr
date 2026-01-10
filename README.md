@@ -488,6 +488,19 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 ... Be careful!
 
+**Audio ducking** - quiet system volume on record:
+
+```json
+{
+  "audio_ducking": true,
+  "audio_ducking_percent": 70
+}
+```
+
+
+- `audio_ducking: true` Set true to enable audio ducking 
+- `audio_ducking_percent: 70` -  How much to reduce volume BY (70 = reduces to 30% of original)
+
 **Add dynamic tray icon** to your `~/.config/waybar/config`:
 
 ```json

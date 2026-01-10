@@ -51,6 +51,7 @@ from whisper_manager import WhisperManager
 from text_injector import TextInjector
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
+from audio_ducker import AudioDucker
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
@@ -71,6 +72,10 @@ class hyprwhsprApp:
 
         # Initialize audio feedback manager
         self.audio_manager = AudioManager(self.config)
+
+        # Initialize audio ducker for reducing system volume during recording
+        ducking_percent = self.config.get_setting('audio_ducking_percent', 70)
+        self.audio_ducker = AudioDucker(reduction_percent=ducking_percent)
 
         # Initialize whisper manager with shared config
         self.whisper_manager = WhisperManager(config_manager=self.config)
@@ -511,7 +516,11 @@ class hyprwhsprApp:
             
             # Write recording status to file for tray script
             self._write_recording_status(True)
-            
+
+            # Duck system audio if enabled
+            if self.config.get_setting('audio_ducking', False):
+                self.audio_ducker.duck()
+
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
             
@@ -573,6 +582,10 @@ class hyprwhsprApp:
                         self._notify_zero_volume("Microphone disconnected - please replug USB microphone", log_level="ERROR")
                     else:
                         self._notify_zero_volume("Microphone not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+
+                    # Restore audio if it was ducked
+                    if self.audio_ducker.is_ducked:
+                        self.audio_ducker.restore()
                     return  # Don't attempt recovery during user-initiated recording
                 
                 # Stream is verified working - show mic-osd visualization
@@ -596,6 +609,10 @@ class hyprwhsprApp:
                         self._notify_zero_volume("Microphone disconnected - please replug USB microphone", log_level="ERROR")
                     else:
                         self._notify_zero_volume("Microphone stream unstable - please wait a moment and try recording again", log_level="WARN")
+
+                    # Restore audio if it was ducked
+                    if self.audio_ducker.is_ducked:
+                        self.audio_ducker.restore()
                     return
                 
                 # Recording is confirmed working - abort any in-progress recovery and clear background retries
@@ -633,8 +650,12 @@ class hyprwhsprApp:
                 self.is_recording = False
                 self._write_recording_status(False)
                 self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+
+                # Restore audio if it was ducked
+                if self.audio_ducker.is_ducked:
+                    self.audio_ducker.restore()
                 return
-            
+
         except Exception as e:
             print(f"[ERROR] Failed to start recording: {e}", flush=True)
 
@@ -651,6 +672,10 @@ class hyprwhsprApp:
             self.is_recording = False
             self._write_recording_status(False)
 
+            # Restore audio if it was ducked
+            if self.audio_ducker.is_ducked:
+                self.audio_ducker.restore()
+
     def _cancel_recording_muted(self):
         """Cancel recording early due to muted microphone"""
         if not self.is_recording:
@@ -661,6 +686,11 @@ class hyprwhsprApp:
             self._hide_mic_osd()
             self._stop_audio_level_monitoring()
             self._write_recording_status(False)
+
+            # Restore audio if it was ducked
+            if self.audio_ducker.is_ducked:
+                self.audio_ducker.restore()
+
             self.audio_capture.stop_recording()
             self.audio_manager.play_error_sound()
             # Note: No desktop notification - tray will detect muted state via audio level monitoring
@@ -671,6 +701,9 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
+                # Restore audio if it was ducked
+                if self.audio_ducker.is_ducked:
+                    self.audio_ducker.restore()
             except Exception:
                 pass  # Best effort cleanup
 
@@ -692,7 +725,11 @@ class hyprwhsprApp:
             
             # Write recording status to file for tray script
             self._write_recording_status(False)
-            
+
+            # Restore system audio if it was ducked
+            if self.audio_ducker.is_ducked:
+                self.audio_ducker.restore()
+
             # Check backend type
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
             backend = normalize_backend(backend)

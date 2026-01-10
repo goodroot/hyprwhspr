@@ -63,6 +63,9 @@ class ConfigManager:
             # Visual feedback settings
             'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
+            # Audio ducking settings
+            'audio_ducking': False,              # Reduce system volume during recording
+            'audio_ducking_percent': 70,         # How much to reduce BY (70 = reduce to 30% of original)
             # Post-paste behavior
             'auto_submit': False                 # Send Enter key after pasting text (for chat/search inputs)
         }
