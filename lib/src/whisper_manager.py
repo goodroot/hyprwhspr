@@ -930,8 +930,7 @@ class WhisperManager:
                 else:
                     transcription = str(result)
 
-            rtf = elapsed / audio_duration if audio_duration > 0 else 0
-            print(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s (RTF: {rtf:.2f})', flush=True)
+            print(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s', flush=True)
 
             return transcription.strip()
 
