@@ -968,7 +968,8 @@ def setup_command():
             print("="*60)
             if backend_normalized == 'onnx-asr':
                 print("\nThis will install the ONNX-ASR backend for hyprwhspr.")
-                print("This is a CPU-optimized ASR backend using ONNX runtime.")
+                print("This backend automatically detects and uses GPU acceleration when available,")
+                print("or falls back to CPU-optimized mode. Uses ONNX runtime for fast transcription.")
                 print("This may take several minutes as it downloads models and dependencies.")
             else:
                 print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")

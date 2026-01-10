@@ -1521,20 +1521,21 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 try:
                     result = run_command(['timeout', '2s', 'nvidia-smi', '-L'], check=False, capture_output=True)
                     if result.returncode == 0 and result.stdout:
-                        output = _safe_decode(result.stdout).strip().lower()
+                        output = _safe_decode(result.stdout).strip()
+                        output_lower = output.lower()
                         # Check for "GPU N:" pattern which indicates an actual GPU listing
-                        if 'gpu 0:' in output or 'gpu 1:' in output or 'gpu 2:' in output or 'gpu 3:' in output:
+                        if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
                             enable_gpu = True
                             log_info("NVIDIA GPU detected - will install onnx-asr with GPU support")
                         else:
-                            log_info("nvidia-smi present but no NVIDIA GPU hardware detected")
+                            log_info("NVIDIA driver present but no GPU hardware detected")
                     else:
-                        log_info("nvidia-smi found but not responding")
+                        log_info("NVIDIA driver check failed - will use CPU mode")
                 except Exception:
-                    log_info("nvidia-smi check failed")
+                    log_info("GPU detection failed - will use CPU mode")
             
             if not enable_gpu:
-                log_info("No CUDA detected - will install onnx-asr (CPU-optimized)")
+                log_info("Installing onnx-asr (CPU-optimized)")
 
             # Install base requirements first
             requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
