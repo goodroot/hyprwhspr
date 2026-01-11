@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
 - **Auto-paste anywhere** - Instant paste into any active buffer, or even auto enter (optional)
-- **Audio ducking 🦆** - Mutes system volume on record (optional)
+- **Audio ducking 🦆** - Reduces system volume on record (optional)
 
 ## Quick start
 
