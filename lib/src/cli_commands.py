@@ -2694,30 +2694,6 @@ def setup_permissions():
     log_warning("You may need to log out/in for new group memberships to apply")
 
 
-# ==================== Validate Command ====================
-
-def cleanup_venv_command():
-    """Remove the venv directory completely"""
-    if not VENV_DIR.exists():
-        log_info("No venv found")
-        return True
-    
-    log_warning("This will remove the entire Python virtual environment.")
-    log_warning("All installed packages (including pywhispercpp) will be deleted.")
-    if not Confirm.ask("Are you sure?", default=False):
-        log_info("Cleanup cancelled")
-        return False
-    
-    try:
-        import shutil
-        shutil.rmtree(VENV_DIR)
-        log_success("Venv removed successfully")
-        return True
-    except Exception as e:
-        log_error(f"Failed to remove venv: {e}")
-        return False
-
-
 # ==================== Backend Management Commands ====================
 
 def backend_repair_command():

@@ -56,56 +56,10 @@ class AudioManager:
             if not self.assets_dir.exists():
                 self.assets_dir = Path(__file__).parent.parent / "assets"
         
-        # Start sound path resolution
-        if self.start_sound_path:
-            # Try the path as-is first (for absolute paths)
-            start_path = Path(self.start_sound_path)
-            if start_path.exists():
-                self.start_sound = start_path
-            else:
-                # Try relative to assets directory (for relative paths like "ping-up.ogg")
-                start_path = self.assets_dir / self.start_sound_path
-                if start_path.exists():
-                    self.start_sound = start_path
-                else:
-                    # Fall back to default
-                    self.start_sound = self.assets_dir / "ping-up.ogg"
-        else:
-            self.start_sound = self.assets_dir / "ping-up.ogg"
-        
-        # Stop sound path resolution
-        if self.stop_sound_path:
-            # Try the path as-is first (for absolute paths)
-            stop_path = Path(self.stop_sound_path)
-            if stop_path.exists():
-                self.stop_sound = stop_path
-            else:
-                # Try relative to assets directory (for relative paths like "ping-down.ogg")
-                stop_path = self.assets_dir / self.stop_sound_path
-                if stop_path.exists():
-                    self.stop_sound = stop_path
-                else:
-                    # Fall back to default
-                    self.stop_sound = self.assets_dir / "ping-down.ogg"
-        else:
-            self.stop_sound = self.assets_dir / "ping-down.ogg"
-
-        # Error sound path resolution
-        if self.error_sound_path:
-            # Try the path as-is first (for absolute paths)
-            error_path = Path(self.error_sound_path)
-            if error_path.exists():
-                self.error_sound = error_path
-            else:
-                # Try relative to assets directory (for relative paths like "ping-error.ogg")
-                error_path = self.assets_dir / self.error_sound_path
-                if error_path.exists():
-                    self.error_sound = error_path
-                else:
-                    # Fall back to default
-                    self.error_sound = self.assets_dir / "ping-error.ogg"
-        else:
-            self.error_sound = self.assets_dir / "ping-error.ogg"
+        # Resolve sound paths (custom path -> relative to assets -> default)
+        self.start_sound = self._resolve_sound_path(self.start_sound_path, "ping-up.ogg")
+        self.stop_sound = self._resolve_sound_path(self.stop_sound_path, "ping-down.ogg")
+        self.error_sound = self._resolve_sound_path(self.error_sound_path, "ping-error.ogg")
 
         # Check if audio files exist
         self.start_sound_available = self.start_sound.exists()
@@ -127,11 +81,29 @@ class AudioManager:
             volume = float(volume)
         except (ValueError, TypeError):
             volume = 0.3
-        
+
         # Clamp between 0.1 (10%) and 1.0 (100%)
         volume = max(0.1, min(volume, 1.0))
         return volume
-    
+
+    def _resolve_sound_path(self, custom_path: Optional[str], default_filename: str) -> Path:
+        """
+        Resolve a sound file path with fallback logic.
+
+        Tries: custom_path as-is -> custom_path relative to assets -> default
+        """
+        if custom_path:
+            # Try as absolute path first
+            path = Path(custom_path)
+            if path.exists():
+                return path
+            # Try relative to assets directory
+            path = self.assets_dir / custom_path
+            if path.exists():
+                return path
+        # Fall back to default
+        return self.assets_dir / default_filename
+
     def _play_sound(self, sound_file: Path, volume: float = None) -> bool:
         """
         Play an audio file with volume control
