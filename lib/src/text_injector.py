@@ -4,6 +4,7 @@ Handles injecting transcribed text into other applications using paste strategy
 """
 
 import os
+import re
 import sys
 import shutil
 import subprocess
@@ -26,14 +27,6 @@ class TextInjector:
     def __init__(self, config_manager=None):
         # Configuration
         self.config_manager = config_manager
-
-        # Initialize settings from config if available
-        if self.config_manager:
-            # Always use paste strategy for fast, reliable injection
-            pass
-        else:
-            # No fallback settings needed
-            pass
 
         # Detect available injectors
         self.ydotool_available = self._check_ydotool()
@@ -246,8 +239,6 @@ class TextInjector:
         """
         Preprocess text to handle common speech-to-text corrections and remove unwanted line breaks
         """
-        import re
-
         # Normalize line breaks to spaces to avoid unintended "Enter"
         processed = text.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
 
@@ -304,8 +295,6 @@ class TextInjector:
 
     def _apply_word_overrides(self, text: str) -> str:
         """Apply user-defined word overrides to the text"""
-        import re
-
         if not self.config_manager:
             return text
 

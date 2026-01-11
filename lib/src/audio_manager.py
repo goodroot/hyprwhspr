@@ -152,17 +152,17 @@ class AudioManager:
         
         try:
             # Try using ffplay (most reliable, supports volume control)
-            if self._is_ffplay_available():
+            if self._is_tool_available('ffplay'):
                 return self._play_with_ffplay(sound_file, volume)
-            
+
             # Fallback to aplay (ALSA, no volume control)
-            elif self._is_aplay_available():
+            elif self._is_tool_available('aplay'):
                 return self._play_with_aplay(sound_file)
-            
+
             # Fallback to paplay (PulseAudio, no volume control)
-            elif self._is_paplay_available():
+            elif self._is_tool_available('paplay'):
                 return self._play_with_paplay(sound_file)
-            
+
             else:
                 print("No audio playback tools available (ffplay, aplay, or paplay)")
                 return False
@@ -171,88 +171,48 @@ class AudioManager:
             print(f"Failed to play audio: {e}")
             return False
     
-    def _is_ffplay_available(self) -> bool:
-        """Check if ffplay is available"""
+    def _is_tool_available(self, tool_name: str) -> bool:
+        """Check if a command-line tool is available"""
         try:
-            result = subprocess.run(['which', 'ffplay'], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(['which', tool_name], capture_output=True, text=True, timeout=5)
             return result.returncode == 0
         except Exception:
             return False
-    
-    def _is_aplay_available(self) -> bool:
-        """Check if aplay is available"""
+
+    def _run_audio_command(self, cmd: list, tool_name: str) -> bool:
+        """Run an audio command in a background thread"""
         try:
-            result = subprocess.run(['which', 'aplay'], capture_output=True, text=True, timeout=5)
-            return result.returncode == 0
-        except Exception:
+            def play_audio():
+                subprocess.run(cmd, capture_output=True, timeout=5)
+
+            thread = threading.Thread(target=play_audio, daemon=True)
+            thread.start()
+            return True
+        except Exception as e:
+            print(f"{tool_name} failed: {e}")
             return False
-    
-    def _is_paplay_available(self) -> bool:
-        """Check if paplay is available"""
-        try:
-            result = subprocess.run(['which', 'paplay'], capture_output=True, text=True, timeout=5)
-            return result.returncode == 0
-        except Exception:
-            return False
-    
+
     def _play_with_ffplay(self, sound_file: Path, volume: float) -> bool:
         """Play audio with ffplay (supports volume control)"""
-        try:
-            # Convert volume from 0.1-1.0 to ffplay's -volume (0-100)
-            ffplay_volume = int(volume * 100)
-            
-            cmd = [
-                'ffplay', 
-                '-nodisp',  # No display window
-                '-autoexit',  # Exit after playing
-                '-volume', str(ffplay_volume),
-                '-loglevel', 'error',  # Minimal logging
-                str(sound_file)
-            ]
-            
-            # Run in background thread to avoid blocking
-            def play_audio():
-                subprocess.run(cmd, capture_output=True, timeout=5)
-            
-            thread = threading.Thread(target=play_audio, daemon=True)
-            thread.start()
-            return True
-            
-        except Exception as e:
-            print(f"ffplay failed: {e}")
-            return False
-    
+        # Convert volume from 0.1-1.0 to ffplay's -volume (0-100)
+        ffplay_volume = int(volume * 100)
+        cmd = [
+            'ffplay',
+            '-nodisp',  # No display window
+            '-autoexit',  # Exit after playing
+            '-volume', str(ffplay_volume),
+            '-loglevel', 'error',  # Minimal logging
+            str(sound_file)
+        ]
+        return self._run_audio_command(cmd, 'ffplay')
+
     def _play_with_aplay(self, sound_file: Path) -> bool:
         """Play audio with aplay (ALSA, no volume control)"""
-        try:
-            cmd = ['aplay', '-q', str(sound_file)]
-            
-            def play_audio():
-                subprocess.run(cmd, capture_output=True, timeout=5)
-            
-            thread = threading.Thread(target=play_audio, daemon=True)
-            thread.start()
-            return True
-            
-        except Exception as e:
-            print(f"aplay failed: {e}")
-            return False
-    
+        return self._run_audio_command(['aplay', '-q', str(sound_file)], 'aplay')
+
     def _play_with_paplay(self, sound_file: Path) -> bool:
         """Play audio with paplay (PulseAudio, no volume control)"""
-        try:
-            cmd = ['paplay', str(sound_file)]
-            
-            def play_audio():
-                subprocess.run(cmd, capture_output=True, timeout=5)
-            
-            thread = threading.Thread(target=play_audio, daemon=True)
-            thread.start()
-            return True
-            
-        except Exception as e:
-            print(f"paplay failed: {e}")
-            return False
+        return self._run_audio_command(['paplay', str(sound_file)], 'paplay')
     
     def play_start_sound(self) -> bool:
         """Play the recording start sound"""
