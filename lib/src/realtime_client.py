@@ -45,6 +45,7 @@ class RealtimeClient:
         self.model = None
         self.instructions = None
         self.mode = mode
+        self.language = None  # Language code for transcription (None = auto-detect)
         
         # Connection state
         self.connected = False
@@ -269,6 +270,8 @@ class RealtimeClient:
         
         if self.mode == 'transcribe':
             # Transcription-only session
+            # Use stored language if set, otherwise default to 'en' (or None for auto-detect)
+            transcription_language = self.language if self.language is not None else 'en'
             session_data = {
                 'type': 'transcription',
                 'audio': {
@@ -279,7 +282,7 @@ class RealtimeClient:
                         },
                         'transcription': {
                             'model': 'gpt-4o-mini-transcribe',
-                            'language': 'en'
+                            'language': transcription_language
                         },
                         'turn_detection': {
                             'type': 'server_vad',
@@ -317,6 +320,16 @@ class RealtimeClient:
             print(f'[REALTIME] Sent session.update', flush=True)
         except Exception as e:
             print(f'[REALTIME] Failed to send session.update: {e}', flush=True)
+    
+    def update_language(self, language: Optional[str]):
+        """Update the language for transcription and resend session.update
+        
+        Args:
+            language: Language code (e.g., 'en', 'it', 'fr') or None for auto-detect
+        """
+        self.language = language
+        if self.connected:
+            self._send_session_update()
     
     def _attempt_reconnect(self):
         """Attempt to reconnect with exponential backoff"""

@@ -330,6 +330,30 @@ Examples:
 - `"F12"` - Just F12 (no modifier)
 - `"RCTRL+RSHIFT+ENTER"` - Right Ctrl + Right Shift + Enter
 
+**Secondary shortcut with language** - use a different hotkey for a specific language:
+
+```jsonc
+{
+    "primary_shortcut": "SUPER+ALT+D",    // Uses default language from config
+    "secondary_shortcut": "SUPER+ALT+I",  // Optional: second hotkey
+    "secondary_language": "it"          // Language for secondary shortcut
+}
+```
+
+> **Note**: Works with backends that support language parameters:
+> - **REST API**: Works if the endpoint accepts `language` in the request body
+> - **Realtime WebSocket**: Fully supported (OpenAI Realtime API)
+> - **Local whisper models**: Fully supported (all pywhispercpp models)
+> - **Custom REST endpoints**: May not work if the endpoint doesn't accept a language parameter
+
+The primary shortcut continues to use the `language` setting from your config (or auto-detect if set to `null`). The secondary shortcut will always use the configured `secondary_language` when pressed.
+
+Configure via CLI:
+
+```bash
+hyprwhspr config secondary-shortcut
+```
+
 **Hyprland native input bindings:**
 
 Use Hyprland's compositor bindings instead of evdev keyboard grabbing.

@@ -81,9 +81,11 @@ class hyprwhsprApp:
         self.whisper_manager = WhisperManager(config_manager=self.config)
         self.text_injector = TextInjector(self.config)
         self.global_shortcuts = None
+        self.secondary_shortcuts = None
 
         # Application state
         self.is_recording = False
+        self._current_language_override = None  # Language override for current recording session
         self.is_processing = False
         self.current_transcription = ""
         self.audio_level_thread = None
@@ -215,6 +217,51 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Failed to initialize global shortcuts: {e}")
             self.global_shortcuts = None
+
+        # Set up secondary shortcut if configured
+        try:
+            secondary_shortcut_key = self.config.get_setting("secondary_shortcut", None)
+            if secondary_shortcut_key:
+                secondary_language = self.config.get_setting("secondary_language", None)
+                if secondary_language:
+                    # Register callbacks based on recording mode (same as primary)
+                    if recording_mode == 'toggle':
+                        self.secondary_shortcuts = GlobalShortcuts(
+                            secondary_shortcut_key,
+                            self._on_secondary_shortcut_triggered,
+                            None,  # No release callback for toggle mode
+                            device_path=selected_device_path,
+                            grab_keys=grab_keys,
+                        )
+                    elif recording_mode in ('push_to_talk', 'auto'):
+                        self.secondary_shortcuts = GlobalShortcuts(
+                            secondary_shortcut_key,
+                            self._on_secondary_shortcut_triggered,
+                            self._on_secondary_shortcut_released,
+                            device_path=selected_device_path,
+                            grab_keys=grab_keys,
+                        )
+                    else:
+                        # Invalid mode: default to toggle behavior
+                        self.secondary_shortcuts = GlobalShortcuts(
+                            secondary_shortcut_key,
+                            self._on_secondary_shortcut_triggered,
+                            None,
+                            device_path=selected_device_path,
+                            grab_keys=grab_keys,
+                        )
+                    
+                    # Start the secondary shortcuts
+                    if self.secondary_shortcuts.start():
+                        print(f"[INFO] Secondary shortcut registered: {secondary_shortcut_key} (language: {secondary_language})", flush=True)
+                    else:
+                        print(f"[WARNING] Failed to start secondary shortcut: {secondary_shortcut_key}", flush=True)
+                        self.secondary_shortcuts = None
+                else:
+                    print("[WARNING] secondary_shortcut configured but secondary_language is not set. Secondary shortcut disabled.", flush=True)
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize secondary shortcuts: {e}", flush=True)
+            self.secondary_shortcuts = None
 
     def _setup_device_monitor(self):
         """Initialize device hotplug monitoring for automatic microphone recovery"""
@@ -497,8 +544,100 @@ class hyprwhsprApp:
                     self._stop_recording()
                 # Otherwise, keep recording (tap started it, let it continue)
 
-    def _start_recording(self):
-        """Start voice recording"""
+    def _on_secondary_shortcut_triggered(self):
+        """Handle secondary shortcut trigger (key press) with language override"""
+        recording_mode = self.config.get_setting("recording_mode", "toggle")
+        secondary_language = self.config.get_setting("secondary_language", None)
+        
+        if recording_mode == 'toggle':
+            # Toggle mode: start/stop recording
+            if self.is_recording:
+                self._stop_recording()
+            else:
+                self._start_recording(language_override=secondary_language)
+        elif recording_mode == 'push_to_talk':
+            # Push-to-talk mode: only start recording on key press
+            if not self.is_recording:
+                self._start_recording(language_override=secondary_language)
+        elif recording_mode == 'auto':
+            # Auto mode (hybrid tap/hold): record timestamp and start if not recording
+            # Synchronize access to state variables to prevent race conditions
+            # Don't call _start_recording() inside the lock to avoid blocking release callback
+            # Initialize state variables if they're None (e.g., if mode was changed from non-auto)
+            with self._auto_mode_lock:
+                # Ensure variables are initialized (handles mode change from non-auto to auto)
+                if self._shortcut_press_time is None:
+                    self._shortcut_press_time = 0.0
+                    self._recording_started_this_press = False
+                    self._tap_threshold = 0.4
+                
+                self._shortcut_press_time = time.time()
+                if not self.is_recording:
+                    self._recording_started_this_press = True
+                    should_start = True
+                else:
+                    # Already recording - will be stopped on release if this is a tap
+                    self._recording_started_this_press = False
+                    should_start = False
+            
+            # Call _start_recording() outside the lock to avoid blocking release callback
+            if should_start:
+                self._start_recording(language_override=secondary_language)
+        else:
+            # Invalid mode, default to toggle behavior
+            if self.is_recording:
+                self._stop_recording()
+            else:
+                self._start_recording(language_override=secondary_language)
+
+    def _on_secondary_shortcut_released(self):
+        """Handle secondary shortcut release (key release)
+        
+        Only called for 'push_to_talk' and 'auto' modes (not 'toggle')
+        """
+        recording_mode = self.config.get_setting("recording_mode", "toggle")
+        
+        if recording_mode == 'push_to_talk':
+            # Push-to-talk mode: stop recording on key release
+            if self.is_recording:
+                self._stop_recording()
+        elif recording_mode == 'auto':
+            # Auto mode (hybrid tap/hold): determine behavior based on hold duration
+            if not self.is_recording:
+                return
+            
+            # Synchronize access to state variables to prevent race conditions
+            # Calculate hold_duration inside the lock to ensure consistent timing
+            with self._auto_mode_lock:
+                press_time = self._shortcut_press_time
+                started_this_press = self._recording_started_this_press
+                release_time = time.time()  # Capture release time while holding lock
+                
+                # Validate press_time is not None (handles mode change from non-auto to auto)
+                if press_time is None:
+                    # State not initialized - treat as hold (stop recording)
+                    self._stop_recording()
+                    return
+                
+                hold_duration = release_time - press_time
+                tap_threshold = self._tap_threshold if self._tap_threshold is not None else 0.4
+
+            if hold_duration >= tap_threshold:
+                # Hold (>= 400ms): always stop recording (push-to-talk behavior)
+                self._stop_recording()
+            else:
+                # Tap (< 400ms): only stop if we didn't start recording on this press (toggle off)
+                if not started_this_press:
+                    self._stop_recording()
+                # Otherwise, keep recording (tap started it, let it continue)
+
+    def _start_recording(self, language_override=None):
+        """Start voice recording
+        
+        Args:
+            language_override: Optional language code to use for this recording session
+                              (overrides the default language from config)
+        """
         # Use a lock to prevent concurrent starts (race condition protection)
         with self._recording_lock:
             if self.is_recording:
@@ -506,6 +645,8 @@ class hyprwhsprApp:
             
             # Set flag immediately to prevent duplicate starts
             self.is_recording = True
+            # Store language override for this recording session
+            self._current_language_override = language_override
         
         print("Recording started", flush=True)
         
@@ -521,6 +662,12 @@ class hyprwhsprApp:
             if self.config.get_setting('audio_ducking', False):
                 self.audio_ducker.duck()
 
+            # Update language in realtime client if override is provided
+            if language_override is not None:
+                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
+                    self.whisper_manager._realtime_client.update_language(language_override)
+            
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
             
@@ -683,6 +830,7 @@ class hyprwhsprApp:
 
         try:
             self.is_recording = False
+            self._current_language_override = None  # Clear language override on error
             self._hide_mic_osd()
             self._stop_audio_level_monitoring()
             self._write_recording_status(False)
@@ -759,14 +907,18 @@ class hyprwhsprApp:
                 self.audio_manager.play_stop_sound()
                 self._process_audio(audio_data)
                 
+            # Clear language override after transcription completes
+            self._current_language_override = None
+                
         except Exception as e:
             print(f"[ERROR] Error stopping recording: {e}", flush=True)
             # Ensure cleanup even if error occurs
-            try:
-                self.is_recording = False
-                self._hide_mic_osd()
-                self._stop_audio_level_monitoring()
-                self._write_recording_status(False)
+        try:
+            self.is_recording = False
+            self._current_language_override = None  # Clear language override on cancel
+            self._hide_mic_osd()
+            self._stop_audio_level_monitoring()
+            self._write_recording_status(False)
 
                 # Close WebSocket if using realtime-ws backend
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
@@ -784,8 +936,8 @@ class hyprwhsprApp:
         try:
             self.is_processing = True
 
-            # Transcribe audio
-            transcription = self.whisper_manager.transcribe_audio(audio_data)
+            # Transcribe audio with language override if set
+            transcription = self.whisper_manager.transcribe_audio(audio_data, language_override=self._current_language_override)
 
             if transcription and transcription.strip():
                 text = transcription.strip()
@@ -1546,6 +1698,10 @@ class hyprwhsprApp:
             # Stop global shortcuts
             if self.global_shortcuts:
                 self.global_shortcuts.stop()
+            
+            # Stop secondary shortcuts
+            if self.secondary_shortcuts:
+                self.secondary_shortcuts.stop()
 
             # Stop audio capture
             if self.is_recording:

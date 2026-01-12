@@ -208,6 +208,9 @@ class WhisperManager:
                 
                 instructions = ' '.join(instructions_parts) if instructions_parts else None
                 
+                # Set language in realtime client (for session.update)
+                self._realtime_client.language = language
+                
                 # Set buffer max seconds
                 buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
                 self._realtime_client.set_max_buffer_seconds(buffer_max)
@@ -667,13 +670,14 @@ class WhisperManager:
             # Converse mode uses model parameter
             return f"{base_url}?model={model_id}"
 
-    def _transcribe_rest(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
+    def _transcribe_rest(self, audio_data: np.ndarray, sample_rate: int = 16000, language_override: Optional[str] = None) -> str:
         """
         Transcribe audio using remote REST API endpoint
 
         Args:
             audio_data: NumPy array of audio samples (float32)
             sample_rate: Sample rate of the audio data
+            language_override: Optional language code to override config language
 
         Returns:
             Transcribed text string
@@ -787,7 +791,8 @@ class WhisperManager:
 
             # Add language parameter if configured
             data = extra_body.copy()
-            language = self.config.get_setting('language', None)
+            # Use language_override if provided, otherwise get from config
+            language = language_override if language_override is not None else self.config.get_setting('language', None)
             if language and 'language' not in data:
                 data['language'] = language
 
@@ -843,7 +848,7 @@ class WhisperManager:
             print(f'ERROR: REST transcription failed: {e}')
             return ''
 
-    def _transcribe_realtime(self, _audio_data: np.ndarray, _sample_rate: int = 16000) -> str:
+    def _transcribe_realtime(self, _audio_data: np.ndarray, _sample_rate: int = 16000, language_override: Optional[str] = None) -> str:
         """
         Transcribe audio using Realtime WebSocket backend.
         
@@ -853,6 +858,7 @@ class WhisperManager:
         Args:
             audio_data: NumPy array of audio samples (float32)
             sample_rate: Sample rate of the audio data (should be 16000)
+            language_override: Optional language code to override config language
         
         Returns:
             Transcribed text string
@@ -866,6 +872,10 @@ class WhisperManager:
             return ""
         
         try:
+            # Update language if override provided
+            if language_override is not None:
+                self._realtime_client.update_language(language_override)
+            
             # Get timeout from config
             timeout = self.config.get_setting('realtime_timeout', 30)
             
@@ -960,13 +970,14 @@ class WhisperManager:
         """Check if whisper is ready for transcription"""
         return self.ready
 
-    def transcribe_audio(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
+    def transcribe_audio(self, audio_data: np.ndarray, sample_rate: int = 16000, language_override: Optional[str] = None) -> str:
         """
         Transcribe audio data using whisper
 
         Args:
             audio_data: NumPy array of audio samples (float32)
             sample_rate: Sample rate of the audio data
+            language_override: Optional language code to override config language (e.g., 'it', 'en', 'fr')
 
         Returns:
             Transcribed text string
@@ -1051,13 +1062,13 @@ class WhisperManager:
             # Debug: ensure we're not accidentally using pywhispercpp
             if self._pywhisper_model is not None:
                 print(f"[WARN] REST API backend selected but pywhispercpp model is loaded - this should not happen", flush=True)
-            return self._transcribe_rest(audio_data, sample_rate)
+            return self._transcribe_rest(audio_data, sample_rate, language_override=language_override)
 
         if backend == 'realtime-ws':
             # Use Realtime WebSocket transcription
             # Note: Audio was already streamed via callback during capture
             # This just commits and waits for the result
-            return self._transcribe_realtime(audio_data, sample_rate)
+            return self._transcribe_realtime(audio_data, sample_rate, language_override=language_override)
 
         if backend == 'onnx-asr':
             # Use ONNX-ASR transcription (CPU-optimized)
@@ -1081,8 +1092,8 @@ class WhisperManager:
                     return ""
 
             try:
-                # Get language setting from config (None = auto-detect)
-                language = self.config.get_setting('language', None)
+                # Use language_override if provided, otherwise get from config (None = auto-detect)
+                language = language_override if language_override is not None else self.config.get_setting('language', None)
                 
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():

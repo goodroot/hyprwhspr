@@ -1901,6 +1901,8 @@ def config_command(action: str):
         show_config()
     elif action == 'edit':
         edit_config()
+    elif action == 'secondary-shortcut':
+        configure_secondary_shortcut()
     else:
         log_error(f"Unknown config action: {action}")
 
@@ -2002,6 +2004,72 @@ def edit_config():
         log_success("Config edited")
     except Exception as e:
         log_error(f"Failed to open editor: {e}")
+
+
+def configure_secondary_shortcut():
+    """Configure secondary shortcut and language"""
+    from rich.prompt import Prompt, Confirm
+    
+    config = ConfigManager()
+    
+    print("\n" + "="*60)
+    print("Secondary Shortcut Configuration")
+    print("="*60)
+    print("\nConfigure a second hotkey that will use a specific language for transcription.")
+    print("The primary shortcut will continue to use the default language from config.")
+    print()
+    
+    # Check if already configured
+    current_shortcut = config.get_setting('secondary_shortcut')
+    current_language = config.get_setting('secondary_language')
+    
+    if current_shortcut:
+        print(f"Current secondary shortcut: {current_shortcut}")
+        if current_language:
+            print(f"Current secondary language: {current_language}")
+        print()
+        if not Confirm.ask("Do you want to change the secondary shortcut?", default=False):
+            return
+    
+    # Prompt for shortcut
+    print("\nEnter the secondary shortcut key combination.")
+    print("Examples: SUPER+ALT+I, CTRL+SHIFT+L, F11")
+    print("Leave blank to disable secondary shortcut.")
+    shortcut = Prompt.ask("Secondary shortcut", default=current_shortcut or "")
+    
+    if not shortcut or shortcut.strip() == "":
+        # Disable secondary shortcut
+        config.set_setting('secondary_shortcut', None)
+        config.set_setting('secondary_language', None)
+        config.save_config()
+        log_success("Secondary shortcut disabled")
+        return
+    
+    # Prompt for language
+    print("\nEnter the language code for this shortcut.")
+    print("Examples: 'it' (Italian), 'en' (English), 'fr' (French), 'de' (German), 'es' (Spanish)")
+    print("Leave blank to disable secondary shortcut.")
+    language = Prompt.ask("Language code", default=current_language or "")
+    
+    if not language or language.strip() == "":
+        log_warning("Language code is required. Secondary shortcut not configured.")
+        return
+    
+    # Validate language code (basic check - 2-3 letter code)
+    language = language.strip().lower()
+    if len(language) < 2 or len(language) > 3:
+        log_warning("Language code should be 2-3 letters (e.g., 'it', 'en', 'fr')")
+        if not Confirm.ask("Continue anyway?", default=False):
+            return
+    
+    # Save configuration
+    config.set_setting('secondary_shortcut', shortcut.strip())
+    config.set_setting('secondary_language', language)
+    config.save_config()
+    
+    log_success(f"Secondary shortcut configured: {shortcut.strip()} (language: {language})")
+    print("\nNote: Restart hyprwhspr service for changes to take effect:")
+    print("  systemctl --user restart hyprwhspr")
 
 
 # ==================== Systemd Commands ====================
