@@ -744,20 +744,25 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
                 print("="*60)
                 print("\nConfigure a custom REST API backend.")
                 print()
-                
+
                 endpoint_url = Prompt.ask("Endpoint URL", default="")
                 if not endpoint_url:
                     log_error("Endpoint URL is required")
                     if not Confirm.ask("Try again?", default=True):
                         return None
                     continue
-                
+
                 # Validate URL format
                 if not endpoint_url.startswith('http://') and not endpoint_url.startswith('https://'):
                     log_warning("URL should start with http:// or https://")
                     if not Confirm.ask("Continue anyway?", default=True):
                         continue
-                
+
+                # Model name - required for REST APIs, optional for WebSocket
+                print("\nModel name (required for REST APIs, leave blank for WebSocket)")
+                print("Examples: whisper-1, whisper-large-v3, distil-whisper-large-v3-en")
+                model_name = Prompt.ask("Model name", default="") or None
+
                 # Optional API key
                 has_api_key = Confirm.ask("Do you have an API key?", default=False)
                 api_key = None
@@ -767,7 +772,7 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
                     # Save as 'custom' provider
                     if api_key:
                         save_credential('custom', api_key)
-                
+
                 # Optional custom headers
                 has_headers = Confirm.ask("Add custom HTTP headers?", default=False)
                 custom_headers = {}
@@ -781,28 +786,28 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
                     except json.JSONDecodeError as e:
                         log_error(f"Invalid JSON: {e}")
                         custom_headers = {}
-                
-                # Optional custom body fields
-                has_body = Confirm.ask("Add custom body fields?", default=False)
-                custom_body = {}
+
+                # Optional additional body fields
+                has_body = Confirm.ask("Add additional body fields?", default=False)
+                custom_body = {'model': model_name} if model_name else {}
                 if has_body:
-                    body_json = Prompt.ask("Enter body fields as JSON (e.g., {\"model\": \"custom-model\"})", default="{}")
+                    body_json = Prompt.ask("Enter additional body fields as JSON (e.g., {\"language\": \"en\"})", default="{}")
                     try:
-                        custom_body = json.loads(body_json)
-                        if not isinstance(custom_body, dict):
+                        extra_body = json.loads(body_json)
+                        if isinstance(extra_body, dict):
+                            custom_body.update(extra_body)
+                        else:
                             log_error("Body fields must be a JSON object")
-                            custom_body = {}
                     except json.JSONDecodeError as e:
                         log_error(f"Invalid JSON: {e}")
-                        custom_body = {}
-                
+
                 custom_config = {
                     'endpoint': endpoint_url,
                     'headers': custom_headers,
                     'body': custom_body
                 }
-                
-                return ('custom', None, api_key, custom_config)
+
+                return ('custom', model_name, api_key, custom_config)
                 
         except KeyboardInterrupt:
             print("\n\nCancelled by user.")
@@ -1252,7 +1257,14 @@ def setup_command():
     if mic_osd_available:
         setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=True)
     else:
-        print("\nDependencies not found. Install python-gobject and gtk4-layer-shell to enable.")
+        # Provide distro-appropriate package names
+        if Path('/etc/debian_version').exists():
+            pkg_hint = "python3-gi gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0"
+        elif Path('/etc/fedora-release').exists():
+            pkg_hint = "python3-gobject gtk4 gtk4-layer-shell"
+        else:
+            pkg_hint = "python-gobject gtk4 gtk4-layer-shell"
+        print(f"\nDependencies not found. Install: {pkg_hint}")
         setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
 
     # Step 3c: Audio ducking setup
@@ -1277,22 +1289,33 @@ def setup_command():
             log_warning("Invalid input, using default 50%")
 
     # Step 3d: Hyprland compositor bindings
-    print("\n" + "="*60)
-    print("Hyprland Compositor Bindings")
-    print("="*60)
-    print("\nUse Hyprland's native compositor bindings instead of evdev keyboard grabbing.")
-    print("Better compatibility with keyboard remappers.")
-    print("Requires adding bindings to ~/.config/hypr/hyprland.conf or bindings.conf")
-    
+    # Detect if user is running Hyprland
+    is_hyprland_session = os.environ.get('HYPRLAND_INSTANCE_SIGNATURE') is not None
+    current_desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
     hypr_config_dir = USER_HOME / '.config' / 'hypr'
     hypr_config_exists = (hypr_config_dir / 'hyprland.conf').exists() or (hypr_config_dir / 'bindings.conf').exists()
-    
-    if hypr_config_exists:
-        print(f"\nHyprland configuration detected at: {hypr_config_dir}")
-        setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=True)
+
+    # Only show Hyprland section if relevant
+    if is_hyprland_session or hypr_config_exists or 'hyprland' in current_desktop:
+        print("\n" + "="*60)
+        print("Hyprland Compositor Bindings")
+        print("="*60)
+        print("\nUse Hyprland's native compositor bindings instead of evdev keyboard grabbing.")
+        print("Better compatibility with keyboard remappers.")
+        print("Requires adding bindings to ~/.config/hypr/hyprland.conf or bindings.conf")
+
+        if is_hyprland_session:
+            print("\nHyprland session detected.")
+            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=True)
+        elif hypr_config_exists:
+            print(f"\nHyprland configuration detected at: {hypr_config_dir}")
+            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=True)
+        else:
+            print("\nHyprland configuration not found.")
+            setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=False)
     else:
-        print("\nHyprland configuration not found.")
-        setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=False)
+        # Not a Hyprland system - skip this section entirely
+        setup_hyprland_choice = False
     
     # Step 4: Systemd setup
     print("\n" + "="*60)
@@ -2393,7 +2416,6 @@ def mic_osd_enable():
         if not MicOSDRunner.is_available():
             reason = MicOSDRunner.get_unavailable_reason()
             log_error(f"Cannot enable mic-osd: {reason}")
-            log_info("Install required packages: python-gobject gtk4-layer-shell")
             return False
     except ImportError:
         log_error("mic-osd module not found")
@@ -2446,8 +2468,7 @@ def mic_osd_status():
             log_info("Mic-OSD is disabled (use 'hyprwhspr mic-osd enable' to enable)")
     else:
         log_warning(f"Mic-OSD cannot run: {deps_reason}")
-        log_info("Install required packages: python-gobject gtk4-layer-shell")
-    
+
     return enabled and deps_available
 
 
@@ -2649,48 +2670,77 @@ def check_permissions():
 def setup_permissions():
     """Setup permissions (requires sudo)"""
     log_info("Setting up permissions...")
-    
+
     # Safer way to get username
     username = os.environ.get('SUDO_USER') or os.environ.get('USER') or getpass.getuser()
     if not username:
         log_error("Could not determine username for permissions setup.")
         return False
-    
+
+    any_failures = False
+
     # Add user to required groups
     try:
-        run_sudo_command(['usermod', '-a', '-G', 'input,audio,tty', username], check=False)
-        log_success("Added user to required groups")
+        result = run_sudo_command(['usermod', '-a', '-G', 'input,audio,tty', username], check=False)
+        if result.returncode == 0:
+            log_success("Added user to required groups")
+        else:
+            log_warning(f"Failed to add user to groups (exit code {result.returncode})")
+            log_info("You may need to run manually: sudo usermod -a -G input,audio,tty $USER")
+            any_failures = True
     except Exception as e:
         log_warning(f"Failed to add user to groups: {e}")
-    
+        any_failures = True
+
     # Load uinput module
     if not Path('/dev/uinput').exists():
         log_info("Loading uinput module...")
-        run_sudo_command(['modprobe', 'uinput'], check=False)
+        try:
+            result = run_sudo_command(['modprobe', 'uinput'], check=False)
+            if result.returncode != 0:
+                log_warning("Failed to load uinput module")
+                any_failures = True
+        except Exception as e:
+            log_warning(f"Failed to load uinput module: {e}")
+            any_failures = True
         import time
         time.sleep(2)
-    
+
     # Create udev rule
     udev_rule = Path('/etc/udev/rules.d/99-uinput.rules')
     if not udev_rule.exists():
         log_info("Creating udev rule...")
         rule_content = '# Allow members of the input group to access uinput device\nKERNEL=="uinput", GROUP="input", MODE="0660"\n'
         try:
-            run_sudo_command(['tee', str(udev_rule)], input_data=rule_content.encode(), check=False)
-            log_success("udev rule created")
+            result = run_sudo_command(['tee', str(udev_rule)], input_data=rule_content.encode(), check=False)
+            if result.returncode == 0:
+                log_success("udev rule created")
+            else:
+                log_warning(f"Failed to create udev rule (exit code {result.returncode})")
+                log_info("You may need to run manually: sudo tee /etc/udev/rules.d/99-uinput.rules")
+                any_failures = True
         except Exception as e:
             log_warning(f"Failed to create udev rule: {e}")
+            any_failures = True
     else:
         log_info("udev rule already exists")
-    
+
     # Reload udev
     try:
-        run_sudo_command(['udevadm', 'control', '--reload-rules'], check=False)
-        run_sudo_command(['udevadm', 'trigger', '--name-match=uinput'], check=False)
-        log_success("udev rules reloaded")
+        result1 = run_sudo_command(['udevadm', 'control', '--reload-rules'], check=False)
+        result2 = run_sudo_command(['udevadm', 'trigger', '--name-match=uinput'], check=False)
+        if result1.returncode == 0 and result2.returncode == 0:
+            log_success("udev rules reloaded")
+        else:
+            log_warning("Failed to reload udev rules")
+            log_info("You may need to run manually: sudo udevadm control --reload-rules && sudo udevadm trigger")
+            any_failures = True
     except Exception as e:
         log_warning(f"Failed to reload udev rules: {e}")
-    
+        any_failures = True
+
+    if any_failures:
+        log_warning("Some permission setup commands failed. You may need to run them manually as root.")
     log_warning("You may need to log out/in for new group memberships to apply")
 
 

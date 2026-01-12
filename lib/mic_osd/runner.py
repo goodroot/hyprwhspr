@@ -43,17 +43,40 @@ class MicOSDRunner:
             return False
     
     @staticmethod
+    def _get_distro_packages() -> tuple:
+        """Return (gtk_pkg, layer_shell_pkg) package names for current distro."""
+        # Check for common distro indicators
+        try:
+            if Path('/etc/debian_version').exists():
+                return ('python3-gi gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
+            elif Path('/etc/arch-release').exists():
+                return ('python-gobject gtk4', 'gtk4-layer-shell')
+            elif Path('/etc/fedora-release').exists():
+                return ('python3-gobject gtk4', 'gtk4-layer-shell')
+            elif Path('/etc/os-release').exists():
+                content = Path('/etc/os-release').read_text().lower()
+                if 'debian' in content or 'ubuntu' in content:
+                    return ('python3-gi gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
+                elif 'fedora' in content or 'rhel' in content:
+                    return ('python3-gobject gtk4', 'gtk4-layer-shell')
+        except Exception:
+            pass
+        # Default to Arch-style names
+        return ('python-gobject gtk4', 'gtk4-layer-shell')
+
+    @staticmethod
     def get_unavailable_reason() -> str:
         """Get reason why mic-osd is unavailable."""
+        gtk_pkg, layer_pkg = MicOSDRunner._get_distro_packages()
         try:
             import gi
             gi.require_version('Gtk', '4.0')
         except (ImportError, ValueError):
-            return "GTK4 (python-gobject) is not installed"
+            return f"GTK4 bindings not installed. Install: {gtk_pkg}"
         try:
             gi.require_version('Gtk4LayerShell', '1.0')
         except (ImportError, ValueError):
-            return "gtk4-layer-shell is not installed"
+            return f"gtk4-layer-shell not installed. Install: {layer_pkg}"
         return ""
     
     def _ensure_daemon(self):

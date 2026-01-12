@@ -856,16 +856,92 @@ def setup_python_venv(force_rebuild: bool = False) -> Path:
 
 # ==================== pywhispercpp Installation ====================
 
+def _should_skip_pygobject() -> bool:
+    """Check if PyGObject should be skipped (already installed as system package)."""
+    try:
+        import gi
+        # gi module exists - PyGObject is installed via system package
+        log_info("PyGObject already available (system package), skipping pip install")
+        return True
+    except ImportError:
+        return False
+
+
+def _extract_package_name(requirement_line: str) -> str:
+    """
+    Extract the package name from a requirements.txt line.
+    Handles version specifiers, extras, environment markers, and URL specs.
+    Examples:
+        'package>=1.0' -> 'package'
+        'package[extra]>=1.0' -> 'package'
+        'package>=1.0; python_version >= "3.8"' -> 'package'
+        'package @ https://...' -> 'package'
+    """
+    import re
+    line = requirement_line.strip().lower()
+    # Match package name: everything before version specifiers, extras, markers, or URL
+    match = re.match(r'^([a-z0-9][-a-z0-9_.]*)', line)
+    return match.group(1) if match else ''
+
+
+def _filter_requirements(requirements_file: Path, skip_packages: list) -> Path:
+    """
+    Create a filtered requirements file, skipping specified packages.
+    Returns path to temp file (caller must clean up).
+    """
+    import tempfile
+    skip_packages_lower = [pkg.lower() for pkg in skip_packages]
+    temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+    try:
+        with open(requirements_file, 'r', encoding='utf-8') as f_in:
+            for line in f_in:
+                line_stripped = line.strip()
+                # Skip empty lines/comments as-is
+                if not line_stripped or line_stripped.startswith('#'):
+                    temp_file.write(line)
+                    continue
+                # Extract package name and check for exact match
+                pkg_name = _extract_package_name(line_stripped)
+                if pkg_name not in skip_packages_lower:
+                    temp_file.write(line)
+        temp_file.close()
+        return Path(temp_file.name)
+    except Exception:
+        temp_file.close()
+        # Clean up the temp file on error
+        try:
+            Path(temp_file.name).unlink()
+        except Exception:
+            pass
+        raise
+
+
 def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
     """Install CPU-only pywhispercpp"""
     log_info("Installing pywhispercpp (CPU-only)...")
+
+    # Check if we should skip PyGObject (already installed via system package)
+    skip_packages = []
+    if _should_skip_pygobject():
+        skip_packages.append('PyGObject')
+
+    temp_req_path = None
     try:
-        run_command([str(pip_bin), 'install', '-r', str(requirements_file)], check=True)
+        if skip_packages:
+            temp_req_path = _filter_requirements(requirements_file, skip_packages)
+            install_file = temp_req_path
+        else:
+            install_file = requirements_file
+
+        run_command([str(pip_bin), 'install', '-r', str(install_file)], check=True)
         log_success("pywhispercpp installed (CPU-only mode)")
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to install pywhispercpp (CPU-only): {e}")
         return False
+    finally:
+        if temp_req_path and temp_req_path.exists():
+            temp_req_path.unlink()
 
 
 def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
@@ -1691,6 +1767,10 @@ print("Models cached successfully", flush=True)
             if enable_cuda or enable_rocm or enable_vulkan:
                 # GPU build path: install everything except pywhispercpp first
                 log_info("Installing base Python dependencies (excluding pywhispercpp)...")
+
+                # Determine packages to skip
+                skip_pygobject = _should_skip_pygobject()
+
                 # Use a writable temp directory instead of system directory
                 import tempfile
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:
@@ -1698,13 +1778,21 @@ print("Models cached successfully", flush=True)
                     try:
                         with open(requirements_file, 'r', encoding='utf-8') as f_in:
                             for line in f_in:
-                                if not line.strip().startswith('pywhispercpp'):
-                                    temp_req.write(line)
-                        
+                                line_stripped = line.strip()
+                                # Extract package name for exact matching
+                                pkg_name = _extract_package_name(line_stripped)
+                                # Skip pywhispercpp (built separately with GPU support)
+                                if pkg_name == 'pywhispercpp':
+                                    continue
+                                # Skip PyGObject if already installed as system package
+                                if skip_pygobject and pkg_name == 'pygobject':
+                                    continue
+                                temp_req.write(line)
+
                         temp_req.flush()
-                        
+
                         if temp_req_path.stat().st_size > 0:
-                            run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], 
+                            run_command([str(pip_bin), 'install', '-r', str(temp_req_path)],
                                        check=True, verbose=OutputController.get_verbosity().value >= VerbosityLevel.VERBOSE.value)
                     except Exception as e:
                         error_msg = f"Failed to install base Python dependencies: {e}"
