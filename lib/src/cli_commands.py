@@ -1184,7 +1184,15 @@ def setup_command():
         
         # Install base dependencies if needed (excluding pywhispercpp)
         if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed:
-            log_info("Installing base Python dependencies (excluding pywhispercpp)...")
+            if not stored_req_hash:
+                # First time setup - no stored hash means venv is new
+                log_info("Installing base Python dependencies (excluding pywhispercpp)...")
+            elif cur_req_hash != stored_req_hash:
+                # Requirements actually changed
+                log_info("Requirements.txt has changed. Updating base Python dependencies...")
+            else:
+                # Dependencies missing but hash matches (shouldn't happen often)
+                log_info("Installing missing base Python dependencies...")
             
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:

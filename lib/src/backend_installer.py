@@ -25,6 +25,13 @@ except ImportError:
         run_command, OutputController, VerbosityLevel
     )
 
+# Import prompt for user interaction
+try:
+    from rich.prompt import Confirm
+except ImportError:
+    # Fallback if rich is not available (shouldn't happen in normal usage)
+    Confirm = None
+
 
 def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None,
                      verbose: Optional[bool] = None) -> subprocess.CompletedProcess:
@@ -467,29 +474,52 @@ def setup_nvidia_support() -> bool:
     
     if nvcc_path:
         # Set environment variables
-        os.environ['PATH'] = '/opt/cuda/bin:' + os.environ.get('PATH', '')
+        # Use the directory where nvcc was actually found, not hardcoded /opt/cuda/bin
+        nvcc_dir = str(Path(nvcc_path).parent)
+        os.environ['PATH'] = f'{nvcc_dir}:' + os.environ.get('PATH', '')
         os.environ['CUDACXX'] = nvcc_path
         log_success("CUDA toolkit present")
     else:
         log_warning("CUDA toolkit not found")
         # Try to install on Arch, provide guidance on other distros
         if shutil.which('pacman'):
-            log_info("Installing CUDA toolkit...")
+            if Confirm is None:
+                # Fallback if rich not available - just warn and skip
+                log_warning("CUDA toolkit not found. Skipping CUDA installation.")
+                log_info("You can install it manually later: sudo pacman -S cuda")
+                return False
+            
+            log_warning("CUDA toolkit not found. CUDA is required for NVIDIA GPU acceleration.")
+            log_info("CUDA installation can take 10-15 minutes and requires ~3GB of disk space.")
+            if not Confirm.ask("Install CUDA toolkit now? (If no, will use CPU mode)", default=True):
+                log_info("Skipping CUDA installation. Will use CPU mode instead.")
+                return False
+            
+            log_info("Installing CUDA toolkit... This may take a while.")
             run_sudo_command(['pacman', '-S', '--needed', '--noconfirm', 'cuda'], check=False)
         else:
             log_info("Please install CUDA toolkit using your distribution's package manager:")
             log_info("  Debian/Ubuntu: sudo apt install nvidia-cuda-toolkit")
             log_info("  Fedora: sudo dnf install cuda")
             log_info("  Or download from: https://developer.nvidia.com/cuda-downloads")
+            log_info("Without CUDA, the NVIDIA backend will fall back to CPU mode.")
+            return False
 
+        # Check for nvcc after installation attempt
+        nvcc_path_after_install = None
         if Path('/opt/cuda/bin/nvcc').exists():
-            os.environ['PATH'] = '/opt/cuda/bin:' + os.environ.get('PATH', '')
-            os.environ['CUDACXX'] = '/opt/cuda/bin/nvcc'
-            log_success("CUDA installed")
+            nvcc_path_after_install = '/opt/cuda/bin/nvcc'
         elif Path('/usr/bin/nvcc').exists():
-            # Common path on Debian/Ubuntu
-            os.environ['CUDACXX'] = '/usr/bin/nvcc'
-            log_success("CUDA toolkit found")
+            nvcc_path_after_install = '/usr/bin/nvcc'
+        elif shutil.which('nvcc'):
+            nvcc_path_after_install = shutil.which('nvcc')
+        
+        if nvcc_path_after_install:
+            # Use the directory where nvcc was actually found
+            nvcc_dir = str(Path(nvcc_path_after_install).parent)
+            os.environ['PATH'] = f'{nvcc_dir}:' + os.environ.get('PATH', '')
+            os.environ['CUDACXX'] = nvcc_path_after_install
+            log_success("CUDA installed")
         else:
             log_warning("nvcc still not visible; will build CPU-only")
             return False
@@ -1762,7 +1792,15 @@ print("Models cached successfully", flush=True)
         
         # Install pywhispercpp if needed
         if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed:
-            log_info("Installing Python dependencies (requirements.txt changed or deps missing)")
+            if not stored_req_hash:
+                # First time setup - no stored hash means venv is new
+                log_info("Installing Python dependencies...")
+            elif cur_req_hash != stored_req_hash:
+                # Requirements actually changed
+                log_info("Installing Python dependencies (requirements.txt changed)...")
+            else:
+                # Dependencies missing but hash matches (shouldn't happen often)
+                log_info("Installing Python dependencies (dependencies missing)...")
 
             if enable_cuda or enable_rocm or enable_vulkan:
                 # GPU build path: install everything except pywhispercpp first
