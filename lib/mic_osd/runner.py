@@ -121,8 +121,14 @@ sys.exit(main())
 """
 
         # Set LD_PRELOAD for gtk4-layer-shell
+        # Use the actual .so file (not symlink) to ensure proper loading
         env = os.environ.copy()
-        env['LD_PRELOAD'] = '/usr/lib/libgtk4-layer-shell.so'
+        # Try to find the actual library file
+        lib_path = '/usr/lib/libgtk4-layer-shell.so'
+        if os.path.islink(lib_path):
+            # Resolve symlink to actual file
+            lib_path = os.path.realpath(lib_path)
+        env['LD_PRELOAD'] = lib_path
 
         try:
             self._process = subprocess.Popen(
@@ -140,8 +146,12 @@ sys.exit(main())
             # Clear orphaned daemon flag since we created a new daemon
             self._orphaned_daemon_pid = None
 
+            print(f"[MIC-OSD] Daemon started (PID {self._process.pid})", flush=True)
             return True
-        except Exception:
+        except Exception as e:
+            print(f"[MIC-OSD] Failed to start daemon: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             self._process = None
             return False
     

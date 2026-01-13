@@ -1242,17 +1242,10 @@ def setup_command():
     print("\nShows a visual overlay during recording with animated bars")
     print("and a pulsing indicator. Requires GTK4 and gtk4-layer-shell.")
     
-    # Check if dependencies are available
-    mic_osd_available = False
-    try:
-        import sys as _sys
-        _sys.path.insert(0, str(Path(__file__).parent.parent))
-        from mic_osd import MicOSDRunner
-        mic_osd_available = MicOSDRunner.is_available()
-        if not mic_osd_available:
-            print(f"\nNote: {MicOSDRunner.get_unavailable_reason()}")
-    except ImportError:
-        pass
+    # Check if dependencies are available using service's Python
+    mic_osd_available, mic_osd_reason = _check_mic_osd_availability()
+    if not mic_osd_available:
+        print(f"\nNote: {mic_osd_reason}")
     
     if mic_osd_available:
         setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=True)
@@ -2461,6 +2454,59 @@ def waybar_status():
 
 # ==================== Mic-OSD Commands ====================
 
+def _check_mic_osd_availability():
+    """Check mic-osd availability using the same Python the service will use.
+    
+    Returns:
+        tuple: (is_available: bool, reason: str)
+    """
+    # First, try with venv Python (same as service uses)
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if venv_python.exists():
+        try:
+            lib_path = Path(__file__).parent.parent
+            # Use repr() to safely escape the path (handles quotes, backslashes, etc.)
+            lib_path_str = repr(str(lib_path))
+            check_code = f"""
+import sys
+sys.path.insert(0, {lib_path_str})
+from mic_osd import MicOSDRunner
+if MicOSDRunner.is_available():
+    print('AVAILABLE')
+else:
+    print('UNAVAILABLE:', MicOSDRunner.get_unavailable_reason())
+"""
+            result = subprocess.run(
+                [str(venv_python), '-c', check_code],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                output = result.stdout.strip()
+                if output == 'AVAILABLE':
+                    return True, ""
+                elif output.startswith('UNAVAILABLE:'):
+                    return False, output.replace('UNAVAILABLE:', '').strip()
+        except Exception as e:
+            # Fall through to current Python check
+            pass
+    
+    # Fallback: check with current Python environment
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from mic_osd import MicOSDRunner
+        
+        if MicOSDRunner.is_available():
+            return True, ""
+        else:
+            return False, MicOSDRunner.get_unavailable_reason()
+    except ImportError:
+        return False, "mic-osd module not found"
+
+
 def mic_osd_command(action: str):
     """Handle mic-osd subcommands"""
     if action == 'enable':
@@ -2475,18 +2521,11 @@ def mic_osd_command(action: str):
 
 def mic_osd_enable():
     """Enable the mic-osd visualization overlay"""
-    # Check if dependencies are available
-    try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from mic_osd import MicOSDRunner
-        
-        if not MicOSDRunner.is_available():
-            reason = MicOSDRunner.get_unavailable_reason()
-            log_error(f"Cannot enable mic-osd: {reason}")
-            return False
-    except ImportError:
-        log_error("mic-osd module not found")
+    # Check if dependencies are available using service's Python
+    is_available, reason = _check_mic_osd_availability()
+    
+    if not is_available:
+        log_error(f"Cannot enable mic-osd: {reason}")
         return False
     
     # Update config
@@ -2512,18 +2551,8 @@ def mic_osd_status():
     config = ConfigManager()
     enabled = config.get_setting('mic_osd_enabled', True)
     
-    # Check dependencies
-    deps_available = False
-    deps_reason = ""
-    try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from mic_osd import MicOSDRunner
-        deps_available = MicOSDRunner.is_available()
-        if not deps_available:
-            deps_reason = MicOSDRunner.get_unavailable_reason()
-    except ImportError:
-        deps_reason = "mic_osd module not found"
+    # Check dependencies using service's Python
+    deps_available, deps_reason = _check_mic_osd_availability()
     
     print("\nMic-OSD Status:")
     print(f"  Enabled in config: {'Yes' if enabled else 'No'}")

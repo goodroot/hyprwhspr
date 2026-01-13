@@ -37,6 +37,9 @@ else:
     except (AttributeError, OSError):
         pass  # Fall back to PYTHONUNBUFFERED environment variable
 
+# Add the lib directory to the Python path (for mic_osd imports)
+lib_path = Path(__file__).parent
+sys.path.insert(0, str(lib_path))
 # Add the src directory to the Python path
 src_path = Path(__file__).parent / 'src'
 sys.path.insert(0, str(src_path))
@@ -161,8 +164,16 @@ class hyprwhsprApp:
                 if runner.is_available():
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
-            except Exception:
-                pass
+                        print("[INIT] Mic-OSD daemon started", flush=True)
+                    else:
+                        print("[WARN] Failed to start mic-osd daemon", flush=True)
+                else:
+                    reason = runner.get_unavailable_reason()
+                    print(f"[WARN] Mic-OSD unavailable: {reason}", flush=True)
+            except Exception as e:
+                print(f"[WARN] Failed to initialize mic-osd: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -913,12 +924,12 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Error stopping recording: {e}", flush=True)
             # Ensure cleanup even if error occurs
-        try:
-            self.is_recording = False
-            self._current_language_override = None  # Clear language override on cancel
-            self._hide_mic_osd()
-            self._stop_audio_level_monitoring()
-            self._write_recording_status(False)
+            try:
+                self.is_recording = False
+                self._current_language_override = None  # Clear language override on cancel
+                self._hide_mic_osd()
+                self._stop_audio_level_monitoring()
+                self._write_recording_status(False)
 
                 # Close WebSocket if using realtime-ws backend
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
