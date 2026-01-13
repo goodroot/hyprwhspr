@@ -1215,7 +1215,8 @@ def setup_command():
         else:
             log_info("Base Python dependencies up to date")
     
-    elif backend not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr']:
+    # Step 2: Model selection for local backends (always prompt, regardless of install/reinstall)
+    if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr']:
         # Local backend - prompt for model selection
         # Note: ONNX-ASR doesn't use Whisper models, it has its own models
         selected_model = _prompt_model_selection()
