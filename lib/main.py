@@ -201,7 +201,7 @@ class hyprwhsprApp:
         try:
             shortcut_key = self.config.get_setting("primary_shortcut", "Super+Alt+D")
             recording_mode = self.config.get_setting("recording_mode", "toggle")
-            grab_keys = self.config.get_setting("grab_keys", True)
+            grab_keys = self.config.get_setting("grab_keys", False)
             selected_device_path = self.config.get_setting("selected_device_path", None)
 
             # Register callbacks based on recording mode
@@ -690,8 +690,18 @@ class hyprwhsprApp:
                 # Otherwise, keep recording (tap started it, let it continue)
 
     # Long-form recording mode handlers
+    def _ensure_longform_initialized(self):
+        """Ensure long-form segment manager is initialized (lazy initialization)"""
+        if self._longform_segment_manager is None:
+            max_size_mb = self.config.get_setting('long_form_temp_limit_mb', 500)
+            self._longform_segment_manager = SegmentManager(max_size_mb=max_size_mb)
+            print("[LONGFORM] Segment manager initialized (lazy init)", flush=True)
+            # Check for stale segments on first initialization
+            self._cleanup_longform_temp_on_startup()
+    
     def _on_longform_shortcut_triggered(self):
         """Handle primary shortcut in long-form mode (record/pause toggle)"""
+        self._ensure_longform_initialized()
         with self._longform_lock:
             if self._longform_state == 'IDLE':
                 # Start recording
@@ -708,6 +718,7 @@ class hyprwhsprApp:
 
     def _on_longform_submit_triggered(self):
         """Handle submit shortcut in long-form mode"""
+        self._ensure_longform_initialized()
         with self._longform_lock:
             if self._longform_state in ('RECORDING', 'PAUSED'):
                 # Stop recording if active, then submit
@@ -1620,19 +1631,57 @@ class hyprwhsprApp:
                 if not action:
                     continue
                 
+                # Check recording mode to route to appropriate handler
+                recording_mode = self.config.get_setting("recording_mode", "toggle")
+                
                 # Process action immediately
                 if action == "start":
-                    if not self.is_recording:
+                    if recording_mode == "long_form":
+                        # In long-form mode, "start" action is state-aware
+                        self._ensure_longform_initialized()
+                        with self._longform_lock:
+                            if self._longform_state == 'IDLE':
+                                print("[CONTROL] Long-form start requested (immediate)", flush=True)
+                                self._longform_start_recording()
+                            elif self._longform_state == 'PAUSED':
+                                print("[CONTROL] Long-form resume requested (immediate)", flush=True)
+                                self._longform_resume_recording()
+                            elif self._longform_state == 'RECORDING':
+                                print("[CONTROL] Long-form already recording, ignoring start request", flush=True)
+                            else:
+                                print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring start request", flush=True)
+                    elif not self.is_recording:
                         print("[CONTROL] Recording start requested (immediate)", flush=True)
                         self._start_recording()
                     else:
                         print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
                 elif action == "stop":
-                    if self.is_recording:
+                    if recording_mode == "long_form":
+                        # In long-form mode, "stop" action pauses if recording
+                        self._ensure_longform_initialized()
+                        with self._longform_lock:
+                            if self._longform_state == 'RECORDING':
+                                print("[CONTROL] Long-form pause requested (immediate)", flush=True)
+                                self._longform_pause_recording()
+                            elif self._longform_state == 'PAUSED':
+                                print("[CONTROL] Long-form already paused, ignoring stop request", flush=True)
+                            elif self._longform_state == 'IDLE':
+                                print("[CONTROL] Long-form not recording, ignoring stop request", flush=True)
+                            else:
+                                print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring stop request", flush=True)
+                    elif self.is_recording:
                         print("[CONTROL] Recording stop requested (immediate)", flush=True)
                         self._stop_recording()
                     else:
                         print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
+                elif action == "submit":
+                    # Submit command for long-form mode submit shortcut
+                    if recording_mode == "long_form":
+                        self._ensure_longform_initialized()
+                        print("[CONTROL] Long-form submit requested (immediate)", flush=True)
+                        self._on_longform_submit_triggered()
+                    else:
+                        print("[CONTROL] Submit command only valid in long_form mode", flush=True)
                 else:
                     print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
                     

@@ -26,6 +26,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
+- **Long form mode with saving** - Pause, think, resume, pause: submit... Bam!
 - **Auto-paste anywhere** - Instant paste into any active buffer, or even auto enter (optional)
 - **Audio ducking 🦆** - Reduces system volume on record (optional)
 
@@ -197,6 +198,13 @@ hyprwhspr supports three configurable interaction modes:
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
+**Long-form mode:**
+
+- **`Super+Alt+D`** - Toggle recording/pause (start recording, pause, or resume)
+- **`long_form_submit_shortcut`** - Set a key to send, like `SUPER+ALT+E`
+- Auto-saves segments periodically (default: every 5 minutes) for crash-safe recording
+- Supports pause/resume for extended recording sessions
+
 ## Configuration
 
 Edit `~/.config/hyprwhspr/config.json`:
@@ -236,6 +244,24 @@ Edit `~/.config/hyprwhspr/config.json`:
 
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
+
+**Long-form mode** - extended recording with pause/resume support:
+
+```jsonc
+{
+    "recording_mode": "long_form",
+    "long_form_submit_shortcut": "SUPER+ALT+E",  // Required: no default, must be set
+    "long_form_temp_limit_mb": 500,              // Optional: max temp storage (default: 500 MB)
+    "long_form_auto_save_interval": 300,         // Optional: auto-save interval in seconds (default: 300 = 5 minutes)
+    "use_hypr_bindings": false,                   // Optional: set true to use Hyprland compositor bindings
+    "grab_keys": false                            // Recommended: false for normal keyboard usage
+}
+```
+
+- Primary shortcut toggles recording/pause/resume
+- Submit shortcut processes all recorded segments and pastes transcription
+- Segments are auto-saved periodically to disk for crash recovery
+- Old segments are automatically cleaned up when storage limit is reached
 
 **REST API** - use any ASR backend via HTTP API (local or cloud):
 
@@ -382,6 +408,14 @@ bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/h
 # Hold key to record, release to stop
 bind = SUPER ALT, D, exec, echo "start" > ~/.config/hyprwhspr/recording_control
 bindr = SUPER ALT, D, exec, echo "stop" > ~/.config/hyprwhspr/recording_control
+```
+
+```bash
+# Long-form mode
+# Primary shortcut: toggle record/pause/resume
+bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record
+# Submit shortcut: submit recording for transcription
+bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > ~/.config/hyprwhspr/recording_control
 ```
 
 Restart service to lock in changes:
