@@ -1963,8 +1963,8 @@ def setup_config(backend: Optional[str] = None, model: Optional[str] = None, rem
             # Add audio_feedback if missing
             if 'audio_feedback' not in existing_config:
                 existing_config['audio_feedback'] = True
-                existing_config['start_sound_volume'] = 0.5
-                existing_config['stop_sound_volume'] = 0.5
+                existing_config['start_sound_volume'] = 1.0
+                existing_config['stop_sound_volume'] = 1.0
                 existing_config['start_sound_path'] = 'ping-up.ogg'
                 existing_config['stop_sound_path'] = 'ping-down.ogg'
             

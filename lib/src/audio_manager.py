@@ -21,8 +21,8 @@ class AudioManager:
             self.enabled = self.config_manager.get_setting('audio_feedback', False)  # Default to disabled
             # General audio volume (fallback for _play_sound when volume=None)
             self.volume = self.config_manager.get_setting('audio_volume', 0.5)  # Default 50% volume
-            self.start_volume = self.config_manager.get_setting('start_sound_volume', 0.5)
-            self.stop_volume = self.config_manager.get_setting('stop_sound_volume', 0.5)
+            self.start_volume = self.config_manager.get_setting('start_sound_volume', 1.0)
+            self.stop_volume = self.config_manager.get_setting('stop_sound_volume', 1.0)
             self.error_volume = self.config_manager.get_setting('error_sound_volume', 0.5)
             self.start_sound_path = self.config_manager.get_setting('start_sound_path', None)
             self.stop_sound_path = self.config_manager.get_setting('stop_sound_path', None)
@@ -30,8 +30,8 @@ class AudioManager:
         else:
             self.enabled = False  # Default to disabled
             self.volume = 0.5  
-            self.start_volume = 0.5
-            self.stop_volume = 0.5
+            self.start_volume = 1.0
+            self.stop_volume = 1.0
             self.error_volume = 0.5
             self.start_sound_path = None
             self.stop_sound_path = None
