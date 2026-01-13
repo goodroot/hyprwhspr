@@ -11,12 +11,12 @@ import sys
 import os
 from pathlib import Path
 
-# Import PID file path
+# Import paths
 try:
-    from ..src.paths import MIC_OSD_PID_FILE
+    from ..src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE
 except ImportError:
     # Fallback for direct execution
-    from src.paths import MIC_OSD_PID_FILE
+    from src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE
 
 
 class MicOSDRunner:
@@ -237,7 +237,28 @@ sys.exit(main())
             print(f"[MIC-OSD] Failed to send SIGUSR2 to daemon (PID {self._process.pid}): {e}", flush=True)
             self._process = None
             self._orphaned_daemon_pid = None
-    
+
+    def set_state(self, state: str):
+        """
+        Set the visualizer state.
+
+        Args:
+            state: One of 'recording', 'paused', 'processing', 'error', 'success'
+        """
+        try:
+            VISUALIZER_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            VISUALIZER_STATE_FILE.write_text(state)
+        except Exception as e:
+            print(f"[MIC-OSD] Failed to write visualizer state: {e}", flush=True)
+
+    def clear_state(self):
+        """Clear the visualizer state file."""
+        try:
+            if VISUALIZER_STATE_FILE.exists():
+                VISUALIZER_STATE_FILE.unlink()
+        except Exception as e:
+            print(f"[MIC-OSD] Failed to clear visualizer state: {e}", flush=True)
+
     def stop(self):
         """Stop the daemon completely."""
         if self._process is None:

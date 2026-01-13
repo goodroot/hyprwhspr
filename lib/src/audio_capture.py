@@ -469,7 +469,88 @@ class AudioCapture:
                     return None
             else:
                 return None
-    
+
+    def get_current_audio_copy(self) -> Optional[np.ndarray]:
+        """
+        Get a copy of the current audio buffer without stopping recording.
+
+        Returns:
+            Copy of audio data as numpy array, or None if no data
+        """
+        with self.lock:
+            if not self.audio_data:
+                return None
+            try:
+                audio_array = np.concatenate(self.audio_data, axis=0)
+                if audio_array.ndim > 1:
+                    audio_array = audio_array.flatten()
+                if audio_array.dtype != np.float32:
+                    audio_array = audio_array.astype(np.float32)
+                return audio_array.copy()
+            except Exception as e:
+                print(f"[ERROR] Failed to copy audio data: {e}")
+                return None
+
+    def clear_buffer(self):
+        """Clear the audio buffer without stopping recording."""
+        with self.lock:
+            self.audio_data = []
+            print("[AUDIO] Buffer cleared")
+
+    def pause_recording(self) -> Optional[np.ndarray]:
+        """
+        Pause recording and return current audio data without fully stopping.
+
+        This keeps the AudioCapture state ready to resume.
+
+        Returns:
+            Current audio data as numpy array, or None if no data
+        """
+        if not self.is_recording:
+            return None
+
+        # Signal to stop recording
+        with self.lock:
+            self.is_recording = False
+
+        # Wait for recording thread to finish
+        if self.record_thread and self.record_thread.is_alive():
+            self.record_thread.join(timeout=3.0)
+
+        # Get the audio data
+        audio_array = None
+        with self.lock:
+            if self.audio_data:
+                try:
+                    audio_array = np.concatenate(self.audio_data, axis=0)
+                    if audio_array.ndim > 1:
+                        audio_array = audio_array.flatten()
+                    if audio_array.dtype != np.float32:
+                        audio_array = audio_array.astype(np.float32)
+                    if not audio_array.flags['C_CONTIGUOUS']:
+                        audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
+                except Exception as e:
+                    print(f"[ERROR] Failed to process paused audio: {e}")
+                    audio_array = None
+            # Clear buffer after extracting
+            self.audio_data = []
+
+        print("[AUDIO] Recording paused")
+        return audio_array
+
+    def resume_recording(self, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
+        """
+        Resume recording after a pause.
+
+        Args:
+            streaming_callback: Optional callback for streaming audio chunks
+
+        Returns:
+            True if resumed successfully, False otherwise
+        """
+        # Just call start_recording - it handles everything
+        return self.start_recording(streaming_callback=streaming_callback)
+
     def _record_audio(self):
         """Internal method to record audio in a separate thread"""
         try:

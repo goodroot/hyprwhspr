@@ -25,6 +25,7 @@ MIC_ZERO_VOLUME_FILE = CONFIG_DIR / '.mic_zero_volume'
 MIC_OSD_PID_FILE = CONFIG_DIR / 'mic_osd.pid'
 SUSPEND_MARKER_FILE = CONFIG_DIR / '.suspend_marker'
 LOCK_FILE = CONFIG_DIR / 'hyprwhspr.lock'
+VISUALIZER_STATE_FILE = CONFIG_DIR / 'visualizer_state'  # recording|paused|processing|error|success
 
 # Secure credential storage
 CREDENTIALS_DIR = DATA_DIR
@@ -32,3 +33,7 @@ CREDENTIALS_FILE = CREDENTIALS_DIR / 'credentials'
 
 # Temporary files and models
 TEMP_DIR = DATA_DIR / 'temp'
+
+# Long-form recording mode
+LONGFORM_STATE_FILE = CONFIG_DIR / 'longform_state'  # IDLE|RECORDING|PAUSED|PROCESSING|ERROR
+LONGFORM_SEGMENTS_DIR = TEMP_DIR / 'longform_segments'

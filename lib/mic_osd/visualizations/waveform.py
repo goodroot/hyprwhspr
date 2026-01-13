@@ -3,9 +3,10 @@ Waveform visualization - shows microphone input as animated vertical bars.
 """
 
 import math
+import time
 import cairo
 import numpy as np
-from .base import BaseVisualization
+from .base import BaseVisualization, StateManager, VisualizerState
 from ..theme import theme
 
 
@@ -21,23 +22,31 @@ class WaveformVisualization(BaseVisualization):
     
     def __init__(self):
         super().__init__()
-        
+
         # Bar settings
         self.num_bars = 32
         self.bar_width = 4
         self.bar_gap = 2
         self.min_bar_height = 2
-        
+
         # Amplification for more visible response
         self.amplification = 4.0
-        
+
         # Smoothing for bar heights (makes animation smoother)
         self.bar_heights = np.zeros(self.num_bars)
         self.decay_rate = 0.85  # How fast bars fall
         self.rise_rate = 0.5    # How fast bars rise
-        
-        # Animation for pulsing dot
+
+        # Animation for pulsing dot (legacy, now managed by StateManager)
         self.pulse_phase = 0.0
+
+        # State manager for visualizer states (recording, paused, processing, etc.)
+        self.state_manager = StateManager()
+
+        # Elapsed time tracking for long-form mode
+        self._recording_start_time = None
+        self._elapsed_seconds = 0.0
+        self._show_elapsed_time = False
     
     def update(self, level: float, samples: np.ndarray = None):
         """Update with new audio samples."""
@@ -73,11 +82,9 @@ class WaveformVisualization(BaseVisualization):
         else:
             # No audio - decay all bars
             self.bar_heights *= self.decay_rate
-        
-        # Update pulse animation
-        self.pulse_phase += 0.15
-        if self.pulse_phase > 2 * math.pi:
-            self.pulse_phase -= 2 * math.pi
+
+        # Update state manager animation
+        self.state_manager.update()
     
     def draw(self, cr: cairo.Context, width: int, height: int):
         """Draw the bar visualization with recording indicator."""
@@ -131,19 +138,105 @@ class WaveformVisualization(BaseVisualization):
             cr.set_source_rgba(r, g, b, 0.9)
             cr.rectangle(x, bar_top, bar_width, bar_h)
             cr.fill()
-    
+
+        # Draw elapsed time (for long-form mode)
+        self._draw_elapsed_time(cr, width, height)
+
+    def set_state(self, state_str: str):
+        """Set the visualizer state from a string value."""
+        self.state_manager.set_state_from_string(state_str)
+
+        # Start/stop elapsed time tracking based on state
+        if state_str == 'recording':
+            if self._recording_start_time is None:
+                self._recording_start_time = time.time()
+            self._show_elapsed_time = True
+        elif state_str == 'paused':
+            # Keep showing elapsed time but don't increment
+            if self._recording_start_time is not None:
+                self._elapsed_seconds += time.time() - self._recording_start_time
+                self._recording_start_time = None
+            self._show_elapsed_time = True
+        else:
+            # Reset elapsed time for other states
+            self._recording_start_time = None
+            self._elapsed_seconds = 0.0
+            self._show_elapsed_time = False
+
+    def set_elapsed_time(self, seconds: float):
+        """Set the elapsed time directly (for long-form mode)."""
+        self._elapsed_seconds = seconds
+        self._show_elapsed_time = True
+
+    def _get_elapsed_seconds(self) -> float:
+        """Get current elapsed time in seconds."""
+        if self._recording_start_time is not None:
+            return self._elapsed_seconds + (time.time() - self._recording_start_time)
+        return self._elapsed_seconds
+
+    def _format_elapsed_time(self, seconds: float) -> str:
+        """Format seconds as MM:SS."""
+        minutes = int(seconds) // 60
+        secs = int(seconds) % 60
+        return f"{minutes:02d}:{secs:02d}"
+
+    def _draw_elapsed_time(self, cr: cairo.Context, width: int, height: int):
+        """Draw elapsed time in the bottom-right corner."""
+        if not self._show_elapsed_time:
+            return
+
+        elapsed = self._get_elapsed_seconds()
+        text = self._format_elapsed_time(elapsed)
+
+        # Set font (monospace for consistent width)
+        cr.select_font_face(
+            "monospace",
+            cairo.FONT_SLANT_NORMAL,
+            cairo.FONT_WEIGHT_NORMAL
+        )
+        cr.set_font_size(11)
+
+        # Measure text
+        extents = cr.text_extents(text)
+        text_width = extents.width
+        text_height = extents.height
+
+        # Position: bottom-right with padding
+        padding = 10
+        x = width - text_width - padding
+        y = height - padding
+
+        # Draw background (semi-transparent)
+        bg_padding = 3
+        cr.set_source_rgba(0, 0, 0, 0.4)
+        cr.rectangle(
+            x - bg_padding,
+            y - text_height - bg_padding,
+            text_width + bg_padding * 2,
+            text_height + bg_padding * 2
+        )
+        cr.fill()
+
+        # Draw text
+        text_color = theme.text
+        cr.set_source_rgba(text_color[0], text_color[1], text_color[2], 0.9)
+        cr.move_to(x, y)
+        cr.show_text(text)
+
     def _draw_recording_indicator(self, cr: cairo.Context, x: float, center_y: float):
-        """Draw the red recording dot."""
+        """Draw the state indicator dot with state-appropriate color and animation."""
         dot_radius = 6
         dot_x = x + dot_radius + 4
         dot_y = center_y
-        
-        # Pulsing effect - varies between 0.6 and 1.0 opacity
-        pulse = 0.7 + 0.3 * math.sin(self.pulse_phase)
-        
-        # Get color from theme
-        dot_color = theme.recording_dot
-        
+
+        # Get animation value and color from state manager
+        pulse = self.state_manager.get_animation_value()
+        dot_color = self.state_manager.get_state_color()
+
+        # Skip drawing if animation has faded out completely (e.g., success state after 2s)
+        if pulse <= 0:
+            return
+
         # Draw glow behind dot
         cr.set_source_rgba(
             dot_color[0],
@@ -153,7 +246,7 @@ class WaveformVisualization(BaseVisualization):
         )
         cr.arc(dot_x, dot_y, dot_radius + 3, 0, 2 * math.pi)
         cr.fill()
-        
+
         # Draw main dot
         cr.set_source_rgba(
             dot_color[0],

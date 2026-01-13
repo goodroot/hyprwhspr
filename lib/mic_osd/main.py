@@ -21,17 +21,18 @@ from .audio import AudioMonitor
 from .visualizations import VISUALIZATIONS
 from .theme import ThemeWatcher
 
-# Import RECORDING_STATUS_FILE path with fallback for daemon context
+# Import paths with fallback for daemon context
 try:
-    from ..src.paths import RECORDING_STATUS_FILE
+    from ..src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE
 except ImportError:
     try:
-        from src.paths import RECORDING_STATUS_FILE
+        from src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE
     except ImportError:
-        # Fallback: construct path manually if imports fail
+        # Fallback: construct paths manually if imports fail
         home = Path.home()
         xdg_config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
         RECORDING_STATUS_FILE = xdg_config / 'hyprwhspr' / 'recording_status'
+        VISUALIZER_STATE_FILE = xdg_config / 'hyprwhspr' / 'visualizer_state'
 
 
 class MicOSD:
@@ -45,10 +46,12 @@ class MicOSD:
         self.window = None
         self.update_timer_id = None
         self._auto_hide_timeout_id = None
+        self._state_poll_timer_id = None
+        self._last_visualizer_state = None
         self.daemon = daemon
         self.visible = False
         self.theme_watcher = None
-        
+
         # Get visualization
         viz_class = VISUALIZATIONS.get(visualization, VISUALIZATIONS["waveform"])
         self.visualization = viz_class()
@@ -141,7 +144,11 @@ class MicOSD:
         # Start update timer (60 FPS)
         if not self.update_timer_id:
             self.update_timer_id = GLib.timeout_add(16, self._update)
-        
+
+        # Start state file polling (100ms interval)
+        if not self._state_poll_timer_id:
+            self._state_poll_timer_id = GLib.timeout_add(100, self._poll_state_file)
+
         # Start auto-hide timeout (30 seconds)
         if self._auto_hide_timeout_id:
             GLib.source_remove(self._auto_hide_timeout_id)
@@ -160,7 +167,12 @@ class MicOSD:
             if self.update_timer_id:
                 GLib.source_remove(self.update_timer_id)
                 self.update_timer_id = None
-            
+
+            # Stop state polling timer
+            if self._state_poll_timer_id:
+                GLib.source_remove(self._state_poll_timer_id)
+                self._state_poll_timer_id = None
+
             # Cancel auto-hide timeout
             if self._auto_hide_timeout_id:
                 GLib.source_remove(self._auto_hide_timeout_id)
@@ -199,7 +211,28 @@ class MicOSD:
             samples = self.audio_monitor.get_samples()
             self.window.update(level, samples)
         return True  # Continue timer
-    
+
+    def _poll_state_file(self):
+        """Poll the visualizer state file and update visualization state."""
+        try:
+            if VISUALIZER_STATE_FILE.exists():
+                with open(VISUALIZER_STATE_FILE, 'r') as f:
+                    state = f.read().strip()
+                    if state and state != self._last_visualizer_state:
+                        self._last_visualizer_state = state
+                        # Update visualization state if it has the set_state method
+                        if hasattr(self.visualization, 'set_state'):
+                            self.visualization.set_state(state)
+            else:
+                # No state file means default to recording state
+                if self._last_visualizer_state != 'recording':
+                    self._last_visualizer_state = 'recording'
+                    if hasattr(self.visualization, 'set_state'):
+                        self.visualization.set_state('recording')
+        except Exception:
+            pass  # Ignore file read errors
+        return True  # Continue polling
+
     def _auto_hide_callback(self):
         """Auto-hide callback triggered after 30 seconds of visibility."""
         if not self.visible:
@@ -247,15 +280,19 @@ class MicOSD:
         if self.update_timer_id:
             GLib.source_remove(self.update_timer_id)
             self.update_timer_id = None
-        
+
+        if self._state_poll_timer_id:
+            GLib.source_remove(self._state_poll_timer_id)
+            self._state_poll_timer_id = None
+
         if self._auto_hide_timeout_id:
             GLib.source_remove(self._auto_hide_timeout_id)
             self._auto_hide_timeout_id = None
-        
+
         if self.audio_monitor:
             self.audio_monitor.stop()
             self.audio_monitor = None
-        
+
         if self.theme_watcher:
             self.theme_watcher.stop()
             self.theme_watcher = None

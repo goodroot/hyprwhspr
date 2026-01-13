@@ -69,7 +69,11 @@ class ConfigManager:
             'audio_ducking': False,              # Reduce system volume during recording
             'audio_ducking_percent': 50,         # How much to reduce BY (50 = reduce to 50% of original)
             # Post-paste behavior
-            'auto_submit': False                 # Send Enter key after pasting text (for chat/search inputs)
+            'auto_submit': False,                # Send Enter key after pasting text (for chat/search inputs)
+            # Long-form recording mode settings
+            'long_form_submit_shortcut': None,   # Shortcut to submit long-form recording (e.g., "Super+Return")
+            'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
+            'long_form_auto_save_interval': 300  # Auto-save interval in seconds (default: 5 minutes)
         }
         
         # Set up config directory and file path

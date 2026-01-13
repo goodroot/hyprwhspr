@@ -17,6 +17,11 @@ DEFAULT_COLORS = {
     'bar-color-right': (0.0, 1.0, 0.6),     # Green
     'recording-dot': (1.0, 0.2, 0.33),      # Red
     'text-color': (0.8, 0.84, 0.96, 1.0),   # Light gray
+    # State-specific colors for visualizer
+    'paused-dot': (1.0, 0.75, 0.0),         # Amber
+    'processing-dot': (0.2, 0.9, 0.4),      # Green
+    'error-dot': (1.0, 0.2, 0.2),           # Bright red
+    'success-dot': (0.0, 1.0, 0.5),         # Green
 }
 
 
@@ -179,6 +184,34 @@ class Theme:
     def text(self):
         color = self.get('text-color')
         # Ensure alpha channel
+        if len(color) == 3:
+            return (*color, 1.0)
+        return color
+
+    @property
+    def paused_dot(self):
+        color = self.get('paused-dot')
+        if len(color) == 3:
+            return (*color, 1.0)
+        return color
+
+    @property
+    def processing_dot(self):
+        color = self.get('processing-dot')
+        if len(color) == 3:
+            return (*color, 1.0)
+        return color
+
+    @property
+    def error_dot(self):
+        color = self.get('error-dot')
+        if len(color) == 3:
+            return (*color, 1.0)
+        return color
+
+    @property
+    def success_dot(self):
+        color = self.get('success-dot')
         if len(color) == 3:
             return (*color, 1.0)
         return color

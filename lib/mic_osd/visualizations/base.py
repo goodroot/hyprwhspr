@@ -3,10 +3,107 @@ Base visualization class for mic-osd.
 """
 
 from abc import ABC, abstractmethod
+from enum import Enum
 import cairo
+import math
 import numpy as np
+import time
 
 from ..theme import theme
+
+
+class VisualizerState(Enum):
+    """States for the visualizer indicator."""
+    RECORDING = "recording"      # Pulsing red dot
+    PAUSED = "paused"            # Static amber dot
+    PROCESSING = "processing"    # Green wave animation
+    ERROR = "error"              # Red flash/strobe
+    SUCCESS = "success"          # Green pulse + fade
+
+
+class StateManager:
+    """Manages visualizer state transitions and animations."""
+
+    def __init__(self):
+        self.current_state = VisualizerState.RECORDING
+        self.state_changed_at = time.time()
+        self.animation_phase = 0.0
+        self.elapsed_seconds = 0.0  # For long-form mode elapsed time display
+
+    def set_state(self, new_state: VisualizerState):
+        """Set a new state, resetting animation timing."""
+        if new_state != self.current_state:
+            self.current_state = new_state
+            self.state_changed_at = time.time()
+            self.animation_phase = 0.0
+
+    def set_state_from_string(self, state_str: str):
+        """Set state from string value (for IPC)."""
+        state_map = {
+            'recording': VisualizerState.RECORDING,
+            'paused': VisualizerState.PAUSED,
+            'processing': VisualizerState.PROCESSING,
+            'error': VisualizerState.ERROR,
+            'success': VisualizerState.SUCCESS,
+        }
+        new_state = state_map.get(state_str.lower(), VisualizerState.RECORDING)
+        self.set_state(new_state)
+
+    def update(self, dt: float = 0.016):
+        """Update animation phase (called every frame, ~60 FPS)."""
+        self.animation_phase += 0.15  # Same rate as existing pulse
+        if self.animation_phase > 2 * math.pi:
+            self.animation_phase -= 2 * math.pi
+
+    def get_state_color(self) -> tuple:
+        """Return the appropriate color for current state from theme."""
+        color_map = {
+            VisualizerState.RECORDING: theme.recording_dot,
+            VisualizerState.PAUSED: theme.paused_dot,
+            VisualizerState.PROCESSING: theme.processing_dot,
+            VisualizerState.ERROR: theme.error_dot,
+            VisualizerState.SUCCESS: theme.success_dot,
+        }
+        return color_map.get(self.current_state, theme.recording_dot)
+
+    def get_animation_value(self) -> float:
+        """Return 0-1 animation parameter based on state type."""
+        elapsed = time.time() - self.state_changed_at
+
+        if self.current_state == VisualizerState.RECORDING:
+            # Gentle pulse: varies 0.7-1.0
+            return 0.7 + 0.3 * math.sin(self.animation_phase)
+
+        elif self.current_state == VisualizerState.PAUSED:
+            # Static, no animation
+            return 1.0
+
+        elif self.current_state == VisualizerState.PROCESSING:
+            # Flowing wave: varies 0.6-1.0
+            return 0.6 + 0.4 * math.sin(self.animation_phase)
+
+        elif self.current_state == VisualizerState.ERROR:
+            # Fast strobe: 4x speed, varies 0.3-1.0
+            return 0.3 + 0.7 * abs(math.sin(self.animation_phase * 4))
+
+        elif self.current_state == VisualizerState.SUCCESS:
+            # Pulse then fade out over 2 seconds
+            if elapsed > 2.0:
+                return 0.0
+            fade = 1.0 - (elapsed / 2.0)
+            pulse = 0.7 + 0.3 * math.sin(self.animation_phase)
+            return fade * pulse
+
+        return 1.0
+
+    def is_animating(self) -> bool:
+        """Return True if state requires continuous animation updates."""
+        if self.current_state == VisualizerState.PAUSED:
+            return False
+        if self.current_state == VisualizerState.SUCCESS:
+            # Stop animating after fade completes
+            return (time.time() - self.state_changed_at) < 2.5
+        return True
 
 
 class BaseVisualization(ABC):
