@@ -113,6 +113,14 @@ class WaveformVisualization(BaseVisualization):
         bar_left = theme.bar_left
         bar_right = theme.bar_right
         
+        # Check if we're in processing state for wave effect
+        is_processing = self.state_manager.current_state == VisualizerState.PROCESSING
+        wave_phase = self.state_manager.animation_phase if is_processing else 0.0
+        
+        # Check if we're in success state for pulse effect
+        is_success = self.state_manager.current_state == VisualizerState.SUCCESS
+        pulse_value = self.state_manager.get_animation_value() if is_success else 1.0
+        
         # Draw bars
         for i in range(actual_num_bars):
             # Interpolate color from left to right
@@ -121,8 +129,50 @@ class WaveformVisualization(BaseVisualization):
             g = bar_left[1] * (1 - t) + bar_right[1] * t
             b = bar_left[2] * (1 - t) + bar_right[2] * t
             
-            # Get bar height
-            bar_h = max(self.min_bar_height, self.bar_heights[i] * bars_height)
+            # Get normalized bar height (0-1 range)
+            normalized_height = self.bar_heights[i]
+            
+            # Apply wave pattern during processing state
+            if is_processing:
+                # Clean, simple wave pattern: bars going up and down in a clear wave
+                # One full cycle across all bars for a clean, visible wave
+                wave_pos = (i / max(1, actual_num_bars - 1)) * 2 * math.pi + wave_phase
+                
+                # Primary wave: clean sine wave with dramatic range (0.3x to 1.7x)
+                primary_wave = 0.3 + 0.7 * math.sin(wave_pos)
+                # One subtle harmonic (2x frequency) for a bit of character/texture
+                harmonic = 0.12 * math.sin(wave_pos * 2)
+                # Combined: clean wave with subtle detail
+                wave_modulation = primary_wave + harmonic
+                
+                # Add base height boost so wave reaches recording-level extremes
+                # This ensures bars get tall even without audio input during processing
+                # Boost to 70% of max as baseline, then apply wave modulation
+                base_height_boost = 0.7
+                boosted_normalized = max(normalized_height, base_height_boost)
+                
+                # Apply wave modulation to the boosted height
+                normalized_height = boosted_normalized * wave_modulation
+                # Clamp to valid range
+                normalized_height = max(0.0, min(1.0, normalized_height))
+                
+                # Convert to pixel height
+                bar_h = max(self.min_bar_height, normalized_height * bars_height)
+                
+                # Simple opacity modulation (subtle, not distracting)
+                opacity_modulation = 0.75 + 0.25 * (0.5 + 0.5 * math.sin(wave_pos))
+            elif is_success:
+                # Pulse effect: all bars pulse together and fade out
+                # Convert to pixel height first
+                bar_h = max(self.min_bar_height, normalized_height * bars_height)
+                # Pulse modulates height (0.7x to 1.3x) based on animation value
+                pulse_modulation = 0.7 + 0.3 * pulse_value
+                bar_h = bar_h * pulse_modulation
+                opacity_modulation = pulse_value
+            else:
+                # Normal bar height calculation for non-processing states
+                bar_h = max(self.min_bar_height, normalized_height * bars_height)
+                opacity_modulation = 1.0
             
             x = start_x + i * total_bar_width
             
@@ -130,12 +180,12 @@ class WaveformVisualization(BaseVisualization):
             bar_top = center_y - bar_h / 2
             
             # Draw glow effect
-            cr.set_source_rgba(r, g, b, 0.3)
+            cr.set_source_rgba(r, g, b, 0.3 * opacity_modulation)
             cr.rectangle(x - 1, bar_top - 1, bar_width + 2, bar_h + 2)
             cr.fill()
             
             # Draw main bar
-            cr.set_source_rgba(r, g, b, 0.9)
+            cr.set_source_rgba(r, g, b, 0.9 * opacity_modulation)
             cr.rectangle(x, bar_top, bar_width, bar_h)
             cr.fill()
 
@@ -206,9 +256,20 @@ class WaveformVisualization(BaseVisualization):
         x = width - text_width - padding
         y = height - padding
 
-        # Draw background (semi-transparent)
+        # Draw background using theme background color (harmonized with bars)
         bg_padding = 3
-        cr.set_source_rgba(0, 0, 0, 0.4)
+        bg_color = theme.background
+        # Use theme background with slightly higher opacity for better visibility
+        if len(bg_color) == 4:
+            bg_alpha = bg_color[3] * 0.9  # Slightly more opaque than main background
+        else:
+            bg_alpha = 0.9
+        cr.set_source_rgba(
+            bg_color[0] if len(bg_color) >= 1 else 0.1,
+            bg_color[1] if len(bg_color) >= 2 else 0.1,
+            bg_color[2] if len(bg_color) >= 3 else 0.15,
+            bg_alpha
+        )
         cr.rectangle(
             x - bg_padding,
             y - text_height - bg_padding,
@@ -217,9 +278,15 @@ class WaveformVisualization(BaseVisualization):
         )
         cr.fill()
 
-        # Draw text
-        text_color = theme.text
-        cr.set_source_rgba(text_color[0], text_color[1], text_color[2], 0.9)
+        # Draw text using bar colors (interpolated toward right/end for harmony)
+        # Use the right bar color (green) as it's at the end where timer is
+        bar_right = theme.bar_right
+        cr.set_source_rgba(
+            bar_right[0],
+            bar_right[1],
+            bar_right[2],
+            0.95  # High opacity for good readability
+        )
         cr.move_to(x, y)
         cr.show_text(text)
 
