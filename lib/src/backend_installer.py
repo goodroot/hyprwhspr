@@ -305,11 +305,9 @@ def _get_wheel_variant(cuda_version: Optional[str]) -> Optional[str]:
         return "cuda118"  # All CUDA 11.x uses 11.8 build
     elif major == 12:
         return "cuda122"  # All CUDA 12.x uses 12.2 build
-    elif major == 13:
-        return "cuda131"  # All CUDA 13.x uses 13.1 build
-    elif major >= 14:
-        # Future CUDA versions - fall back to source build until we add wheels
-        log_debug(f"CUDA {cuda_version} detected - no pre-built wheel available, will build from source")
+    elif major >= 13:
+        # CUDA 13+ not yet available in GitHub Actions - fall back to source build
+        log_info(f"CUDA {cuda_version} detected - no pre-built wheel available, building from source")
         return None
     else:
         return "cpu"  # Very old CUDA, fallback to CPU
