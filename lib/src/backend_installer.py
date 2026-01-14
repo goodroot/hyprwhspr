@@ -305,12 +305,23 @@ def _get_wheel_variant(cuda_version: Optional[str]) -> str:
         return "cpu"  # Unsupported CUDA, fallback to CPU
 
 
-def _get_wheel_filename(python_version: str, variant: str) -> str:
-    """Construct wheel filename for given Python version and variant"""
+def _get_wheel_filename(python_version: str, variant: str, for_download: bool = True) -> str:
+    """Construct wheel filename for given Python version and variant
+
+    Args:
+        python_version: e.g., '3.11'
+        variant: 'cpu', 'cuda118', 'cuda122'
+        for_download: If True, include variant suffix (for GitHub). If False, standard pip format.
+    """
     # Python 3.11 -> cp311
     py_tag = f"cp{python_version.replace('.', '')}"
-    # Example: pywhispercpp-1.4.0-cp311-cp311-linux_x86_64+cuda122.whl
-    return f"pywhispercpp-{PYWHISPERCPP_VERSION}-{py_tag}-{py_tag}-linux_x86_64+{variant}.whl"
+    base = f"pywhispercpp-{PYWHISPERCPP_VERSION}-{py_tag}-{py_tag}-linux_x86_64"
+    if for_download:
+        # GitHub release filename: pywhispercpp-1.4.0-cp311-cp311-linux_x86_64+cuda122.whl
+        return f"{base}+{variant}.whl"
+    else:
+        # Standard pip-compatible filename: pywhispercpp-1.4.0-cp311-cp311-linux_x86_64.whl
+        return f"{base}.whl"
 
 
 def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]:
@@ -322,7 +333,7 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
                  If None, auto-detects based on system CUDA.
 
     Returns:
-        Path to downloaded wheel file, or None if unavailable/failed.
+        Path to downloaded wheel file (with pip-compatible name), or None if unavailable/failed.
     """
     python_version = _detect_venv_python_version()
 
@@ -330,19 +341,25 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
         cuda_version = _detect_cuda_version()
         variant = _get_wheel_variant(cuda_version)
 
-    wheel_filename = _get_wheel_filename(python_version, variant)
-    wheel_url = f"{WHEEL_BASE_URL}/{wheel_filename}"
+    # Filename on GitHub (with variant suffix)
+    download_filename = _get_wheel_filename(python_version, variant, for_download=True)
+    # Filename for pip (standard format without variant)
+    install_filename = _get_wheel_filename(python_version, variant, for_download=False)
 
-    # Create cache directory
-    WHEEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    wheel_path = WHEEL_CACHE_DIR / wheel_filename
+    wheel_url = f"{WHEEL_BASE_URL}/{download_filename}"
 
-    # Check if already cached
-    if wheel_path.exists() and wheel_path.stat().st_size > 10 * 1024 * 1024:  # >10MB
-        log_info(f"Using cached wheel: {wheel_filename}")
-        return wheel_path
+    # Create variant-specific cache directory to avoid collisions between cpu/cuda variants
+    variant_cache_dir = WHEEL_CACHE_DIR / variant
+    variant_cache_dir.mkdir(parents=True, exist_ok=True)
+    download_path = variant_cache_dir / download_filename
+    install_path = variant_cache_dir / install_filename
 
-    log_info(f"Downloading pre-built wheel: {wheel_filename}")
+    # Check if already cached (check the pip-compatible filename in variant subdirectory)
+    if install_path.exists() and install_path.stat().st_size > 10 * 1024 * 1024:  # >10MB
+        log_info(f"Using cached wheel: {variant}/{install_filename}")
+        return install_path
+
+    log_info(f"Downloading pre-built wheel: {download_filename}")
 
     try:
         def show_progress(block_num, block_size, total_size):
@@ -361,28 +378,33 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
             if downloaded >= total_size and total_size > 0:
                 OutputController.write("\n", VerbosityLevel.NORMAL, flush=True)
 
-        urllib.request.urlretrieve(wheel_url, wheel_path, reporthook=show_progress)
+        urllib.request.urlretrieve(wheel_url, download_path, reporthook=show_progress)
 
         # Verify download
-        if wheel_path.exists() and wheel_path.stat().st_size > 10 * 1024 * 1024:
-            log_success(f"Pre-built wheel downloaded: {wheel_filename}")
-            return wheel_path
+        if download_path.exists() and download_path.stat().st_size > 10 * 1024 * 1024:
+            # Rename to pip-compatible filename (strip variant suffix)
+            if download_path != install_path:
+                if install_path.exists():
+                    install_path.unlink()
+                download_path.rename(install_path)
+            log_success(f"Pre-built wheel downloaded: {install_filename}")
+            return install_path
         else:
             log_warning("Downloaded wheel appears invalid (too small)")
-            if wheel_path.exists():
-                wheel_path.unlink()
+            if download_path.exists():
+                download_path.unlink()
             return None
 
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            log_debug(f"Pre-built wheel not available: {wheel_filename}")
+            log_debug(f"Pre-built wheel not available: {download_filename}")
         else:
             log_warning(f"Failed to download wheel: HTTP {e.code}")
         return None
     except Exception as e:
         log_warning(f"Failed to download wheel: {e}")
-        if wheel_path.exists():
-            wheel_path.unlink()
+        if download_path.exists():
+            download_path.unlink()
         return None
 
 
