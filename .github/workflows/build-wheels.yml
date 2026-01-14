@@ -89,7 +89,13 @@ jobs:
         with:
           cuda: ${{ matrix.cuda-version }}.0
           method: 'network'
-          sub-packages: '["nvcc", "cudart-dev", "cublas-dev"]'
+          sub-packages: '["nvcc", "cudart-dev"]'
+
+      - name: Install cuBLAS development libraries
+        run: |
+          CUDA_VER="${{ matrix.cuda-version }}"
+          CUDA_VER_DASH="${CUDA_VER//./-}"  # 11.8 -> 11-8
+          sudo apt-get install -y libcublas-dev-${CUDA_VER_DASH}
 
       - name: Install build dependencies
         run: |
