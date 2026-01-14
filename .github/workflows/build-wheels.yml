@@ -142,6 +142,8 @@ jobs:
     needs: [build-cpu, build-cuda]
     runs-on: ubuntu-latest
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
 
     steps:
       - name: Download all wheel artifacts
