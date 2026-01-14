@@ -89,7 +89,7 @@ jobs:
         with:
           cuda: ${{ matrix.cuda-version }}.0
           method: 'network'
-          sub-packages: '["nvcc", "cudart-dev"]'
+          sub-packages: '["nvcc", "cudart-dev", "cublas-dev"]'
 
       - name: Install build dependencies
         run: |
