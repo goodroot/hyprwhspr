@@ -1096,7 +1096,8 @@ def setup_python_venv(force_rebuild: bool = False) -> Path:
             shutil.rmtree(VENV_DIR)
         log_info(f"Creating venv at {VENV_DIR}")
         VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
-        run_command([python_executable, '-m', 'venv', str(VENV_DIR)], check=True)
+        # Use --system-site-packages to access system GTK/GLib bindings (python-gobject)
+        run_command([python_executable, '-m', 'venv', '--system-site-packages', str(VENV_DIR)], check=True)
     else:
         log_info(f"Venv already exists at {VENV_DIR}")
     
