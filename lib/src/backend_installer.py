@@ -12,6 +12,7 @@ import shutil
 import urllib.request
 from pathlib import Path
 from typing import Optional, Tuple, Dict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import output control system
 try:
@@ -68,6 +69,11 @@ PARAKEET_VENV_DIR = USER_BASE / 'parakeet-venv'
 PARAKEET_DIR = Path(HYPRWHSPR_ROOT) / 'lib' / 'backends' / 'parakeet'
 PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
 PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
+
+# Pre-built wheel configuration
+WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v1"
+WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
+PYWHISPERCPP_VERSION = "1.4.0"
 
 
 def _safe_decode(output) -> str:
@@ -216,6 +222,194 @@ def _get_system_python() -> str:
     
     # Default: return current executable (may be mise-managed, but better than nothing)
     return sys.executable
+
+
+# ==================== Pre-built Wheel Support ====================
+
+def _detect_venv_python_version() -> str:
+    """Detect Python version in the venv (e.g., '3.11')"""
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        # Fallback to system Python version
+        import re
+        version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        return version
+
+    try:
+        result = run_command(
+            [str(venv_python), '--version'],
+            check=False,
+            capture_output=True
+        )
+        output = _safe_decode(result.stdout)
+        # Parse "Python 3.11.5" -> "3.11"
+        import re
+        match = re.search(r'(\d+)\.(\d+)', output)
+        if match:
+            return f"{match.group(1)}.{match.group(2)}"
+    except Exception:
+        pass
+
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
+
+
+def _detect_cuda_version() -> Optional[str]:
+    """Detect installed CUDA version from nvcc or nvidia-smi"""
+    import re
+
+    # Try nvcc first (more reliable for build compatibility)
+    nvcc_path = shutil.which('nvcc')
+    if not nvcc_path:
+        nvcc_path = '/opt/cuda/bin/nvcc' if Path('/opt/cuda/bin/nvcc').exists() else None
+
+    if nvcc_path:
+        try:
+            result = run_command([nvcc_path, '--version'], check=False, capture_output=True)
+            output = _safe_decode(result.stdout)
+            # Parse "release 12.2, V12.2.140" -> "12.2"
+            match = re.search(r'release (\d+)\.(\d+)', output)
+            if match:
+                return f"{match.group(1)}.{match.group(2)}"
+        except Exception:
+            pass
+
+    # Fallback to nvidia-smi
+    if shutil.which('nvidia-smi'):
+        try:
+            result = run_command(['nvidia-smi'], check=False, capture_output=True)
+            output = _safe_decode(result.stdout)
+            # Parse "CUDA Version: 12.2" -> "12.2"
+            match = re.search(r'CUDA Version:\s*(\d+)\.(\d+)', output)
+            if match:
+                return f"{match.group(1)}.{match.group(2)}"
+        except Exception:
+            pass
+
+    return None
+
+
+def _get_wheel_variant(cuda_version: Optional[str]) -> str:
+    """Get wheel variant suffix based on CUDA version"""
+    if not cuda_version:
+        return "cpu"
+
+    major, minor = cuda_version.split('.')[:2]
+    major = int(major)
+
+    # Map CUDA versions to our pre-built wheel variants
+    if major == 11:
+        return "cuda118"  # All CUDA 11.x uses 11.8 build
+    elif major >= 12:
+        return "cuda122"  # All CUDA 12.x uses 12.2 build
+    else:
+        return "cpu"  # Unsupported CUDA, fallback to CPU
+
+
+def _get_wheel_filename(python_version: str, variant: str) -> str:
+    """Construct wheel filename for given Python version and variant"""
+    # Python 3.11 -> cp311
+    py_tag = f"cp{python_version.replace('.', '')}"
+    # Example: pywhispercpp-1.4.0-cp311-cp311-linux_x86_64+cuda122.whl
+    return f"pywhispercpp-{PYWHISPERCPP_VERSION}-{py_tag}-{py_tag}-linux_x86_64+{variant}.whl"
+
+
+def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]:
+    """
+    Download pre-built pywhispercpp wheel if available.
+
+    Args:
+        variant: Optional variant override ('cpu', 'cuda118', 'cuda122').
+                 If None, auto-detects based on system CUDA.
+
+    Returns:
+        Path to downloaded wheel file, or None if unavailable/failed.
+    """
+    python_version = _detect_venv_python_version()
+
+    if variant is None:
+        cuda_version = _detect_cuda_version()
+        variant = _get_wheel_variant(cuda_version)
+
+    wheel_filename = _get_wheel_filename(python_version, variant)
+    wheel_url = f"{WHEEL_BASE_URL}/{wheel_filename}"
+
+    # Create cache directory
+    WHEEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    wheel_path = WHEEL_CACHE_DIR / wheel_filename
+
+    # Check if already cached
+    if wheel_path.exists() and wheel_path.stat().st_size > 10 * 1024 * 1024:  # >10MB
+        log_info(f"Using cached wheel: {wheel_filename}")
+        return wheel_path
+
+    log_info(f"Downloading pre-built wheel: {wheel_filename}")
+
+    try:
+        def show_progress(block_num, block_size, total_size):
+            """Callback to show download progress"""
+            if not OutputController.is_progress_enabled():
+                return
+
+            downloaded = block_num * block_size
+            percent = min(100, (downloaded * 100) // total_size) if total_size > 0 else 0
+            size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
+            downloaded_mb = downloaded / (1024 * 1024)
+
+            progress_msg = f"\r[INFO] Downloading wheel: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)"
+            OutputController.write(progress_msg, VerbosityLevel.NORMAL, flush=True)
+
+            if downloaded >= total_size and total_size > 0:
+                OutputController.write("\n", VerbosityLevel.NORMAL, flush=True)
+
+        urllib.request.urlretrieve(wheel_url, wheel_path, reporthook=show_progress)
+
+        # Verify download
+        if wheel_path.exists() and wheel_path.stat().st_size > 10 * 1024 * 1024:
+            log_success(f"Pre-built wheel downloaded: {wheel_filename}")
+            return wheel_path
+        else:
+            log_warning("Downloaded wheel appears invalid (too small)")
+            if wheel_path.exists():
+                wheel_path.unlink()
+            return None
+
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            log_debug(f"Pre-built wheel not available: {wheel_filename}")
+        else:
+            log_warning(f"Failed to download wheel: HTTP {e.code}")
+        return None
+    except Exception as e:
+        log_warning(f"Failed to download wheel: {e}")
+        if wheel_path.exists():
+            wheel_path.unlink()
+        return None
+
+
+def install_pywhispercpp_from_wheel(pip_bin: Path, wheel_path: Path) -> bool:
+    """Install pywhispercpp from a pre-built wheel file."""
+    log_info(f"Installing from wheel: {wheel_path.name}")
+
+    try:
+        # Setup environment
+        if _check_mise_active():
+            env = _create_mise_free_environment()
+        else:
+            env = os.environ.copy()
+
+        venv_bin = str(VENV_DIR / 'bin')
+        env['PATH'] = f"{venv_bin}:{env.get('PATH', '')}"
+
+        run_command(
+            [str(pip_bin), 'install', '--force-reinstall', str(wheel_path)],
+            check=True,
+            env=env
+        )
+        log_success("pywhispercpp installed from pre-built wheel")
+        return True
+    except subprocess.CalledProcessError as e:
+        log_warning(f"Wheel installation failed: {e}")
+        return False
 
 
 # ==================== State Management ====================
@@ -950,8 +1144,36 @@ def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
     """Install CPU-only pywhispercpp"""
     log_info("Installing pywhispercpp (CPU-only)...")
 
-    # Check if we should skip PyGObject (already installed via system package)
+    # Track if wheel was successfully installed (to avoid overwriting with PyPI version)
+    wheel_installed = False
+
+    # Try pre-built wheel first (faster than pip resolving from PyPI)
+    wheel_path = download_pywhispercpp_wheel(variant='cpu')
+    if wheel_path:
+        if install_pywhispercpp_from_wheel(pip_bin, wheel_path):
+            wheel_installed = True
+            # Still need to install other requirements
+            skip_packages = ['pywhispercpp']
+            if _should_skip_pygobject():
+                skip_packages.append('PyGObject')
+            temp_req_path = None
+            try:
+                temp_req_path = _filter_requirements(requirements_file, skip_packages)
+                run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
+                return True
+            except subprocess.CalledProcessError as e:
+                log_warning(f"Wheel installed but remaining deps failed: {e}")
+                log_warning("Falling back to full pip install...")
+            finally:
+                if temp_req_path and temp_req_path.exists():
+                    temp_req_path.unlink()
+        else:
+            log_warning("Pre-built wheel failed, falling back to pip install...")
+
+    # Build skip list - always skip pywhispercpp if wheel was already installed
     skip_packages = []
+    if wheel_installed:
+        skip_packages.append('pywhispercpp')
     if _should_skip_pygobject():
         skip_packages.append('PyGObject')
 
@@ -977,7 +1199,16 @@ def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
 def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     """Install pywhispercpp with CUDA support"""
     log_info("Installing pywhispercpp with CUDA support...")
-    
+
+    # Try pre-built wheel first (much faster than source build)
+    wheel_path = download_pywhispercpp_wheel()  # Auto-detects CUDA version
+    if wheel_path:
+        if install_pywhispercpp_from_wheel(pip_bin, wheel_path):
+            return True
+        log_warning("Pre-built wheel failed, falling back to source build...")
+
+    log_info("Building from source (this may take several minutes)...")
+
     # Clean build artifacts if they exist (to avoid Python version mismatches)
     if PYWHISPERCPP_SRC_DIR.exists():
         log_info("Cleaning existing build artifacts...")
@@ -1585,6 +1816,127 @@ def install_onnx_asr(pip_bin: Path, enable_gpu: bool = False) -> bool:
         except subprocess.CalledProcessError as e:
             log_error(f"Failed to install onnx-asr: {e}")
             return False
+
+
+# ==================== Parallel Installation Helpers ====================
+
+def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False) -> Tuple[Dict[str, bool], Optional[Path]]:
+    """
+    Run GPU detection and venv creation in parallel.
+
+    This provides ~2-5 second speedup by overlapping independent operations.
+
+    Args:
+        backend_type: One of 'nvidia', 'amd', 'vulkan' (or 'cpu' for no GPU setup)
+        force_rebuild: If True, recreate venv even if it exists
+
+    Returns:
+        Tuple of (gpu_status dict, pip_bin Path or None if venv setup failed)
+    """
+    gpu_status = {'cuda': False, 'rocm': False, 'vulkan': False}
+    pip_bin = None
+    errors = []
+
+    def setup_gpu():
+        """Run GPU detection/setup based on backend type"""
+        nonlocal gpu_status
+        try:
+            if backend_type == 'nvidia':
+                gpu_status['cuda'] = setup_nvidia_support()
+            elif backend_type == 'amd':
+                gpu_status['rocm'] = setup_amd_support()
+            elif backend_type == 'vulkan':
+                gpu_status['vulkan'] = setup_vulkan_support()
+        except Exception as e:
+            errors.append(f"GPU setup error: {e}")
+
+    def setup_venv():
+        """Create/verify Python venv"""
+        nonlocal pip_bin
+        try:
+            pip_bin = setup_python_venv(force_rebuild=force_rebuild)
+        except Exception as e:
+            errors.append(f"Venv setup error: {e}")
+
+    # Run both in parallel
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        gpu_future = executor.submit(setup_gpu)
+        venv_future = executor.submit(setup_venv)
+
+        # Wait for both to complete
+        for future in as_completed([gpu_future, venv_future]):
+            try:
+                future.result()
+            except Exception as e:
+                errors.append(str(e))
+
+    if errors:
+        for error in errors:
+            log_warning(error)
+
+    return gpu_status, pip_bin
+
+
+def _parallel_deps_and_wheel(pip_bin: Path, requirements_file: Path, variant: str) -> Tuple[bool, Optional[Path]]:
+    """
+    Download wheel and install base dependencies in parallel.
+
+    Args:
+        pip_bin: Path to pip in venv
+        requirements_file: Path to requirements.txt
+        variant: Wheel variant ('cpu', 'cuda118', 'cuda122')
+
+    Returns:
+        Tuple of (deps_installed bool, wheel_path or None)
+    """
+    deps_ok = False
+    wheel_path = None
+    errors = []
+
+    def install_deps():
+        """Install base dependencies (excluding pywhispercpp)"""
+        nonlocal deps_ok
+        try:
+            # Filter out pywhispercpp from requirements
+            skip_packages = ['pywhispercpp']
+            if _should_skip_pygobject():
+                skip_packages.append('PyGObject')
+
+            temp_req_path = None
+            try:
+                temp_req_path = _filter_requirements(requirements_file, skip_packages)
+                run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
+                deps_ok = True
+            finally:
+                if temp_req_path and temp_req_path.exists():
+                    temp_req_path.unlink()
+        except Exception as e:
+            errors.append(f"Deps install error: {e}")
+
+    def download_wheel():
+        """Download pre-built wheel"""
+        nonlocal wheel_path
+        try:
+            wheel_path = download_pywhispercpp_wheel(variant=variant)
+        except Exception as e:
+            errors.append(f"Wheel download error: {e}")
+
+    # Run both in parallel
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        deps_future = executor.submit(install_deps)
+        wheel_future = executor.submit(download_wheel)
+
+        for future in as_completed([deps_future, wheel_future]):
+            try:
+                future.result()
+            except Exception as e:
+                errors.append(str(e))
+
+    if errors:
+        for error in errors:
+            log_debug(error)
+
+    return deps_ok, wheel_path
 
 
 # ==================== Main Installation Function ====================

@@ -1,0 +1,170 @@
+name: Build PyWhisperCPP Wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      pywhispercpp_commit:
+        description: 'PyWhisperCPP commit hash'
+        required: false
+        default: '4ab96165f84e8eb579077dfc3d0476fa5606affe'
+  release:
+    types: [published]
+
+env:
+  PYWHISPERCPP_COMMIT: ${{ github.event.inputs.pywhispercpp_commit || '4ab96165f84e8eb579077dfc3d0476fa5606affe' }}
+
+jobs:
+  build-cpu:
+    name: Build CPU wheel (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - name: Checkout hyprwhspr
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git
+          pip install --upgrade pip wheel setuptools build
+
+      - name: Clone pywhispercpp
+        run: |
+          git clone --recurse-submodules https://github.com/Absadiki/pywhispercpp.git pywhispercpp-src
+          cd pywhispercpp-src
+          git checkout ${{ env.PYWHISPERCPP_COMMIT }}
+          git submodule update --init --recursive
+
+      - name: Build wheel
+        run: |
+          cd pywhispercpp-src
+          pip wheel . --no-deps --wheel-dir ../dist
+
+      - name: Rename wheel with variant suffix
+        run: |
+          cd dist
+          for f in *.whl; do
+            # Add +cpu suffix before .whl extension
+            newname="${f%.whl}+cpu.whl"
+            mv "$f" "$newname"
+          done
+          ls -la
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-cpu-py${{ matrix.python-version }}
+          path: dist/*.whl
+
+  build-cuda:
+    name: Build CUDA ${{ matrix.cuda-version }} wheel (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+        cuda-version: ['11.8', '12.2']
+
+    steps:
+      - name: Checkout hyprwhspr
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install CUDA Toolkit ${{ matrix.cuda-version }}
+        uses: Jimver/cuda-toolkit@v0.2.15
+        id: cuda-toolkit
+        with:
+          cuda: ${{ matrix.cuda-version }}.0
+          method: 'network'
+          sub-packages: '["nvcc", "cudart-dev"]'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git
+          pip install --upgrade pip wheel setuptools build
+
+      - name: Clone pywhispercpp
+        run: |
+          git clone --recurse-submodules https://github.com/Absadiki/pywhispercpp.git pywhispercpp-src
+          cd pywhispercpp-src
+          git checkout ${{ env.PYWHISPERCPP_COMMIT }}
+          git submodule update --init --recursive
+
+      - name: Build wheel with CUDA support
+        env:
+          GGML_CUDA: 'ON'
+          CUDACXX: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}/bin/nvcc
+        run: |
+          cd pywhispercpp-src
+          pip wheel . --no-deps --wheel-dir ../dist
+
+      - name: Rename wheel with CUDA variant suffix
+        run: |
+          cd dist
+          cuda_suffix="cuda${{ matrix.cuda-version }}"
+          cuda_suffix="${cuda_suffix//.}"  # Remove dots: cuda118, cuda122
+          for f in *.whl; do
+            newname="${f%.whl}+${cuda_suffix}.whl"
+            mv "$f" "$newname"
+          done
+          ls -la
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-cuda${{ matrix.cuda-version }}-py${{ matrix.python-version }}
+          path: dist/*.whl
+
+  publish-wheels:
+    name: Publish wheels to release
+    needs: [build-cpu, build-cuda]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: wheels
+          pattern: wheel-*
+          merge-multiple: true
+
+      - name: List wheels
+        run: ls -la wheels/
+
+      - name: Generate checksums
+        run: |
+          cd wheels
+          sha256sum *.whl > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload wheels to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            wheels/*.whl
+            wheels/SHA256SUMS.txt
+
+      - name: Upload wheels as workflow artifact (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-wheels
+          path: |
+            wheels/*.whl
+            wheels/SHA256SUMS.txt
