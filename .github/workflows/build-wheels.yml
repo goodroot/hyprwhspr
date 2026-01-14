@@ -95,12 +95,7 @@ jobs:
         run: |
           CUDA_VER="${{ matrix.cuda-version }}"
           CUDA_VER_DASH="${CUDA_VER//./-}"  # 11.8 -> 11-8
-          # Install cuBLAS dev and CUDA driver stubs (needed for wheel repair)
           sudo apt-get install -y libcublas-dev-${CUDA_VER_DASH}
-          # Create symlink to CUDA stubs for libcuda.so.1 (no real GPU in CI)
-          sudo ln -sf ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}/lib64/stubs/libcuda.so \
-                      ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}/lib64/stubs/libcuda.so.1
-          echo "LD_LIBRARY_PATH=${{ steps.cuda-toolkit.outputs.CUDA_PATH }}/lib64/stubs:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Install build dependencies
         run: |
@@ -119,6 +114,8 @@ jobs:
         env:
           GGML_CUDA: 'ON'
           CUDACXX: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}/bin/nvcc
+          # Skip wheel repair - CUDA driver libs must come from user's system
+          NO_REPAIR: '1'
         run: |
           cd pywhispercpp-src
           pip wheel . --no-deps --wheel-dir ../dist
