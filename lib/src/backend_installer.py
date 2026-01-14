@@ -288,8 +288,11 @@ def _detect_cuda_version() -> Optional[str]:
     return None
 
 
-def _get_wheel_variant(cuda_version: Optional[str]) -> str:
-    """Get wheel variant suffix based on CUDA version"""
+def _get_wheel_variant(cuda_version: Optional[str]) -> Optional[str]:
+    """Get wheel variant suffix based on CUDA version.
+
+    Returns None if no compatible pre-built wheel exists (triggers source build).
+    """
     if not cuda_version:
         return "cpu"
 
@@ -297,12 +300,19 @@ def _get_wheel_variant(cuda_version: Optional[str]) -> str:
     major = int(major)
 
     # Map CUDA versions to our pre-built wheel variants
+    # Only return variants we actually have pre-built wheels for
     if major == 11:
         return "cuda118"  # All CUDA 11.x uses 11.8 build
-    elif major >= 12:
+    elif major == 12:
         return "cuda122"  # All CUDA 12.x uses 12.2 build
+    elif major == 13:
+        return "cuda131"  # All CUDA 13.x uses 13.1 build
+    elif major >= 14:
+        # Future CUDA versions - fall back to source build until we add wheels
+        log_debug(f"CUDA {cuda_version} detected - no pre-built wheel available, will build from source")
+        return None
     else:
-        return "cpu"  # Unsupported CUDA, fallback to CPU
+        return "cpu"  # Very old CUDA, fallback to CPU
 
 
 def _get_wheel_filename(python_version: str, variant: str, for_download: bool = True) -> str:
@@ -340,6 +350,10 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
     if variant is None:
         cuda_version = _detect_cuda_version()
         variant = _get_wheel_variant(cuda_version)
+
+    # If variant is still None, no compatible wheel exists
+    if variant is None:
+        return None
 
     # Filename on GitHub (with variant suffix)
     download_filename = _get_wheel_filename(python_version, variant, for_download=True)
