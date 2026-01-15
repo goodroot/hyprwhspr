@@ -1534,18 +1534,22 @@ def setup_command():
 
 # ==================== Install Commands ====================
 
-def _auto_download_model():
-    """Auto-download base model without prompts"""
+def _auto_download_model(model: str = 'base'):
+    """Auto-download Whisper model without prompts
+
+    Args:
+        model: Model name to download (default: 'base')
+    """
     try:
         from .backend_installer import download_pywhispercpp_model
     except ImportError:
         from backend_installer import download_pywhispercpp_model
 
-    log_info("Downloading base Whisper model...")
-    if download_pywhispercpp_model('base'):
+    log_info(f"Downloading {model} Whisper model...")
+    if download_pywhispercpp_model(model):
         log_success("Model downloaded")
     else:
-        log_warning("Model download failed - can download later with: hyprwhspr model download")
+        log_warning(f"Model download failed - can download later with: hyprwhspr model download {model}")
 
 
 def _setup_hyprland_bindings() -> bool:
@@ -1724,21 +1728,31 @@ def _verify_model_downloaded(model_name: str = 'base') -> bool:
     return model_file.exists() and model_file.is_file()
 
 
-def omarchy_command():
+def omarchy_command(args=None):
     """
     Automated setup
 
     This command:
-    1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU)
+    1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU) or uses specified backend
     2. Installs appropriate backend (CUDA for NVIDIA, Vulkan for others, CPU fallback)
     3. Configures defaults (auto recording mode, Waybar integration)
     4. Sets up and starts systemd service
     5. Validates installation
 
     All without user interaction.
-    
+
+    Args:
+        args: Optional argparse namespace with:
+            - backend: 'nvidia', 'vulkan', 'cpu', 'onnx-asr', or 'rest-api' (default: auto-detect)
+            - model: Model name to download (default: 'base' for whisper, auto for onnx-asr)
+            - no_waybar: Skip waybar integration
+            - no_mic_osd: Disable mic-osd visualization
+            - no_systemd: Skip systemd service setup
+            - hypr_bindings: Enable Hyprland compositor bindings
+
     Note: Hyprland compositor bindings are NOT configured by default.
-    Use 'hyprwhspr setup' for interactive setup with Hyprland compositor options.
+    Use 'hyprwhspr setup' for interactive setup with Hyprland compositor options,
+    or use --hypr-bindings flag.
     """
     # Import functions we need
     try:
@@ -1747,6 +1761,14 @@ def omarchy_command():
     except ImportError:
         from backend_installer import detect_gpu_type, install_backend
         from config_manager import ConfigManager
+
+    # Extract CLI options with defaults for backwards compatibility
+    explicit_backend = getattr(args, 'backend', None) if args else None
+    explicit_model = getattr(args, 'model', None) if args else None
+    skip_waybar = getattr(args, 'no_waybar', False) if args else False
+    skip_mic_osd = getattr(args, 'no_mic_osd', False) if args else False
+    skip_systemd = getattr(args, 'no_systemd', False) if args else False
+    enable_hypr_bindings = getattr(args, 'hypr_bindings', False) if args else False
 
     # 1. Print banner
     print("\n" + "="*60)
@@ -1762,20 +1784,23 @@ def omarchy_command():
         mise_free_env = _create_mise_free_environment()
         # Note: install_backend() already handles MISE warnings
 
-    # 3. Auto-detect GPU type
-    log_info("Detecting hardware...")
-    gpu_type = detect_gpu_type()  # Returns 'nvidia', 'vulkan', or 'cpu'
+    # 3. Determine backend (explicit or auto-detect)
+    if explicit_backend:
+        backend = explicit_backend
+        log_info(f"Using specified backend: {backend.upper()}")
+    else:
+        log_info("Detecting hardware...")
+        gpu_type = detect_gpu_type()  # Returns 'nvidia', 'vulkan', or 'cpu'
+        backend = gpu_type
 
-    # gpu_type is already the backend name
-    backend = gpu_type
+        gpu_descriptions = {
+            'nvidia': 'NVIDIA GPU with CUDA acceleration',
+            'vulkan': 'GPU with Vulkan acceleration (AMD/Intel/other)',
+            'cpu': 'CPU-only (no GPU detected)'
+        }
 
-    gpu_descriptions = {
-        'nvidia': 'NVIDIA GPU with CUDA acceleration',
-        'vulkan': 'GPU with Vulkan acceleration (AMD/Intel/other)',
-        'cpu': 'CPU-only (no GPU detected)'
-    }
+        log_success(f"Detected: {gpu_descriptions[gpu_type]}")
 
-    log_success(f"Detected: {gpu_descriptions[gpu_type]}")
     log_info(f"Installing: {backend.upper()} backend")
 
     # 4. Install backend
@@ -1799,10 +1824,31 @@ def omarchy_command():
     log_info("Configuring defaults...")
     config = ConfigManager()
     config.set_setting('recording_mode', 'auto')
-    # Note: use_hypr_bindings and grab_keys are NOT set by default in auto installer
-    # Users can configure Hyprland compositor bindings via interactive setup
-    config.set_setting('transcription_backend', 'pywhispercpp')
-    config.set_setting('mic_osd_enabled', True)
+
+    # Configure backend-specific settings
+    if backend == 'onnx-asr':
+        config.set_setting('transcription_backend', 'onnx-asr')
+        # Set onnx-asr model (defaults to parakeet)
+        onnx_model = explicit_model or 'nemo-parakeet-tdt-0.6b-v3'
+        config.set_setting('onnx_asr_model', onnx_model)
+        log_info(f"Configured onnx-asr with model: {onnx_model}")
+    else:
+        config.set_setting('transcription_backend', 'pywhispercpp')
+        # Set whisper model if specified (defaults to 'base')
+        whisper_model = explicit_model or 'base'
+        config.set_setting('model', whisper_model)
+        if explicit_model:
+            log_info(f"Configured pywhispercpp with model: {whisper_model}")
+
+    # Configure mic-osd (enabled unless --no-mic-osd specified)
+    config.set_setting('mic_osd_enabled', not skip_mic_osd)
+
+    # Configure Hyprland bindings if requested
+    if enable_hypr_bindings:
+        config.set_setting('use_hypr_bindings', True)
+        config.set_setting('grab_keys', False)
+        log_info("Hyprland compositor bindings enabled")
+
     config.save_config()
     log_success("Configuration saved")
     
@@ -1811,54 +1857,64 @@ def omarchy_command():
         log_error("Config verification failed - configuration may be incomplete")
         return False
 
-    # 6. Download model (for local backends)
+    # 6. Download model (for local whisper backends only)
+    # onnx-asr models download automatically on first use
     if backend in ['cpu', 'nvidia', 'vulkan']:
-        _auto_download_model()
+        model_to_download = explicit_model or 'base'
+        _auto_download_model(model_to_download)
         # 6.5. Verify model download
-        if not _verify_installation_step("Model download", lambda: _verify_model_downloaded('base')):
+        if not _verify_installation_step("Model download", lambda: _verify_model_downloaded(model_to_download)):
             log_warning("Model download verification failed - model may not be available")
-            log_warning("You can download it later with: hyprwhspr model download")
+            log_warning(f"You can download it later with: hyprwhspr model download {model_to_download}")
+    elif backend == 'onnx-asr':
+        log_info("onnx-asr model will be downloaded automatically on first use")
 
-    # 7. Waybar integration (if detected)
+    # 7. Waybar integration (if detected and not skipped)
     print("\n" + "="*60)
     print("Waybar Integration")
     print("="*60)
 
-    waybar_config = Path.home() / '.config' / 'waybar' / 'config.jsonc'
-    if waybar_config.exists():
-        log_info("Waybar detected - installing integration...")
-        waybar_command('install')
+    if skip_waybar:
+        log_info("Waybar integration skipped (--no-waybar)")
     else:
-        log_info("Waybar not detected - skipping")
+        waybar_config = Path.home() / '.config' / 'waybar' / 'config.jsonc'
+        if waybar_config.exists():
+            log_info("Waybar detected - installing integration...")
+            waybar_command('install')
+        else:
+            log_info("Waybar not detected - skipping")
 
-    # 8. Systemd service
+    # 8. Systemd service (unless skipped)
     print("\n" + "="*60)
     print("Systemd Service")
     print("="*60)
 
-    systemd_command('install')
+    if skip_systemd:
+        log_info("Systemd service setup skipped (--no-systemd)")
+    else:
+        systemd_command('install')
 
-    try:
-        from .output_control import run_command
-    except ImportError:
-        from output_control import run_command
+        try:
+            from .output_control import run_command
+        except ImportError:
+            from output_control import run_command
 
-    try:
-        # Use MISE-free environment if MISE was detected
-        env = mise_free_env if mise_free_env else None
-        run_command(['systemctl', '--user', 'enable', 'hyprwhspr.service'], check=True, env=env)
-        run_command(['systemctl', '--user', 'start', 'hyprwhspr.service'], check=True, env=env)
-        log_success("Service enabled and started")
-    except Exception as e:
-        log_warning(f"Could not start service: {e}")
-    
-    # 8.5. Verify service is running
-    print("\n" + "="*60)
-    print("Verifying Service Status")
-    print("="*60)
-    if not _verify_installation_step("Service running", _verify_service_running):
-        log_warning("Service verification failed - service may not be running")
-        log_warning("Check service status with: systemctl --user status hyprwhspr")
+        try:
+            # Use MISE-free environment if MISE was detected
+            env = mise_free_env if mise_free_env else None
+            run_command(['systemctl', '--user', 'enable', 'hyprwhspr.service'], check=True, env=env)
+            run_command(['systemctl', '--user', 'start', 'hyprwhspr.service'], check=True, env=env)
+            log_success("Service enabled and started")
+        except Exception as e:
+            log_warning(f"Could not start service: {e}")
+
+        # 8.5. Verify service is running
+        print("\n" + "="*60)
+        print("Verifying Service Status")
+        print("="*60)
+        if not _verify_installation_step("Service running", _verify_service_running):
+            log_warning("Service verification failed - service may not be running")
+            log_warning("Check service status with: systemctl --user status hyprwhspr")
 
     # 9. Validate
     print("\n" + "="*60)
@@ -1866,18 +1922,19 @@ def omarchy_command():
     print("="*60)
     validate_command()
 
-    # 10. Restart service for clean initialization
-    print("\n" + "="*60)
-    print("Service Restart")
-    print("="*60)
-    log_info("Restarting service to ensure clean initialization...")
+    # 10. Restart service for clean initialization (only if systemd was set up)
+    if not skip_systemd:
+        print("\n" + "="*60)
+        print("Service Restart")
+        print("="*60)
+        log_info("Restarting service to ensure clean initialization...")
 
-    # Check if service is actually running before restarting
-    if _is_service_running_via_systemd():
-        systemd_restart()
-        log_success("Service restarted with clean state")
-    else:
-        log_warning("Service not running - skipping restart")
+        # Check if service is actually running before restarting
+        if _is_service_running_via_systemd():
+            systemd_restart()
+            log_success("Service restarted with clean state")
+        else:
+            log_warning("Service not running - skipping restart")
 
     # 11. Completion
     print("\n" + "="*60)

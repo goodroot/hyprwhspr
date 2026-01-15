@@ -60,7 +60,14 @@ def main():
     # setup command
     setup_parser = subparsers.add_parser('setup', help='Full initial setup')
     setup_subparsers = setup_parser.add_subparsers(dest='setup_action', help='Setup actions')
-    setup_subparsers.add_parser('auto', help='Automated setup')
+    auto_parser = setup_subparsers.add_parser('auto', help='Automated setup')
+    auto_parser.add_argument('--backend', choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr'],
+                             help='Backend to install (default: auto-detect GPU)')
+    auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
+    auto_parser.add_argument('--no-waybar', action='store_true', help='Skip waybar integration')
+    auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization')
+    auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')
+    auto_parser.add_argument('--hypr-bindings', action='store_true', help='Enable Hyprland compositor bindings')
 
     # install command
     install_parser = subparsers.add_parser('install', help='Installation management')
@@ -164,7 +171,7 @@ def main():
     try:
         if args.command == 'setup':
             if hasattr(args, 'setup_action') and args.setup_action == 'auto':
-                if not omarchy_command():
+                if not omarchy_command(args):
                     sys.exit(1)
             elif hasattr(args, 'setup_action') and args.setup_action:
                 setup_parser.print_help()
@@ -176,7 +183,7 @@ def main():
                 install_parser.print_help()
                 sys.exit(1)
             if args.install_action == 'auto':
-                if not omarchy_command():
+                if not omarchy_command(args):
                     sys.exit(1)
         elif args.command == 'config':
             if not args.config_action:

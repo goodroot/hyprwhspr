@@ -167,6 +167,13 @@ hyprwhspr status
 After installation, use the `hyprwhspr` CLI to manage your installation:
 
 - `hyprwhspr setup` - Interactive initial setup
+  - `hyprwhspr setup auto` - Automated setup with optional parameters:
+    - `--backend {nvidia,vulkan,cpu,onnx-asr}` - Specify backend (default: auto-detect GPU)
+    - `--model MODEL` - Model to download (default: base for whisper, auto for onnx-asr)
+    - `--no-waybar` - Skip waybar integration
+    - `--no-mic-osd` - Disable mic-osd visualization
+    - `--no-systemd` - Skip systemd service setup
+    - `--hypr-bindings` - Enable Hyprland compositor bindings
 - `hyprwhspr config` - Manage configuration (init/show/edit)
 - `hyprwhspr waybar` - Manage Waybar integration (install/remove/status)
 - `hyprwhspr mic-osd` - Manage microphone visualization overlay (enable/disable/status)
