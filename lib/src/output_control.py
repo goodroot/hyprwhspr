@@ -124,12 +124,13 @@ def log_verbose(msg: str):
     OutputController.write(f"[VERBOSE] {msg}\n", VerbosityLevel.VERBOSE)
 
 
-def run_command(cmd: list, check: bool = True, capture_output: bool = False, 
+def run_command(cmd: list, check: bool = True, capture_output: bool = False,
                 env: Optional[dict] = None, verbose: Optional[bool] = None,
-                show_output_on_error: bool = True, use_mise_free_env: bool = True) -> subprocess.CompletedProcess:
+                show_output_on_error: bool = True, use_mise_free_env: bool = True,
+                timeout: Optional[float] = None) -> subprocess.CompletedProcess:
     """
     Run a shell command with output control.
-    
+
     Args:
         cmd: Command to run
         check: Raise exception on non-zero exit
@@ -138,7 +139,8 @@ def run_command(cmd: list, check: bool = True, capture_output: bool = False,
         verbose: Override verbosity for this command (None = use global)
         show_output_on_error: Show captured output if command fails
         use_mise_free_env: If True and env is None, automatically use mise-free environment when mise is active
-    
+        timeout: Timeout in seconds (None = no timeout). Uses Python subprocess timeout, not external 'timeout' command.
+
     Returns:
         CompletedProcess result
     """
@@ -182,7 +184,8 @@ def run_command(cmd: list, check: bool = True, capture_output: bool = False,
                 check=check,
                 capture_output=True,
                 text=True,
-                env=env
+                env=env,
+                timeout=timeout
             )
         elif verbose:
             # Show real-time output
@@ -191,7 +194,8 @@ def run_command(cmd: list, check: bool = True, capture_output: bool = False,
                 check=check,
                 capture_output=False,
                 text=True,
-                env=env
+                env=env,
+                timeout=timeout
             )
         else:
             # Capture output, show on error if requested
@@ -200,17 +204,21 @@ def run_command(cmd: list, check: bool = True, capture_output: bool = False,
                 check=check,
                 capture_output=True,
                 text=True,
-                env=env
+                env=env,
+                timeout=timeout
             )
-            
+
             # Show output on error if requested
             if result.returncode != 0 and show_output_on_error:
                 if result.stdout:
                     log_error(f"Command stdout:\n{result.stdout}")
                 if result.stderr:
                     log_error(f"Command stderr:\n{result.stderr}")
-        
+
         return result
+    except subprocess.TimeoutExpired:
+        log_error(f"Command timed out after {timeout}s: {' '.join(cmd)}")
+        raise
     except subprocess.CalledProcessError as e:
         log_error(f"Command failed: {' '.join(cmd)}")
         if hasattr(e, 'stdout') and e.stdout and show_output_on_error:

@@ -670,7 +670,7 @@ def setup_nvidia_support() -> bool:
 
     # Test nvidia-smi
     try:
-        result = run_command(['timeout', '2s', 'nvidia-smi', '-L'], check=False, capture_output=True)
+        result = run_command(['nvidia-smi', '-L'], check=False, capture_output=True, timeout=2)
         if result.returncode != 0:
             log_warning("nvidia-smi found but not responding (no GPU hardware or driver issue)")
             return False
@@ -787,7 +787,7 @@ def setup_amd_support() -> bool:
     
     # Test rocm-smi
     try:
-        result = run_command(['timeout', '2s', 'rocm-smi', '--showproductname'], check=False, capture_output=True)
+        result = run_command(['rocm-smi', '--showproductname'], check=False, capture_output=True, timeout=2)
         if result.returncode != 0:
             log_warning("rocm-smi found but not responding (no GPU hardware or driver issue)")
             return False
@@ -866,10 +866,11 @@ def detect_gpu_type() -> str:
                     # Hardware detected, now verify with nvidia-smi
                     try:
                         result = run_command(
-                            ['timeout', '2s', 'nvidia-smi', '-L'],
+                            ['nvidia-smi', '-L'],
                             capture_output=True,
                             check=False,
-                            verbose=False
+                            verbose=False,
+                            timeout=2
                         )
                         if result:
                             log_info(f"[GPU Detection] nvidia-smi exit code: {result.returncode}")
@@ -910,10 +911,11 @@ def detect_gpu_type() -> str:
     if shutil.which('vulkaninfo'):
         try:
             result = run_command(
-                ['timeout', '5s', 'vulkaninfo', '--summary'],
+                ['vulkaninfo', '--summary'],
                 capture_output=True,
                 check=False,
-                verbose=False
+                verbose=False,
+                timeout=5
             )
             if result and result.returncode == 0 and result.stdout:
                 # Check if output mentions GPU/device
@@ -981,10 +983,11 @@ def setup_vulkan_support() -> bool:
 
     try:
         result = run_command(
-            ['timeout', '5s', 'vulkaninfo', '--summary'],
+            ['vulkaninfo', '--summary'],
             capture_output=True,
             check=False,
-            verbose=False
+            verbose=False,
+            timeout=5
         )
         if not result or result.returncode != 0:
             log_warning("Vulkan installed but vulkaninfo check failed")
@@ -1742,7 +1745,7 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
     enable_cuda = False
     if shutil.which('nvidia-smi'):
         try:
-            result = run_command(['timeout', '2s', 'nvidia-smi', '-L'], check=False, capture_output=True)
+            result = run_command(['nvidia-smi', '-L'], check=False, capture_output=True, timeout=2)
             if result.returncode == 0:
                 enable_cuda = True
                 log_info("CUDA detected - will install PyTorch with CUDA support")
@@ -2082,7 +2085,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             enable_gpu = False
             if shutil.which('nvidia-smi'):
                 try:
-                    result = run_command(['timeout', '2s', 'nvidia-smi', '-L'], check=False, capture_output=True)
+                    result = run_command(['nvidia-smi', '-L'], check=False, capture_output=True, timeout=2)
                     if result.returncode == 0 and result.stdout:
                         output = _safe_decode(result.stdout).strip()
                         output_lower = output.lower()
