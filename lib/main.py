@@ -1429,9 +1429,9 @@ class hyprwhsprApp:
         state = 'success' if success else 'error'
         self._set_visualizer_state(state)
 
-        # Schedule hiding after 2 seconds
+        # Schedule hiding after 1.25 seconds (matches animation fade duration)
         def delayed_hide():
-            time.sleep(2.0)
+            time.sleep(1.25)
             self._hide_mic_osd()
 
         hide_thread = threading.Thread(target=delayed_hide, daemon=True)
