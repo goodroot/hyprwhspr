@@ -87,10 +87,10 @@ class StateManager:
             return 0.3 + 0.7 * abs(math.sin(self.animation_phase * 4))
 
         elif self.current_state == VisualizerState.SUCCESS:
-            # Pulse then fade out over 2 seconds
-            if elapsed > 2.0:
+            # Pulse then fade out over 1 second
+            if elapsed > 1.0:
                 return 0.0
-            fade = 1.0 - (elapsed / 2.0)
+            fade = 1.0 - (elapsed / 1.0)
             pulse = 0.7 + 0.3 * math.sin(self.animation_phase)
             return fade * pulse
 
@@ -102,7 +102,7 @@ class StateManager:
             return False
         if self.current_state == VisualizerState.SUCCESS:
             # Stop animating after fade completes
-            return (time.time() - self.state_changed_at) < 2.5
+            return (time.time() - self.state_changed_at) < 1.25
         return True
 
 
