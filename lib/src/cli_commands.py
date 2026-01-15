@@ -1743,7 +1743,7 @@ def omarchy_command(args=None):
 
     Args:
         args: Optional argparse namespace with:
-            - backend: 'nvidia', 'vulkan', 'cpu', 'onnx-asr', or 'rest-api' (default: auto-detect)
+            - backend: 'nvidia', 'vulkan', 'cpu', or 'onnx-asr' (default: auto-detect)
             - model: Model name to download (default: 'base' for whisper, auto for onnx-asr)
             - no_waybar: Skip waybar integration
             - no_mic_osd: Disable mic-osd visualization
@@ -1834,11 +1834,10 @@ def omarchy_command(args=None):
         log_info(f"Configured onnx-asr with model: {onnx_model}")
     else:
         config.set_setting('transcription_backend', 'pywhispercpp')
-        # Set whisper model if specified (defaults to 'base')
+        # Set whisper model (defaults to 'base')
         whisper_model = explicit_model or 'base'
         config.set_setting('model', whisper_model)
-        if explicit_model:
-            log_info(f"Configured pywhispercpp with model: {whisper_model}")
+        log_info(f"Configured pywhispercpp with model: {whisper_model}")
 
     # Configure mic-osd (enabled unless --no-mic-osd specified)
     config.set_setting('mic_osd_enabled', not skip_mic_osd)
