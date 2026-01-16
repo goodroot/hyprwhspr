@@ -542,12 +542,18 @@ class hyprwhsprApp:
                     self._recording_started_this_press = False
                     self._tap_threshold = 0.4
                 
-                self._shortcut_press_time = time.time()
-                if not self.is_recording:
+                # Ignore duplicate triggers while we're starting a recording
+                # (race condition: second trigger arrives before is_recording is set)
+                if self._recording_started_this_press and not self.is_recording:
+                    # Already in the process of starting - ignore this trigger
+                    should_start = False
+                elif not self.is_recording:
+                    self._shortcut_press_time = time.time()
                     self._recording_started_this_press = True
                     should_start = True
                 else:
                     # Already recording - will be stopped on release if this is a tap
+                    self._shortcut_press_time = time.time()
                     self._recording_started_this_press = False
                     should_start = False
             
@@ -629,12 +635,18 @@ class hyprwhsprApp:
                     self._recording_started_this_press = False
                     self._tap_threshold = 0.4
                 
-                self._shortcut_press_time = time.time()
-                if not self.is_recording:
+                # Ignore duplicate triggers while we're starting a recording
+                # (race condition: second trigger arrives before is_recording is set)
+                if self._recording_started_this_press and not self.is_recording:
+                    # Already in the process of starting - ignore this trigger
+                    should_start = False
+                elif not self.is_recording:
+                    self._shortcut_press_time = time.time()
                     self._recording_started_this_press = True
                     should_start = True
                 else:
                     # Already recording - will be stopped on release if this is a tap
+                    self._shortcut_press_time = time.time()
                     self._recording_started_this_press = False
                     should_start = False
             
@@ -1179,6 +1191,10 @@ class hyprwhsprApp:
         
         try:
             self.is_recording = False
+            
+            # Reset auto mode state to allow new recordings
+            if hasattr(self, '_recording_started_this_press'):
+                self._recording_started_this_press = False
 
             # Set visualizer to processing state (keep it visible during transcription)
             self._set_visualizer_state('processing')
