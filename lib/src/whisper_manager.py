@@ -1110,7 +1110,10 @@ class WhisperManager:
                     segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
 
                 result = ' '.join(seg.text for seg in segments).strip()
-                
+
+                # Update last use time on successful transcription
+                self._last_use_time = time.monotonic()
+
                 return result
             except Exception as e:
                 print(f"[ERROR] pywhispercpp transcription failed: {e}")
