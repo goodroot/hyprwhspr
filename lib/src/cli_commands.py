@@ -1264,8 +1264,10 @@ def setup_command():
             pkg_hint = "python3-gi gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0"
         elif Path('/etc/fedora-release').exists():
             pkg_hint = "python3-gobject gtk4 gtk4-layer-shell"
+        elif Path('/etc/os-release').exists() and 'suse' in Path('/etc/os-release').read_text().lower():
+            pkg_hint = "python3-gobject typelib-1_0-Gtk-4_0 (gtk4-layer-shell from community repo)"
         else:
-            pkg_hint = "python-gobject gtk4 gtk4-layer-shell"
+            pkg_hint = "python-gobject gtk4 gtk4-layer-shell (Arch naming)"
         print(f"\nDependencies not found. Install: {pkg_hint}")
         setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
 
