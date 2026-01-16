@@ -104,15 +104,21 @@ Install dependencies manually, then use the setup script.
 ```bash
 # Install system dependencies
 sudo apt install python3 python3-pip python3-venv git cmake make build-essential \
-    python3-dev python3-sounddevice python3-numpy python3-scipy python3-evdev \
-    python3-pyperclip python3-requests python3-psutil python3-rich \
-    python3-gi gir1.2-gtk-4.0 pipewire pipewire-pulse ydotool
+    python3-dev libportaudio2 python3-numpy python3-scipy python3-evdev \
+    python3-requests python3-psutil python3-rich \
+    python3-gi gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0 \
+    pipewire pipewire-pulse ydotool wl-clipboard
+
+# Install Python packages not in Debian repos
+pip install --user --break-system-packages sounddevice pyperclip
 
 # Clone and run setup
 git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
 cd ~/hyprwhspr
 ./bin/hyprwhspr setup
 ```
+
+> **Note:** On Ubuntu 22.04 LTS, `gir1.2-gtk4layershell-1.0` may not be available. The mic-osd visualizer will be disabled, but dictation works fine without it.
 
 **Fedora:**
 
@@ -121,7 +127,8 @@ cd ~/hyprwhspr
 sudo dnf install python3 python3-pip python3-devel git cmake make gcc-c++ \
     python3-sounddevice python3-numpy python3-scipy python3-evdev \
     python3-pyperclip python3-requests python3-psutil python3-rich \
-    python3-gobject gtk4 pipewire pipewire-pulseaudio ydotool
+    python3-gobject gtk4 gtk4-layer-shell \
+    pipewire pipewire-pulseaudio ydotool wl-clipboard
 
 # Clone and run setup
 git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
@@ -136,7 +143,12 @@ cd ~/hyprwhspr
 sudo zypper install python3 python3-pip python3-devel git cmake make gcc-c++ \
     python3-sounddevice python3-numpy python3-scipy python3-evdev \
     python3-pyperclip python3-requests python3-psutil python3-rich \
-    python3-gobject typelib-1_0-Gtk-4_0 pipewire pipewire-pulseaudio ydotool
+    python3-gobject typelib-1_0-Gtk-4_0 \
+    pipewire pipewire-pulseaudio ydotool wl-clipboard
+
+# Optional: For mic-osd visualizer (Tumbleweed only, from community repo)
+# sudo zypper addrepo https://download.opensuse.org/repositories/devel:languages:zig/openSUSE_Tumbleweed/devel:languages:zig.repo
+# sudo zypper refresh && sudo zypper install gtk4-layer-shell
 
 # Clone and run setup
 git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
