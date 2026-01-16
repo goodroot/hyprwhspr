@@ -112,6 +112,9 @@ class MicOSDRunner:
 
         # Build the Python code to run
         lib_dir = self._mic_osd_dir.parent
+        venv_python = f"{lib_dir.parent.parent}/.local/share/hyprwhspr/venv/bin/python"
+        if not os.path.exists(venv_python):
+            venv_python = '/usr/bin/python3'
         code = f"""
 import sys
 sys.path.insert(0, '{lib_dir}')
@@ -123,16 +126,33 @@ sys.exit(main())
         # Set LD_PRELOAD for gtk4-layer-shell
         # Use the actual .so file (not symlink) to ensure proper loading
         env = os.environ.copy()
-        # Try to find the actual library file
-        lib_path = '/usr/lib/libgtk4-layer-shell.so'
-        if os.path.islink(lib_path):
-            # Resolve symlink to actual file
-            lib_path = os.path.realpath(lib_path)
-        env['LD_PRELOAD'] = lib_path
+        # Try to find the actual library file - check common locations
+        lib_paths = [
+            '/usr/lib/libgtk4-layer-shell.so',
+            '/usr/lib64/libgtk4-layer-shell.so',
+            '/usr/lib/libgtk4-layer-shell.so.0',
+            '/usr/lib64/libgtk4-layer-shell.so.0',
+        ]
+        lib_path = None
+        for path in lib_paths:
+            if os.path.exists(path):
+                # Resolve symlink to actual file
+                lib_path = os.path.realpath(path)
+                break
+        
+        if lib_path and os.path.exists(lib_path):
+            env['LD_PRELOAD'] = lib_path
+        else:
+            # Try to find any gtk4-layer-shell library
+            import glob
+            candidates = glob.glob('/usr/lib*/libgtk4-layer-shell.so*')
+            if candidates:
+                lib_path = os.path.realpath(candidates[0])
+                env['LD_PRELOAD'] = lib_path
 
         try:
             self._process = subprocess.Popen(
-                ['/usr/bin/python3', '-c', code],
+                [venv_python, '-c', code],
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
