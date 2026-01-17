@@ -1592,9 +1592,9 @@ def _setup_hyprland_bindings() -> bool:
                 with open(target_file, 'r', encoding='utf-8') as f:
                     content = f.read()
                     # Check for existing hyprwhspr bindings
-                    if ('hyprwhspr-tray.sh record' in content and 'SUPER ALT, D' in content) or \
-                       ('# hyprwhspr' in content and 'bindd' in content and 'SUPER ALT, D' in content) or \
-                       ('# added by hyprwhspr' in content):
+                    # Just check for the command - keybind could be anything
+                    if 'hyprwhspr-tray.sh record' in content or \
+                       '# added by hyprwhspr' in content:
                         bindings_exist = True
         except Exception as e:
             log_warning(f"Could not read {target_file}: {e}")
