@@ -169,7 +169,8 @@ class hyprwhsprApp:
         if self.config.get_setting('mic_osd_enabled', True):
             try:
                 from mic_osd import MicOSDRunner
-                runner = MicOSDRunner()
+                osd_style = self.config.get_setting('mic_osd_style', 'waveform')
+                runner = MicOSDRunner(style=osd_style)
                 if runner.is_available():
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
