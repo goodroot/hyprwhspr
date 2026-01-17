@@ -57,6 +57,7 @@ class MicOSD:
         self.daemon = daemon
         self.visible = False
         self.theme_watcher = None
+        self._should_stop = False
 
         # Get visualization
         viz_class = VISUALIZATIONS.get(visualization, VISUALIZATIONS["waveform"])
@@ -75,9 +76,42 @@ class MicOSD:
         self.app = Gtk.Application(application_id="com.hyprwhspr.mic-osd")
         self.app.connect('activate', self._gtk_on_activate)
         self.app.connect('shutdown', lambda _: self._cleanup())
-        self.app.run(None)
+        # Check if stop was requested before running (unlikely but possible)
+        if self._should_stop:
+            self._cleanup()
+            return
+        try:
+            self.app.run(None)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Ensure cleanup happens even if exception occurs
+            # (shutdown signal may not be emitted on exception)
+            self._cleanup()
 
     def _gtk_on_activate(self, app):
+        # Clean up existing resources if activation happens multiple times
+        if self.window:
+            # Stop timers and audio monitoring before removing window
+            if self.update_timer_id:
+                GLib.source_remove(self.update_timer_id)
+                self.update_timer_id = None
+            if self._state_poll_timer_id:
+                GLib.source_remove(self._state_poll_timer_id)
+                self._state_poll_timer_id = None
+            if self._auto_hide_timeout_id:
+                GLib.source_remove(self._auto_hide_timeout_id)
+                self._auto_hide_timeout_id = None
+            if self.audio_monitor:
+                self.audio_monitor.stop()
+                self.audio_monitor = None
+            app.remove_window(self.window)
+            self.window = None
+        
+        if self.theme_watcher:
+            self.theme_watcher.stop()
+            self.theme_watcher = None
+        
         load_css()
 
         self.window = OSDWindow(self.visualization, self.width, self.height)
@@ -104,6 +138,10 @@ class MicOSD:
 
         self._initial_visibility()
 
+        # Check if stop was requested before main loop was created
+        if self._should_stop:
+            return
+
         # Create main loop
         self.main_loop = GLib.MainLoop()
 
@@ -115,7 +153,12 @@ class MicOSD:
             self._cleanup()
 
     def _initial_visibility(self):
-        if self.daemon:
+        # If a signal handler already set visibility before window creation,
+        # respect that state (handles race condition with early signals)
+        if self.visible:
+            # Signal handler wants to show it
+            self._show()
+        elif self.daemon:
             # Start hidden, wait for SIGUSR1
             self.window.set_visible(False)
         else:
@@ -124,7 +167,16 @@ class MicOSD:
 
     def _show(self):
         """Show the OSD and start audio monitoring."""
-        if self.visible:
+        # If already visible and audio monitoring is running, return early
+        # This handles the normal case where _show() is called multiple times
+        if self.visible and self.audio_monitor and self.update_timer_id:
+            return
+
+        # If window doesn't exist yet (race condition with signal handlers),
+        # just set the visible flag and return. The window will be shown when
+        # it's created in _gtk_on_activate().
+        if not self.window:
+            self.visible = True
             return
 
         self.visible = True
@@ -141,7 +193,8 @@ class MicOSD:
             # Hide window and reset state to prevent hanging
             print(f"[MIC-OSD] Failed to start audio monitoring: {e}", flush=True)
             self.visible = False
-            self.window.set_visible(False)
+            if self.window:
+                self.window.set_visible(False)
 
             # Stop update timer if it was started
             if self.update_timer_id:
@@ -159,6 +212,14 @@ class MicOSD:
         audio_detected = False
 
         while time.monotonic() - verification_start < verification_duration:
+            # Check if audio_monitor was cleaned up by a re-activation (race condition)
+            if not self.audio_monitor:
+                # Audio monitor was stopped by cleanup, abort verification
+                self.visible = False
+                if self.window:
+                    self.window.set_visible(False)
+                return  # Exit early - don't start timers
+            
             level = self.audio_monitor.get_level()
             if level > max_zero_level:
                 audio_detected = True
@@ -168,9 +229,12 @@ class MicOSD:
         if not audio_detected:
             # Stream is returning zeros - mic likely unavailable
             print("[MIC-OSD] Audio stream returning zeros - hiding window", flush=True)
-            self.audio_monitor.stop()
+            if self.audio_monitor:
+                self.audio_monitor.stop()
+                self.audio_monitor = None
             self.visible = False
-            self.window.set_visible(False)
+            if self.window:
+                self.window.set_visible(False)
             return  # Exit early - don't start timers
         
         # Start update timer (60 FPS)
@@ -189,6 +253,12 @@ class MicOSD:
     def _hide(self):
         """Hide the OSD and stop audio monitoring."""
         if not self.visible:
+            return
+        
+        # If window doesn't exist yet (race condition with signal handlers),
+        # just set the visible flag and return.
+        if not self.window:
+            self.visible = False
             return
         
         try:
@@ -213,6 +283,7 @@ class MicOSD:
             # Stop audio monitoring
             if self.audio_monitor:
                 self.audio_monitor.stop()
+                self.audio_monitor = None
         except Exception as e:
             # Ensure window is hidden even if exceptions occur
             print(f"[MIC-OSD] Error in _hide(): {e}", flush=True)
@@ -229,12 +300,25 @@ class MicOSD:
                 except Exception:
                     pass
                 self.update_timer_id = None
+            if self._state_poll_timer_id:
+                try:
+                    GLib.source_remove(self._state_poll_timer_id)
+                except Exception:
+                    pass
+                self._state_poll_timer_id = None
             if self._auto_hide_timeout_id:
                 try:
                     GLib.source_remove(self._auto_hide_timeout_id)
                 except Exception:
                     pass
                 self._auto_hide_timeout_id = None
+            # Clean up audio monitor on error
+            if self.audio_monitor:
+                try:
+                    self.audio_monitor.stop()
+                except Exception:
+                    pass
+                self.audio_monitor = None
     
     def _update(self):
         """Update visualization with current audio data."""
@@ -308,6 +392,11 @@ class MicOSD:
             self.app.quit()
         elif self.main_loop:
             self.main_loop.quit()
+        else:
+            # Neither app nor main_loop exists yet (early stop request)
+            # Set flag and call cleanup directly
+            self._should_stop = True
+            self._cleanup()
     
     def _cleanup(self):
         """Clean up resources."""
@@ -326,6 +415,11 @@ class MicOSD:
         if self.audio_monitor:
             self.audio_monitor.stop()
             self.audio_monitor = None
+
+        if self.window:
+            if self.app:
+                self.app.remove_window(self.window)
+            self.window = None
 
         if self.theme_watcher:
             self.theme_watcher.stop()
