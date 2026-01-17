@@ -156,6 +156,61 @@ def _create_mise_free_environment() -> dict:
     return env
 
 
+def _check_ydotool_version() -> tuple[bool, str, str]:
+    """
+    Check if ydotool is installed and has a compatible version.
+
+    hyprwhspr requires ydotool 1.0+ for paste injection. Ubuntu/Debian apt
+    repositories contain an outdated 0.1.x version that uses incompatible syntax.
+
+    Returns:
+        Tuple of (is_compatible, version_string, message)
+        - is_compatible: True if ydotool 1.0+ is available
+        - version_string: The detected version or empty string
+        - message: Human-readable status message
+    """
+    MIN_VERSION = "1.0.0"
+
+    # Check if ydotool is installed
+    if not shutil.which('ydotool'):
+        return False, "", "ydotool not found"
+
+    # Get version
+    try:
+        result = subprocess.run(
+            ['ydotool', '--version'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        version_output = result.stdout + result.stderr
+    except Exception:
+        version_output = ""
+
+    # Parse version (ydotool 1.0+ outputs "ydotool version X.Y.Z")
+    import re
+    match = re.search(r'(\d+\.\d+\.?\d*)', version_output)
+    if match:
+        version = match.group(1)
+    else:
+        # Can't parse version - assume old version
+        version = "0.1.0"
+
+    # Compare versions
+    def version_tuple(v):
+        return tuple(map(int, (v.split('.') + ['0', '0'])[:3]))
+
+    try:
+        is_compatible = version_tuple(version) >= version_tuple(MIN_VERSION)
+    except ValueError:
+        is_compatible = False
+
+    if is_compatible:
+        return True, version, f"ydotool {version} (compatible)"
+    else:
+        return False, version, f"ydotool {version} is too old (requires {MIN_VERSION}+)"
+
+
 def _strip_jsonc(text: str) -> str:
     """Strip // and /* */ comments from JSONC while preserving strings."""
     result = []
@@ -3363,6 +3418,23 @@ def validate_command():
             else:
                 log_error("✗ Parakeet script missing")
                 all_ok = False
+
+    # Check ydotool version (required for paste injection)
+    ydotool_ok, ydotool_version, ydotool_msg = _check_ydotool_version()
+    if ydotool_ok:
+        log_success(f"✓ {ydotool_msg}")
+    elif ydotool_version:
+        log_error(f"✗ {ydotool_msg}")
+        log_error("  Paste injection will output garbage with this version.")
+        log_error("  Ubuntu/Debian users: Run scripts/install-deps.sh to fix this,")
+        log_error("  or manually install ydotool 1.0+ from Debian backports:")
+        log_error("  wget http://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb")
+        log_error("  sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb")
+        all_ok = False
+    else:
+        log_error(f"✗ {ydotool_msg}")
+        log_error("  ydotool is required for paste injection.")
+        all_ok = False
 
     # Validate configuration for potential conflicts
     try:

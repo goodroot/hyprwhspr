@@ -95,19 +95,45 @@ hyprwhspr setup
 
 ### Other Linux distros
 
-hyprwhspr can run on any Linux distribution with systemd. 
+hyprwhspr can run on any Linux distribution with systemd.
 
-Install dependencies manually, then use the setup script.
+**Quick install (recommended):**
+
+Use the install script to automatically install dependencies for your distro:
+
+```bash
+# Download and run the install script
+curl -fsSL https://raw.githubusercontent.com/goodroot/hyprwhspr/main/scripts/install-deps.sh | bash
+
+# Clone and run setup
+git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
+cd ~/hyprwhspr
+./bin/hyprwhspr setup
+```
+
+The script supports Ubuntu, Debian, Fedora, and openSUSE.
+
+> Non-Arch distro support is new - please report any snags!
+
+<details>
+<summary><b>Manual installation instructions</b></summary>
 
 **Debian / Ubuntu:**
 
+> **Important:** Ubuntu/Debian apt repositories contain an outdated ydotool (0.1.x from 2019) that is **incompatible** with hyprwhspr. With the old version, paste injection outputs garbage instead of text. You must install ydotool 1.0+ manually. The install script above handles this automatically, or see the manual fix below.
+
 ```bash
-# Install system dependencies
+# Install system dependencies (NOTE: do NOT install ydotool from apt)
 sudo apt install python3 python3-pip python3-venv git cmake make build-essential \
     python3-dev libportaudio2 python3-numpy python3-scipy python3-evdev \
     python3-requests python3-psutil python3-rich \
     python3-gi gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0 \
-    pipewire pipewire-pulse ydotool wl-clipboard
+    pipewire pipewire-pulse wl-clipboard wget
+
+# Install ydotool 1.0+ from Debian backports (required!)
+wget http://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb
+sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb
+sudo apt install -f  # Fix any dependency issues
 
 # Install Python packages not in Debian repos
 pip install --user --break-system-packages sounddevice pyperclip
@@ -156,7 +182,9 @@ cd ~/hyprwhspr
 ./bin/hyprwhspr setup
 ```
 
-**Post-installation (all distros):**
+</details>
+
+**Post-installation (non-Arch distros):**
 
 The setup wizard handles most configuration automatically:
 
