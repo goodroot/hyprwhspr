@@ -331,7 +331,7 @@ def main():
     )
     parser.add_argument(
         "-v", "--viz",
-        choices=["waveform", "vu_meter"],
+        choices=["waveform", "vu_meter", "pill"],
         default="waveform",
         help="Visualization type (default: waveform)"
     )

@@ -26,10 +26,11 @@ class MicOSDRunner:
     Spawns mic-osd in daemon mode at init, then signals it to show/hide.
     """
     
-    def __init__(self):
+    def __init__(self, style: str = "waveform"):
         self._process = None
         self._mic_osd_dir = Path(__file__).parent
         self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
+        self._style = style  # Visualization style: 'waveform', 'vu_meter', or 'pill'
     
     @staticmethod
     def is_available() -> bool:
@@ -115,11 +116,14 @@ class MicOSDRunner:
         venv_python = f"{lib_dir.parent.parent}/.local/share/hyprwhspr/venv/bin/python"
         if not os.path.exists(venv_python):
             venv_python = '/usr/bin/python3'
+        style_args = f", '--viz', '{self._style}'" if self._style else ""
+        size_args = ", '--width', '200', '--height', '40'" if self._style == 'pill' else ""
+        extra_args = style_args + size_args
         code = f"""
 import sys
 sys.path.insert(0, '{lib_dir}')
 from mic_osd.main import main
-sys.argv = ['mic-osd', '--daemon']
+sys.argv = ['mic-osd', '--daemon'{extra_args}]
 sys.exit(main())
 """
 
