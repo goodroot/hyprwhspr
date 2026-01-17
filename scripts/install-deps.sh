@@ -104,20 +104,44 @@ version_gte() {
 
 # Get ydotool version
 get_ydotool_version() {
-    if command -v ydotool &> /dev/null; then
-        local version_output
-        version_output=$(ydotool --version 2>&1 || echo "")
+    if ! command -v ydotool &> /dev/null; then
+        echo ""
+        return 0
+    fi
 
-        if [[ "$version_output" =~ ([0-9]+\.[0-9]+\.?[0-9]*) ]]; then
+    local version=""
+
+    # Method 1: Try apt show (works reliably on Debian/Ubuntu)
+    if command -v apt &> /dev/null; then
+        version=$(apt show ydotool 2>/dev/null | awk -F': ' '/^Version:/ {
+            v = $2
+            sub(/^[0-9]+:/, "", v)  # remove epoch
+            sub(/-.*/, "", v)        # remove debian revision
+            print v
+            exit
+        }')
+        if [[ -n "$version" ]]; then
+            echo "$version"
+            return 0
+        fi
+    fi
+
+    # Method 2: Try ydotoold --version with timeout
+    # (ydotool has no --version flag, only ydotoold does)
+    # Note: Old ydotoold 0.1.x has no --version and may hang, hence the timeout
+    if command -v ydotoold &> /dev/null; then
+        local version_output
+        version_output=$(timeout 3s ydotoold --version 2>&1 || echo "")
+
+        # Handle "UNKNOWN" response from some builds
+        if [[ "$version_output" != "UNKNOWN" ]] && [[ "$version_output" =~ ([0-9]+\.[0-9]+\.?[0-9]*) ]]; then
             echo "${BASH_REMATCH[1]}"
             return 0
         fi
-
-        # Fallback: assume old version if we can't parse it
-        echo "0.1.0"
-        return 0
     fi
-    echo ""
+
+    # Fallback: ydotool exists but we can't determine version - assume old
+    echo "0.1.0"
 }
 
 # Check if ydotool version is sufficient
@@ -155,10 +179,11 @@ install_ydotool_backports() {
         return 1
     fi
 
-    # Remove old ydotool if installed
+    # Remove old ydotool and ydotoold if installed
+    # (old versions had ydotool and ydotoold as separate packages)
     if dpkg -l ydotool &> /dev/null 2>&1; then
         log_info "Removing old ydotool version..."
-        sudo apt remove -y ydotool || true
+        sudo apt remove -y ydotool ydotoold 2>/dev/null || sudo apt remove -y ydotool || true
     fi
 
     # Install the new package
