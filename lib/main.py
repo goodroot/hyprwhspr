@@ -118,6 +118,9 @@ class hyprwhsprApp:
         # Lock for recovery result writes (prevents race conditions when multiple threads write results)
         self._recovery_result_lock = threading.Lock()
 
+        # Cancel pending delayed-hide from _show_result_and_hide when a new recording starts
+        self._cancel_pending_hide = False
+
         # Background recovery retry state (for suspend/resume)
         self._background_recovery_needed = threading.Event()  # Signal that recovery should be retried
         self._background_recovery_thread = None  # Background thread handle
@@ -1401,6 +1404,9 @@ class hyprwhsprApp:
 
     def _show_mic_osd(self):
         """Show mic-osd visualization overlay"""
+        # Cancel any pending delayed-hide from a previous recording's _show_result_and_hide
+        # so we don't hide the visualizer for this new recording
+        self._cancel_pending_hide = True
         if self._mic_osd_runner and self._mic_osd_runner.is_available():
             self._mic_osd_runner.set_state('recording')
             self._mic_osd_runner.show()
@@ -1429,9 +1435,15 @@ class hyprwhsprApp:
         state = 'success' if success else 'error'
         self._set_visualizer_state(state)
 
+        # Clear cancel so this scheduled hide is allowed to run (avoids inheriting
+        # cancel from an earlier _show_mic_osd that already completed)
+        self._cancel_pending_hide = False
+
         # Schedule hiding after 1.25 seconds (matches animation fade duration)
         def delayed_hide():
             time.sleep(1.25)
+            if self._cancel_pending_hide:
+                return  # New recording started; don't hide
             self._hide_mic_osd()
 
         hide_thread = threading.Thread(target=delayed_hide, daemon=True)
