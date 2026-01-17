@@ -16,6 +16,11 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GLib
 
+
+def is_gnome():
+    desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
+    return 'gnome' in desktop
+
 from .window import OSDWindow, load_css
 from .audio import AudioMonitor
 from .visualizations import VISUALIZATIONS
@@ -42,6 +47,7 @@ class MicOSD:
     
     def __init__(self, visualization="waveform", width=400, height=68, daemon=False):
         self.main_loop = None
+        self.app = None
         self.audio_monitor = None
         self.window = None
         self.update_timer_id = None
@@ -57,51 +63,77 @@ class MicOSD:
         self.visualization = viz_class()
         self.width = width
         self.height = height
-    
+
     def run(self):
         """Start the OSD and run until killed."""
+        if is_gnome():
+            self._run_with_gtk_application()
+        else:
+            self._run_with_main_loop()
+
+    def _run_with_gtk_application(self):
+        self.app = Gtk.Application(application_id="com.hyprwhspr.mic-osd")
+        self.app.connect('activate', self._gtk_on_activate)
+        self.app.connect('shutdown', lambda _: self._cleanup())
+        self.app.run(None)
+
+    def _gtk_on_activate(self, app):
+        load_css()
+
+        self.window = OSDWindow(self.visualization, self.width, self.height)
+        app.add_window(self.window)
+
+        self.theme_watcher = ThemeWatcher(on_theme_changed=self._on_theme_changed)
+        self.theme_watcher.start()
+
+        self._initial_visibility()
+
+    def _run_with_main_loop(self):
         # Initialize GTK
         Gtk.init()
-        
+
         # Load CSS
         load_css()
-        
+
         # Create window (hidden in daemon mode)
         self.window = OSDWindow(self.visualization, self.width, self.height)
-        
+
         # Start theme watcher for live theme updates
         self.theme_watcher = ThemeWatcher(on_theme_changed=self._on_theme_changed)
         self.theme_watcher.start()
-        
-        if self.daemon:
-            # Start hidden, wait for SIGUSR1
-            self.window.set_visible(False)
-        else:
-            # Show immediately
-            self._show()
-        
+
+        self._initial_visibility()
+
         # Create main loop
         self.main_loop = GLib.MainLoop()
-        
+
         try:
             self.main_loop.run()
         except KeyboardInterrupt:
             pass
         finally:
             self._cleanup()
-    
+
+    def _initial_visibility(self):
+        if self.daemon:
+            # Start hidden, wait for SIGUSR1
+            self.window.set_visible(False)
+        else:
+            # Show immediately
+            self._show()
+
     def _show(self):
         """Show the OSD and start audio monitoring."""
         if self.visible:
             return
-        
+
         self.visible = True
         self.window.set_visible(True)
-        
+
         # Start audio monitoring
         if not self.audio_monitor:
             self.audio_monitor = AudioMonitor(samplerate=44100, blocksize=1024)
-        
+
         try:
             self.audio_monitor.start()
         except RuntimeError as e:
@@ -110,14 +142,14 @@ class MicOSD:
             print(f"[MIC-OSD] Failed to start audio monitoring: {e}", flush=True)
             self.visible = False
             self.window.set_visible(False)
-            
+
             # Stop update timer if it was started
             if self.update_timer_id:
                 GLib.source_remove(self.update_timer_id)
                 self.update_timer_id = None
-            
+
             return  # Exit early - don't start timer
-        
+
         # Verify that audio stream is actually receiving audio (not just zeros)
         # This prevents showing window when mic is unplugged but stream opens successfully
         import time
@@ -125,7 +157,7 @@ class MicOSD:
         verification_duration = 0.25  # 250ms verification period
         max_zero_level = 1e-6  # Threshold for considering audio as zero (very small)
         audio_detected = False
-        
+
         while time.monotonic() - verification_start < verification_duration:
             level = self.audio_monitor.get_level()
             if level > max_zero_level:
@@ -272,7 +304,9 @@ class MicOSD:
     
     def stop(self):
         """Stop the OSD completely."""
-        if self.main_loop:
+        if self.app:
+            self.app.quit()
+        elif self.main_loop:
             self.main_loop.quit()
     
     def _cleanup(self):
