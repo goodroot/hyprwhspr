@@ -227,12 +227,34 @@ install_deps_apt() {
         python3-requests \
         python3-psutil \
         python3-rich \
+        python3-pulsectl \
+        python3-pyudev \
+        python3-dbus \
         python3-gi \
         gir1.2-gtk-4.0 \
         pipewire \
         pipewire-pulse \
         wl-clipboard \
         wget
+
+    # Optional Python packages (not present on all Debian/Ubuntu releases)
+    local optional_packages=(
+        python3-sounddevice
+        python3-pyperclip
+        python3-websocket
+    )
+    local available_packages=()
+    local pkg
+    for pkg in "${optional_packages[@]}"; do
+        if apt-cache show "$pkg" &> /dev/null; then
+            available_packages+=("$pkg")
+        else
+            log_warning "Package $pkg not found in apt repos - will use pip if needed"
+        fi
+    done
+    if [[ ${#available_packages[@]} -gt 0 ]]; then
+        sudo apt install -y "${available_packages[@]}"
+    fi
 
     # gtk4-layer-shell (may not be available on older Ubuntu)
     if apt-cache show gir1.2-gtk4layershell-1.0 &> /dev/null 2>&1; then
@@ -265,6 +287,9 @@ install_deps_dnf() {
         python3-requests \
         python3-psutil \
         python3-rich \
+        python3-pulsectl \
+        python3-pyudev \
+        python3-dbus \
         python3-gobject \
         gtk4 \
         gtk4-layer-shell \
@@ -296,12 +321,23 @@ install_deps_zypper() {
         python3-requests \
         python3-psutil \
         python3-rich \
+        python3-pulsectl \
+        python3-pyudev \
         python3-gobject \
         typelib-1_0-Gtk-4_0 \
         pipewire \
         pipewire-pulseaudio \
         ydotool \
         wl-clipboard
+
+    # Optional dbus package naming differs across openSUSE releases
+    if sudo zypper info -t package python3-dbus-python &> /dev/null; then
+        sudo zypper install -y python3-dbus-python
+    elif sudo zypper info -t package python3-dbus &> /dev/null; then
+        sudo zypper install -y python3-dbus
+    else
+        log_warning "python3-dbus package not found - dbus integration may be unavailable"
+    fi
 
     # gtk4-layer-shell (Tumbleweed only, from community repo)
     log_info "Attempting to install gtk4-layer-shell..."
@@ -323,6 +359,9 @@ install_pip_packages() {
 
     local need_sounddevice=false
     local need_pyperclip=false
+    local need_pulsectl=false
+    local need_pyudev=false
+    local need_websocket=false
 
     # Check if packages are already available (Fedora/openSUSE include them)
     if ! python3 -c "import sounddevice" 2>/dev/null; then
@@ -332,22 +371,41 @@ install_pip_packages() {
     if ! python3 -c "import pyperclip" 2>/dev/null; then
         need_pyperclip=true
     fi
+    
+    if ! python3 -c "import pulsectl" 2>/dev/null; then
+        need_pulsectl=true
+    fi
 
-    if $need_sounddevice || $need_pyperclip; then
+    if ! python3 -c "import pyudev" 2>/dev/null; then
+        need_pyudev=true
+    fi
+
+    if ! python3 -c "import websocket" 2>/dev/null; then
+        need_websocket=true
+    fi
+
+    if $need_sounddevice || $need_pyperclip || $need_pulsectl || $need_pyudev || $need_websocket; then
         log_info "Installing Python packages via pip..."
 
         local packages=""
         $need_sounddevice && packages="$packages sounddevice"
         $need_pyperclip && packages="$packages pyperclip"
+        $need_pulsectl && packages="$packages pulsectl"
+        $need_pyudev && packages="$packages pyudev"
+        $need_websocket && packages="$packages websocket-client"
 
         # Try with --break-system-packages first (needed on newer systems)
         # Fall back to without it for older systems
-        pip install --user --break-system-packages $packages 2>/dev/null || \
-        pip install --user $packages
+        python3 -m pip install --user --break-system-packages $packages 2>/dev/null || \
+        python3 -m pip install --user $packages
 
         log_success "Python packages installed"
     else
         log_success "Python packages already available"
+    fi
+
+    if ! python3 -c "import dbus" 2>/dev/null; then
+        log_warning "python3-dbus is missing; install via your package manager (e.g., python3-dbus)"
     fi
 }
 
