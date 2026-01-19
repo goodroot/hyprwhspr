@@ -221,6 +221,9 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr model` - Manage models (download/list/status)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation
+- `hyprwhspr test` - Test microphone and backend connectivity end-to-end
+  - `--live` - Record live audio (3s) instead of using test.wav
+  - `--mic-only` - Only test microphone, skip transcription
 - `hyprwhspr backend` - Backend management (repair/reset)
 - `hyprwhspr state` - State management (show/validate/reset)
 - `hyprwhspr uninstall` - Completely remove hyprwhspr and all data
