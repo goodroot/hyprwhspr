@@ -31,7 +31,11 @@ if [[ "$1" == "help" ]]; then
 fi
 
 # Subcommands: route to CLI if recognized
-if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|test|uninstall|backend|state|mic-osd)$ ]]; then
+# 'test' needs venv Python since it loads the transcription backend
+if [[ "$1" == "test" ]]; then
+  exec "$PYTHON_CMD" "$PACKAGE_ROOT/lib/cli.py" "$@"
+fi
+if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd)$ ]]; then
   exec python "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 
