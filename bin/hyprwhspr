@@ -16,18 +16,18 @@ if [ -f "$VENV_PYTHON" ]; then
     PYTHON_CMD="$VENV_PYTHON"
 else
     # Fallback to system Python if venv doesn't exist
-    PYTHON_CMD="python"
+    PYTHON_CMD="python3"
 fi
 
 # Help handling: route any -h/--help or leading "help" to CLI help
 for arg in "$@"; do
   if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-    exec python "$PACKAGE_ROOT/lib/cli.py" --help
+    exec python3 "$PACKAGE_ROOT/lib/cli.py" --help
   fi
 done
 
 if [[ "$1" == "help" ]]; then
-  exec python "$PACKAGE_ROOT/lib/cli.py" --help
+  exec python3 "$PACKAGE_ROOT/lib/cli.py" --help
 fi
 
 # Subcommands: route to CLI if recognized
@@ -36,7 +36,7 @@ if [[ "$1" == "test" ]]; then
   exec "$PYTHON_CMD" "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd)$ ]]; then
-  exec python "$PACKAGE_ROOT/lib/cli.py" "$@"
+  exec python3 "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 
 # Set up CUDA library path if CUDA is installed
