@@ -796,6 +796,12 @@ class WhisperManager:
             if language and 'language' not in data:
                 data['language'] = language
 
+            # Log request parameters for debugging
+            if data:
+                # Sanitize - don't log full prompt, just keys
+                param_summary = ', '.join(f'{k}={v[:20] + "..." if isinstance(v, str) and len(v) > 20 else v}' for k, v in data.items())
+                print(f'[REST] Request params: {param_summary}', flush=True)
+
             # Send the request
             print(f'[REST] Sending request to {endpoint_url}...', flush=True)
             start_time = time.time()
@@ -809,13 +815,21 @@ class WhisperManager:
                 try:
                     error_detail = response.json()
                     error_msg += f': {error_detail}'
-                except:
+                except Exception:
                     error_msg += f': {response.text[:200]}'
                 print(f'ERROR: {error_msg}')
                 return ''
 
             # Parse the response
-            result = response.json()
+            try:
+                result = response.json()
+            except Exception as json_err:
+                # Show raw response for debugging
+                raw_body = response.text[:500] if response.text else '(empty)'
+                print(f'ERROR: Failed to parse JSON response: {json_err}')
+                print(f'[REST] Raw response body: {raw_body}')
+                print(f'[REST] Content-Type: {response.headers.get("Content-Type", "not set")}')
+                return ''
 
             # Try common response formats
             transcription = ''
