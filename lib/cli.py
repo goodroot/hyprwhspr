@@ -27,6 +27,7 @@ from cli_commands import (
     model_command,
     status_command,
     validate_command,
+    test_command,
     backend_repair_command,
     backend_reset_command,
     state_show_command,
@@ -117,6 +118,13 @@ def main():
     
     # validate command
     subparsers.add_parser('validate', help='Validate installation')
+
+    # test command
+    test_parser = subparsers.add_parser('test', help='Test microphone and backend connectivity')
+    test_parser.add_argument('--live', action='store_true',
+                            help='Record live audio instead of using test.wav')
+    test_parser.add_argument('--mic-only', action='store_true',
+                            help='Only test microphone, skip transcription')
     
     # backend command
     backend_parser = subparsers.add_parser('backend', help='Backend management')
@@ -215,6 +223,11 @@ def main():
             status_command()
         elif args.command == 'validate':
             validate_command()
+        elif args.command == 'test':
+            test_command(
+                live=getattr(args, 'live', False),
+                mic_only=getattr(args, 'mic_only', False)
+            )
         elif args.command == 'backend':
             if not args.backend_action:
                 backend_parser.print_help()
