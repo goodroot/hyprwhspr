@@ -207,7 +207,7 @@ class MicOSD:
         # This prevents showing window when mic is unplugged but stream opens successfully
         import time
         verification_start = time.monotonic()
-        verification_duration = 0.25  # 250ms verification period
+        verification_duration = 1.5  # 1.5s verification period
         max_zero_level = 1e-6  # Threshold for considering audio as zero (very small)
         audio_detected = False
 
