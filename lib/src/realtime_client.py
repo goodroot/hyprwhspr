@@ -252,6 +252,9 @@ class RealtimeClient:
         
         elif event_type == 'input_audio_buffer.speech_started':
             print(f'[REALTIME] Speech detected', flush=True)
+            # Reset commit tracking - new speech means we haven't committed THIS audio yet
+            with self.lock:
+                self._buffer_committed = False
         
         elif event_type == 'input_audio_buffer.speech_stopped':
             print(f'[REALTIME] Speech ended', flush=True)
@@ -270,8 +273,11 @@ class RealtimeClient:
         
         if self.mode == 'transcribe':
             # Transcription-only session
-            # Use stored language if set, otherwise default to 'en' (or None for auto-detect)
-            transcription_language = self.language if self.language is not None else 'en'
+            # Build transcription config - omit language for auto-detect
+            transcription_config = {'model': 'gpt-4o-mini-transcribe'}
+            if self.language:
+                transcription_config['language'] = self.language
+
             session_data = {
                 'type': 'transcription',
                 'audio': {
@@ -280,10 +286,7 @@ class RealtimeClient:
                             'type': 'audio/pcm',
                             'rate': 24000
                         },
-                        'transcription': {
-                            'model': 'gpt-4o-mini-transcribe',
-                            'language': transcription_language
-                        },
+                        'transcription': transcription_config,
                         'turn_detection': {
                             'type': 'server_vad',
                             'threshold': 0.5,
@@ -371,6 +374,10 @@ class RealtimeClient:
             self.audio_buffer_seconds = 0.0
             with self.lock:
                 self._buffer_committed = False  # Reset commit tracking for new recording
+                # Clear old transcription state to prevent returning stale results
+                self.current_response_text = ""
+                self.response_complete = False
+            self.response_event.clear()
         except Exception as e:
             print(f'[REALTIME] Failed to clear buffer: {e}', flush=True)
     
