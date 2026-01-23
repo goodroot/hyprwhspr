@@ -224,6 +224,7 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr test` - Test microphone and backend connectivity end-to-end
   - `--live` - Record live audio (3s) instead of using test.wav
   - `--mic-only` - Only test microphone, skip transcription
+- `hyprwhspr keyboard` - Keyboard device management (list/test)
 - `hyprwhspr backend` - Backend management (repair/reset)
 - `hyprwhspr state` - State management (show/validate/reset)
 - `hyprwhspr uninstall` - Completely remove hyprwhspr and all data
@@ -875,6 +876,26 @@ If you use a keyboard remapping daemon that grabs evdev devices (e.g. `keyd`, `k
 This prevents hyprwhspr from taking exclusive control of keyboards and allows it to listen to events normally.
 
 > When grab_keys is disabled, the shortcut is not suppressed and may also trigger other system keybindings.
+
+**Selecting a specific keyboard device:**
+
+If you have multiple keyboards or need to avoid conflicts with other tools (e.g., Espanso, keyd, kmonad), you can specify which keyboard to use:
+
+```json
+{
+  "selected_device_name": "USB Keyboard"  // Match by device name (recommended)
+}
+```
+
+Or by device path:
+
+```json
+{
+  "selected_device_path": "/dev/input/event3"  // Match by exact path
+}
+```
+
+Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see available devices.
 
 **Bluetooth mic and flakey recording:**
 

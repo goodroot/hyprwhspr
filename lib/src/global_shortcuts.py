@@ -210,10 +210,11 @@ KEY_ALIASES: dict[str, str] = {
 class GlobalShortcuts:
     """Handles global keyboard shortcuts using evdev for hardware-level capture"""
 
-    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None, grab_keys: bool = True):
+    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None, device_name: Optional[str] = None, grab_keys: bool = True):
         self.primary_key = primary_key
         self.callback = callback
         self.selected_device_path = device_path
+        self.selected_device_name = device_name
         self.release_callback = release_callback
         self.grab_keys = grab_keys
 
@@ -256,8 +257,79 @@ class GlobalShortcuts:
                 all_device_paths = evdev.list_devices()
                 devices = [evdev.InputDevice(path) for path in all_device_paths]
                 
-                # If a specific device path is selected, only use that device and skip auto-detection
-                if self.selected_device_path:
+                # Device selection: prefer name over path if both are provided
+                if self.selected_device_name:
+                    # Match by device name (case-insensitive partial match)
+                    selected_device = None
+                    matching_devices = []
+                    search_name_lower = self.selected_device_name.lower()
+                    processed_devices = set()  # Track which devices we've processed
+                    
+                    try:
+                        for device in devices:
+                            try:
+                                device_name_lower = device.name.lower()
+                                processed_devices.add(device)
+                                # Check for exact match or partial match
+                                if device_name_lower == search_name_lower or search_name_lower in device_name_lower:
+                                    matching_devices.append(device)
+                                else:
+                                    device.close()
+                            except Exception:
+                                # If we can't access device.name, close it and continue
+                                processed_devices.add(device)
+                                try:
+                                    device.close()
+                                except:
+                                    pass
+                                continue
+                        
+                        if not matching_devices:
+                            print(f"[WARN] Selected device name '{self.selected_device_name}' not found!")
+                            print("[WARN] Use 'hyprwhspr keyboard list' to see available devices")
+                            # All non-matching devices should already be closed, but ensure cleanup
+                            # (matching_devices is empty here, so this is just defensive)
+                            for dev in matching_devices:
+                                try:
+                                    dev.close()
+                                except:
+                                    pass
+                            return
+                        
+                        # If multiple matches, use the first accessible one
+                        if len(matching_devices) > 1:
+                            print(f"[WARN] Multiple devices match '{self.selected_device_name}':")
+                            for dev in matching_devices:
+                                print(f"[WARN]   - {dev.name} ({dev.path})")
+                            print(f"[WARN] Using first match: {matching_devices[0].name} ({matching_devices[0].path})")
+                        
+                        selected_device = matching_devices[0]
+                        # Close other matching devices that we won't use
+                        for dev in matching_devices[1:]:
+                            try:
+                                dev.close()
+                            except:
+                                pass
+                        
+                        devices = [selected_device]
+                    except Exception:
+                        # Ensure all devices are closed on any exception
+                        # Close all matching devices
+                        for dev in matching_devices:
+                            try:
+                                dev.close()
+                            except:
+                                pass
+                        # Close any remaining unprocessed devices
+                        for device in devices:
+                            if device not in processed_devices:
+                                try:
+                                    device.close()
+                                except:
+                                    pass
+                        raise
+                elif self.selected_device_path:
+                    # Match by device path (existing behavior)
                     selected_device = None
                     for device in devices:
                         if device.path == self.selected_device_path:
@@ -267,7 +339,8 @@ class GlobalShortcuts:
                             device.close()
                     
                     if selected_device is None:
-                        print(f"[WARN] Selected device {self.selected_device_path} not found!")
+                        print(f"[WARN] Selected device path {self.selected_device_path} not found!")
+                        print("[WARN] Use 'hyprwhspr keyboard list' to see available devices")
                         return
                     
                     devices = [selected_device]
@@ -276,7 +349,7 @@ class GlobalShortcuts:
                     # Require EV_KEY events
                     capabilities = device.capabilities()
                     if ecodes.EV_KEY not in capabilities:
-                        if self.selected_device_path:
+                        if self.selected_device_name or self.selected_device_path:
                             print(f"[ERROR] Selected device '{device.name}' ({device.path}) does not support keyboard events (EV_KEY)")
                             print("[ERROR] This device cannot be used for keyboard shortcuts")
                             device.close()
@@ -287,7 +360,7 @@ class GlobalShortcuts:
                     # Check that device can emit ALL keys required for the shortcut
                     available_keys = set(capabilities[ecodes.EV_KEY])
                     if not self.target_keys.issubset(available_keys):
-                        if self.selected_device_path:
+                        if self.selected_device_name or self.selected_device_path:
                             missing_keys = self.target_keys - available_keys
                             missing_key_names = [self._keycode_to_name(k) for k in missing_keys]
                             print(f"[ERROR] Selected device '{device.name}' ({device.path}) cannot emit all keys required for shortcut '{self.primary_key}'")
@@ -315,7 +388,7 @@ class GlobalShortcuts:
                                     time.sleep(0.05)
                                     continue
                                 # Last retry failed - this is a real error
-                                if self.selected_device_path:
+                                if self.selected_device_name or self.selected_device_path:
                                     print(f"[ERROR] Cannot access selected device '{device.name}' ({device.path}): {e}")
                                     print("[ERROR] This usually means you need root or input group membership")
                                     print("[ERROR]   Run: sudo usermod -aG input $USER (then log out and back in)")
@@ -336,7 +409,7 @@ class GlobalShortcuts:
                             # This will fail if we don't have read permission
                             device.capabilities()
                         except (OSError, IOError) as e:
-                            if self.selected_device_path:
+                            if self.selected_device_name or self.selected_device_path:
                                 print(f"[ERROR] Cannot access selected device '{device.name}' ({device.path}): {e}")
                                 print("[ERROR] This usually means you need root or input group membership")
                                 print("[ERROR]   Run: sudo usermod -aG input $USER (then log out and back in)")
@@ -352,7 +425,7 @@ class GlobalShortcuts:
                     self.device_fds[device.fd] = device
                     
                     # If we selected a specific device, we're done
-                    if self.selected_device_path:
+                    if self.selected_device_name or self.selected_device_path:
                         break
 
             except Exception as e:
@@ -361,9 +434,14 @@ class GlobalShortcuts:
                 traceback.print_exc()
 
             if not self.devices:
-                if self.selected_device_path:
+                if self.selected_device_name:
                     # This shouldn't happen if we handled all cases above, but just in case
-                    print(f"[ERROR] Selected device {self.selected_device_path} could not be initialized")
+                    print(f"[ERROR] Selected device name '{self.selected_device_name}' could not be initialized")
+                    print("[ERROR] Use 'hyprwhspr keyboard list' to see available devices")
+                elif self.selected_device_path:
+                    # This shouldn't happen if we handled all cases above, but just in case
+                    print(f"[ERROR] Selected device path {self.selected_device_path} could not be initialized")
+                    print("[ERROR] Use 'hyprwhspr keyboard list' to see available devices")
                 else:
                     print("[ERROR] No accessible devices found that can emit the configured shortcut!")
                     print("[ERROR] Solutions:")
@@ -717,13 +795,23 @@ class GlobalShortcuts:
                             continue
                         # Last retry failed - this is a real error
                         print(f"[ERROR] Could not grab {device.name} after {retry + 1} retries: {e}")
-                        print(f"[ERROR] Device may still be grabbed by previous process.")
+                        print(f"[ERROR] Device may be in use by another process (e.g., Espanso, keyd, kmonad)")
                         print(f"[ERROR] Check what's using it: sudo fuser {device.path}")
                         print(f"[ERROR] If needed, kill the process: sudo fuser -k {device.path} (WARNING: kills all processes using this device)")
+                        print(f"[ERROR] To avoid conflicts, use 'hyprwhspr keyboard list' to see available devices")
+                        print(f"[ERROR] Then set 'selected_device_name' in config to use a different keyboard")
 
             if grabbed_count == 0:
                 print("[ERROR] No devices were grabbed! Shortcuts will not work!")
-                print("[ERROR] Try running with sudo or check permissions")
+                print("[ERROR] Possible causes:")
+                print("[ERROR]   1. Devices are in use by another tool (Espanso, keyd, kmonad, etc.)")
+                print("[ERROR]   2. Missing permissions (need to be in 'input' group)")
+                print("[ERROR]   3. All devices are busy or inaccessible")
+                print("[ERROR] Solutions:")
+                print("[ERROR]   - Run 'hyprwhspr keyboard list' to see available devices")
+                print("[ERROR]   - Set 'selected_device_name' in config to use a different keyboard")
+                print("[ERROR]   - Add yourself to 'input' group: sudo usermod -aG input $USER")
+                print("[ERROR]   - Check for conflicting tools: sudo fuser /dev/input/event*")
                 # Clean up UInput since we can't use it
                 if self.uinput:
                     try:

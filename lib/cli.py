@@ -34,6 +34,7 @@ from cli_commands import (
     state_validate_command,
     state_reset_command,
     uninstall_command,
+    keyboard_command,
 )
 
 
@@ -125,6 +126,12 @@ def main():
                             help='Record live audio instead of using test.wav')
     test_parser.add_argument('--mic-only', action='store_true',
                             help='Only test microphone, skip transcription')
+    
+    # keyboard command
+    keyboard_parser = subparsers.add_parser('keyboard', help='Keyboard device management')
+    keyboard_subparsers = keyboard_parser.add_subparsers(dest='keyboard_action', help='Keyboard actions')
+    keyboard_subparsers.add_parser('list', help='List available keyboard devices')
+    keyboard_subparsers.add_parser('test', help='Test keyboard device accessibility')
     
     # backend command
     backend_parser = subparsers.add_parser('backend', help='Backend management')
@@ -228,6 +235,11 @@ def main():
                 live=getattr(args, 'live', False),
                 mic_only=getattr(args, 'mic_only', False)
             )
+        elif args.command == 'keyboard':
+            if not args.keyboard_action:
+                keyboard_parser.print_help()
+                sys.exit(1)
+            keyboard_command(args.keyboard_action)
         elif args.command == 'backend':
             if not args.backend_action:
                 backend_parser.print_help()

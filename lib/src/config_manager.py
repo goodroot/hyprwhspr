@@ -25,6 +25,8 @@ class ConfigManager:
             'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' (hybrid tap/hold)
             'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
             'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
+            'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
+            'selected_device_name': None,  # Specific keyboard device name (e.g., 'USB Keyboard') - takes priority over path if both set
             # Audio device persistence (for reliable device matching across reboots)
             'audio_device_id': None,        # PortAudio device index (can change on reboot)
             'audio_device_name': None,      # Human-readable device name (more stable)

@@ -206,6 +206,7 @@ class hyprwhsprApp:
             recording_mode = self.config.get_setting("recording_mode", "toggle")
             grab_keys = self.config.get_setting("grab_keys", False)
             selected_device_path = self.config.get_setting("selected_device_path", None)
+            selected_device_name = self.config.get_setting("selected_device_name", None)
 
             # Register callbacks based on recording mode
             # Validate recording_mode and only register release callback for modes that need it
@@ -216,6 +217,7 @@ class hyprwhsprApp:
                     self._on_shortcut_triggered,
                     None,  # No release callback for toggle mode
                     device_path=selected_device_path,
+                    device_name=selected_device_name,
                     grab_keys=grab_keys,
                 )
             elif recording_mode in ('push_to_talk', 'auto'):
@@ -225,6 +227,7 @@ class hyprwhsprApp:
                     self._on_shortcut_triggered,
                     self._on_shortcut_released,
                     device_path=selected_device_path,
+                    device_name=selected_device_name,
                     grab_keys=grab_keys,
                 )
             elif recording_mode == 'long_form':
@@ -234,6 +237,7 @@ class hyprwhsprApp:
                     self._on_longform_shortcut_triggered,
                     None,  # No release callback for long_form mode
                     device_path=selected_device_path,
+                    device_name=selected_device_name,
                     grab_keys=grab_keys,
                 )
                 # Initialize segment manager for long-form mode
@@ -250,6 +254,7 @@ class hyprwhsprApp:
                     self._on_shortcut_triggered,
                     None,  # No release callback for invalid modes (treated as toggle)
                     device_path=selected_device_path,
+                    device_name=selected_device_name,
                     grab_keys=grab_keys,
                 )
         except Exception as e:
@@ -269,6 +274,7 @@ class hyprwhsprApp:
                             self._on_secondary_shortcut_triggered,
                             None,  # No release callback for toggle mode
                             device_path=selected_device_path,
+                            device_name=selected_device_name,
                             grab_keys=grab_keys,
                         )
                     elif recording_mode in ('push_to_talk', 'auto'):
@@ -277,6 +283,7 @@ class hyprwhsprApp:
                             self._on_secondary_shortcut_triggered,
                             self._on_secondary_shortcut_released,
                             device_path=selected_device_path,
+                            device_name=selected_device_name,
                             grab_keys=grab_keys,
                         )
                     else:
@@ -286,6 +293,7 @@ class hyprwhsprApp:
                             self._on_secondary_shortcut_triggered,
                             None,
                             device_path=selected_device_path,
+                            device_name=selected_device_name,
                             grab_keys=grab_keys,
                         )
                     
@@ -311,6 +319,7 @@ class hyprwhsprApp:
                         self._on_longform_submit_triggered,
                         None,  # No release callback
                         device_path=selected_device_path,
+                        device_name=selected_device_name,
                         grab_keys=grab_keys,
                     )
                     if self._longform_submit_shortcuts.start():
