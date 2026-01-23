@@ -270,8 +270,11 @@ class RealtimeClient:
         
         if self.mode == 'transcribe':
             # Transcription-only session
-            # Use stored language if set, otherwise default to 'en' (or None for auto-detect)
-            transcription_language = self.language if self.language is not None else 'en'
+            # Build transcription config - omit language for auto-detect
+            transcription_config = {'model': 'gpt-4o-mini-transcribe'}
+            if self.language:
+                transcription_config['language'] = self.language
+
             session_data = {
                 'type': 'transcription',
                 'audio': {
@@ -280,10 +283,7 @@ class RealtimeClient:
                             'type': 'audio/pcm',
                             'rate': 24000
                         },
-                        'transcription': {
-                            'model': 'gpt-4o-mini-transcribe',
-                            'language': transcription_language
-                        },
+                        'transcription': transcription_config,
                         'turn_detection': {
                             'type': 'server_vad',
                             'threshold': 0.5,
