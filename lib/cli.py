@@ -42,7 +42,7 @@ def main():
     """Main CLI entry point"""
     parser = argparse.ArgumentParser(
         prog='hyprwhspr',
-        description='hyprwhspr - Voice dictation service for Hyprland',
+        description='hyprwhspr - ferocious speech-to-text for Linux',
     )
     
     # Global verbosity flags

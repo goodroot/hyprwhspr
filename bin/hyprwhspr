@@ -35,7 +35,7 @@ fi
 if [[ "$1" == "test" ]]; then
   exec "$PYTHON_CMD" "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
-if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd)$ ]]; then
+if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard)$ ]]; then
   exec python3 "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 
