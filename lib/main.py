@@ -994,7 +994,7 @@ class hyprwhsprApp:
                 """Wait for callbacks and play sound if stream works"""
                 import time
                 start_time = time.monotonic()
-                while time.monotonic() - start_time < 0.5:  # Wait up to 500ms
+                while time.monotonic() - start_time < 1.5:  # Wait up to 1.5s
                     # Read frames_since_start with lock held to avoid data race
                     with self.audio_capture.lock:
                         frames_count = self.audio_capture.frames_since_start
