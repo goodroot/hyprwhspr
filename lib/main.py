@@ -1647,10 +1647,21 @@ class hyprwhsprApp:
                 
                 # Open FIFO for reading (blocks until writer appears)
                 with open(RECORDING_CONTROL_FILE, 'r') as f:
-                    action = f.read().strip().lower()
-                
-                if not action:
+                    raw_data = f.read()
+
+                # Handle multiple commands written to FIFO before read
+                # (e.g., user clicks rapidly during timeout - "start\nstart")
+                # Take only the last valid command (most recent intent)
+                valid_commands = {'start', 'stop', 'submit'}
+                lines = [line.strip().lower() for line in raw_data.splitlines() if line.strip()]
+                valid_lines = [line for line in lines if line in valid_commands]
+
+                if not valid_lines:
+                    if lines:
+                        print(f"[CONTROL] No valid commands in: {lines}", flush=True)
                     continue
+
+                action = valid_lines[-1]  # Take the last valid command
                 
                 # Check recording mode to route to appropriate handler
                 recording_mode = self.config.get_setting("recording_mode", "toggle")
