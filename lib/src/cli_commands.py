@@ -180,25 +180,42 @@ def _check_ydotool_version() -> tuple[bool, str, str]:
     if not shutil.which('ydotool'):
         return False, "", "ydotool not found"
 
-    # Get version
+    # Get version - try dpkg first (ydotool 1.0+ has no --version flag)
+    import re
+    version = None
+
+    # Try dpkg (Debian/Ubuntu)
     try:
         result = subprocess.run(
-            ['ydotool', '--version'],
+            ['dpkg', '-l', 'ydotool'],
             capture_output=True,
             text=True,
             timeout=5
         )
-        version_output = result.stdout + result.stderr
+        match = re.search(r'ii\s+ydotool\s+(\d+\.\d+\.?\d*)', result.stdout)
+        if match:
+            version = match.group(1)
     except Exception:
-        version_output = ""
+        pass
 
-    # Parse version (ydotool 1.0+ outputs "ydotool version X.Y.Z")
-    import re
-    match = re.search(r'(\d+\.\d+\.?\d*)', version_output)
-    if match:
-        version = match.group(1)
-    else:
-        # Can't parse version - assume old version
+    # Fallback: try --version (old ydotool 0.1.x supports this)
+    if not version:
+        try:
+            result = subprocess.run(
+                ['ydotool', '--version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            version_output = result.stdout + result.stderr
+            match = re.search(r'(\d+\.\d+\.?\d*)', version_output)
+            if match:
+                version = match.group(1)
+        except Exception:
+            pass
+
+    # If still no version, assume old
+    if not version:
         version = "0.1.0"
 
     # Compare versions
