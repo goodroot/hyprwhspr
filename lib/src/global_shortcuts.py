@@ -263,13 +263,13 @@ class GlobalShortcuts:
                     selected_device = None
                     matching_devices = []
                     search_name_lower = self.selected_device_name.lower()
-                    processed_devices = set()  # Track which devices we've processed
-                    
+                    processed_paths = set()  # Track which device paths we've processed
+
                     try:
                         for device in devices:
                             try:
                                 device_name_lower = device.name.lower()
-                                processed_devices.add(device)
+                                processed_paths.add(device.path)
                                 # Check for exact match or partial match
                                 if device_name_lower == search_name_lower or search_name_lower in device_name_lower:
                                     matching_devices.append(device)
@@ -277,7 +277,7 @@ class GlobalShortcuts:
                                     device.close()
                             except Exception:
                                 # If we can't access device.name, close it and continue
-                                processed_devices.add(device)
+                                processed_paths.add(device.path)
                                 try:
                                     device.close()
                                 except:
@@ -322,7 +322,7 @@ class GlobalShortcuts:
                                 pass
                         # Close any remaining unprocessed devices
                         for device in devices:
-                            if device not in processed_devices:
+                            if device.path not in processed_paths:
                                 try:
                                     device.close()
                                 except:
