@@ -245,7 +245,16 @@ class TextInjector:
         # Apply user-defined overrides first
         processed = self._apply_word_overrides(processed)
 
-        # Built-in speech-to-text replacements
+        # Built-in speech-to-text replacements (can be disabled via config)
+        symbol_replacements_enabled = True
+        if self.config_manager:
+            symbol_replacements_enabled = self.config_manager.get_setting('symbol_replacements', True)
+
+        if not symbol_replacements_enabled:
+            # Collapse runs of whitespace (newlines already normalized to spaces on line 243)
+            processed = re.sub(r'[ \t]+', ' ', processed)
+            return processed.strip()
+
         replacements = {
             r'\bperiod\b': '.',
             r'\bcomma\b': ',',

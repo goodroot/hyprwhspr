@@ -525,6 +525,14 @@ systemctl --user restart hyprwhspr
 
 Automatically converts spoken words to symbols / punctuation:
 
+Toggle this behavior in `~/.config/hyprwhspr/config.json`:
+
+```jsonc
+{
+    "symbol_replacements": true  // default: true (set false to disable speech-to-symbol replacements)
+}
+```
+
 **Punctuation:**
 
 - "period" → "."
