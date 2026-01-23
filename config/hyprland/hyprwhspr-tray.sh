@@ -121,8 +121,8 @@ PY
     fi
     backend="${backend:-pywhispercpp}"
 
-    # REST API backends don't require a local model file
-    if [[ "$backend" == "rest-api" ]] || [[ "$backend" == "remote" ]]; then
+    # Remote backends don't require a local model file
+    if [[ "$backend" == "rest-api" ]] || [[ "$backend" == "remote" ]] || [[ "$backend" == "realtime-ws" ]]; then
         return 0
     fi
 
