@@ -252,6 +252,9 @@ class RealtimeClient:
         
         elif event_type == 'input_audio_buffer.speech_started':
             print(f'[REALTIME] Speech detected', flush=True)
+            # Reset commit tracking - new speech means we haven't committed THIS audio yet
+            with self.lock:
+                self._buffer_committed = False
         
         elif event_type == 'input_audio_buffer.speech_stopped':
             print(f'[REALTIME] Speech ended', flush=True)
