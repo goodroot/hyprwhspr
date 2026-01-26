@@ -167,6 +167,7 @@ def _check_ydotool_version() -> tuple[bool, str, str]:
 
     hyprwhspr requires ydotool 1.0+ for paste injection. Ubuntu/Debian apt
     repositories contain an outdated 0.1.x version that uses incompatible syntax.
+    Arch-based distros (Arch, Manjaro, CachyOS) typically have 1.0+ in their repos.
 
     Returns:
         Tuple of (is_compatible, version_string, message)
@@ -197,6 +198,22 @@ def _check_ydotool_version() -> tuple[bool, str, str]:
             version = match.group(1)
     except Exception:
         pass
+
+    # Try pacman (Arch/Manjaro/CachyOS)
+    if not version:
+        try:
+            result = subprocess.run(
+                ['pacman', '-Q', 'ydotool'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            # Output format: "ydotool 1.0.4-2.1"
+            match = re.search(r'ydotool\s+(\d+\.\d+\.?\d*)', result.stdout)
+            if match:
+                version = match.group(1)
+        except Exception:
+            pass
 
     # Fallback: try --version (old ydotool 0.1.x supports this)
     if not version:
