@@ -271,7 +271,7 @@ class GlobalShortcuts:
                                 device_name_lower = device.name.lower()
                                 processed_paths.add(device.path)
                                 # Check for exact match or partial match
-                                if device_name_lower == search_name_lower or search_name_lower in device_name_lower:
+                                if device_name_lower == search_name_lower or search_name_lower == device_name_lower:
                                     matching_devices.append(device)
                                 else:
                                     device.close()
