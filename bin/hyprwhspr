@@ -10,24 +10,63 @@ PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
 export PYTHONPATH="$PACKAGE_ROOT/lib:$PYTHONPATH"
 
+# Find system Python, avoiding mise/pyenv/asdf managed versions
+# CLI commands use system Python since deps are installed via package manager
+get_system_python() {
+    # Check common system Python paths across distros
+    for py in /usr/bin/python3 /usr/bin/python /usr/local/bin/python3 /usr/local/bin/python; do
+        if [ -x "$py" ]; then
+            echo "$py"
+            return 0
+        fi
+    done
+    # No system Python found
+    return 1
+}
+
+# Check if mise/pyenv/asdf is active
+is_version_manager_active() {
+    # Check for mise
+    [[ -n "$MISE_SHELL" || -n "$__MISE_ACTIVATE" || -n "$MISE_DATA_DIR" ]] && return 0
+    # Check for pyenv
+    [[ -n "$PYENV_ROOT" && "$PATH" == *"$PYENV_ROOT"* ]] && return 0
+    # Check for asdf
+    [[ -n "$ASDF_DIR" && "$PATH" == *"$ASDF_DIR"* ]] && return 0
+    return 1
+}
+
+# Determine which Python to use for CLI commands
+# Use system Python when version manager is active (deps are in system packages)
+if is_version_manager_active; then
+    CLI_PYTHON="$(get_system_python)"
+    if [[ -z "$CLI_PYTHON" ]]; then
+        echo "Error: Version manager detected but no system Python found." >&2
+        echo "hyprwhspr requires system Python with distro packages (python3-rich, etc.)." >&2
+        echo "Please install Python via your package manager or temporarily deactivate your version manager." >&2
+        exit 1
+    fi
+else
+    CLI_PYTHON="python3"
+fi
+
 # Find venv Python (for main app execution)
 VENV_PYTHON="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
 if [ -f "$VENV_PYTHON" ]; then
     PYTHON_CMD="$VENV_PYTHON"
 else
     # Fallback to system Python if venv doesn't exist
-    PYTHON_CMD="python3"
+    PYTHON_CMD="$CLI_PYTHON"
 fi
 
 # Help handling: route any -h/--help or leading "help" to CLI help
 for arg in "$@"; do
   if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-    exec python3 "$PACKAGE_ROOT/lib/cli.py" --help
+    exec "$CLI_PYTHON" "$PACKAGE_ROOT/lib/cli.py" --help
   fi
 done
 
 if [[ "$1" == "help" ]]; then
-  exec python3 "$PACKAGE_ROOT/lib/cli.py" --help
+  exec "$CLI_PYTHON" "$PACKAGE_ROOT/lib/cli.py" --help
 fi
 
 # Subcommands: route to CLI if recognized
@@ -36,7 +75,7 @@ if [[ "$1" == "test" ]]; then
   exec "$PYTHON_CMD" "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard)$ ]]; then
-  exec python3 "$PACKAGE_ROOT/lib/cli.py" "$@"
+  exec "$CLI_PYTHON" "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 
 # Set up CUDA library path if CUDA is installed
