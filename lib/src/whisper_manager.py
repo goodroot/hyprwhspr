@@ -1109,19 +1109,25 @@ class WhisperManager:
                 # Use language_override if provided, otherwise get from config (None = auto-detect)
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
                 
+                # For pywhispercpp, we must explicitly pass language parameter for auto-detection
+                # According to PARAMS_SCHEMA, language=None, "" or "auto" enables auto-detection
+                transcribe_kwargs = {}
+                if language is not None:
+                    # User specified a language
+                    transcribe_kwargs['language'] = language
+                else:
+                    # Auto-detect - explicitly pass None to ensure proper auto-detection
+                    transcribe_kwargs['language'] = None
+                
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():
-                    # Transcribe with language parameter if specified
-                    if language:
-                        segments = self._pywhisper_model.transcribe(audio_data, language=language)
-                    else:
-                        segments = self._pywhisper_model.transcribe(audio_data)
+                    segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
 
                 result = ' '.join(seg.text for seg in segments).strip()
-                
+
                 # Update last use time on successful transcription
                 self._last_use_time = time.monotonic()
-                
+
                 return result
             except Exception as e:
                 print(f"[ERROR] pywhispercpp transcription failed: {e}")
