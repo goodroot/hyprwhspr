@@ -10,21 +10,24 @@ PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
 export PYTHONPATH="$PACKAGE_ROOT/lib:$PYTHONPATH"
 
-# Find system Python, avoiding mise/pyenv/asdf managed versions
+# Find system Python, avoiding mise/pyenv/asdf/homebrew managed versions
 # CLI commands use system Python since deps are installed via package manager
 get_system_python() {
-    # Check common system Python paths across distros
-    for py in /usr/bin/python3 /usr/bin/python /usr/local/bin/python3 /usr/local/bin/python; do
-        if [ -x "$py" ]; then
-            echo "$py"
-            return 0
-        fi
-    done
+    # Use a clean PATH containing only system directories to find Python
+    # This excludes version managers, homebrew, and user-installed Pythons
+    # Prefer /usr/bin first since that's where distro packages install Python
+    local system_path="/usr/bin:/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/sbin"
+    local py
+
+    # Search for python3 or python in system paths only
+    py="$(PATH="$system_path" command -v python3 2>/dev/null)" && [ -x "$py" ] && { echo "$py"; return 0; }
+    py="$(PATH="$system_path" command -v python 2>/dev/null)" && [ -x "$py" ] && { echo "$py"; return 0; }
+
     # No system Python found
     return 1
 }
 
-# Check if mise/pyenv/asdf is active
+# Check if mise/pyenv/asdf/homebrew is active
 is_version_manager_active() {
     # Check for mise
     [[ -n "$MISE_SHELL" || -n "$__MISE_ACTIVATE" || -n "$MISE_DATA_DIR" ]] && return 0
@@ -32,6 +35,12 @@ is_version_manager_active() {
     [[ -n "$PYENV_ROOT" && "$PATH" == *"$PYENV_ROOT"* ]] && return 0
     # Check for asdf
     [[ -n "$ASDF_DIR" && "$PATH" == *"$ASDF_DIR"* ]] && return 0
+    # Check for Homebrew/Linuxbrew (only if actually active in this shell)
+    # Avoid false positives when HOMEBREW_PREFIX is set but Homebrew isn't on PATH.
+    if [[ -n "$HOMEBREW_PREFIX" ]]; then
+        [[ ":$PATH:" == *":$HOMEBREW_PREFIX/bin:"* || ":$PATH:" == *":$HOMEBREW_PREFIX/sbin:"* ]] && return 0
+    fi
+    [[ "$PATH" == *"linuxbrew"* || "$PATH" == *"homebrew"* ]] && return 0
     return 1
 }
 
