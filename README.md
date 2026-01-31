@@ -831,18 +831,21 @@ pactl list short sources
 systemctl --user restart pipewire
 ```
 
-**Audio feedback not working:**
+**Audio feedback not working or sounds like white noise:**
 
 ```bash
 # Check if audio feedback is enabled in config
 cat ~/.config/hyprwhspr/config.json | grep audio_feedback
 
-# Verify sound files exist
-ls -la /usr/lib/hyprwhspr/share/assets/
+# Verify sound files exist (script install uses ~/hyprwhspr/share/assets/)
+ls -la /usr/lib/hyprwhspr/share/assets/   # AUR install
+ls -la ~/hyprwhspr/share/assets/           # Script install
 
-# Check if ffplay/aplay/paplay is available
-which ffplay aplay paplay
+# Check which audio player is available
+which ffplay paplay pw-play aplay
 ```
+
+**Important:** The default sounds are OGG format. `aplay` (ALSA) only supports WAV files and will produce white noise if used with OGG. Install `ffplay` (ffmpeg) or ensure `paplay` (pulseaudio-utils) or `pw-play` (pipewire) is available for OGG playback.
 
 **Model not found:**
 

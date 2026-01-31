@@ -234,6 +234,7 @@ install_deps_apt() {
         gir1.2-gtk-4.0 \
         pipewire \
         pipewire-pulse \
+        pulseaudio-utils \
         wl-clipboard \
         wget
 
