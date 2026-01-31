@@ -922,6 +922,34 @@ Or by device path:
 
 Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see available devices.
 
+**External hotkey systems (Espanso, KDE, GNOME, etc.):**
+
+If your keyboard is already grabbed by another tool (Espanso, pydal, etc.) or you prefer using your desktop's native hotkey system, you can control recording via CLI:
+
+```bash
+# Start recording
+hyprwhspr record start
+
+# Stop recording
+hyprwhspr record stop
+
+# Toggle recording on/off
+hyprwhspr record toggle
+
+# Check current status
+hyprwhspr record status
+```
+
+Then bind these commands to your preferred hotkeys in KDE, GNOME, sxhkd, or any other hotkey system:
+
+```bash
+# Example: Bind to KDE custom shortcut
+# Command: hyprwhspr record toggle
+
+# Example: Hyprland config (when not using grab_keys)
+bind = SUPER ALT, D, exec, hyprwhspr record toggle
+```
+
 **Bluetooth mic and flakey recording:**
 
 Mute detection can cause conflicts with Bluetooth microphones. To disable it, add the following to your `~/.config/hyprwhspr/config.json`:

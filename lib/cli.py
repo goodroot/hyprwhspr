@@ -35,6 +35,7 @@ from cli_commands import (
     state_reset_command,
     uninstall_command,
     keyboard_command,
+    record_command,
 )
 
 
@@ -132,6 +133,14 @@ def main():
     keyboard_subparsers = keyboard_parser.add_subparsers(dest='keyboard_action', help='Keyboard actions')
     keyboard_subparsers.add_parser('list', help='List available keyboard devices')
     keyboard_subparsers.add_parser('test', help='Test keyboard device accessibility')
+
+    # record command (for external hotkey systems)
+    record_parser = subparsers.add_parser('record', help='Control recording (for external hotkeys)')
+    record_subparsers = record_parser.add_subparsers(dest='record_action', help='Recording actions')
+    record_subparsers.add_parser('start', help='Start recording')
+    record_subparsers.add_parser('stop', help='Stop recording')
+    record_subparsers.add_parser('toggle', help='Toggle recording on/off')
+    record_subparsers.add_parser('status', help='Show current recording status')
     
     # backend command
     backend_parser = subparsers.add_parser('backend', help='Backend management')
@@ -258,6 +267,11 @@ def main():
                 state_validate_command()
             elif args.state_action == 'reset':
                 state_reset_command(getattr(args, 'all', False))
+        elif args.command == 'record':
+            if not args.record_action:
+                record_parser.print_help()
+                sys.exit(1)
+            record_command(args.record_action)
         elif args.command == 'uninstall':
             uninstall_command(
                 keep_models=getattr(args, 'keep_models', False),

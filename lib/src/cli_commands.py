@@ -31,9 +31,9 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
-    from .paths import CONFIG_DIR, CONFIG_FILE
+    from .paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE
 except ImportError:
-    from paths import CONFIG_DIR, CONFIG_FILE
+    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE
 
 try:
     from .backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
@@ -4233,4 +4233,109 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         print("Note: System permissions (group memberships, udev rules) were not removed.")
         print("      You may want to remove them manually if needed.")
     print()
+
+
+def record_command(action: str):
+    """
+    Control recording via CLI - useful when keyboard grab is not possible.
+
+    This writes to the recording control FIFO to trigger start/stop/toggle
+    without requiring keyboard grab. Useful for users with:
+    - External hotkey systems (KDE, GNOME, sxhkd, etc.)
+    - Keyboard remappers that grab devices (Espanso, keyd, kmonad)
+    - Multiple keyboard tools that conflict with grab_keys
+    """
+    import stat
+
+    def is_recording() -> bool:
+        """Check if currently recording (status file exists with 'true')"""
+        if not RECORDING_STATUS_FILE.exists():
+            return False
+        try:
+            content = RECORDING_STATUS_FILE.read_text().strip().lower()
+            return content == 'true'
+        except Exception:
+            return False
+
+    def send_control(command: str) -> bool:
+        """Send a command to the recording control FIFO"""
+        if not RECORDING_CONTROL_FILE.exists():
+            log_error("Recording control file not found.")
+            log_error("Is the hyprwhspr service running?")
+            log_info("Start it with: systemctl --user start hyprwhspr")
+            return False
+
+        # Check if it's a FIFO (named pipe)
+        try:
+            file_stat = RECORDING_CONTROL_FILE.stat()
+            is_fifo = stat.S_ISFIFO(file_stat.st_mode)
+        except Exception:
+            is_fifo = False
+
+        try:
+            if is_fifo:
+                # Open FIFO in non-blocking mode with timeout
+                import select
+                fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
+                fd_closed = False
+                try:
+                    # Wait for FIFO to be ready for writing (service is listening)
+                    _, ready, _ = select.select([], [fd], [], 2.0)
+                    if not ready:
+                        os.close(fd)
+                        fd_closed = True
+                        log_error("Service not responding (timeout waiting for FIFO)")
+                        log_info("The service may be busy or not running properly")
+                        return False
+                    os.write(fd, (command + '\n').encode())
+                finally:
+                    if not fd_closed:
+                        os.close(fd)
+            else:
+                # Fall back to regular file write
+                RECORDING_CONTROL_FILE.write_text(command + '\n')
+            return True
+        except OSError as e:
+            if e.errno == 6:  # ENXIO - no reader on FIFO
+                log_error("Service not listening on control FIFO")
+                log_info("Is the hyprwhspr service running?")
+                log_info("Start it with: systemctl --user start hyprwhspr")
+            else:
+                log_error(f"Failed to send command: {e}")
+            return False
+        except Exception as e:
+            log_error(f"Failed to send command: {e}")
+            return False
+
+    if action == 'start':
+        if is_recording():
+            log_warning("Already recording")
+            return
+        if send_control('start'):
+            log_success("Recording started")
+
+    elif action == 'stop':
+        if not is_recording():
+            log_warning("Not currently recording")
+            return
+        if send_control('stop'):
+            log_success("Recording stopped")
+
+    elif action == 'toggle':
+        if is_recording():
+            if send_control('stop'):
+                log_success("Recording stopped")
+        else:
+            if send_control('start'):
+                log_success("Recording started")
+
+    elif action == 'status':
+        if is_recording():
+            log_info("Status: Recording in progress")
+        else:
+            log_info("Status: Idle")
+
+    else:
+        log_error(f"Unknown action: {action}")
+        log_info("Available actions: start, stop, toggle, status")
 
