@@ -245,6 +245,9 @@ class TextInjector:
         # Apply user-defined overrides first
         processed = self._apply_word_overrides(processed)
 
+        # Filter filler words if enabled
+        processed = self._filter_filler_words(processed)
+
         # Built-in speech-to-text replacements (can be disabled via config)
         symbol_replacements_enabled = True
         if self.config_manager:
@@ -313,9 +316,38 @@ class TextInjector:
 
         processed = text
         for original, replacement in word_overrides.items():
-            if original and replacement:
+            # Only require original to be non-empty; replacement can be empty string to delete words
+            if original:
                 pattern = r'\b' + re.escape(original) + r'\b'
                 processed = re.sub(pattern, replacement, processed, flags=re.IGNORECASE)
+
+        # Clean up extra spaces left by word deletions (multiple spaces -> single space)
+        processed = re.sub(r' +', ' ', processed)
+        processed = processed.strip()
+
+        return processed
+
+    def _filter_filler_words(self, text: str) -> str:
+        """Remove filler words like uh, um, er if enabled in config"""
+        if not self.config_manager:
+            return text
+
+        if not self.config_manager.get_filter_filler_words():
+            return text
+
+        filler_words = self.config_manager.get_filler_words()
+        if not filler_words:
+            return text
+
+        processed = text
+        for word in filler_words:
+            if word:
+                pattern = r'\b' + re.escape(word) + r'\b'
+                processed = re.sub(pattern, '', processed, flags=re.IGNORECASE)
+
+        # Clean up extra spaces left by word deletions
+        processed = re.sub(r' +', ' ', processed)
+        processed = processed.strip()
 
         return processed
 

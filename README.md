@@ -491,9 +491,23 @@ systemctl --user restart hyprwhspr
 {
     "word_overrides": {
         "hyper whisper": "hyprwhspr",
+        "um": ""
     }
 }
 ```
+
+Use empty string `""` to delete words entirely.
+
+**Filler word filtering** - remove common filler words automatically:
+
+```jsonc
+{
+    "filter_filler_words": true,  // Enable automatic filler word removal (default: false)
+    "filler_words": ["uh", "um", "er", "ah", "eh", "hmm", "hm", "mm", "mhm"]  // Customize list
+}
+```
+
+When enabled, filler words are removed before text injection. Customize the list to match your speech patterns.
 
 **Audio feedback** - optional sound notifications:
 

@@ -36,6 +36,8 @@ class ConfigManager:
             'threads': 4,           # Thread count for whisper processing
             'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
             'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
+            'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
+            'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
             'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
             'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
@@ -201,7 +203,36 @@ class ConfigManager:
     def clear_word_overrides(self):
         """Clear all word overrides"""
         self.config['word_overrides'] = {}
-    
+
+    def get_filter_filler_words(self) -> bool:
+        """Check if filler word filtering is enabled"""
+        return self.config.get('filter_filler_words', False)
+
+    def set_filter_filler_words(self, enabled: bool):
+        """Enable or disable filler word filtering"""
+        self.config['filter_filler_words'] = bool(enabled)
+
+    def get_filler_words(self) -> list:
+        """Get the list of filler words to filter"""
+        return self.config.get('filler_words', ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm']).copy()
+
+    def add_filler_word(self, word: str):
+        """Add a word to the filler words list"""
+        word = word.lower().strip()
+        if word:
+            filler_words = self.get_filler_words()
+            if word not in filler_words:
+                filler_words.append(word)
+                self.config['filler_words'] = filler_words
+
+    def remove_filler_word(self, word: str):
+        """Remove a word from the filler words list"""
+        word = word.lower().strip()
+        filler_words = self.get_filler_words()
+        if word in filler_words:
+            filler_words.remove(word)
+            self.config['filler_words'] = filler_words
+
     def migrate_api_key_to_credential_manager(self) -> bool:
         """
         Migrate API key from config.json to credential manager.
