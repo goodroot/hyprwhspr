@@ -62,6 +62,8 @@ def main():
     
     # setup command
     setup_parser = subparsers.add_parser('setup', help='Full initial setup')
+    setup_parser.add_argument('--python', dest='python_path', metavar='PATH',
+                              help='Path to Python executable for venv (e.g., /usr/bin/python3.13)')
     setup_subparsers = setup_parser.add_subparsers(dest='setup_action', help='Setup actions')
     auto_parser = setup_subparsers.add_parser('auto', help='Automated setup')
     auto_parser.add_argument('--backend', choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr'],
@@ -71,6 +73,8 @@ def main():
     auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization')
     auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')
     auto_parser.add_argument('--hypr-bindings', action='store_true', help='Enable Hyprland compositor bindings')
+    auto_parser.add_argument('--python', dest='python_path', metavar='PATH',
+                             help='Path to Python executable for venv (e.g., /usr/bin/python3.13)')
 
     # install command
     install_parser = subparsers.add_parser('install', help='Installation management')
@@ -201,7 +205,8 @@ def main():
                 setup_parser.print_help()
                 sys.exit(1)
             else:
-                setup_command()
+                python_path = getattr(args, 'python_path', None)
+                setup_command(python_path=python_path)
         elif args.command == 'install':
             if not args.install_action:
                 install_parser.print_help()

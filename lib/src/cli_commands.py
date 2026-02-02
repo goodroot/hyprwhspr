@@ -1025,8 +1025,13 @@ def _setup_command_symlink():
             log_info(f"  ln -sf {source_path} {symlink_path}")
 
 
-def setup_command():
-    """Interactive full initial setup"""
+def setup_command(python_path: Optional[str] = None):
+    """Interactive full initial setup
+
+    Args:
+        python_path: Optional path to Python executable to use for venv creation.
+                     If None, auto-detects a compatible Python (3.13 or earlier).
+    """
     print("\n" + "="*60)
     print("hyprwhspr setup")
     print("="*60)
@@ -1143,7 +1148,7 @@ def setup_command():
             else:
                 # Pass force_rebuild=True when reinstalling to ensure clean venv
                 # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
-                if not install_backend(backend_normalized, force_rebuild=wants_reinstall):
+                if not install_backend(backend_normalized, force_rebuild=wants_reinstall, custom_python=python_path):
                     log_error("Backend installation failed. Setup cannot continue.")
                     return
                 
@@ -1851,6 +1856,7 @@ def omarchy_command(args=None):
             - no_mic_osd: Disable mic-osd visualization
             - no_systemd: Skip systemd service setup
             - hypr_bindings: Enable Hyprland compositor bindings
+            - python_path: Path to Python executable for venv creation
 
     Note: Hyprland compositor bindings are NOT configured by default.
     Use 'hyprwhspr setup' for interactive setup with Hyprland compositor options,
@@ -1871,6 +1877,7 @@ def omarchy_command(args=None):
     skip_mic_osd = getattr(args, 'no_mic_osd', False) if args else False
     skip_systemd = getattr(args, 'no_systemd', False) if args else False
     enable_hypr_bindings = getattr(args, 'hypr_bindings', False) if args else False
+    python_path = getattr(args, 'python_path', None) if args else None
 
     # 1. Print banner
     print("\n" + "="*60)
@@ -1910,7 +1917,7 @@ def omarchy_command(args=None):
     print("Backend Installation")
     print("="*60)
 
-    if not install_backend(backend, force_rebuild=False):
+    if not install_backend(backend, force_rebuild=False, custom_python=python_path):
         log_error("Backend installation failed")
         return False
     

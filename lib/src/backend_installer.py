@@ -83,6 +83,128 @@ def _safe_decode(output) -> str:
     return output
 
 
+# Maximum Python version compatible with ML packages (onnxruntime, etc.)
+MAX_COMPATIBLE_PYTHON = (3, 13)
+
+
+def _get_python_version(python_path: str) -> Optional[Tuple[int, int]]:
+    """
+    Get Python major.minor version from executable.
+
+    Args:
+        python_path: Path to Python executable
+
+    Returns:
+        Tuple of (major, minor) version, or None if detection failed
+    """
+    import re
+    try:
+        result = run_command(
+            [python_path, '--version'],
+            check=False,
+            capture_output=True,
+            verbose=False
+        )
+        if result.returncode == 0:
+            # `python --version` output is not consistent across versions/builds:
+            # some print to stderr, others to stdout. Prefer stderr, fall back to stdout.
+            candidates = [
+                getattr(result, 'stderr', None),
+                getattr(result, 'stdout', None),
+            ]
+            for stream in candidates:
+                if not stream:
+                    continue
+                output = _safe_decode(stream).strip()
+                match = re.search(r'Python\s+(\d+)\.(\d+)', output)
+                if match:
+                    return (int(match.group(1)), int(match.group(2)))
+    except Exception:
+        pass
+    return None
+
+
+def _python_compatibility_error(current_version: Optional[Tuple[int, int]]) -> None:
+    """
+    Print error message and exit when no compatible Python is found.
+
+    Args:
+        current_version: The detected system Python version, or None
+    """
+    version_str = f"{current_version[0]}.{current_version[1]}" if current_version else "unknown"
+    max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
+
+    log_error(f"System Python {version_str} is not compatible with ML packages (onnxruntime, etc.)")
+    print(f"\nhyprwhspr requires Python {max_str} or earlier. No compatible Python found.", flush=True)
+    print("\nInstall Python 3.13 or 3.12:", flush=True)
+    print("", flush=True)
+    print("  Fedora:     sudo dnf install python3.13", flush=True)
+    print("  Arch:       yay -S python313  # or python312", flush=True)
+    print("  Ubuntu/Deb: sudo apt install python3.12", flush=True)
+    print("", flush=True)
+    print("Then re-run: hyprwhspr setup", flush=True)
+    print("", flush=True)
+    print("Or specify Python explicitly:", flush=True)
+    print("  hyprwhspr setup --python /path/to/python3.13", flush=True)
+    print("", flush=True)
+    print("Alternative: Use cloud transcription (no local Python requirement):", flush=True)
+    print("  hyprwhspr setup  # Select 'REST API'", flush=True)
+    sys.exit(1)
+
+
+def _find_compatible_python(max_version: Tuple[int, int] = MAX_COMPATIBLE_PYTHON) -> Tuple[str, str]:
+    """
+    Find a compatible Python for venv creation.
+
+    Fallback chain:
+    1. System python3 if version <= max_version
+    2. python3.13, python3.12, python3.11 in /usr/bin, /usr/local/bin
+    3. Error with actionable message
+
+    Args:
+        max_version: Maximum allowed Python version as (major, minor) tuple
+
+    Returns:
+        Tuple of (python_path, description)
+
+    Raises:
+        SystemExit if no compatible Python found
+    """
+    # Check if current Python is mise-managed
+    current_is_mise = '.local/share/mise' in sys.executable
+    mise_active = _check_mise_active()
+
+    # 1. Check current/system Python
+    if mise_active or current_is_mise:
+        # Use system Python when MISE is active
+        current_python = _get_system_python()
+    else:
+        current_python = sys.executable
+
+    current_version = _get_python_version(current_python)
+    if current_version and current_version <= max_version:
+        return (current_python, f"Python {current_version[0]}.{current_version[1]}")
+
+    # 2. Search for python3.13, python3.12, python3.11 in common paths
+    for minor in [13, 12, 11]:
+        # Skip versions that are too new
+        if (3, minor) > max_version:
+            continue
+
+        for prefix in ['/usr/bin', '/usr/local/bin']:
+            path = f"{prefix}/python3.{minor}"
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                # Verify it actually works
+                test_version = _get_python_version(path)
+                if test_version and test_version <= max_version:
+                    return (path, f"python3.{minor}")
+
+    # 3. Error with guidance
+    _python_compatibility_error(current_version)
+    # _python_compatibility_error calls sys.exit, but for type checker:
+    raise SystemExit(1)
+
+
 def _check_mise_active() -> bool:
     """
     Check if MISE (runtime version manager) is active in the current environment.
@@ -1009,11 +1131,13 @@ def setup_vulkan_support() -> bool:
 
 # ==================== Python Environment ====================
 
-def setup_python_venv(force_rebuild: bool = False) -> Path:
+def setup_python_venv(force_rebuild: bool = False, custom_python: Optional[str] = None) -> Path:
     """Create or update Python virtual environment. Returns path to pip binary.
 
     Args:
         force_rebuild: If True, delete and recreate venv even if it exists and Python version matches.
+        custom_python: Optional path to Python executable to use for venv creation.
+                       If None, auto-detects a compatible Python (3.13 or earlier).
     """
     log_info("Setting up Python virtual environment…")
 
@@ -1023,14 +1147,27 @@ def setup_python_venv(force_rebuild: bool = False) -> Path:
         log_error(f"requirements.txt not found at {requirements_file}")
         raise FileNotFoundError(f"requirements.txt not found at {requirements_file}")
 
-    # Check if mise is active - if so, use system Python for venv creation
-    mise_active = _check_mise_active()
-    python_executable = sys.executable
-    
-    if mise_active:
-        log_info("MISE detected - using system Python for venv creation")
-        python_executable = _get_system_python()
-        log_info(f"Using system Python: {python_executable}")
+    # Determine Python executable to use
+    if custom_python:
+        # User specified explicit Python path
+        if not os.path.isfile(custom_python) or not os.access(custom_python, os.X_OK):
+            log_error(f"Specified Python not found or not executable: {custom_python}")
+            sys.exit(1)
+        python_executable = custom_python
+        version = _get_python_version(custom_python)
+        version_str = f"{version[0]}.{version[1]}" if version else "unknown"
+        # Validate version compatibility
+        if version and version > MAX_COMPATIBLE_PYTHON:
+            max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
+            log_error(f"Specified Python {version_str} is not compatible (requires {max_str} or earlier)")
+            log_error("ML packages like onnxruntime do not have wheels for this Python version yet.")
+            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python3.13")
+            sys.exit(1)
+        log_info(f"Using specified Python: {custom_python} ({version_str})")
+    else:
+        # Auto-detect compatible Python
+        python_executable, source = _find_compatible_python()
+        log_info(f"Using {source}: {python_executable}")
 
     # Check if venv exists and if Python version matches
     venv_needs_recreation = force_rebuild
@@ -1632,11 +1769,13 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
 
 # ==================== Parakeet Installation ====================
 
-def setup_parakeet_venv(force_rebuild: bool = False) -> Path:
+def setup_parakeet_venv(force_rebuild: bool = False, custom_python: Optional[str] = None) -> Path:
     """Create or update Parakeet Python virtual environment. Returns path to pip binary.
 
     Args:
         force_rebuild: If True, delete and recreate venv even if it exists and Python version matches.
+        custom_python: Optional path to Python executable to use for venv creation.
+                       If None, auto-detects a compatible Python (3.13 or earlier).
     """
     log_info("Setting up Parakeet Python virtual environment…")
 
@@ -1645,14 +1784,27 @@ def setup_parakeet_venv(force_rebuild: bool = False) -> Path:
         log_error(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
         raise FileNotFoundError(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
 
-    # Check if mise is active - if so, use system Python for venv creation
-    mise_active = _check_mise_active()
-    python_executable = sys.executable
-    
-    if mise_active:
-        log_info("MISE detected - using system Python for Parakeet venv creation")
-        python_executable = _get_system_python()
-        log_info(f"Using system Python: {python_executable}")
+    # Determine Python executable to use
+    if custom_python:
+        # User specified explicit Python path
+        if not os.path.isfile(custom_python) or not os.access(custom_python, os.X_OK):
+            log_error(f"Specified Python not found or not executable: {custom_python}")
+            sys.exit(1)
+        python_executable = custom_python
+        version = _get_python_version(custom_python)
+        version_str = f"{version[0]}.{version[1]}" if version else "unknown"
+        # Validate version compatibility
+        if version and version > MAX_COMPATIBLE_PYTHON:
+            max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
+            log_error(f"Specified Python {version_str} is not compatible (requires {max_str} or earlier)")
+            log_error("ML packages like onnxruntime do not have wheels for this Python version yet.")
+            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python3.13")
+            sys.exit(1)
+        log_info(f"Using specified Python: {custom_python} ({version_str})")
+    else:
+        # Auto-detect compatible Python
+        python_executable, source = _find_compatible_python()
+        log_info(f"Using {source}: {python_executable}")
 
     # Check if venv exists and if Python version matches
     venv_needs_recreation = force_rebuild
@@ -1858,7 +2010,8 @@ def install_onnx_asr(pip_bin: Path, enable_gpu: bool = False) -> bool:
 
 # ==================== Parallel Installation Helpers ====================
 
-def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False) -> Tuple[Dict[str, bool], Optional[Path]]:
+def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False,
+                                 custom_python: Optional[str] = None) -> Tuple[Dict[str, bool], Optional[Path]]:
     """
     Run GPU detection and venv creation in parallel.
 
@@ -1867,6 +2020,7 @@ def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False)
     Args:
         backend_type: One of 'nvidia', 'amd', 'vulkan' (or 'cpu' for no GPU setup)
         force_rebuild: If True, recreate venv even if it exists
+        custom_python: Optional path to Python executable for venv creation
 
     Returns:
         Tuple of (gpu_status dict, pip_bin Path or None if venv setup failed)
@@ -1892,7 +2046,7 @@ def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False)
         """Create/verify Python venv"""
         nonlocal pip_bin
         try:
-            pip_bin = setup_python_venv(force_rebuild=force_rebuild)
+            pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
         except Exception as e:
             errors.append(f"Venv setup error: {e}")
 
@@ -1979,7 +2133,8 @@ def _parallel_deps_and_wheel(pip_bin: Path, requirements_file: Path, variant: st
 
 # ==================== Main Installation Function ====================
 
-def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_rebuild: bool = False) -> bool:
+def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_rebuild: bool = False,
+                    custom_python: Optional[str] = None) -> bool:
     """
     Main function to install backend.
 
@@ -1987,6 +2142,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         backend_type: One of 'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr'
         cleanup_on_failure: Whether to clean up partial installations on failure
         force_rebuild: If True, delete and recreate venv even if it exists
+        custom_python: Optional path to Python executable to use for venv creation.
+                       If None, auto-detects a compatible Python (3.13 or earlier).
 
     Returns:
         True if installation succeeded, False otherwise
@@ -2051,7 +2208,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             
             # Setup Parakeet venv
             parakeet_venv_existed = PARAKEET_VENV_DIR.exists()
-            parakeet_pip_bin = setup_parakeet_venv(force_rebuild=force_rebuild)
+            parakeet_pip_bin = setup_parakeet_venv(force_rebuild=force_rebuild, custom_python=custom_python)
             if (force_rebuild or not parakeet_venv_existed) and PARAKEET_VENV_DIR.exists():
                 created_items['venv_created'] = True
                 created_items['venv_path'] = str(PARAKEET_VENV_DIR)
@@ -2074,7 +2231,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             # ONNX-ASR uses main venv with onnx-asr package
             # Setup main venv
             venv_existed = VENV_DIR.exists()
-            pip_bin = setup_python_venv(force_rebuild=force_rebuild)
+            pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
             if (force_rebuild or not venv_existed) and VENV_DIR.exists():
                 created_items['venv_created'] = True
                 created_items['venv_path'] = str(VENV_DIR)
@@ -2159,7 +2316,7 @@ print("Models cached successfully", flush=True)
 
         # Setup Python venv (for cpu/nvidia/amd backends)
         venv_existed = VENV_DIR.exists()
-        pip_bin = setup_python_venv(force_rebuild=force_rebuild)
+        pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
         if (force_rebuild or not venv_existed) and VENV_DIR.exists():
             created_items['venv_created'] = True
             created_items['venv_path'] = str(VENV_DIR)
