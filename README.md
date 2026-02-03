@@ -930,24 +930,34 @@ If your keyboard is already grabbed by another tool (Espanso, pydal, etc.) or yo
 # Start recording
 hyprwhspr record start
 
+# Start recording with specific language
+hyprwhspr record start --lang it    # Italian
+hyprwhspr record start --lang de    # German
+hyprwhspr record start --lang es    # Spanish
+
 # Stop recording
 hyprwhspr record stop
 
 # Toggle recording on/off
 hyprwhspr record toggle
+hyprwhspr record toggle --lang it   # Toggle with language override
 
 # Check current status
 hyprwhspr record status
 ```
 
+The `--lang` parameter overrides the default language for that recording session. This is useful for multilingual users who want different hotkeys for different languages.
+
 Then bind these commands to your preferred hotkeys in KDE, GNOME, sxhkd, or any other hotkey system:
 
 ```bash
-# Example: Bind to KDE custom shortcut
-# Command: hyprwhspr record toggle
+# Example: KDE custom shortcuts
+# English: hyprwhspr record toggle
+# Italian: hyprwhspr record start --lang it
 
 # Example: Hyprland config (when not using grab_keys)
 bind = SUPER ALT, D, exec, hyprwhspr record toggle
+bind = SUPER ALT, I, exec, hyprwhspr record start --lang it
 ```
 
 **Bluetooth mic and flakey recording:**

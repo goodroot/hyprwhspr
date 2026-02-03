@@ -4248,7 +4248,7 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     print()
 
 
-def record_command(action: str):
+def record_command(action: str, language: str = None):
     """
     Control recording via CLI - useful when keyboard grab is not possible.
 
@@ -4257,6 +4257,10 @@ def record_command(action: str):
     - External hotkey systems (KDE, GNOME, sxhkd, etc.)
     - Keyboard remappers that grab devices (Espanso, keyd, kmonad)
     - Multiple keyboard tools that conflict with grab_keys
+
+    Args:
+        action: The action to perform (start, stop, toggle, status)
+        language: Optional language code for transcription (e.g., 'en', 'it', 'de')
     """
     import stat
 
@@ -4320,12 +4324,16 @@ def record_command(action: str):
             log_error(f"Failed to send command: {e}")
             return False
 
+    # Build start command with optional language
+    start_cmd = f'start:{language}' if language else 'start'
+
     if action == 'start':
         if is_recording():
             log_warning("Already recording")
             return
-        if send_control('start'):
-            log_success("Recording started")
+        if send_control(start_cmd):
+            msg = f"Recording started (language: {language})" if language else "Recording started"
+            log_success(msg)
 
     elif action == 'stop':
         if not is_recording():
@@ -4339,8 +4347,9 @@ def record_command(action: str):
             if send_control('stop'):
                 log_success("Recording stopped")
         else:
-            if send_control('start'):
-                log_success("Recording started")
+            if send_control(start_cmd):
+                msg = f"Recording started (language: {language})" if language else "Recording started"
+                log_success(msg)
 
     elif action == 'status':
         if is_recording():

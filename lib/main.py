@@ -144,6 +144,7 @@ class hyprwhsprApp:
 
         # Long-form recording mode state
         self._longform_state = 'IDLE'  # IDLE, RECORDING, PAUSED, PROCESSING, ERROR
+        self._longform_language_override = None  # Language override for long-form session
         self._longform_lock = threading.Lock()
         self._longform_segment_manager = None
         self._longform_auto_save_timer = None
@@ -749,9 +750,17 @@ class hyprwhsprApp:
             elif self._longform_state == 'PROCESSING':
                 print("[LONGFORM] Already processing, please wait")
 
-    def _longform_start_recording(self):
-        """Start recording in long-form mode"""
-        print("[LONGFORM] Starting recording session")
+    def _longform_start_recording(self, language_override=None):
+        """Start recording in long-form mode
+
+        Args:
+            language_override: Optional language code for transcription (e.g., 'en', 'it')
+        """
+        lang_info = f" (language: {language_override})" if language_override else ""
+        print(f"[LONGFORM] Starting recording session{lang_info}")
+
+        # Store language override for use during submit
+        self._longform_language_override = language_override
 
         # Start audio capture first to verify it works
         if not self.audio_capture.start_recording():
@@ -850,8 +859,10 @@ class hyprwhsprApp:
         try:
             self.is_processing = True
 
-            # Transcribe
-            transcription = self.whisper_manager.transcribe_audio(audio_data)
+            # Transcribe with language override if set
+            transcription = self.whisper_manager.transcribe_audio(
+                audio_data, language_override=self._longform_language_override
+            )
 
             if transcription and transcription.strip():
                 text = transcription.strip()
@@ -871,9 +882,10 @@ class hyprwhsprApp:
                 # Success - inject text
                 self._inject_text(text)
 
-                # Clear segments and error audio
+                # Clear segments, error audio, and language override
                 self._longform_segment_manager.clear_session()
                 self._longform_error_audio = None
+                self._longform_language_override = None
 
                 self._longform_state = 'IDLE'
                 self._write_longform_state('IDLE')
@@ -1306,6 +1318,7 @@ class hyprwhsprApp:
         """Inject transcribed text into active application"""
         try:
             self.text_injector.inject_text(text)
+            print(f"[INJECT] Text injected ({len(text)} chars)", flush=True)
 
             # Text injection succeeded - system is fully healthy
             # Cancel any pending background recovery
@@ -1652,39 +1665,53 @@ class hyprwhsprApp:
                 # Handle multiple commands written to FIFO before read
                 # (e.g., user clicks rapidly during timeout - "start\nstart")
                 # Take only the last valid command (most recent intent)
-                valid_commands = {'start', 'stop', 'submit'}
-                lines = [line.strip().lower() for line in raw_data.splitlines() if line.strip()]
-                valid_lines = [line for line in lines if line in valid_commands]
+                # Commands can be: 'start', 'start:lang', 'stop', 'submit'
+                valid_base_commands = {'start', 'stop', 'submit'}
+                lines = [line.strip() for line in raw_data.splitlines() if line.strip()]
 
-                if not valid_lines:
+                # Parse commands - extract base command and optional language
+                parsed_commands = []
+                for line in lines:
+                    line_lower = line.lower()
+                    if ':' in line_lower and line_lower.startswith('start:'):
+                        # start:lang format - preserve language case
+                        parts = line.split(':', 1)
+                        lang = parts[1].strip() if len(parts) > 1 else None
+                        parsed_commands.append(('start', lang))
+                    elif line_lower in valid_base_commands:
+                        parsed_commands.append((line_lower, None))
+
+                if not parsed_commands:
                     if lines:
                         print(f"[CONTROL] No valid commands in: {lines}", flush=True)
                     continue
 
-                action = valid_lines[-1]  # Take the last valid command
+                action, language_param = parsed_commands[-1]  # Take the last valid command
                 
                 # Check recording mode to route to appropriate handler
                 recording_mode = self.config.get_setting("recording_mode", "toggle")
                 
                 # Process action immediately
                 if action == "start":
+                    lang_info = f" (language: {language_param})" if language_param else ""
                     if recording_mode == "long_form":
                         # In long-form mode, "start" action is state-aware
                         self._ensure_longform_initialized()
                         with self._longform_lock:
                             if self._longform_state == 'IDLE':
-                                print("[CONTROL] Long-form start requested (immediate)", flush=True)
-                                self._longform_start_recording()
+                                print(f"[CONTROL] Long-form start requested (immediate){lang_info}", flush=True)
+                                self._longform_start_recording(language_override=language_param)
                             elif self._longform_state == 'PAUSED':
-                                print("[CONTROL] Long-form resume requested (immediate)", flush=True)
+                                print(f"[CONTROL] Long-form resume requested (immediate){lang_info}", flush=True)
+                                # Note: resume doesn't change language - it was set at session start
                                 self._longform_resume_recording()
                             elif self._longform_state == 'RECORDING':
                                 print("[CONTROL] Long-form already recording, ignoring start request", flush=True)
                             else:
                                 print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring start request", flush=True)
                     elif not self.is_recording:
-                        print("[CONTROL] Recording start requested (immediate)", flush=True)
-                        self._start_recording()
+                        print(f"[CONTROL] Recording start requested (immediate){lang_info}", flush=True)
+                        self._start_recording(language_override=language_param)
                     else:
                         print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
                 elif action == "stop":

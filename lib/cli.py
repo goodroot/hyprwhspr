@@ -141,9 +141,13 @@ def main():
     # record command (for external hotkey systems)
     record_parser = subparsers.add_parser('record', help='Control recording (for external hotkeys)')
     record_subparsers = record_parser.add_subparsers(dest='record_action', help='Recording actions')
-    record_subparsers.add_parser('start', help='Start recording')
+    record_start_parser = record_subparsers.add_parser('start', help='Start recording')
+    record_start_parser.add_argument('--lang', dest='language', metavar='CODE',
+                                     help='Language code for transcription (e.g., en, it, de)')
     record_subparsers.add_parser('stop', help='Stop recording')
-    record_subparsers.add_parser('toggle', help='Toggle recording on/off')
+    record_toggle_parser = record_subparsers.add_parser('toggle', help='Toggle recording on/off')
+    record_toggle_parser.add_argument('--lang', dest='language', metavar='CODE',
+                                      help='Language code for transcription (e.g., en, it, de)')
     record_subparsers.add_parser('status', help='Show current recording status')
     
     # backend command
@@ -276,7 +280,7 @@ def main():
             if not args.record_action:
                 record_parser.print_help()
                 sys.exit(1)
-            record_command(args.record_action)
+            record_command(args.record_action, language=getattr(args, 'language', None))
         elif args.command == 'uninstall':
             uninstall_command(
                 keep_models=getattr(args, 'keep_models', False),
