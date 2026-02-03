@@ -83,7 +83,7 @@ fi
 if [[ "$1" == "test" ]]; then
   exec "$PYTHON_CMD" "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
-if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard)$ ]]; then
+if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record)$ ]]; then
   exec "$CLI_PYTHON" "$PACKAGE_ROOT/lib/cli.py" "$@"
 fi
 
