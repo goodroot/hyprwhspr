@@ -27,35 +27,15 @@ get_system_python() {
     return 1
 }
 
-# Check if mise/pyenv/asdf/homebrew is active
-is_version_manager_active() {
-    # Check for mise
-    [[ -n "$MISE_SHELL" || -n "$__MISE_ACTIVATE" || -n "$MISE_DATA_DIR" ]] && return 0
-    # Check for pyenv
-    [[ -n "$PYENV_ROOT" && "$PATH" == *"$PYENV_ROOT"* ]] && return 0
-    # Check for asdf
-    [[ -n "$ASDF_DIR" && "$PATH" == *"$ASDF_DIR"* ]] && return 0
-    # Check for Homebrew/Linuxbrew (only if actually active in this shell)
-    # Avoid false positives when HOMEBREW_PREFIX is set but Homebrew isn't on PATH.
-    if [[ -n "$HOMEBREW_PREFIX" ]]; then
-        [[ ":$PATH:" == *":$HOMEBREW_PREFIX/bin:"* || ":$PATH:" == *":$HOMEBREW_PREFIX/sbin:"* ]] && return 0
-    fi
-    [[ "$PATH" == *"linuxbrew"* || "$PATH" == *"homebrew"* ]] && return 0
-    return 1
-}
-
-# Determine which Python to use for CLI commands
-# Use system Python when version manager is active (deps are in system packages)
-if is_version_manager_active; then
-    CLI_PYTHON="$(get_system_python)"
-    if [[ -z "$CLI_PYTHON" ]]; then
-        echo "Error: Version manager detected but no system Python found." >&2
-        echo "hyprwhspr requires system Python with distro packages (python3-rich, etc.)." >&2
-        echo "Please install Python via your package manager or temporarily deactivate your version manager." >&2
-        exit 1
-    fi
-else
-    CLI_PYTHON="python3"
+# Always use system Python for CLI commands
+# Dependencies (python-rich, etc.) are installed via package manager to system site-packages
+# This avoids issues with mise/pyenv/asdf hijacking python3 to a version without those deps
+CLI_PYTHON="$(get_system_python)"
+if [[ -z "$CLI_PYTHON" ]]; then
+    echo "Error: System Python not found." >&2
+    echo "hyprwhspr requires system Python with distro packages (python-rich, etc.)." >&2
+    echo "Please install Python via your package manager (pacman -S python)." >&2
+    exit 1
 fi
 
 # Find venv Python (for main app execution)
