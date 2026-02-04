@@ -64,7 +64,7 @@ PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.l
 STATE_DIR = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'state')) / 'hyprwhspr'
 STATE_FILE = STATE_DIR / 'install-state.json'
 PYWHISPERCPP_SRC_DIR = USER_BASE / 'pywhispercpp-src'
-PYWHISPERCPP_PINNED_COMMIT = "4ab96165f84e8eb579077dfc3d0476fa5606affe"
+PYWHISPERCPP_PINNED_COMMIT = "d8f202f4435cf3e5e0bf735723eaacbe84c6853c"
 PARAKEET_VENV_DIR = USER_BASE / 'parakeet-venv'
 PARAKEET_DIR = Path(HYPRWHSPR_ROOT) / 'lib' / 'backends' / 'parakeet'
 PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
@@ -73,7 +73,7 @@ PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
 # Pre-built wheel configuration
 WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v1"
 WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
-PYWHISPERCPP_VERSION = "1.4.0"
+PYWHISPERCPP_VERSION = "1.4.1"
 
 
 def _safe_decode(output) -> str:
@@ -447,10 +447,10 @@ def _get_wheel_filename(python_version: str, variant: str, for_download: bool = 
     py_tag = f"cp{python_version.replace('.', '')}"
     base = f"pywhispercpp-{PYWHISPERCPP_VERSION}-{py_tag}-{py_tag}-linux_x86_64"
     if for_download:
-        # GitHub release filename: pywhispercpp-1.4.0-cp311-cp311-linux_x86_64+cuda122.whl
+        # GitHub release filename: pywhispercpp-<version>-cp311-cp311-linux_x86_64+cuda122.whl
         return f"{base}+{variant}.whl"
     else:
-        # Standard pip-compatible filename: pywhispercpp-1.4.0-cp311-cp311-linux_x86_64.whl
+        # Standard pip-compatible filename: pywhispercpp-<version>-cp311-cp311-linux_x86_64.whl
         return f"{base}.whl"
 
 
@@ -1418,7 +1418,7 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     
     # Clone or update pywhispercpp sources
     if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
-        log_info(f"Cloning pywhispercpp sources (v1.4.0) → {PYWHISPERCPP_SRC_DIR}")
+        log_info(f"Cloning pywhispercpp sources (v{PYWHISPERCPP_VERSION}) → {PYWHISPERCPP_SRC_DIR}")
         PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
         verbosity = OutputController.get_verbosity()
         verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
@@ -1436,7 +1436,7 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
             'submodule', 'update', '--init', '--recursive'
         ], check=True, verbose=verbose)
     else:
-        log_info(f"Updating pywhispercpp sources to v1.4.0 in {PYWHISPERCPP_SRC_DIR}")
+        log_info(f"Updating pywhispercpp sources to v{PYWHISPERCPP_VERSION} in {PYWHISPERCPP_SRC_DIR}")
         verbosity = OutputController.get_verbosity()
         verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         try:
@@ -1447,7 +1447,7 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
             run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'], 
                        check=False, verbose=verbose)
         except Exception as e:
-            log_warning(f"Could not update pywhispercpp repository to v1.4.0: {e}")
+            log_warning(f"Could not update pywhispercpp repository to v{PYWHISPERCPP_VERSION}: {e}")
     
     # Build with CUDA support
     log_info("Building pywhispercpp with CUDA (ggml CUDA) via pip - may take several minutes")
@@ -1525,7 +1525,7 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
     
     # Clone or update pywhispercpp sources
     if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
-        log_info(f"Cloning pywhispercpp sources (v1.4.0) → {PYWHISPERCPP_SRC_DIR}")
+        log_info(f"Cloning pywhispercpp sources (v{PYWHISPERCPP_VERSION}) → {PYWHISPERCPP_SRC_DIR}")
         PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
         verbosity = OutputController.get_verbosity()
         verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
@@ -1543,7 +1543,7 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
             'submodule', 'update', '--init', '--recursive'
         ], check=True, verbose=verbose)
     else:
-        log_info(f"Updating pywhispercpp sources to v1.4.0 in {PYWHISPERCPP_SRC_DIR}")
+        log_info(f"Updating pywhispercpp sources to v{PYWHISPERCPP_VERSION} in {PYWHISPERCPP_SRC_DIR}")
         verbosity = OutputController.get_verbosity()
         verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         try:
@@ -1554,7 +1554,7 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
             run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'], 
                        check=False, verbose=verbose)
         except Exception as e:
-            log_warning(f"Could not update pywhispercpp repository to v1.4.0: {e}")
+            log_warning(f"Could not update pywhispercpp repository to v{PYWHISPERCPP_VERSION}: {e}")
     
     # Set up ROCm environment
     rocm_path = os.environ.get('ROCM_PATH', '/opt/rocm')
@@ -1647,7 +1647,7 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
 
     # Clone or update pywhispercpp sources
     if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
-        log_info(f"Cloning pywhispercpp sources (v1.4.0) → {PYWHISPERCPP_SRC_DIR}")
+        log_info(f"Cloning pywhispercpp sources (v{PYWHISPERCPP_VERSION}) → {PYWHISPERCPP_SRC_DIR}")
         PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
         verbosity = OutputController.get_verbosity()
         verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
@@ -1665,7 +1665,7 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
             'submodule', 'update', '--init', '--recursive'
         ], check=True, verbose=verbose)
     else:
-        log_info(f"Updating pywhispercpp sources to v1.4.0 in {PYWHISPERCPP_SRC_DIR}")
+        log_info(f"Updating pywhispercpp sources to v{PYWHISPERCPP_VERSION} in {PYWHISPERCPP_SRC_DIR}")
         verbosity = OutputController.get_verbosity()
         verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         try:
@@ -1676,7 +1676,7 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
             run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'],
                        check=False, verbose=verbose)
         except Exception as e:
-            log_warning(f"Could not update pywhispercpp repository to v1.4.0: {e}")
+            log_warning(f"Could not update pywhispercpp repository to v{PYWHISPERCPP_VERSION}: {e}")
 
     # Set up Vulkan environment
     # Start with mise-free environment if mise is active, otherwise use current environment
@@ -2421,7 +2421,7 @@ print("Models cached successfully", flush=True)
                             # ROCm build failed - fall back to CPU-only
                             log_warning("ROCm build failed - falling back to CPU-only installation")
                             log_warning("")
-                            log_warning("ROCm 7.x has known compatibility issues with pywhispercpp v1.4.0")
+                            log_warning(f"ROCm 7.x has known compatibility issues with pywhispercpp v{PYWHISPERCPP_VERSION}")
                             log_warning("See: https://github.com/ggml-org/whisper.cpp/issues/3553")
                             log_warning("")
                             log_warning("Alternatives:")
