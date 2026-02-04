@@ -8,7 +8,7 @@ evdev>=1.6.0
 pyperclip>=1.8.2
 
 # Whisper integration
-pywhispercpp==1.4.0
+pywhispercpp==1.4.1
 requests>=2.25.0
 websocket-client>=1.9.0
 
