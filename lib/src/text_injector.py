@@ -351,52 +351,6 @@ class TextInjector:
 
         return processed
 
-    # ------------------------ Backends ------------------------
-
-    def _inject_via_ydotool(self, text: str) -> bool:
-        """
-        Inject using ydotool.
-        - For 'paste' strategy: use clipboard then Ctrl+V keystroke (fast).
-        - For 'type' strategy: stream text via stdin with --key-delay.
-        """
-        if self.inject_strategy == "paste":
-            return self._inject_via_clipboard_and_hotkey(text)
-
-        try:
-            delay = self._compute_key_delay_ms()
-            cmd = ['ydotool', 'type', '--key-delay', str(delay), '--file', '-']
-
-            # Respect YDOTOOL_SOCKET; default to $XDG_RUNTIME_DIR/.ydotool_socket
-            env = os.environ.copy()
-            if "YDOTOOL_SOCKET" not in env:
-                xdg = env.get("XDG_RUNTIME_DIR")
-                if xdg:
-                    env["YDOTOOL_SOCKET"] = os.path.join(xdg, ".ydotool_socket")
-
-            print(f"Injecting text with ydotool: type (delay={delay}ms) via {env.get('YDOTOOL_SOCKET','<default>')}")
-            result = subprocess.run(
-                cmd,
-                input=text.encode("utf-8"),
-                capture_output=True,
-                text=False,
-                timeout=60,
-                env=env,
-            )
-
-            if result.returncode == 0:
-                return True
-            else:
-                stderr = (result.stderr or b"").decode("utf-8", "ignore")
-                print(f"ERROR: ydotool failed: {stderr}")
-                return False
-
-        except subprocess.TimeoutExpired:
-            print("ERROR: ydotool command timed out")
-            return False
-        except Exception as e:
-            print(f"ERROR: ydotool injection failed: {e}")
-            return False
-
     # ------------------------ Paste injection (primary method) ------------------------
 
     def _inject_via_clipboard_and_hotkey(self, text: str) -> bool:

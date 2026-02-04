@@ -1,6 +1,6 @@
 """
-Generic WebSocket client    s
-Provider-agnostic design, use whatever
+Generic WebSocket client.
+Provider-agnostic design, use whatever.
 """
 
 import sys

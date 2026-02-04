@@ -91,10 +91,7 @@ class WhisperManager:
 
                 # Suppress ONNX Runtime verbose error logging
                 # Errors about missing CUDA libraries are expected and will fall back to CPU
-                import os
                 import logging
-                import sys
-                import contextlib
                 from io import StringIO
                 
                 # Set ONNX Runtime log level to suppress warnings/errors
