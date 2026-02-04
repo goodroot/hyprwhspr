@@ -2,6 +2,17 @@
 
 # hyprwhspr waybar tray
 
+# Find system Python, avoiding mise/pyenv/asdf managed versions
+# This ensures we use /usr/bin/python3 even if mise has hijacked PATH
+get_system_python() {
+    local system_path="/usr/bin:/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/sbin"
+    local py
+    py="$(PATH="$system_path" command -v python3 2>/dev/null)" && [ -x "$py" ] && { echo "$py"; return 0; }
+    py="$(PATH="$system_path" command -v python 2>/dev/null)" && [ -x "$py" ] && { echo "$py"; return 0; }
+    return 1
+}
+SYSTEM_PYTHON="$(get_system_python)" || SYSTEM_PYTHON="python3"
+
 # Detect PACKAGE_ROOT dynamically
 if [ -n "${HYPRWHSPR_ROOT:-}" ]; then
     PACKAGE_ROOT="$HYPRWHSPR_ROOT"
@@ -95,7 +106,7 @@ model_exists() {
 
     # Check backend first - remote backends don't require local model validation
     local backend
-    backend=$(python - <<'PY' "$cfg" 2>/dev/null
+    backend=$("$SYSTEM_PYTHON" - <<'PY' "$cfg" 2>/dev/null
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -143,7 +154,7 @@ PY
 
     # Only read model setting for pywhispercpp backends
     local model_path
-    model_path=$(python - <<'PY' "$cfg" 2>/dev/null
+    model_path=$("$SYSTEM_PYTHON" - <<'PY' "$cfg" 2>/dev/null
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
