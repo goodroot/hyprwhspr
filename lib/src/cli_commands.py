@@ -51,14 +51,16 @@ try:
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
         init_state, _cleanup_partial_installation,
-        PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR
+        PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR,
+        MAX_COMPATIBLE_PYTHON, _get_python_version
     )
 except ImportError:
     from backend_installer import (
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
         init_state, _cleanup_partial_installation,
-        PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR
+        PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR,
+        MAX_COMPATIBLE_PYTHON, _get_python_version
     )
 
 try:
@@ -165,6 +167,68 @@ def _create_mise_free_environment() -> dict:
         env['PATH'] = ':'.join(paths)
 
     return env
+
+
+def _check_python_compatibility() -> tuple[bool, str, str]:
+    """
+    Check if a compatible Python version is available for local ML backends.
+
+    ML packages (onnxruntime, etc.) require Python 3.13 or earlier.
+    This check warns users early if their system Python is too new.
+
+    Returns:
+        Tuple of (is_compatible, current_version_str, guidance_message)
+    """
+    max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
+
+    # Get current system Python version
+    python_path = shutil.which('python3') or shutil.which('python') or sys.executable
+    current_version = _get_python_version(python_path)
+
+    if not current_version:
+        return (True, "unknown", "")  # Can't detect, let it proceed
+
+    version_str = f"{current_version[0]}.{current_version[1]}"
+
+    if current_version <= MAX_COMPATIBLE_PYTHON:
+        return (True, version_str, "")
+
+    # Python is too new - search for a compatible alternative directly
+    # (Don't call _find_compatible_python() as it prints errors and exits on failure)
+    for minor in [13, 12, 11]:
+        if (3, minor) > MAX_COMPATIBLE_PYTHON:
+            continue
+        for prefix in ['/usr/bin', '/usr/local/bin']:
+            alt_path = f"{prefix}/python3.{minor}"
+            if os.path.isfile(alt_path) and os.access(alt_path, os.X_OK):
+                test_version = _get_python_version(alt_path)
+                if test_version and test_version <= MAX_COMPATIBLE_PYTHON:
+                    # Found a compatible Python
+                    guidance = (
+                        f"System Python {version_str} is too new for ML packages.\n"
+                        f"Found compatible Python: python3.{minor} ({alt_path})\n"
+                        f"The installer will use this automatically."
+                    )
+                    return (True, version_str, guidance)
+
+    # No compatible Python available
+    guidance = (
+        f"System Python {version_str} is too new for ML packages (onnxruntime, etc.).\n"
+        f"Local transcription backends require Python {max_str} or earlier.\n"
+        f"\n"
+        f"Options:\n"
+        f"  1. Install Python 3.13 or 3.12:\n"
+        f"     Fedora:     sudo dnf install python3.13\n"
+        f"     Arch:       yay -S python313  # or python312\n"
+        f"     Ubuntu/Deb: sudo apt install python3.12\n"
+        f"\n"
+        f"  2. Use cloud transcription (no local Python requirement):\n"
+        f"     Select 'REST API' or 'Realtime WS' during backend selection\n"
+        f"\n"
+        f"  3. Specify Python path manually:\n"
+        f"     hyprwhspr setup --python /path/to/python3.13"
+    )
+    return (False, version_str, guidance)
 
 
 def _check_ydotool_version() -> tuple[bool, str, str]:
@@ -1048,6 +1112,28 @@ def setup_command(python_path: Optional[str] = None):
             except Exception:
                 pass
         log_info("MISE deactivated for installation")
+
+    # Early Python version compatibility check
+    # This warns users upfront if their Python is too new for local ML backends
+    if not python_path:  # Only check if user didn't specify a custom Python
+        is_compatible, version_str, guidance = _check_python_compatibility()
+        if guidance:
+            # Either found alternative Python or need to warn user
+            if is_compatible:
+                log_info(f"Note: {guidance}")
+            else:
+                print("\n" + "="*60)
+                print("Python Version Warning")
+                print("="*60)
+                log_warning(f"System Python {version_str} detected")
+                print()
+                print(guidance)
+                print()
+                if not Confirm.ask("Continue anyway? (Cloud backends will still work)", default=True):
+                    log_info("Setup cancelled.")
+                    log_info("Install Python 3.13 or 3.12, then re-run: hyprwhspr setup")
+                    return
+                print()
 
     # Setup command symlink for git clone installs
     _setup_command_symlink()

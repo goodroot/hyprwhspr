@@ -97,6 +97,85 @@ detect_distro() {
     log_success "Detected: ${PRETTY_NAME:-$ID} (using $PKG_MANAGER)"
 }
 
+# Maximum Python version compatible with ML packages (onnxruntime, etc.)
+MAX_PYTHON_MAJOR=3
+MAX_PYTHON_MINOR=13
+
+# Check Python version compatibility
+check_python_version() {
+    local python_path=""
+    local python_version=""
+    local major=""
+    local minor=""
+
+    # Find the default python3
+    if command -v python3 &> /dev/null; then
+        python_path="python3"
+    elif command -v python &> /dev/null; then
+        python_path="python"
+    else
+        log_warning "Python not found. It will be installed with dependencies."
+        return 0
+    fi
+
+    # Get version string
+    python_version=$($python_path --version 2>&1 | grep -oP 'Python \K[0-9]+\.[0-9]+' || echo "")
+    if [[ -z "$python_version" ]]; then
+        log_warning "Could not detect Python version."
+        return 0
+    fi
+
+    # Parse major.minor
+    major=$(echo "$python_version" | cut -d. -f1)
+    minor=$(echo "$python_version" | cut -d. -f2)
+
+    log_info "System Python version: $python_version"
+
+    # Check if version is too new
+    if [[ "$major" -gt "$MAX_PYTHON_MAJOR" ]] || \
+       [[ "$major" -eq "$MAX_PYTHON_MAJOR" && "$minor" -gt "$MAX_PYTHON_MINOR" ]]; then
+        echo ""
+        log_warning "Python $python_version is too new for ML packages (onnxruntime, etc.)"
+        echo ""
+        echo -e "${YELLOW}hyprwhspr's local transcription requires Python ${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR} or earlier.${NC}"
+        echo -e "${YELLOW}ML packages like onnxruntime don't have wheels for Python $python_version yet.${NC}"
+        echo ""
+        echo "Options:"
+        echo ""
+        echo "  1) Install Python ${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR} or ${MAX_PYTHON_MAJOR}.$((MAX_PYTHON_MINOR-1)) alongside your current Python:"
+        case "$PKG_MANAGER" in
+            dnf)
+                echo "     sudo dnf install python3.13  # or python3.12"
+                ;;
+            apt)
+                echo "     sudo apt install python3.12  # or use deadsnakes PPA for newer"
+                ;;
+            zypper)
+                echo "     sudo zypper install python313  # or python312"
+                ;;
+        esac
+        echo ""
+        echo "  2) Use cloud transcription (no local Python requirement):"
+        echo "     During 'hyprwhspr setup', select 'REST API' or 'Realtime WS'"
+        echo ""
+        echo "  3) Continue anyway (installation may fail for local backends)"
+        echo ""
+        read -p "Continue with dependency installation? [y/N] " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Installation cancelled."
+            log_info "Install Python ${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR} or earlier, then re-run this script."
+            exit 0
+        fi
+        echo ""
+        log_warning "Continuing with Python $python_version - local backends may not work."
+        log_info "You can specify an alternative Python during setup: hyprwhspr setup --python /path/to/python3.13"
+        echo ""
+    else
+        log_success "Python version $python_version is compatible"
+    fi
+}
+
 # Compare version strings (returns 0 if $1 >= $2)
 version_gte() {
     printf '%s\n%s\n' "$2" "$1" | sort -V -C
@@ -488,6 +567,9 @@ main() {
 
     # Detect distribution
     detect_distro
+
+    # Check Python version compatibility early
+    check_python_version
 
     echo ""
     log_info "This script will install dependencies for hyprwhspr."
