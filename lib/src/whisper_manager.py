@@ -1108,14 +1108,18 @@ class WhisperManager:
             try:
                 # Use language_override if provided, otherwise get from config (None = auto-detect)
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
-                
+                whisper_prompt = self.config.get_setting('whisper_prompt', None)
+
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():
-                    # Transcribe with language parameter if specified
+                    # Build transcribe kwargs with available values
+                    transcribe_kwargs = {}
                     if language:
-                        segments = self._pywhisper_model.transcribe(audio_data, language=language)
-                    else:
-                        segments = self._pywhisper_model.transcribe(audio_data)
+                        transcribe_kwargs['language'] = language
+                    if whisper_prompt:
+                        transcribe_kwargs['initial_prompt'] = whisper_prompt
+
+                    segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
 
                 result = ' '.join(seg.text for seg in segments).strip()
                 
