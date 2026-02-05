@@ -6,6 +6,7 @@ PyWhisperCPP-only backend (in-process, model kept hot)
 import os
 import shutil
 import sys
+import contextlib
 import threading
 import time
 import types
