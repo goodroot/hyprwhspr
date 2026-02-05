@@ -50,6 +50,13 @@ class ElevenLabsRealtimeClient:
         # Threading
         self.lock = threading.Lock()
 
+        # Reconnection
+        self._should_stay_alive = False  # Set True after connect, False on close()
+        self._reconnecting = False
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 5
+        self.reconnect_delays = [1, 2, 4, 8, 16]  # Exponential backoff
+
         # Buffer tracking
         self.audio_buffer_seconds = 0.0
         self.max_buffer_seconds = 5.0
@@ -88,13 +95,7 @@ class ElevenLabsRealtimeClient:
         try:
             # Import SDK
             try:
-                from elevenlabs import (
-                    ElevenLabs,
-                    RealtimeEvents,
-                    RealtimeAudioOptions,
-                    AudioFormat,
-                    CommitStrategy,
-                )
+                from elevenlabs import ElevenLabs as _ElevenLabs
             except ImportError:
                 print(
                     '[ELEVENLABS] SDK not installed. Install with: pip install elevenlabs',
@@ -102,23 +103,50 @@ class ElevenLabsRealtimeClient:
                 )
                 return False
 
-            # Start event loop in background thread
-            self._loop_thread = threading.Thread(
-                target=self._start_event_loop, daemon=True
+            # Start event loop in background thread (once)
+            if self._loop is None:
+                self._loop_thread = threading.Thread(
+                    target=self._start_event_loop, daemon=True
+                )
+                self._loop_thread.start()
+
+                # Wait for loop to start
+                time.sleep(0.1)
+
+            # Initialize SDK client
+            self._elevenlabs = _ElevenLabs(api_key=api_key)
+
+            result = self._connect_internal()
+            if result:
+                self._should_stay_alive = True
+                self.reconnect_attempts = 0
+            return result
+
+        except Exception as e:
+            print(f'[ELEVENLABS] Connection error: {e}', flush=True)
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+    def _connect_internal(self) -> bool:
+        """Internal connection logic, reusable for reconnection."""
+        if self._reconnecting:
+            return False
+
+        try:
+            from elevenlabs import (
+                RealtimeEvents,
+                RealtimeAudioOptions,
+                AudioFormat,
+                CommitStrategy,
             )
-            self._loop_thread.start()
-
-            # Wait for loop to start
-            time.sleep(0.1)
-
-            # Initialize client
-            self._elevenlabs = ElevenLabs(api_key=api_key)
 
             # Connect asynchronously
-            async def _connect():
+            async def _do_connect():
                 # Build options
                 options = RealtimeAudioOptions(
-                    model_id=model,
+                    model_id=self.model,
                     audio_format=AudioFormat.PCM_16000,
                     sample_rate=16000,
                     commit_strategy=CommitStrategy.VAD,
@@ -172,9 +200,18 @@ class ElevenLabsRealtimeClient:
                     self._transcript_event.set()
 
                 def on_close():
-                    print('[ELEVENLABS] Connection closed', flush=True)
                     with self.lock:
+                        was_connected = self.connected
                         self.connected = False
+
+                    if self._should_stay_alive and was_connected:
+                        print(
+                            '[ELEVENLABS] Connection lost unexpectedly',
+                            flush=True,
+                        )
+                        self._attempt_reconnect()
+                    else:
+                        print('[ELEVENLABS] Connection closed', flush=True)
 
                 connection.on(RealtimeEvents.SESSION_STARTED, on_session_started)
                 connection.on(RealtimeEvents.PARTIAL_TRANSCRIPT, on_partial_transcript)
@@ -190,7 +227,7 @@ class ElevenLabsRealtimeClient:
 
                 return connection
 
-            self._connection = self._run_async(_connect())
+            self._connection = self._run_async(_do_connect())
 
             # Wait for session_started
             timeout = 10.0
@@ -199,7 +236,7 @@ class ElevenLabsRealtimeClient:
                 time.sleep(0.1)
 
             if self.connected:
-                print(f'[ELEVENLABS] Connected successfully', flush=True)
+                print('[ELEVENLABS] Connected successfully', flush=True)
                 return True
             else:
                 print('[ELEVENLABS] Connection timeout', flush=True)
@@ -211,6 +248,41 @@ class ElevenLabsRealtimeClient:
 
             traceback.print_exc()
             return False
+
+    def _attempt_reconnect(self):
+        """Attempt to reconnect with exponential backoff"""
+        if self._reconnecting:
+            return
+        if self.reconnect_attempts >= self.max_reconnect_attempts:
+            print(
+                '[ELEVENLABS] Max reconnection attempts reached',
+                flush=True,
+            )
+            return
+
+        self._reconnecting = True
+        try:
+            delay = self.reconnect_delays[
+                min(self.reconnect_attempts, len(self.reconnect_delays) - 1)
+            ]
+            self.reconnect_attempts += 1
+
+            print(
+                f'[ELEVENLABS] Reconnecting (attempt {self.reconnect_attempts}/'
+                f'{self.max_reconnect_attempts}) in {delay}s...',
+                flush=True,
+            )
+            time.sleep(delay)
+
+            if not self._should_stay_alive:
+                print('[ELEVENLABS] Reconnection cancelled (closing)', flush=True)
+                return
+
+            if self._connect_internal():
+                self.reconnect_attempts = 0
+                print('[ELEVENLABS] Reconnected successfully', flush=True)
+        finally:
+            self._reconnecting = False
 
     def _float32_to_pcm16_base64(self, audio_data: np.ndarray) -> str:
         """Convert float32 numpy array to base64-encoded PCM16"""
@@ -334,6 +406,9 @@ class ElevenLabsRealtimeClient:
 
     def close(self):
         """Close connection and cleanup"""
+        # Signal that this is an intentional shutdown — prevents on_close from reconnecting
+        self._should_stay_alive = False
+
         if self._connection:
             try:
 
