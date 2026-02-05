@@ -12,7 +12,7 @@ import types
 import wave
 import re
 import io
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from io import BytesIO
 from typing import Optional, Callable
 
@@ -124,7 +124,7 @@ class WhisperManager:
                     # onnx-asr automatically uses GPU providers if available
                     # Suppress stderr during model loading to avoid CUDA library error spam
                     # These errors are harmless - ONNX Runtime will fall back to CPU automatically
-                    with contextlib.redirect_stderr(StringIO()):
+                    with redirect_stderr(StringIO()):
                         if quantization:
                             self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
                         else:
