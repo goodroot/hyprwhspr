@@ -152,11 +152,6 @@ class WhisperManager:
 
             # Configure Realtime WebSocket backend
             if backend == 'realtime-ws':
-                try:
-                    from .realtime_client import RealtimeClient
-                except ImportError:
-                    from realtime_client import RealtimeClient
-                
                 # Validate WebSocket configuration
                 provider_id = self.config.get_setting('websocket_provider')
                 model_id = self.config.get_setting('websocket_model')
@@ -175,66 +170,120 @@ class WhisperManager:
                     print(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
                     return False
                 
-                # Initialize RealtimeClient with mode
-                realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-                self._realtime_client = RealtimeClient(mode=realtime_mode)
-                
-                # Get WebSocket URL
-                websocket_url = self.config.get_setting('websocket_url')
-                if not websocket_url:
-                    # For custom providers, websocket_url must be explicitly set
-                    if provider_id == 'custom':
-                        print('ERROR: Custom realtime backend requires websocket_url to be configured')
+                # Select appropriate client based on provider
+                if provider_id == 'elevenlabs':
+                    # Use ElevenLabs-specific client (Scribe v2 Realtime)
+                    try:
+                        from .elevenlabs_realtime_client import ElevenLabsRealtimeClient
+                    except ImportError:
+                        from elevenlabs_realtime_client import ElevenLabsRealtimeClient
+                    
+                    self._realtime_client = ElevenLabsRealtimeClient()
+                    
+                    # Get WebSocket URL
+                    websocket_url = self.config.get_setting('websocket_url')
+                    if not websocket_url:
+                        provider = get_provider(provider_id)
+                        if provider and 'websocket_endpoint' in provider:
+                            websocket_url = provider['websocket_endpoint']
+                        else:
+                            websocket_url = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime'
+                    
+                    # Set language (used at connection time via query params)
+                    language = self.config.get_setting('language', None)
+                    self._realtime_client.language = language
+                    
+                    # Set buffer max seconds
+                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+                    self._realtime_client.set_max_buffer_seconds(buffer_max)
+                    
+                    # Connect (ElevenLabs doesn't use instructions)
+                    if not self._realtime_client.connect(websocket_url, api_key, model_id, None):
+                        print('ERROR: Failed to connect to ElevenLabs Realtime WebSocket')
+                        try:
+                            self._realtime_client.close()
+                        except Exception:
+                            pass
+                        self._realtime_client = None
                         return False
                     
-                    # For known providers, derive from provider registry
+                    # ElevenLabs uses 16kHz audio - no resampling needed!
+                    def _send_direct(audio_chunk: np.ndarray):
+                        """Send audio directly to ElevenLabs (16kHz, no resampling)"""
+                        try:
+                            self._realtime_client.append_audio(audio_chunk)
+                        except Exception as e:
+                            print(f'[ELEVENLABS] Streaming error: {e}', flush=True)
+                    
+                    self._realtime_streaming_callback = _send_direct
+                
+                else:
+                    # Use OpenAI-compatible client (default)
                     try:
-                        websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
-                    except Exception as e:
-                        print(f'ERROR: Failed to derive WebSocket URL: {e}')
+                        from .realtime_client import RealtimeClient
+                    except ImportError:
+                        from realtime_client import RealtimeClient
+                    
+                    # Initialize RealtimeClient with mode
+                    realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+                    self._realtime_client = RealtimeClient(mode=realtime_mode)
+                    
+                    # Get WebSocket URL
+                    websocket_url = self.config.get_setting('websocket_url')
+                    if not websocket_url:
+                        # For custom providers, websocket_url must be explicitly set
+                        if provider_id == 'custom':
+                            print('ERROR: Custom realtime backend requires websocket_url to be configured')
+                            return False
+                        
+                        # For known providers, derive from provider registry
+                        try:
+                            websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
+                        except Exception as e:
+                            print(f'ERROR: Failed to derive WebSocket URL: {e}')
+                            return False
+                    
+                    # Build instructions from whisper_prompt and language
+                    instructions_parts = []
+                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                    if whisper_prompt:
+                        instructions_parts.append(whisper_prompt)
+                    
+                    language = self.config.get_setting('language', None)
+                    if language:
+                        instructions_parts.append(f"Transcribe in {language} language.")
+                    
+                    instructions = ' '.join(instructions_parts) if instructions_parts else None
+                    
+                    # Set language in realtime client (for session.update)
+                    self._realtime_client.language = language
+                    
+                    # Set buffer max seconds
+                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+                    self._realtime_client.set_max_buffer_seconds(buffer_max)
+                    
+                    # Connect
+                    if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
+                        print('ERROR: Failed to connect to Realtime WebSocket')
+                        # Clean up failed client
+                        try:
+                            self._realtime_client.close()
+                        except Exception:
+                            pass
+                        self._realtime_client = None
                         return False
-                
-                # Build instructions from whisper_prompt and language
-                instructions_parts = []
-                whisper_prompt = self.config.get_setting('whisper_prompt', None)
-                if whisper_prompt:
-                    instructions_parts.append(whisper_prompt)
-                
-                language = self.config.get_setting('language', None)
-                if language:
-                    instructions_parts.append(f"Transcribe in {language} language.")
-                
-                instructions = ' '.join(instructions_parts) if instructions_parts else None
-                
-                # Set language in realtime client (for session.update)
-                self._realtime_client.language = language
-                
-                # Set buffer max seconds
-                buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
-                self._realtime_client.set_max_buffer_seconds(buffer_max)
-                
-                # Connect
-                if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                    print('ERROR: Failed to connect to Realtime WebSocket')
-                    # Clean up failed client
-                    try:
-                        self._realtime_client.close()
-                    except Exception:
-                        pass
-                    self._realtime_client = None
-                    return False
-                
-                # Set up streaming callback with resampling from 16kHz to 24kHz
-                def _resample_and_send(audio_chunk: np.ndarray):
-                    """Resample from 16kHz to 24kHz and send to realtime client"""
-                    try:
-                        from scipy import signal
-                        resampled = signal.resample(audio_chunk, int(len(audio_chunk) * 1.5))
-                        self._realtime_client.append_audio(resampled.astype(np.float32))
-                    except Exception as e:
-                        print(f'[REALTIME] Streaming error: {e}', flush=True)
-                
-                self._realtime_streaming_callback = _resample_and_send
+                    
+                    # OpenAI requires 24kHz audio - resample from 16kHz
+                    def _resample_and_send(audio_chunk: np.ndarray):
+                        """Resample from 16kHz to 24kHz and send to realtime client"""
+                        try:
+                            from scipy import signal
+                            resampled = signal.resample(audio_chunk, int(len(audio_chunk) * 1.5))
+                            self._realtime_client.append_audio(resampled.astype(np.float32))
+                        except Exception as e:
+                            print(f'[REALTIME] Streaming error: {e}', flush=True)
+                    
+                    self._realtime_streaming_callback = _resample_and_send
                 
                 print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
                 print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
