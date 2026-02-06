@@ -84,7 +84,7 @@ def _safe_decode(output) -> str:
 
 
 # Maximum Python version compatible with ML packages (onnxruntime, etc.)
-MAX_COMPATIBLE_PYTHON = (3, 13)
+MAX_COMPATIBLE_PYTHON = (3, 14)
 
 
 def _get_python_version(python_path: str) -> Optional[Tuple[int, int]]:
@@ -136,16 +136,16 @@ def _python_compatibility_error(current_version: Optional[Tuple[int, int]]) -> N
 
     log_error(f"System Python {version_str} is not compatible with ML packages (onnxruntime, etc.)")
     print(f"\nhyprwhspr requires Python {max_str} or earlier. No compatible Python found.", flush=True)
-    print("\nInstall Python 3.13 or 3.12:", flush=True)
+    print("\nInstall Python 3.14 or 3.13:", flush=True)
     print("", flush=True)
-    print("  Fedora:     sudo dnf install python3.13", flush=True)
-    print("  Arch:       yay -S python313  # or python312", flush=True)
-    print("  Ubuntu/Deb: sudo apt install python3.12", flush=True)
+    print("  Fedora:     sudo dnf install python3.14", flush=True)
+    print("  Arch:       yay -S python314  # or python313", flush=True)
+    print("  Ubuntu/Deb: sudo apt install python3.13", flush=True)
     print("", flush=True)
     print("Then re-run: hyprwhspr setup", flush=True)
     print("", flush=True)
     print("Or specify Python explicitly:", flush=True)
-    print("  hyprwhspr setup --python /path/to/python3.13", flush=True)
+    print("  hyprwhspr setup --python /path/to/python3.14", flush=True)
     print("", flush=True)
     print("Alternative: Use cloud transcription (no local Python requirement):", flush=True)
     print("  hyprwhspr setup  # Select 'REST API'", flush=True)
@@ -158,7 +158,7 @@ def _find_compatible_python(max_version: Tuple[int, int] = MAX_COMPATIBLE_PYTHON
 
     Fallback chain:
     1. System python3 if version <= max_version
-    2. python3.13, python3.12, python3.11 in /usr/bin, /usr/local/bin
+    2. python3.14, python3.13, python3.12, python3.11 in /usr/bin, /usr/local/bin
     3. Error with actionable message
 
     Args:
@@ -185,8 +185,8 @@ def _find_compatible_python(max_version: Tuple[int, int] = MAX_COMPATIBLE_PYTHON
     if current_version and current_version <= max_version:
         return (current_python, f"Python {current_version[0]}.{current_version[1]}")
 
-    # 2. Search for python3.13, python3.12, python3.11 in common paths
-    for minor in [13, 12, 11]:
+    # 2. Search for python3.14, python3.13, python3.12, python3.11 in common paths
+    for minor in [14, 13, 12, 11]:
         # Skip versions that are too new
         if (3, minor) > max_version:
             continue
@@ -1137,7 +1137,7 @@ def setup_python_venv(force_rebuild: bool = False, custom_python: Optional[str] 
     Args:
         force_rebuild: If True, delete and recreate venv even if it exists and Python version matches.
         custom_python: Optional path to Python executable to use for venv creation.
-                       If None, auto-detects a compatible Python (3.13 or earlier).
+                       If None, auto-detects a compatible Python (3.14 or earlier).
     """
     log_info("Setting up Python virtual environment…")
 
@@ -1161,7 +1161,7 @@ def setup_python_venv(force_rebuild: bool = False, custom_python: Optional[str] 
             max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
             log_error(f"Specified Python {version_str} is not compatible (requires {max_str} or earlier)")
             log_error("ML packages like onnxruntime do not have wheels for this Python version yet.")
-            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python3.13")
+            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python3.14")
             sys.exit(1)
         log_info(f"Using specified Python: {custom_python} ({version_str})")
     else:
@@ -1775,7 +1775,7 @@ def setup_parakeet_venv(force_rebuild: bool = False, custom_python: Optional[str
     Args:
         force_rebuild: If True, delete and recreate venv even if it exists and Python version matches.
         custom_python: Optional path to Python executable to use for venv creation.
-                       If None, auto-detects a compatible Python (3.13 or earlier).
+                       If None, auto-detects a compatible Python (3.14 or earlier).
     """
     log_info("Setting up Parakeet Python virtual environment…")
 
@@ -1798,7 +1798,7 @@ def setup_parakeet_venv(force_rebuild: bool = False, custom_python: Optional[str
             max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
             log_error(f"Specified Python {version_str} is not compatible (requires {max_str} or earlier)")
             log_error("ML packages like onnxruntime do not have wheels for this Python version yet.")
-            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python3.13")
+            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python3.14")
             sys.exit(1)
         log_info(f"Using specified Python: {custom_python} ({version_str})")
     else:
@@ -2143,7 +2143,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         cleanup_on_failure: Whether to clean up partial installations on failure
         force_rebuild: If True, delete and recreate venv even if it exists
         custom_python: Optional path to Python executable to use for venv creation.
-                       If None, auto-detects a compatible Python (3.13 or earlier).
+                       If None, auto-detects a compatible Python (3.14 or earlier).
 
     Returns:
         True if installation succeeded, False otherwise
