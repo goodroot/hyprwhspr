@@ -339,7 +339,9 @@ Examples:
 > - **Local whisper models**: Fully supported (all pywhispercpp models)
 > - **Custom REST endpoints**: May not work if the endpoint doesn't accept a language parameter
 
-The primary shortcut continues to use the `language` setting from your config (or auto-detect if set to `null`). The secondary shortcut will always use the configured `secondary_language` when pressed.
+The primary shortcut continues to use the `language` setting from your config (or auto-detect if set to `null`). 
+
+The secondary shortcut will always use the configured `secondary_language` when pressed.
 
 Configure via CLI:
 
@@ -552,8 +554,6 @@ Toggle this behavior in `~/.config/hyprwhspr/config.json`:
 - "new line" → new line
 - "tab" → tab character
 
-_Speech-to-text replacement list via [WhisperTux](https://github.com/cjams/whispertux), thanks @cjams!_
-
 **Clipboard behavior** - control what happens to clipboard after text injection:
 
 ```jsonc
@@ -639,7 +639,7 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 **Select a specific keyboard device:**
 
-If you have multiple keyboards or need to avoid conflicts with other tools (e.g., Espanso, keyd, kmonad), you can specify which keyboard to use:
+If you have multiple input tools (e.g., Espanso, keyd, kmonad), specify which to use:
 
 ```json
 {
@@ -657,9 +657,9 @@ Or by device path:
 
 Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see available devices.
 
-**External hotkey systems (Espanso, KDE, GNOME, etc.):**
+**External hotkey systems (Espanso, KDE, GNOME):**
 
-If your keyboard is already grabbed by another tool (Espanso, pydal, etc.) or you prefer using your desktop's native hotkey system, you can control recording via CLI:
+Cntrol recording via CLI - set these terminal commands however is appropriate:
 
 ```bash
 # Start recording
@@ -681,7 +681,9 @@ hyprwhspr record toggle --lang it   # Toggle with language override
 hyprwhspr record status
 ```
 
-The `--lang` parameter overrides the default language for that recording session. This is useful for multilingual users who want different hotkeys for different languages.
+The `--lang` parameter overrides the default language for that recording session. 
+
+This is useful for multilingual users who want different hotkeys for different languages.
 
 Then bind these commands to your preferred hotkeys in KDE, GNOME, sxhkd, or any other hotkey system:
 
@@ -841,11 +843,13 @@ Still weird? Proceed.
 
 **I heard the sound, but don't see text** 
 
-It's common in Arch and other distros for the microphone to need to be plugged in and set each time you log in and out of your session, including during a restart. 
+On resume/restart, often the microphone "loses connection" and requires reseating.
 
-Reseat your microphone as prompted if it fails under these conditions. Also, ithin sound options, ensure that the microphone is indeed set. 
+This is a Linux quirk and not resolvable by hyprwhspr.
 
-The sound utility will show feedback from the select microphone if it is.
+Reseat your microphone as prompted if it fails under these conditions. 
+
+Also, within sound options, ensure that the **right microphone** is indeed set. 
 
 **Hotkey not working:**
 
@@ -902,7 +906,11 @@ ls -la ~/hyprwhspr/share/assets/           # Script install
 which ffplay paplay pw-play aplay
 ```
 
-**Important:** The default sounds are OGG format. `aplay` (ALSA) only supports WAV files and will produce white noise if used with OGG. Install `ffplay` (ffmpeg) or ensure `paplay` (pulseaudio-utils) or `pw-play` (pipewire) is available for OGG playback.
+**Important:** 
+
+The default sounds are OGG format. `aplay` (ALSA) only supports WAV files and will produce white noise if used with OGG. 
+
+Install `ffplay` (ffmpeg) or ensure `paplay` (pulseaudio-utils) or `pw-play` (pipewire) is available for OGG playback.
 
 **Model not found:**
 
