@@ -289,16 +289,14 @@ class WhisperManager:
                         return False
                     
                     # OpenAI requires 24kHz audio - resample from 16kHz
-                    def _resample_and_send(audio_chunk: np.ndarray):
-                        """Resample from 16kHz to 24kHz and send to realtime client"""
+                    def _send_direct(audio_chunk: np.ndarray):
+                        """Send audio to realtime client (16kHz; client handles resampling/queueing)."""
                         try:
-                            from scipy import signal
-                            resampled = signal.resample(audio_chunk, int(len(audio_chunk) * 1.5))
-                            self._realtime_client.append_audio(resampled.astype(np.float32))
+                            self._realtime_client.append_audio(audio_chunk)
                         except Exception as e:
                             print(f'[REALTIME] Streaming error: {e}', flush=True)
                     
-                    self._realtime_streaming_callback = _resample_and_send
+                    self._realtime_streaming_callback = _send_direct
                 
                 print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
                 print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
