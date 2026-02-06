@@ -800,12 +800,33 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
     # Filter providers if this is for realtime-ws (only show providers with websocket_endpoint)
     if filter_realtime:
         providers_list = []
-        for provider_id, provider_name, model_ids in all_providers_list:
+        for provider_id, provider_name, _model_ids in all_providers_list:
             provider = get_provider(provider_id)
-            if provider and provider.get('websocket_endpoint'):
-                providers_list.append((provider_id, provider_name, model_ids))
+            if not (provider and provider.get('websocket_endpoint')):
+                continue
+
+            # Only show providers that have realtime-capable models
+            models = get_provider_models(provider_id) or {}
+            realtime_model_ids = [
+                model_id
+                for model_id, model_data in models.items()
+                if model_data.get('realtime_model', False)
+            ]
+            if realtime_model_ids:
+                providers_list.append((provider_id, provider_name, realtime_model_ids))
     else:
-        providers_list = all_providers_list
+        # REST providers: only include providers with at least one REST-visible model
+        # (i.e. not marked hidden in provider_registry)
+        providers_list = []
+        for provider_id, provider_name, _model_ids in all_providers_list:
+            models = get_provider_models(provider_id) or {}
+            visible_model_ids = [
+                model_id
+                for model_id, model_data in models.items()
+                if not model_data.get('hidden', False)
+            ]
+            if visible_model_ids:
+                providers_list.append((provider_id, provider_name, visible_model_ids))
     
     provider_choices = []
     
@@ -1332,11 +1353,15 @@ def setup_command(python_path: Optional[str] = None):
             return
         
         # Prompt for realtime mode
-        print("\nRealtime Mode:")
-        print("  1. Transcribe - Convert speech to text (default)")
-        print("  2. Converse - Voice-to-AI: speak and get AI responses")
-        mode_choice = Prompt.ask("Select mode", choices=['1', '2'], default='1')
-        realtime_mode = 'transcribe' if mode_choice == '1' else 'converse'
+        # NOTE: Only OpenAI (and custom OpenAI-compatible endpoints) support "converse".
+        if provider_id in ('openai', 'custom'):
+            print("\nRealtime Mode:")
+            print("  1. Transcribe - Convert speech to text (default)")
+            print("  2. Converse - Voice-to-AI: speak and get AI responses")
+            mode_choice = Prompt.ask("Select mode", choices=['1', '2'], default='1')
+            realtime_mode = 'transcribe' if mode_choice == '1' else 'converse'
+        else:
+            realtime_mode = 'transcribe'
         remote_config['realtime_mode'] = realtime_mode
         log_info(f"Realtime mode: {realtime_mode}")
     
@@ -1368,7 +1393,7 @@ def setup_command(python_path: Optional[str] = None):
             python_bin = VENV_DIR / 'bin' / 'python'
             result = run_command([
                 'timeout', '5s', str(python_bin), '-c',
-                'import sounddevice, numpy, requests; import websocket'
+                'import sounddevice, numpy, requests; import websocket; import elevenlabs'
             ], check=False, capture_output=True, show_output_on_error=False)
             deps_installed = result.returncode == 0
         except Exception:

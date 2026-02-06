@@ -59,6 +59,9 @@ class WhisperManager:
         # Realtime WebSocket client
         self._realtime_client = None
         self._realtime_streaming_callback = None
+        # Connection parameters used for reconnect-on-demand.
+        # (Stored in-memory only; do not log API keys.)
+        self._realtime_connect_params = None
 
         # ONNX-ASR model (CPU-optimized)
         self._onnx_asr_model = None
@@ -198,6 +201,12 @@ class WhisperManager:
                     self._realtime_client.set_max_buffer_seconds(buffer_max)
                     
                     # Connect (ElevenLabs doesn't use instructions)
+                    self._realtime_connect_params = {
+                        'websocket_url': websocket_url,
+                        'api_key': api_key,
+                        'model_id': model_id,
+                        'instructions': None,
+                    }
                     if not self._realtime_client.connect(websocket_url, api_key, model_id, None):
                         print('ERROR: Failed to connect to ElevenLabs Realtime WebSocket')
                         try:
@@ -263,6 +272,12 @@ class WhisperManager:
                     self._realtime_client.set_max_buffer_seconds(buffer_max)
                     
                     # Connect
+                    self._realtime_connect_params = {
+                        'websocket_url': websocket_url,
+                        'api_key': api_key,
+                        'model_id': model_id,
+                        'instructions': instructions,
+                    }
                     if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
                         print('ERROR: Failed to connect to Realtime WebSocket')
                         # Clean up failed client
@@ -1022,10 +1037,48 @@ class WhisperManager:
         backend = normalize_backend(backend)
         
         if backend == 'realtime-ws' and self._realtime_client:
+            # If the server closed the socket while idle, reconnect on-demand here
+            # (before we start capturing audio) to avoid dropping the first chunks.
+            if not self._realtime_client.connected:
+                if not self._reconnect_realtime_client():
+                    return None
+
             # Clear server buffer before starting new recording
             self._realtime_client.clear_audio_buffer()
             return self._realtime_streaming_callback
         return None
+
+    def _reconnect_realtime_client(self) -> bool:
+        """Reconnect realtime client using stored connect params."""
+        if not self._realtime_client:
+            return False
+
+        params = self._realtime_connect_params or {}
+        websocket_url = params.get('websocket_url')
+        api_key = params.get('api_key')
+        model_id = params.get('model_id')
+        instructions = params.get('instructions')
+
+        if not (websocket_url and api_key and model_id):
+            print('[REALTIME] Missing connection parameters; cannot reconnect', flush=True)
+            return False
+
+        try:
+            # Best-effort: close any stale connection first
+            try:
+                self._realtime_client.close()
+            except Exception:
+                pass
+
+            if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
+                print('[REALTIME] Reconnect failed', flush=True)
+                return False
+
+            print('[REALTIME] Reconnected on-demand', flush=True)
+            return True
+        except Exception as e:
+            print(f'[REALTIME] Reconnect failed: {e}', flush=True)
+            return False
 
     def is_ready(self) -> bool:
         """Check if whisper is ready for transcription"""

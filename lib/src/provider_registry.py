@@ -78,7 +78,8 @@ PROVIDERS: Dict[str, Dict] = {
             'scribe_v2': {
                 'name': 'Scribe v2',
                 'description': 'Batch transcription, 90+ languages',
-                'body': {'model_id': 'scribe_v2'}
+                'body': {'model_id': 'scribe_v2'},
+                'hidden': True
             },
             'scribe_v2_realtime': {
                 'name': 'Scribe v2 Realtime',
@@ -149,10 +150,9 @@ def validate_api_key(provider_id: str, api_key: str) -> Tuple[bool, Optional[str
     if not provider:
         return False, f"Unknown provider: {provider_id}"
     
-    # Providers without API key requirement
-    if provider.get('api_key_prefix') is None:
-        return True, None
-    
+    if not api_key:
+        return False, "API key is required"
+
     prefix = provider.get('api_key_prefix')
     if prefix and not api_key.startswith(prefix):
         return False, f"API key should start with '{prefix}'"
