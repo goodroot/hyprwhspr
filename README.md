@@ -231,7 +231,7 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 
 ## Usage and configuration
 
-Running `hyprwhspr setup` will walk you basic setup.
+Perform basic setup and configuration via `hyprwhspr setup`.
 
 Or use the CLI above, or edit `~/.config/hyprwhspr/config.json`:
 
