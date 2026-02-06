@@ -84,7 +84,7 @@ def _safe_decode(output) -> str:
 
 
 # Maximum Python version compatible with ML packages (onnxruntime, etc.)
-MAX_COMPATIBLE_PYTHON = (3, 13)
+MAX_COMPATIBLE_PYTHON = (3, 14)
 
 
 def _get_python_version(python_path: str) -> Optional[Tuple[int, int]]:
