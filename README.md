@@ -305,7 +305,6 @@ Edit `~/.config/hyprwhspr/config.json`:
     "long_form_temp_limit_mb": 500,              // Optional: max temp storage (default: 500 MB)
     "long_form_auto_save_interval": 300,         // Optional: auto-save interval in seconds (default: 300 = 5 minutes)
     "use_hypr_bindings": false,                   // Optional: set true to use Hyprland compositor bindings
-    "grab_keys": false                            // Recommended: false for normal keyboard usage
 }
 ```
 
@@ -442,7 +441,6 @@ Enable in config (`~/.config/hyprwhspr/config.json`):
 ```json
 {
   "use_hypr_bindings": true,
-  "grab_keys": false
 }
 ```
 
@@ -664,6 +662,78 @@ Useful for chat applications, search boxes, or any input where you want to submi
 - **Left-click**: Start/stop recording (auto-starts service if needed)
 - **Right-click**: Restart Hyprwhspr service
 
+**Select a specific keyboard device:**
+
+If you have multiple keyboards or need to avoid conflicts with other tools (e.g., Espanso, keyd, kmonad), you can specify which keyboard to use:
+
+```json
+{
+  "selected_device_name": "USB Keyboard"  // Match by device name (recommended)
+}
+```
+
+Or by device path:
+
+```json
+{
+  "selected_device_path": "/dev/input/event3"  // Match by exact path
+}
+```
+
+Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see available devices.
+
+**External hotkey systems (Espanso, KDE, GNOME, etc.):**
+
+If your keyboard is already grabbed by another tool (Espanso, pydal, etc.) or you prefer using your desktop's native hotkey system, you can control recording via CLI:
+
+```bash
+# Start recording
+hyprwhspr record start
+
+# Start recording with specific language
+hyprwhspr record start --lang it    # Italian
+hyprwhspr record start --lang de    # German
+hyprwhspr record start --lang es    # Spanish
+
+# Stop recording
+hyprwhspr record stop
+
+# Toggle recording on/off
+hyprwhspr record toggle
+hyprwhspr record toggle --lang it   # Toggle with language override
+
+# Check current status
+hyprwhspr record status
+```
+
+The `--lang` parameter overrides the default language for that recording session. This is useful for multilingual users who want different hotkeys for different languages.
+
+Then bind these commands to your preferred hotkeys in KDE, GNOME, sxhkd, or any other hotkey system:
+
+```bash
+# Example: KDE custom shortcuts
+# English: hyprwhspr record toggle
+# Italian: hyprwhspr record start --lang it
+
+# Example: Hyprland config
+bind = SUPER ALT, D, exec, hyprwhspr record toggle
+bind = SUPER ALT, I, exec, hyprwhspr record start --lang it
+```
+
+**Mute detection:**
+
+Lets you know when you're disconnected.
+
+Note, mute detection can cause conflicts with Bluetooth microphones. 
+
+To disable it, add the following to your `~/.config/hyprwhspr/config.json`:
+
+```json
+{
+  "mute_detection": false
+}
+```
+
 ## Parakeet (Nvidia)
 
 Parakeet V3 via [onnx-asr](https://github.com/istupakov/onnx-asr) is a fantastic project.
@@ -782,29 +852,25 @@ If you're having persistent issues, completely reset hyprwhspr:
 hyprwhspr uninstall
 hyprwhspr setup
 ```
-
 ### Common issues
 
 **Something is weird...**
 
-Right click the Waybar microphone next to the tray to restart the service.
+Restart the service - right click on the waybar icon if you use it, or:
+
+```bash
+systemctl --user restart hyprwhspr.service
+```
 
 Still weird? Proceed.
 
-**I heard the sound, but don't see text!** 
+**I heard the sound, but don't see text** 
 
-It's common in Arch and other distros for the microphone to need to be plugged in and set each time you log in and out of your session, including during a restart. Reseat your microphone as prompted if it fails under these conditions. Also, ithin sound options, ensure that the microphone is indeed set. The sound utility will show feedback from the select microphone if it is.
+It's common in Arch and other distros for the microphone to need to be plugged in and set each time you log in and out of your session, including during a restart. 
 
-**I updated and something is weird...**
+Reseat your microphone as prompted if it fails under these conditions. Also, ithin sound options, ensure that the microphone is indeed set. 
 
-Uninstall everything and setup fresh.
-
-Brute force. And effective.
-
-```bash
-hyprwhspr uninstall
-hyprwhsp setup
-```
+The sound utility will show feedback from the select microphone if it is.
 
 **Hotkey not working:**
 
@@ -823,6 +889,8 @@ systemctl --user status ydotool.service
 # Check logs
 journalctl --user -u ydotool.service -f
 ```
+
+If you are using the hyprland input method, do you have shortcuts?
 
 **Permission denied:**
 
@@ -888,88 +956,6 @@ systemctl --user restart hyprwhspr.service
 systemctl --user status hyprwhspr.service
 ```
 
-**Keyboard remappers (keyd / kmonad)**:
-
-If you use a keyboard remapping daemon that grabs evdev devices (e.g. `keyd`, `kmonad`), set:
-
-```json
-{
-  "grab_keys": false
-}
-```
-
-This prevents hyprwhspr from taking exclusive control of keyboards and allows it to listen to events normally.
-
-> When grab_keys is disabled, the shortcut is not suppressed and may also trigger other system keybindings.
-
-**Selecting a specific keyboard device:**
-
-If you have multiple keyboards or need to avoid conflicts with other tools (e.g., Espanso, keyd, kmonad), you can specify which keyboard to use:
-
-```json
-{
-  "selected_device_name": "USB Keyboard"  // Match by device name (recommended)
-}
-```
-
-Or by device path:
-
-```json
-{
-  "selected_device_path": "/dev/input/event3"  // Match by exact path
-}
-```
-
-Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see available devices.
-
-**External hotkey systems (Espanso, KDE, GNOME, etc.):**
-
-If your keyboard is already grabbed by another tool (Espanso, pydal, etc.) or you prefer using your desktop's native hotkey system, you can control recording via CLI:
-
-```bash
-# Start recording
-hyprwhspr record start
-
-# Start recording with specific language
-hyprwhspr record start --lang it    # Italian
-hyprwhspr record start --lang de    # German
-hyprwhspr record start --lang es    # Spanish
-
-# Stop recording
-hyprwhspr record stop
-
-# Toggle recording on/off
-hyprwhspr record toggle
-hyprwhspr record toggle --lang it   # Toggle with language override
-
-# Check current status
-hyprwhspr record status
-```
-
-The `--lang` parameter overrides the default language for that recording session. This is useful for multilingual users who want different hotkeys for different languages.
-
-Then bind these commands to your preferred hotkeys in KDE, GNOME, sxhkd, or any other hotkey system:
-
-```bash
-# Example: KDE custom shortcuts
-# English: hyprwhspr record toggle
-# Italian: hyprwhspr record start --lang it
-
-# Example: Hyprland config (when not using grab_keys)
-bind = SUPER ALT, D, exec, hyprwhspr record toggle
-bind = SUPER ALT, I, exec, hyprwhspr record start --lang it
-```
-
-**Bluetooth mic and flakey recording:**
-
-Mute detection can cause conflicts with Bluetooth microphones. To disable it, add the following to your `~/.config/hyprwhspr/config.json`:
-
-```json
-{
-  "mute_detection": false
-}
-```
-
 **This sucks!**
 
 Doh! We tried.
@@ -982,7 +968,6 @@ yay -Rs hyprwhspr
 ```
 
 Or better yet - create an issue and help us improve.
-
 
 ## Getting help
 
