@@ -20,6 +20,14 @@ except ImportError:
 
 pyperclip = require_package('pyperclip')
 
+DEFAULT_V_KEYCODE_QWERTY = 47
+
+# ydotool sends raw keycodes, so we need the physical key that produces 'v' on each layout
+LETTER_V_KEYCODE = {
+    'qwerty': DEFAULT_V_KEYCODE_QWERTY,
+    'fr-bepo': 22,
+}
+
 
 class TextInjector:
     """Handles injecting text into focused applications"""
@@ -41,6 +49,15 @@ class TextInjector:
             return result.returncode == 0
         except Exception:
             return False
+
+    def _get_physical_keycode_v(self) -> int:
+        """Get the physical keycode for 'v' based on configured keyboard layout.
+
+        ydotool sends raw keycodes, so for non-QWERTY layouts we need
+        the physical key that produces 'v' in that layout.
+        """
+        layout = self.config_manager.get_setting('keyboard_layout') if self.config_manager else None
+        return LETTER_V_KEYCODE.get(layout, DEFAULT_V_KEYCODE_QWERTY)
 
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
         """Get active window info from Hyprland (if available)"""
@@ -115,11 +132,15 @@ class TextInjector:
         the key sequence when modifiers arrive too quickly.
         """
         try:
+            v_keycode = self._get_physical_keycode_v()
+            v_keycode_pressed = f'{v_keycode}:1'
+            v_keycode_released = f'{v_keycode}:0'
+
             if paste_mode == 'super':
                 # Super+V with delays: Super down, delay, V down, V up, Super up
                 subprocess.run(['ydotool', 'key', '125:1'], capture_output=True, timeout=1)
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', '47:1', '47:0'], capture_output=True, timeout=1)
+                subprocess.run(['ydotool', 'key', v_keycode_pressed, v_keycode_released], capture_output=True, timeout=1)
                 time.sleep(0.010)
                 subprocess.run(['ydotool', 'key', '125:0'], capture_output=True, timeout=1)
 
@@ -127,7 +148,7 @@ class TextInjector:
                 # Ctrl+Shift+V with delays: mods down, delay, V, delay, mods up
                 subprocess.run(['ydotool', 'key', '29:1', '42:1'], capture_output=True, timeout=1)
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', '47:1', '47:0'], capture_output=True, timeout=1)
+                subprocess.run(['ydotool', 'key', v_keycode_pressed, v_keycode_released], capture_output=True, timeout=1)
                 time.sleep(0.010)
                 subprocess.run(['ydotool', 'key', '42:0', '29:0'], capture_output=True, timeout=1)
 
@@ -135,7 +156,7 @@ class TextInjector:
                 # Ctrl+V with delays
                 subprocess.run(['ydotool', 'key', '29:1'], capture_output=True, timeout=1)
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', '47:1', '47:0'], capture_output=True, timeout=1)
+                subprocess.run(['ydotool', 'key', v_keycode_pressed, v_keycode_released], capture_output=True, timeout=1)
                 time.sleep(0.010)
                 subprocess.run(['ydotool', 'key', '29:0'], capture_output=True, timeout=1)
 
@@ -143,7 +164,7 @@ class TextInjector:
                 # Alt+V with delays
                 subprocess.run(['ydotool', 'key', '56:1'], capture_output=True, timeout=1)
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', '47:1', '47:0'], capture_output=True, timeout=1)
+                subprocess.run(['ydotool', 'key', v_keycode_pressed, v_keycode_released], capture_output=True, timeout=1)
                 time.sleep(0.010)
                 subprocess.run(['ydotool', 'key', '56:0'], capture_output=True, timeout=1)
 
@@ -186,7 +207,7 @@ class TextInjector:
             time.sleep(delay)
             self._clear_clipboard()
             print(f"📋 Clipboard cleared after {delay}s delay")
-        
+
         # Run in a separate thread to avoid blocking
         clear_thread = threading.Thread(target=clear_after_delay, daemon=True)
         clear_thread.start()
@@ -411,26 +432,30 @@ class TextInjector:
                         return True
 
                 # Fast path for non-Kitty terminals (original behavior)
+                v_keycode = self._get_physical_keycode_v()
+                v_keycode_pressed = f'{v_keycode}:1'
+                v_keycode_released = f'{v_keycode}:0'
+
                 if paste_mode == 'super':
-                    # LeftMeta (Super) = 125, 'V' = 47
+                    # LeftMeta (Super) = 125
                     result = subprocess.run(
-                        ['ydotool', 'key', '125:1', '47:1', '47:0', '125:0'],
+                        ['ydotool', 'key', '125:1', v_keycode_pressed, v_keycode_released, '125:0'],
                         capture_output=True, timeout=5
                     )
                 elif paste_mode == 'ctrl_shift':
                     result = subprocess.run(
-                        ['ydotool', 'key', '29:1', '42:1', '47:1', '47:0', '42:0', '29:0'],
+                        ['ydotool', 'key', '29:1', '42:1', v_keycode_pressed, v_keycode_released, '42:0', '29:0'],
                         capture_output=True, timeout=5
                     )
                 elif paste_mode == 'ctrl':
                     result = subprocess.run(
-                        ['ydotool', 'key', '29:1', '47:1', '47:0', '29:0'],
+                        ['ydotool', 'key', '29:1', v_keycode_pressed, v_keycode_released, '29:0'],
                         capture_output=True, timeout=5
                     )
                 elif paste_mode == 'alt':
-                    # LeftAlt = 56, 'V' = 47
+                    # LeftAlt = 56
                     result = subprocess.run(
-                        ['ydotool', 'key', '56:1', '47:1', '47:0', '56:0'],
+                        ['ydotool', 'key', '56:1', v_keycode_pressed, v_keycode_released, '56:0'],
                         capture_output=True, timeout=5
                     )
                 else:
@@ -440,15 +465,15 @@ class TextInjector:
                         shift_paste = self.config_manager.get_setting('shift_paste', True)
                     if shift_paste:
                         result = subprocess.run(
-                            ['ydotool', 'key', '29:1', '42:1', '47:1', '47:0', '42:0', '29:0'],
+                            ['ydotool', 'key', '29:1', '42:1', v_keycode_pressed, v_keycode_released, '42:0', '29:0'],
                             capture_output=True, timeout=5
                         )
                     else:
                         result = subprocess.run(
-                            ['ydotool', 'key', '29:1', '47:1', '47:0', '29:0'],
+                            ['ydotool', 'key', '29:1', v_keycode_pressed, v_keycode_released, '29:0'],
                             capture_output=True, timeout=5
                         )
-                
+
                 if result.returncode != 0:
                     stderr = (result.stderr or b"").decode("utf-8", "ignore")
                     print(f"  ydotool paste command failed: {stderr}")
@@ -471,7 +496,7 @@ class TextInjector:
                 subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True)
             else:
                 pyperclip.copy(text)
-            
+
             print("Text copied to clipboard (ydotool not available for paste)")
             return True
         except Exception as e:
