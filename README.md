@@ -650,7 +650,7 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 **Audio ducking** - quiet system volume on record:
 
-```json
+```jsonc
 {
   "audio_ducking": true,
   "audio_ducking_percent": 70
@@ -663,7 +663,7 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 **Add dynamic tray icon** to your `~/.config/waybar/config`:
 
-```json
+```jsonc
 {
     "custom/hyprwhspr": {
         "exec": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh status",
@@ -701,7 +701,7 @@ If you have multiple input tools (e.g., Espanso, keyd, kmonad), specify which to
 
 Or by device path:
 
-```json
+```jsonc
 {
   "selected_device_path": "/dev/input/event3"  // Match by exact path
 }
@@ -757,7 +757,7 @@ Note, mute detection can cause conflicts with Bluetooth microphones.
 
 To disable it, add the following to your `~/.config/hyprwhspr/config.json`:
 
-```json
+```jsonc
 {
   "mute_detection": false
 }
@@ -856,7 +856,7 @@ Language options:
 
 **Whisper prompt** - customize transcription behavior:
 
-```json
+```jsonc
 {
     "whisper_prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
 }
