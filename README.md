@@ -411,6 +411,12 @@ Bring an API key from Grok, and choose from:
 - **Whisper Large V3** - High accuracy processing
 - **Whisper Large V3 Turbo** - Fastest transcription speed
 
+**Regolo**
+
+Bring an API key from [Regolo](https://regolo.ai/), European-hosted with zero data retention (GDPR):
+
+- **Faster Whisper Large V3** - High accuracy, zero data retention (GDPR)
+
 **Any arbitrary backend:**
 
 Or connect to any backend, local or cloud, via your own custom backend:

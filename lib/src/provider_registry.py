@@ -67,6 +67,19 @@ PROVIDERS: Dict[str, Dict] = {
             },
         },
     },
+    'regolo': {
+        'name': 'Regolo',
+        'endpoint': 'https://api.regolo.ai/v1/audio/transcriptions',
+        'api_key_prefix': None,
+        'api_key_description': 'Regolo API key',
+        'models': {
+            'faster-whisper-large-v3': {
+                'name': 'Faster Whisper Large V3',
+                'description': 'High accuracy, zero data retention (GDPR)',
+                'body': {'model': 'faster-whisper-large-v3'}
+            },
+        },
+    },
     'elevenlabs': {
         'name': 'ElevenLabs',
         'endpoint': 'https://api.elevenlabs.io/v1/speech-to-text',
