@@ -135,9 +135,32 @@ sys.exit(main())
                 ['/usr/bin/python3', '-c', code],
                 env=env,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 start_new_session=True,
             )
+
+            # Brief startup health check - give daemon time to crash on init errors
+            import time
+            time.sleep(0.15)
+            if self._process.poll() is not None:
+                # Daemon died during startup - capture and log the error
+                stderr_output = ""
+                try:
+                    stderr_output = self._process.stderr.read().decode('utf-8', errors='ignore').strip()
+                except Exception:
+                    pass
+                if stderr_output:
+                    print(f"[MIC-OSD] Daemon crashed on startup: {stderr_output}", flush=True)
+                else:
+                    print(f"[MIC-OSD] Daemon crashed on startup (exit code {self._process.returncode})", flush=True)
+                self._process = None
+                return False
+
+            # Daemon survived startup - detach stderr so it doesn't block
+            try:
+                self._process.stderr.close()
+            except Exception:
+                pass
 
             # Write PID file
             MIC_OSD_PID_FILE.parent.mkdir(parents=True, exist_ok=True)

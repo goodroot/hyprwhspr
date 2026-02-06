@@ -173,7 +173,7 @@ def _check_python_compatibility() -> tuple[bool, str, str]:
     """
     Check if a compatible Python version is available for local ML backends.
 
-    ML packages (onnxruntime, etc.) require Python 3.13 or earlier.
+    ML packages (onnxruntime, etc.) require Python 3.14 or earlier.
     This check warns users early if their system Python is too new.
 
     Returns:
@@ -195,7 +195,7 @@ def _check_python_compatibility() -> tuple[bool, str, str]:
 
     # Python is too new - search for a compatible alternative directly
     # (Don't call _find_compatible_python() as it prints errors and exits on failure)
-    for minor in [13, 12, 11]:
+    for minor in [14, 13, 12, 11]:
         if (3, minor) > MAX_COMPATIBLE_PYTHON:
             continue
         for prefix in ['/usr/bin', '/usr/local/bin']:
@@ -217,16 +217,16 @@ def _check_python_compatibility() -> tuple[bool, str, str]:
         f"Local transcription backends require Python {max_str} or earlier.\n"
         f"\n"
         f"Options:\n"
-        f"  1. Install Python 3.13 or 3.12:\n"
-        f"     Fedora:     sudo dnf install python3.13\n"
-        f"     Arch:       yay -S python313  # or python312\n"
-        f"     Ubuntu/Deb: sudo apt install python3.12\n"
+        f"  1. Install Python 3.14 or 3.13:\n"
+        f"     Fedora:     sudo dnf install python3.14\n"
+        f"     Arch:       yay -S python314  # or python313\n"
+        f"     Ubuntu/Deb: sudo apt install python3.13\n"
         f"\n"
         f"  2. Use cloud transcription (no local Python requirement):\n"
         f"     Select 'REST API' or 'Realtime WS' during backend selection\n"
         f"\n"
         f"  3. Specify Python path manually:\n"
-        f"     hyprwhspr setup --python /path/to/python3.13"
+        f"     hyprwhspr setup --python /path/to/python3.14"
     )
     return (False, version_str, guidance)
 
@@ -666,13 +666,15 @@ def _prompt_backend_selection():
             }
 
             # Warn if switching to different backend
+            switching_local_backends = False
             if current_backend and current_backend != selected:
                 print(f"\n⚠️  Switching from {backend_names.get(current_backend, current_backend)} to {backend_names.get(selected, selected)}")
 
                 if current_backend not in ['rest-api', 'remote', 'realtime-ws'] and selected not in ['rest-api', 'remote', 'realtime-ws']:
-                    print("This will uninstall the current backend and install the new one.")
+                    print("This will recreate the venv and install the new backend cleanly.")
                     if not Confirm.ask("Continue?", default=True):
                         continue
+                    switching_local_backends = True
                 elif selected in ['rest-api', 'realtime-ws']:
                     backend_type_name = 'REST API' if selected == 'rest-api' else 'Realtime WebSocket'
                     print(f"Switching to {backend_type_name} backend.")
@@ -714,10 +716,9 @@ def _prompt_backend_selection():
                 # If yes to reconfigure, continue to return with wants_reinstall=True for correct state tracking
 
             print(f"\n✓ Selected: {backend_names.get(selected, selected)}")
-            # Check if user wants to reinstall/reconfigure (same backend selected and they said yes)
-            # For local backends: wants_reinstall means reinstall
-            # For cloud backends: wants_reinstall means reconfigure (correctly tracks user intent)
-            wants_reinstall = (current_backend == selected)
+            # Force rebuild when: reinstalling same backend OR switching between local backends
+            # This ensures a clean venv without stale packages from the previous backend
+            wants_reinstall = (current_backend == selected) or switching_local_backends
             return (selected, False, wants_reinstall)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
         except KeyboardInterrupt:
             print("\n\nCancelled by user.")
@@ -1094,7 +1095,7 @@ def setup_command(python_path: Optional[str] = None):
 
     Args:
         python_path: Optional path to Python executable to use for venv creation.
-                     If None, auto-detects a compatible Python (3.13 or earlier).
+                     If None, auto-detects a compatible Python (3.14 or earlier).
     """
     print("\n" + "="*60)
     print("hyprwhspr setup")
@@ -1131,7 +1132,7 @@ def setup_command(python_path: Optional[str] = None):
                 print()
                 if not Confirm.ask("Continue anyway? (Cloud backends will still work)", default=True):
                     log_info("Setup cancelled.")
-                    log_info("Install Python 3.13 or 3.12, then re-run: hyprwhspr setup")
+                    log_info("Install Python 3.14 or 3.13, then re-run: hyprwhspr setup")
                     return
                 print()
 
