@@ -299,7 +299,7 @@ class ElevenLabsRealtimeClient:
                 )
 
                 if self.language:
-                    options.language_code = self.language
+                    options['language_code'] = self.language
 
                 connection = await self._elevenlabs.speech_to_text.realtime.connect(
                     options
