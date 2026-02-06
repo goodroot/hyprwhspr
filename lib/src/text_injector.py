@@ -20,6 +20,8 @@ except ImportError:
 
 pyperclip = require_package('pyperclip')
 
+DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
+
 
 class TextInjector:
     """Handles injecting text into focused applications"""
@@ -41,6 +43,37 @@ class TextInjector:
             return result.returncode == 0
         except Exception:
             return False
+
+    def _get_paste_keycode(self) -> int:
+        """
+        Get the Linux evdev keycode used for the 'V' part of paste chords.
+
+        ydotool's `key` command sends raw keycodes (physical keys). On non-QWERTY
+        layouts, KEY_V (47) may not map to a keysym 'v', so Ctrl+KEY_V won't paste.
+        Users can set either:
+        - `paste_keycode_wev`: the Wayland/XKB keycode printed by `wev` (we subtract 8)
+        - `paste_keycode`: the Linux evdev keycode directly (advanced)
+        """
+        keycode = DEFAULT_PASTE_KEYCODE
+        if self.config_manager:
+            wev_keycode = self.config_manager.get_setting('paste_keycode_wev', None)
+            if wev_keycode is not None:
+                try:
+                    # wev reports Wayland/XKB keycodes, which are typically evdev+8
+                    wev_keycode_int = int(wev_keycode)
+                    converted = wev_keycode_int - 8
+                    return converted if converted > 0 else DEFAULT_PASTE_KEYCODE
+                except Exception:
+                    # If parsing fails, fall back to evdev keycode setting
+                    pass
+
+            keycode = self.config_manager.get_setting('paste_keycode', DEFAULT_PASTE_KEYCODE)
+
+        try:
+            keycode_int = int(keycode)
+            return keycode_int if keycode_int > 0 else DEFAULT_PASTE_KEYCODE
+        except Exception:
+            return DEFAULT_PASTE_KEYCODE
 
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
         """Get active window info from Hyprland (if available)"""
@@ -115,11 +148,15 @@ class TextInjector:
         the key sequence when modifiers arrive too quickly.
         """
         try:
+            paste_keycode = self._get_paste_keycode()
+            paste_keycode_pressed = f'{paste_keycode}:1'
+            paste_keycode_released = f'{paste_keycode}:0'
+
             if paste_mode == 'super':
                 # Super+V with delays: Super down, delay, V down, V up, Super up
                 subprocess.run(['ydotool', 'key', '125:1'], capture_output=True, timeout=1)
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', '47:1', '47:0'], capture_output=True, timeout=1)
+                subprocess.run(['ydotool', 'key', paste_keycode_pressed, paste_keycode_released], capture_output=True, timeout=1)
                 time.sleep(0.010)
                 subprocess.run(['ydotool', 'key', '125:0'], capture_output=True, timeout=1)
 
@@ -127,7 +164,7 @@ class TextInjector:
                 # Ctrl+Shift+V with delays: mods down, delay, V, delay, mods up
                 subprocess.run(['ydotool', 'key', '29:1', '42:1'], capture_output=True, timeout=1)
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', '47:1', '47:0'], capture_output=True, timeout=1)
+                subprocess.run(['ydotool', 'key', paste_keycode_pressed, paste_keycode_released], capture_output=True, timeout=1)
                 time.sleep(0.010)
                 subprocess.run(['ydotool', 'key', '42:0', '29:0'], capture_output=True, timeout=1)
 
@@ -135,7 +172,7 @@ class TextInjector:
                 # Ctrl+V with delays
                 subprocess.run(['ydotool', 'key', '29:1'], capture_output=True, timeout=1)
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', '47:1', '47:0'], capture_output=True, timeout=1)
+                subprocess.run(['ydotool', 'key', paste_keycode_pressed, paste_keycode_released], capture_output=True, timeout=1)
                 time.sleep(0.010)
                 subprocess.run(['ydotool', 'key', '29:0'], capture_output=True, timeout=1)
 
@@ -143,7 +180,7 @@ class TextInjector:
                 # Alt+V with delays
                 subprocess.run(['ydotool', 'key', '56:1'], capture_output=True, timeout=1)
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', '47:1', '47:0'], capture_output=True, timeout=1)
+                subprocess.run(['ydotool', 'key', paste_keycode_pressed, paste_keycode_released], capture_output=True, timeout=1)
                 time.sleep(0.010)
                 subprocess.run(['ydotool', 'key', '56:0'], capture_output=True, timeout=1)
 
@@ -378,10 +415,11 @@ class TextInjector:
                     self._clear_stuck_modifiers()
                     time.sleep(0.02)  # Brief settle after clearing modifiers
 
-                #   "super"      -> Super+V      (125:1 47:1 47:0 125:0)
-                #   "ctrl_shift" -> Ctrl+Shift+V (29:1  42:1 47:1 47:0 42:0 29:0)
-                #   "ctrl"       -> Ctrl+V       (29:1  47:1 47:0 29:0)
-                #   "alt"        -> Alt+V        (56:1  47:1 47:0 56:0)
+                paste_keycode = self._get_paste_keycode()
+                paste_keycode_pressed = f'{paste_keycode}:1'
+                paste_keycode_released = f'{paste_keycode}:0'
+
+                # Paste chords are sent as modifiers + a configurable keycode (default KEY_V=47).
                 paste_mode = None
                 if self.config_manager:
                     paste_mode = self.config_manager.get_setting('paste_mode', None)
@@ -412,25 +450,25 @@ class TextInjector:
 
                 # Fast path for non-Kitty terminals (original behavior)
                 if paste_mode == 'super':
-                    # LeftMeta (Super) = 125, 'V' = 47
+                    # LeftMeta (Super) = 125
                     result = subprocess.run(
-                        ['ydotool', 'key', '125:1', '47:1', '47:0', '125:0'],
+                        ['ydotool', 'key', '125:1', paste_keycode_pressed, paste_keycode_released, '125:0'],
                         capture_output=True, timeout=5
                     )
                 elif paste_mode == 'ctrl_shift':
                     result = subprocess.run(
-                        ['ydotool', 'key', '29:1', '42:1', '47:1', '47:0', '42:0', '29:0'],
+                        ['ydotool', 'key', '29:1', '42:1', paste_keycode_pressed, paste_keycode_released, '42:0', '29:0'],
                         capture_output=True, timeout=5
                     )
                 elif paste_mode == 'ctrl':
                     result = subprocess.run(
-                        ['ydotool', 'key', '29:1', '47:1', '47:0', '29:0'],
+                        ['ydotool', 'key', '29:1', paste_keycode_pressed, paste_keycode_released, '29:0'],
                         capture_output=True, timeout=5
                     )
                 elif paste_mode == 'alt':
-                    # LeftAlt = 56, 'V' = 47
+                    # LeftAlt = 56
                     result = subprocess.run(
-                        ['ydotool', 'key', '56:1', '47:1', '47:0', '56:0'],
+                        ['ydotool', 'key', '56:1', paste_keycode_pressed, paste_keycode_released, '56:0'],
                         capture_output=True, timeout=5
                     )
                 else:
@@ -440,12 +478,12 @@ class TextInjector:
                         shift_paste = self.config_manager.get_setting('shift_paste', True)
                     if shift_paste:
                         result = subprocess.run(
-                            ['ydotool', 'key', '29:1', '42:1', '47:1', '47:0', '42:0', '29:0'],
+                            ['ydotool', 'key', '29:1', '42:1', paste_keycode_pressed, paste_keycode_released, '42:0', '29:0'],
                             capture_output=True, timeout=5
                         )
                     else:
                         result = subprocess.run(
-                            ['ydotool', 'key', '29:1', '47:1', '47:0', '29:0'],
+                            ['ydotool', 'key', '29:1', paste_keycode_pressed, paste_keycode_released, '29:0'],
                             capture_output=True, timeout=5
                         )
                 

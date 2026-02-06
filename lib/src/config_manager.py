@@ -45,6 +45,14 @@ class ConfigManager:
             # Values: "super" | "ctrl_shift" | "ctrl"
             # Default "ctrl_shift" for flexible unix-y primitive
             'paste_mode': 'ctrl_shift',
+            # Wayland/XKB keycode as printed by `wev` for the key that types 'v'.
+            # If set, hyprwhspr will convert it to Linux evdev by subtracting 8.
+            # This avoids users having to do the math themselves.
+            'paste_keycode_wev': None,
+            # ydotool sends Linux evdev keycodes (physical keys), not keysyms/characters.
+            # Default 47 = KEY_V (works on QWERTY; on other layouts set this to the keycode
+            # for the physical key that produces 'v' on your layout).
+            'paste_keycode': 47,
             # Back-compat for older configs (used only if paste_mode is absent):
             'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
             # Transcription backend settings

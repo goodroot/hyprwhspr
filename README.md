@@ -598,7 +598,7 @@ Toggle this behavior in `~/.config/hyprwhspr/config.json`:
 
 ```jsonc
 {
-    "paste_mode": "ctrl_shift"   // "ctrl_shift" | "ctrl" | "super" (default: "ctrl_shift")
+    "paste_mode": "ctrl_shift",  // "ctrl_shift" | "ctrl" | "super" (default: "ctrl_shift")
 }
 ```
 
@@ -609,6 +609,24 @@ Toggle this behavior in `~/.config/hyprwhspr/config.json`:
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
 
 - **`"super"`** — Sends Super+V. Maybe finicky.
+
+**Non-QWERTY layouts (bepo, dvorak, etc.)**
+
+`ydotool` sends physical Linux keycodes, so `Ctrl+KEY_V` might not be `Ctrl+v` on your layout. 
+
+Quick way to fix it on Wayland (no arithmetic):
+
+- Run `wev` in terminal
+- Press the key that types `v` on your layout
+- Copy the printed `keycode` into `paste_keycode_wev`
+
+```jsonc
+{
+    "paste_keycode_wev": 55 // `wev` keycode for the key that types 'v' on your layout
+}
+```
+
+Advanced (if you already know the Linux evdev keycode): set `paste_keycode` directly.
 
 **Auto-submit** - automatically press Enter after pasting:
 
