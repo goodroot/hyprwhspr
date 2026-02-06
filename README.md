@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | Parakeet / Whisper / REST API | stylish visuals
+    instant performance | Parakeet / Whisper / REST API / ElevenLabs | stylish visuals
 </p>
 
  <p align="center">
@@ -430,9 +430,11 @@ Or connect to any backend, local or cloud, via your own custom backend:
 }
 ```
 
-**Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
+**Realtime WebSocket** - low-latency streaming transcription:
 
 > Experimental! 
+
+**OpenAI Realtime**
 
 Two modes available:
 
@@ -445,6 +447,28 @@ Two modes available:
     "websocket_provider": "openai",
     "websocket_model": "gpt-realtime-mini-2025-12-15",
     "realtime_mode": "transcribe",       // "transcribe" or "converse"
+    "realtime_timeout": 30,              // Completion timeout (seconds)
+    "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
+}
+```
+
+**ElevenLabs Scribe v2 Realtime**
+
+Ultra-low latency (~150ms) streaming transcription with 90+ languages. Uses native 16kHz audio (no resampling), and auto-reconnects on connection drops.
+
+Bring an API key from [ElevenLabs](https://elevenlabs.io/).
+
+Modes available:
+
+- **transcribe** (default) - speech-to-text
+
+Or configure manually:
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "elevenlabs",
+    "websocket_model": "scribe_v2_realtime",
     "realtime_timeout": 30,              // Completion timeout (seconds)
     "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
 }
