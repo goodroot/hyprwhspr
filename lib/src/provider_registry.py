@@ -64,6 +64,29 @@ PROVIDERS: Dict[str, Dict] = {
                 'name': 'Whisper Large V3 Turbo',
                 'description': 'Fastest transcription speed',
                 'body': {'model': 'whisper-large-v3-turbo'}
+            },
+        },
+    },
+    'elevenlabs': {
+        'name': 'ElevenLabs',
+        'endpoint': 'https://api.elevenlabs.io/v1/speech-to-text',
+        'websocket_endpoint': 'wss://api.elevenlabs.io/v1/speech-to-text/realtime',
+        'api_key_header': 'xi-api-key',
+        'api_key_prefix': None,
+        'api_key_description': 'ElevenLabs API key',
+        'models': {
+            'scribe_v2': {
+                'name': 'Scribe v2',
+                'description': 'Batch transcription, 90+ languages',
+                'body': {'model_id': 'scribe_v2'},
+                'hidden': True
+            },
+            'scribe_v2_realtime': {
+                'name': 'Scribe v2 Realtime',
+                'description': 'Ultra-low latency (~150ms), 90+ languages',
+                'body': {'model_id': 'scribe_v2_realtime'},
+                'realtime_model': True,
+                'hidden': True
             }
         }
     }
@@ -127,10 +150,9 @@ def validate_api_key(provider_id: str, api_key: str) -> Tuple[bool, Optional[str
     if not provider:
         return False, f"Unknown provider: {provider_id}"
     
-    # Providers without API key requirement
-    if provider.get('api_key_prefix') is None:
-        return True, None
-    
+    if not api_key:
+        return False, "API key is required"
+
     prefix = provider.get('api_key_prefix')
     if prefix and not api_key.startswith(prefix):
         return False, f"API key should start with '{prefix}'"

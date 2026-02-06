@@ -23,3 +23,6 @@ rich>=13.0.0
 
 # Mic-osd visualization (requires python-gobject system package)
 PyGObject>=3.42.0
+
+# ElevenLabs integration
+elevenlabs>=2.34.0

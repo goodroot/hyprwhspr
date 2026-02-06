@@ -934,6 +934,21 @@ class hyprwhsprApp:
             
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
+            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+            if backend == 'realtime-ws' and streaming_callback is None:
+                # Fail fast: realtime-ws requires an active streaming callback (and a connected client)
+                self.is_recording = False
+                self._write_recording_status(False)
+                self._hide_mic_osd()
+                self._stop_audio_level_monitoring()
+                self._notify_zero_volume(
+                    "Realtime backend not connected (WebSocket closed while idle?). Try again.",
+                    log_level="ERROR",
+                )
+                # Restore audio if it was ducked
+                if self.audio_ducker.is_ducked:
+                    self.audio_ducker.restore()
+                return
             
             # Helper function to verify stream is working and play sound
             def verify_and_play_sound():
