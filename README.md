@@ -229,36 +229,11 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr state` - State management (show/validate/reset)
 - `hyprwhspr uninstall` - Completely remove hyprwhspr and all data
 
-## Usage
+## Usage and configuration
 
-### Global hotkey modes
+Running `hyprwhspr setup` will walk you basic setup.
 
-hyprwhspr supports three configurable interaction modes:
-
-**Toggle mode (default):**
-
-- **`Super+Alt+D`** - Toggle dictation on/off
-
-**Push-to-talk mode:**
-
-- **Hold `Super+Alt+D`** - Start dictation
-- **Release `Super+Alt+D`** - Stop dictation
-
-**Auto mode (hybrid tap/hold):**
-
-- **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
-- **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
-
-**Long-form mode:**
-
-- **`Super+Alt+D`** - Toggle recording/pause (start recording, pause, or resume)
-- **`long_form_submit_shortcut`** - Set a key to send, like `SUPER+ALT+E`
-- Auto-saves segments periodically (default: every 5 minutes) for crash-safe recording
-- Supports pause/resume for extended recording sessions
-
-## Configuration
-
-Edit `~/.config/hyprwhspr/config.json`:
+Or use the CLI above, or edit `~/.config/hyprwhspr/config.json`:
 
 **Minimal config** - only 2 essential options:
 
@@ -312,64 +287,6 @@ Edit `~/.config/hyprwhspr/config.json`:
 - Submit shortcut processes all recorded segments and pastes transcription
 - Segments are auto-saved periodically to disk for crash recovery
 - Old segments are automatically cleaned up when storage limit is reached
-
-**REST API** - use any ASR backend via HTTP API (local or cloud):
-
-**OpenAI**
-
-Bring an API key from OpenAI, and choose from:
-
-- **GPT-4o Transcribe** - Latest model with best accuracy
-- **GPT-4o Mini Transcribe** - Faster, lighter model
-- **GPT-4o Mini Transcribe (2025-12-15)** - Updated version of the faster, lighter transcription model
-- **GPT Audio Mini (2025-12-15)** - General purpose audio model
-- **Whisper 1** - Legacy Whisper model
-
-**Groq**
-
-Bring an API key from Grok, and choose from:
-
-- **Whisper Large V3** - High accuracy processing
-- **Whisper Large V3 Turbo** - Fastest transcription speed
-
-**Any arbitrary backend:**
-
-Or connect to any backend, local or cloud, via your own custom backend:
-
-```jsonc
-{
-    "transcription_backend": "rest-api",
-    "rest_endpoint_url": "https://your-server.example.com/transcribe",
-    "rest_headers": {                     // optional arbitrary headers
-        "authorization": "Bearer your-api-key-here"
-    },
-    "rest_body": {                        // optional body fields merged with defaults
-        "model": "custom-model"
-    },
-    "rest_api_key": "your-api-key-here",  // equivalent to rest_headers: { authorization: Bearer your-api-key-here }
-    "rest_timeout": 30                    // optional, default: 30
-}
-```
-
-**Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
-
-> Experimental! 
-
-Two modes available:
-
-- **transcribe** (default) - Pure speech-to-text, more expensive than HTTP
-- **converse** - Voice-to-AI: speak and get AI responses
-
-```jsonc
-{
-    "transcription_backend": "realtime-ws",
-    "websocket_provider": "openai",
-    "websocket_model": "gpt-realtime-mini-2025-12-15",
-    "realtime_mode": "transcribe",       // "transcribe" or "converse"
-    "realtime_timeout": 30,              // Completion timeout (seconds)
-    "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
-}
-```
 
 **Custom hotkey** - extensive key support:
 
@@ -471,6 +388,64 @@ Restart service to lock in changes:
 
 ```bash
 systemctl --user restart hyprwhspr
+```
+
+**REST API** - use any ASR backend via HTTP API (local or cloud):
+
+**OpenAI**
+
+Bring an API key from OpenAI, and choose from:
+
+- **GPT-4o Transcribe** - Latest model with best accuracy
+- **GPT-4o Mini Transcribe** - Faster, lighter model
+- **GPT-4o Mini Transcribe (2025-12-15)** - Updated version of the faster, lighter transcription model
+- **GPT Audio Mini (2025-12-15)** - General purpose audio model
+- **Whisper 1** - Legacy Whisper model
+
+**Groq**
+
+Bring an API key from Grok, and choose from:
+
+- **Whisper Large V3** - High accuracy processing
+- **Whisper Large V3 Turbo** - Fastest transcription speed
+
+**Any arbitrary backend:**
+
+Or connect to any backend, local or cloud, via your own custom backend:
+
+```jsonc
+{
+    "transcription_backend": "rest-api",
+    "rest_endpoint_url": "https://your-server.example.com/transcribe",
+    "rest_headers": {                     // optional arbitrary headers
+        "authorization": "Bearer your-api-key-here"
+    },
+    "rest_body": {                        // optional body fields merged with defaults
+        "model": "custom-model"
+    },
+    "rest_api_key": "your-api-key-here",  // equivalent to rest_headers: { authorization: Bearer your-api-key-here }
+    "rest_timeout": 30                    // optional, default: 30
+}
+```
+
+**Realtime WebSocket** - low-latency streaming via OpenAI's Realtime API:
+
+> Experimental! 
+
+Two modes available:
+
+- **transcribe** (default) - Pure speech-to-text, more expensive than HTTP
+- **converse** - Voice-to-AI: speak and get AI responses
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "openai",
+    "websocket_model": "gpt-realtime-mini-2025-12-15",
+    "realtime_mode": "transcribe",       // "transcribe" or "converse"
+    "realtime_timeout": 30,              // Completion timeout (seconds)
+    "realtime_buffer_max_seconds": 5     // Max audio buffer before dropping chunks
+}
 ```
 
 **Themed visualizer** - visual feedback, will auto-match Omarchy themes:
