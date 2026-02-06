@@ -6,9 +6,24 @@
 SCRIPT_DIR="$(cd "$(dirname $(readlink -f "$0"))" && pwd)"
 PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Determine the library directory
+# Development: lib/cli.py exists directly under PACKAGE_ROOT
+# Installed: lib/hyprwhspr/cli.py under PACKAGE_ROOT (e.g., ~/.local/lib/hyprwhspr/)
+if [ -f "$PACKAGE_ROOT/lib/cli.py" ]; then
+    LIB_DIR="$PACKAGE_ROOT/lib"
+elif [ -f "$PACKAGE_ROOT/lib/hyprwhspr/cli.py" ]; then
+    LIB_DIR="$PACKAGE_ROOT/lib/hyprwhspr"
+else
+    echo "Error: Cannot find hyprwhspr library files." >&2
+    echo "Searched in:" >&2
+    echo "  $PACKAGE_ROOT/lib/cli.py" >&2
+    echo "  $PACKAGE_ROOT/lib/hyprwhspr/cli.py" >&2
+    exit 1
+fi
+
 # Set environment variables
 export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
-export PYTHONPATH="$PACKAGE_ROOT/lib:$PYTHONPATH"
+export PYTHONPATH="$LIB_DIR:$PYTHONPATH"
 
 # Find system Python, avoiding mise/pyenv/asdf/homebrew managed versions
 # CLI commands use system Python since deps are installed via package manager
@@ -50,21 +65,21 @@ fi
 # Help handling: route any -h/--help or leading "help" to CLI help
 for arg in "$@"; do
   if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-    exec "$CLI_PYTHON" "$PACKAGE_ROOT/lib/cli.py" --help
+    exec "$CLI_PYTHON" "$LIB_DIR/cli.py" --help
   fi
 done
 
 if [[ "$1" == "help" ]]; then
-  exec "$CLI_PYTHON" "$PACKAGE_ROOT/lib/cli.py" --help
+  exec "$CLI_PYTHON" "$LIB_DIR/cli.py" --help
 fi
 
 # Subcommands: route to CLI if recognized
 # 'test' needs venv Python since it loads the transcription backend
 if [[ "$1" == "test" ]]; then
-  exec "$PYTHON_CMD" "$PACKAGE_ROOT/lib/cli.py" "$@"
+  exec "$PYTHON_CMD" "$LIB_DIR/cli.py" "$@"
 fi
 if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record)$ ]]; then
-  exec "$CLI_PYTHON" "$PACKAGE_ROOT/lib/cli.py" "$@"
+  exec "$CLI_PYTHON" "$LIB_DIR/cli.py" "$@"
 fi
 
 # Set up CUDA library path if CUDA is installed
@@ -90,4 +105,4 @@ if [ -d "/opt/rocm" ]; then
 fi
 
 # Default: run main application with venv Python
-exec "$PYTHON_CMD" "$PACKAGE_ROOT/lib/main.py" "$@"
+exec "$PYTHON_CMD" "$LIB_DIR/main.py" "$@"
