@@ -1,0 +1,17 @@
+[Unit]
+Description=meeting-recorder (hyprwhspr)
+Documentation=https://github.com/goodroot/hyprwhspr
+After=pipewire.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/hyprwhspr/bin/meeting-recorder
+Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
+Environment=PYTHONUNBUFFERED=1
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

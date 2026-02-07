@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# meeting-recorder launcher
+# Uses hyprwhspr's venv and transcription backends to record system audio
+
+SCRIPT_DIR="$(cd "$(dirname $(readlink -f "$0"))" && pwd)"
+PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Determine the library directory (same logic as bin/hyprwhspr)
+if [ -f "$PACKAGE_ROOT/lib/cli.py" ]; then
+    LIB_DIR="$PACKAGE_ROOT/lib"
+elif [ -f "$PACKAGE_ROOT/lib/hyprwhspr/cli.py" ]; then
+    LIB_DIR="$PACKAGE_ROOT/lib/hyprwhspr"
+else
+    echo "Error: Cannot find hyprwhspr library files." >&2
+    exit 1
+fi
+
+# Find the meeting-recorder script
+if [ -f "$PACKAGE_ROOT/utils/meeting-recorder.py" ]; then
+    RECORDER_SCRIPT="$PACKAGE_ROOT/utils/meeting-recorder.py"
+elif [ -f "$PACKAGE_ROOT/lib/hyprwhspr/utils/meeting-recorder.py" ]; then
+    RECORDER_SCRIPT="$PACKAGE_ROOT/lib/hyprwhspr/utils/meeting-recorder.py"
+else
+    echo "Error: Cannot find meeting-recorder.py" >&2
+    exit 1
+fi
+
+export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
+export PYTHONPATH="$LIB_DIR:${LIB_DIR}/src:$PYTHONPATH"
+
+# Find venv Python
+VENV_PYTHON="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo "Error: hyprwhspr venv not found at $VENV_PYTHON" >&2
+    echo "Run: hyprwhspr setup" >&2
+    exit 1
+fi
+
+# CUDA library path
+if [ -d "/opt/cuda" ]; then
+    [ -d "/opt/cuda/lib" ] && export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/opt/cuda/lib"
+    [ -d "/opt/cuda/lib64" ] && export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/opt/cuda/lib64"
+fi
+
+# ROCm library path
+if [ -d "/opt/rocm" ]; then
+    [ -d "/opt/rocm/lib" ] && export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/opt/rocm/lib"
+    [ -d "/opt/rocm/lib64" ] && export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/opt/rocm/lib64"
+fi
+
+exec "$VENV_PYTHON" "$RECORDER_SCRIPT" "$@"
