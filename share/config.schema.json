@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/goodroot/hyprwhspr/main/share/config.schema.json",
+  "title": "hyprwhspr configuration",
+  "description": "Configuration schema for hyprwhspr speech-to-text system",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for IDE autocompletion and validation"
+    },
+    "primary_shortcut": {
+      "type": "string",
+      "default": "SUPER+ALT+D",
+      "description": "Primary keyboard shortcut to trigger recording (e.g., 'SUPER+ALT+D')"
+    },
+    "secondary_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional secondary hotkey for language-specific recording (e.g., 'SUPER+ALT+I')"
+    },
+    "secondary_language": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Language code for secondary shortcut (e.g., 'it', 'en', 'fr')"
+    },
+    "recording_mode": {
+      "type": "string",
+      "enum": ["toggle", "push_to_talk", "auto"],
+      "default": "toggle",
+      "description": "Recording mode: 'toggle' (press to start/stop), 'push_to_talk' (hold to record), 'auto' (hybrid tap/hold)"
+    },
+    "grab_keys": {
+      "type": "boolean",
+      "default": false,
+      "description": "Exclusive keyboard grab. False is safer; true suppresses shortcut from other apps. Disable for compatibility with keyboard remappers (keyd, kmonad)."
+    },
+    "use_hypr_bindings": {
+      "type": "boolean",
+      "default": false,
+      "description": "Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)"
+    },
+    "selected_device_path": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Specific keyboard device path (e.g., '/dev/input/event3')"
+    },
+    "selected_device_name": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Specific keyboard device name (e.g., 'USB Keyboard'). Takes priority over path if both set."
+    },
+    "audio_device_id": {
+      "type": ["integer", "null"],
+      "default": null,
+      "description": "PortAudio device index (can change on reboot)"
+    },
+    "audio_device_name": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Human-readable audio device name (more stable across reboots)"
+    },
+    "audio_device_vendor_id": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "USB vendor ID for audio device (most stable identifier, from udev)"
+    },
+    "audio_device_model_id": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "USB model ID for audio device (most stable identifier, from udev)"
+    },
+    "model": {
+      "type": "string",
+      "default": "base",
+      "description": "Whisper model to use for local transcription (e.g., 'base', 'base.en', 'small', 'medium', 'large-v3')"
+    },
+    "threads": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 4,
+      "description": "Thread count for whisper processing"
+    },
+    "language": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Language code for transcription (null = auto-detect, or 'en', 'nl', 'fr', etc.)"
+    },
+    "word_overrides": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "Dictionary of word replacements applied after transcription: {\"original\": \"replacement\"}"
+    },
+    "filter_filler_words": {
+      "type": "boolean",
+      "default": false,
+      "description": "Remove common filler words (uh, um, er, etc.) from transcription output"
+    },
+    "filler_words": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": ["uh", "um", "er", "ah", "eh", "hmm", "hm", "mm", "mhm"],
+      "description": "Filler words to remove when filter_filler_words is enabled"
+    },
+    "symbol_replacements": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable built-in speech-to-symbol replacements (e.g., 'quote' to '\"')"
+    },
+    "whisper_prompt": {
+      "type": "string",
+      "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
+      "description": "Prompt passed to Whisper to guide transcription style"
+    },
+    "clipboard_behavior": {
+      "type": "boolean",
+      "default": false,
+      "description": "True = clear clipboard after delay, false = keep clipboard contents"
+    },
+    "clipboard_clear_delay": {
+      "type": "number",
+      "minimum": 0,
+      "default": 5.0,
+      "description": "Seconds to wait before clearing clipboard (only used if clipboard_behavior is true)"
+    },
+    "paste_mode": {
+      "type": "string",
+      "enum": ["super", "ctrl_shift", "ctrl"],
+      "default": "ctrl_shift",
+      "description": "Paste key combination: 'ctrl_shift' (Ctrl+Shift+V), 'super' (Super+V), 'ctrl' (Ctrl+V)"
+    },
+    "paste_keycode_wev": {
+      "type": ["integer", "null"],
+      "default": null,
+      "description": "Wayland/XKB keycode as printed by wev for the key that types 'v'. Converted to Linux evdev by subtracting 8."
+    },
+    "paste_keycode": {
+      "type": "integer",
+      "default": 47,
+      "description": "Linux evdev keycode for the paste key. Default 47 = KEY_V (QWERTY). Set to the keycode for the physical key that produces 'v' on your layout."
+    },
+    "shift_paste": {
+      "type": "boolean",
+      "default": true,
+      "description": "Back-compat: true = Ctrl+Shift+V, false = Ctrl+V. Only used if paste_mode is absent."
+    },
+    "transcription_backend": {
+      "type": "string",
+      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr"],
+      "default": "pywhispercpp",
+      "description": "Transcription backend to use"
+    },
+    "rest_endpoint_url": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Full HTTP or HTTPS URL for remote transcription endpoint"
+    },
+    "rest_api_provider": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Provider identifier for credential lookup (e.g., 'openai', 'groq', 'custom')"
+    },
+    "rest_api_key": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "DEPRECATED: API key for authentication. Use credential manager instead."
+    },
+    "rest_headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "Additional HTTP headers for remote transcription"
+    },
+    "rest_body": {
+      "type": "object",
+      "default": {},
+      "description": "Additional body fields for remote transcription"
+    },
+    "rest_timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 30,
+      "description": "Request timeout in seconds for REST API calls"
+    },
+    "rest_audio_format": {
+      "type": "string",
+      "default": "wav",
+      "description": "Audio format for remote transcription (e.g., 'wav', 'mp3')"
+    },
+    "websocket_provider": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai')"
+    },
+    "websocket_model": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-mini-2025-12-15')"
+    },
+    "websocket_url": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Explicit WebSocket URL (auto-derived from provider if null)"
+    },
+    "realtime_timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 30,
+      "description": "Completion timeout in seconds for WebSocket transcription"
+    },
+    "realtime_buffer_max_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 5,
+      "description": "Max buffer in seconds before dropping audio chunks"
+    },
+    "realtime_mode": {
+      "type": "string",
+      "enum": ["transcribe", "converse"],
+      "default": "transcribe",
+      "description": "'transcribe' for speech-to-text, 'converse' for voice-to-AI"
+    },
+    "onnx_asr_model": {
+      "type": "string",
+      "default": "nemo-parakeet-tdt-0.6b-v3",
+      "description": "ONNX ASR model name (CPU-optimized)"
+    },
+    "onnx_asr_quantization": {
+      "type": ["string", "null"],
+      "enum": ["int8", null],
+      "default": "int8",
+      "description": "Quantization mode for ONNX ASR. 'int8' for CPU performance, null for fp32."
+    },
+    "onnx_asr_use_vad": {
+      "type": "boolean",
+      "default": true,
+      "description": "Use Voice Activity Detection for long recordings (>30s)"
+    },
+    "audio_feedback": {
+      "type": "boolean",
+      "default": false,
+      "description": "Play sounds on recording start/stop/error"
+    },
+    "audio_volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "description": "Master audio feedback volume (0.0-1.0)"
+    },
+    "start_sound_volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 1.0,
+      "description": "Volume multiplier for recording start sound"
+    },
+    "stop_sound_volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 1.0,
+      "description": "Volume multiplier for recording stop sound"
+    },
+    "error_sound_volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "description": "Volume multiplier for error sound"
+    },
+    "start_sound_path": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Custom path for start sound (null = built-in ping-up.ogg)"
+    },
+    "stop_sound_path": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Custom path for stop sound (null = built-in ping-down.ogg)"
+    },
+    "error_sound_path": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Custom path for error sound (null = built-in ping-error.ogg)"
+    },
+    "mic_osd_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show microphone visualization overlay during recording"
+    },
+    "mute_detection": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable mute detection to cancel recording when mic is muted"
+    },
+    "audio_ducking": {
+      "type": "boolean",
+      "default": false,
+      "description": "Reduce system volume during recording"
+    },
+    "audio_ducking_percent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "How much to reduce volume BY (50 = reduce to 50% of original)"
+    },
+    "auto_submit": {
+      "type": "boolean",
+      "default": false,
+      "description": "Send Enter key after pasting text (for chat/search inputs)"
+    },
+    "long_form_submit_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Shortcut to submit long-form recording (e.g., 'Super+Return')"
+    },
+    "long_form_temp_limit_mb": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 500,
+      "description": "Max temp storage in MB for long-form segments"
+    },
+    "long_form_auto_save_interval": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 300,
+      "description": "Auto-save interval in seconds for long-form recording (default: 5 minutes)"
+    }
+  }
+}

@@ -2207,48 +2207,35 @@ def setup_config(backend: Optional[str] = None, model: Optional[str] = None, rem
             for key, value in remote_config.items():
                 config.set_setting(key, value)
         
-        config.save_config()
-        log_success(f"Created {config_file}")
+        if config.save_config():
+            log_success(f"Created {config_file}")
+        else:
+            log_error(f"Failed to create {config_file}")
     else:
         log_info(f"Config already exists at {config_file}")
-        # Update existing config if needed
+        # Update existing config via ConfigManager (handles migrations, sparse save)
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                existing_config = json.load(f)
-            
-            # Update backend if provided (accept both old 'local'/'remote' and new backend types)
+            config = ConfigManager()
+
             if backend:
                 # Map old values for backward compatibility
                 if backend == 'local':
-                    backend = 'cpu'  # Map old 'local' to 'cpu'
+                    backend = 'cpu'
                 elif backend == 'remote':
-                    backend = 'rest-api'  # Map old 'remote' to 'rest-api'
-                existing_config['transcription_backend'] = backend
-            
-            # Apply remote configuration if provided
+                    backend = 'rest-api'
+                config.set_setting('transcription_backend', backend)
+
             if remote_config:
                 for key, value in remote_config.items():
-                    existing_config[key] = value
-            
-            # Update model if provided, otherwise default to base if missing
+                    config.set_setting(key, value)
+
             if model:
-                existing_config['model'] = model
-            elif 'model' not in existing_config and not remote_config:
-                # Only set default model if not using remote backend
-                existing_config['model'] = 'base'
-            
-            # Add audio_feedback if missing
-            if 'audio_feedback' not in existing_config:
-                existing_config['audio_feedback'] = True
-                existing_config['start_sound_volume'] = 1.0
-                existing_config['stop_sound_volume'] = 1.0
-                existing_config['start_sound_path'] = 'ping-up.ogg'
-                existing_config['stop_sound_path'] = 'ping-down.ogg'
-            
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(existing_config, f, indent=2)
-            
-            log_success("Updated existing config")
+                config.set_setting('model', model)
+
+            if config.save_config():
+                log_success("Updated existing config")
+            else:
+                log_error("Failed to save updated config")
         except Exception as e:
             log_error(f"Failed to update config: {e}")
 

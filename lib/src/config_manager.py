@@ -3,6 +3,7 @@ Configuration manager for hyprwhspr
 Handles loading, saving, and managing application settings
 """
 
+import copy
 import json
 from pathlib import Path
 from typing import Any, Dict
@@ -15,7 +16,9 @@ except ImportError:
 
 class ConfigManager:
     """Manages application configuration and settings"""
-    
+
+    SCHEMA_URL = "https://raw.githubusercontent.com/goodroot/hyprwhspr/main/share/config.schema.json"
+
     def __init__(self):
         # Default configuration values - minimal set for hyprwhspr
         self.default_config = {
@@ -75,6 +78,15 @@ class ConfigManager:
             'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
             'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
             'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
+            # Audio feedback settings
+            'audio_feedback': False,             # Play sounds on recording start/stop/error
+            'audio_volume': 0.5,                 # Master audio feedback volume (0.0-1.0)
+            'start_sound_volume': 1.0,           # Volume multiplier for start sound
+            'stop_sound_volume': 1.0,            # Volume multiplier for stop sound
+            'error_sound_volume': 0.5,           # Volume multiplier for error sound
+            'start_sound_path': None,            # Custom path for start sound (None = built-in ping-up.ogg)
+            'stop_sound_path': None,             # Custom path for stop sound (None = built-in ping-down.ogg)
+            'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)
             # Visual feedback settings
             'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
@@ -94,7 +106,8 @@ class ConfigManager:
         self.config_file = CONFIG_FILE
         
         # Current configuration (starts with defaults)
-        self.config = self.default_config.copy()
+        # Deep copy so mutable values (dicts, lists) aren't shared references
+        self.config = copy.deepcopy(self.default_config)
         
         # Ensure config directory exists
         self._ensure_config_dir()
@@ -120,9 +133,17 @@ class ConfigManager:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f)
                     
+                # Detect whether this is a new-style sparse config (has $schema)
+                # or a legacy full config. Legacy configs need "missing key" migrations;
+                # sparse configs omit default values intentionally.
+                is_legacy_config = '$schema' not in loaded_config
+
+                # Strip $schema key so it doesn't pollute self.config
+                loaded_config.pop('$schema', None)
+
                 # Migrate old push_to_talk config to recording_mode (before merging with defaults)
                 # Check the original loaded_config, not self.config (which has defaults merged)
-                migration_occurred = False
+                migrations = []
                 if 'push_to_talk' in loaded_config and 'recording_mode' not in loaded_config:
                     if loaded_config['push_to_talk']:
                         loaded_config['recording_mode'] = 'push_to_talk'
@@ -130,24 +151,31 @@ class ConfigManager:
                         loaded_config['recording_mode'] = 'toggle'
                     # Remove old push_to_talk key from loaded config
                     del loaded_config['push_to_talk']
-                    migration_occurred = True
+                    migrations.append("'push_to_talk' -> 'recording_mode'")
 
                 # Migrate old audio_device config key to audio_device_id
                 if 'audio_device' in loaded_config and 'audio_device_id' not in loaded_config:
                     loaded_config['audio_device_id'] = loaded_config['audio_device']
                     del loaded_config['audio_device']
-                    migration_occurred = True
+                    migrations.append("'audio_device' -> 'audio_device_id'")
+
+                # Migrate pre-audio-feedback configs: enable audio feedback for existing users
+                # who set up before this feature existed (previously done in setup_config).
+                # Only for legacy configs — sparse configs omit audio_feedback intentionally.
+                if is_legacy_config and 'audio_feedback' not in loaded_config:
+                    loaded_config['audio_feedback'] = True
+                    migrations.append("enabled 'audio_feedback' for legacy config")
 
                 # Merge loaded config with defaults (preserving any new default keys)
                 self.config.update(loaded_config)
-                
+
                 # Attempt automatic migration of API key if needed
                 self.migrate_api_key_to_credential_manager()
-                
+
                 # Save migrated config if migration occurred
-                if migration_occurred:
+                if migrations:
                     self.save_config()
-                    print("Migrated 'push_to_talk' config to 'recording_mode'")
+                    print(f"Migrated config: {', '.join(migrations)}")
                 
                 print(f"Configuration loaded from {self.config_file}")
             else:
@@ -160,10 +188,14 @@ class ConfigManager:
             print("Using default configuration")
     
     def save_config(self) -> bool:
-        """Save current configuration to file"""
+        """Save current configuration to file (sparse: only non-default keys + $schema)"""
         try:
+            sparse = {"$schema": self.SCHEMA_URL}
+            for key, value in self.config.items():
+                if key not in self.default_config or self.default_config[key] != value:
+                    sparse[key] = value
             with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=2)
+                json.dump(sparse, f, indent=2)
             print(f"Configuration saved to {self.config_file}")
             return True
         except Exception as e:
@@ -184,7 +216,7 @@ class ConfigManager:
     
     def reset_to_defaults(self):
         """Reset configuration to default values"""
-        self.config = self.default_config.copy()
+        self.config = copy.deepcopy(self.default_config)
         print("Configuration reset to defaults")
     
     def get_temp_directory(self) -> Path:
