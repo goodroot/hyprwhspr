@@ -743,6 +743,45 @@ journalctl --user -u ydotool.service -f
 
 If you are using the hyprland input method, do you have shortcuts?
 
+#### Service starts but doesn't work until restarted
+
+`hyprwhspr` must start within an active graphical session.
+
+If the service appears active but hotkeys/transcription don't work until you manually restart, your session environment may not be set up correctly.
+
+Check your session:
+
+```bash
+# Verify graphical-session.target is active
+systemctl --user is-active graphical-session.target
+
+# Verify Wayland env is available to systemd services
+systemctl --user show-environment | grep WAYLAND_DISPLAY
+```
+
+If `WAYLAND_DISPLAY` is missing, add to `~/.config/hypr/hyprland.conf`:
+
+```bash
+# Export session environment to systemd user services
+exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE
+```
+
+**Hyprland:**
+
+If `graphical-session.target` is inactive, you likely need a session manager to activate it. The recommended approach is to launch Hyprland via [uwsm](https://github.com/Vladimir-csp/uwsm) (it activates `graphical-session.target` and exports the session environment to systemd).
+
+If you *aren't* using a session manager and your system allows it, you can try starting it manually:
+
+```bash
+exec-once = systemctl --user start graphical-session.target
+```
+
+> **Note:** Some distros set `graphical-session.target` with `RefuseManualStart=yes`, in which case the manual start will fail and you should use a session manager like `uwsm` instead.
+
+Then restart Hyprland or log out and back in.
+
+Run `hyprwhspr validate` to confirm the session is configured correctly.
+
 #### Permission denied
 
 ```bash

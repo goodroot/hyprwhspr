@@ -3615,6 +3615,37 @@ def validate_command():
     except Exception:
         pass  # Config validation is optional, don't fail if it errors
 
+    # Check graphical session readiness
+    try:
+        result = subprocess.run(
+            ['systemctl', '--user', 'is-active', 'graphical-session.target'],
+            capture_output=True, text=True, timeout=5, check=False
+        )
+        if result.stdout.strip() == 'active':
+            log_success("✓ graphical-session.target is active")
+        else:
+            log_warning("⚠ graphical-session.target is not active")
+            print("  hyprwhspr starts with the graphical session.")
+            print("  A session manager like uwsm is needed to activate graphical-session.target.")
+            print("  See: https://github.com/Vladimir-csp/uwsm")
+    except Exception:
+        pass
+
+    # Check WAYLAND_DISPLAY in systemd user environment
+    try:
+        result = subprocess.run(
+            ['systemctl', '--user', 'show-environment'],
+            capture_output=True, text=True, timeout=5, check=False
+        )
+        if result.returncode == 0 and 'WAYLAND_DISPLAY=' in result.stdout:
+            log_success("✓ WAYLAND_DISPLAY set in systemd user environment")
+        else:
+            log_warning("⚠ WAYLAND_DISPLAY not found in systemd user environment")
+            print("  Add to ~/.config/hypr/hyprland.conf:")
+            print("    exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
+    except Exception:
+        pass
+
     if all_ok:
         log_success("Validation passed")
     else:

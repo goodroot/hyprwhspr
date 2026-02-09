@@ -1,27 +1,28 @@
 [Unit]
 Description=hyprwhspr stt
 Documentation=https://github.com/goodroot/hyprwhspr
-After=graphical-session.target pipewire.service ydotool.service
-StartLimitIntervalSec=300
-StartLimitBurst=5
-Requires=ydotool.service
+
+PartOf=graphical-session.target
+After=graphical-session.target
+
+After=pipewire.service ydotool.service
 Wants=pipewire.service
+Requires=ydotool.service
+
+Wants=wireplumber.service
+After=wireplumber.service
 
 [Service]
 Type=simple
-# Wait for Wayland compositor - check for socket file directly since systemd
-# services don't inherit WAYLAND_DISPLAY from the graphical session
-ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo "Warning: Wayland socket not found after 15s"'
+ExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do ls "$XDG_RUNTIME_DIR"/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo "Wayland socket not found"; exit 1'
 ExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr
-# Ensure virtual keyboard is killed even on crash/SIGKILL to release device grabs
 ExecStopPost=/bin/bash -c 'pkill -9 -f "hyprwhspr-virtual-keyboard" 2>/dev/null || true'
 Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
-# Give kernel time to release device grabs after stop
 RestartSec=2
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

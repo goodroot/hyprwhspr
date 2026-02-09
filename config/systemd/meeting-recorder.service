@@ -1,6 +1,10 @@
 [Unit]
 Description=meeting-recorder (hyprwhspr)
 Documentation=https://github.com/goodroot/hyprwhspr
+
+PartOf=graphical-session.target
+After=graphical-session.target
+
 After=pipewire.service
 Wants=pipewire.service
 
@@ -14,4 +18,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
