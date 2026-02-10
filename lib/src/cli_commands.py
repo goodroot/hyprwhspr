@@ -2172,12 +2172,12 @@ def omarchy_command(args=None):
 
 # ==================== Config Commands ====================
 
-def config_command(action: str):
+def config_command(action: str, show_all: bool = False):
     """Handle config subcommands"""
     if action == 'init':
         setup_config()
     elif action == 'show':
-        show_config()
+        show_config(show_all=show_all)
     elif action == 'edit':
         edit_config()
     elif action == 'secondary-shortcut':
@@ -2240,17 +2240,18 @@ def setup_config(backend: Optional[str] = None, model: Optional[str] = None, rem
             log_error(f"Failed to update config: {e}")
 
 
-def show_config():
+def show_config(show_all: bool = False):
     """Display current config"""
-    config_file = USER_CONFIG_DIR / 'config.json'
-    
-    if not config_file.exists():
-        log_error("Config file not found. Run 'hyprwhspr config init' first.")
-        return
-    
     try:
-        with open(config_file, 'r', encoding='utf-8') as f:
-            config = json.load(f)
+        if show_all:
+            config = ConfigManager().get_all_settings()
+        else:
+            config_file = USER_CONFIG_DIR / 'config.json'
+            if not config_file.exists():
+                log_error("Config file not found. Run 'hyprwhspr config init' first.")
+                return
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
         print(json.dumps(config, indent=2))
     except (json.JSONDecodeError, IOError) as e:
         log_error(f"Failed to read config: {e}")

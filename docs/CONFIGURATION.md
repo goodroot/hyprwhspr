@@ -4,6 +4,25 @@ Perform basic setup and configuration via `hyprwhspr setup`.
 
 Or use the CLI, or edit `~/.config/hyprwhspr/config.json` directly.
 
+The config file uses **sparse storage** and will only contain values you've explicitly changed from the defaults. This keeps your config clean and means upstream default changes apply automatically on update.
+
+There is also a `$schema` reference for IDE autocompletion and validation:
+
+```jsonc
+{
+    "$schema": "https://raw.githubusercontent.com/goodroot/hyprwhspr/main/share/config.schema.json",
+    "transcription_backend": "rest-api",
+    "language": "en"
+}
+```
+
+To view your overrides or the full resolved config:
+
+```bash
+hyprwhspr config show        # Show your overrides only
+hyprwhspr config show --all  # Show all settings including defaults
+```
+
 ## Minimal configuration
 
 Only 2 essential options:

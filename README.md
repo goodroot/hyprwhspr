@@ -211,6 +211,7 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
     - `--no-systemd` - Skip systemd service setup
     - `--hypr-bindings` - Enable Hyprland compositor bindings
 - `hyprwhspr config` - Manage configuration (init/show/edit)
+  - `hyprwhspr config show --all` - Show all settings including defaults
 - `hyprwhspr waybar` - Manage Waybar integration (install/remove/status)
 - `hyprwhspr mic-osd` - Manage microphone visualization overlay (enable/disable/status)
 - `hyprwhspr systemd` - Manage systemd services (install/enable/disable/status/restart)

@@ -80,10 +80,10 @@ class ConfigManager:
             'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
             # Audio feedback settings
             'audio_feedback': False,             # Play sounds on recording start/stop/error
-            'audio_volume': 0.5,                 # Master audio feedback volume (0.0-1.0)
+            'audio_volume': 1.0,                 # Master audio feedback volume (0.0-1.0)
             'start_sound_volume': 1.0,           # Volume multiplier for start sound
             'stop_sound_volume': 1.0,            # Volume multiplier for stop sound
-            'error_sound_volume': 0.5,           # Volume multiplier for error sound
+            'error_sound_volume': 1.0,           # Volume multiplier for error sound
             'start_sound_path': None,            # Custom path for start sound (None = built-in ping-up.ogg)
             'stop_sound_path': None,             # Custom path for stop sound (None = built-in ping-down.ogg)
             'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)

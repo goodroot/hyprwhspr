@@ -85,7 +85,8 @@ def main():
     config_parser = subparsers.add_parser('config', help='Configuration management')
     config_subparsers = config_parser.add_subparsers(dest='config_action', help='Config actions')
     config_subparsers.add_parser('init', help='Create default config')
-    config_subparsers.add_parser('show', help='Display current config')
+    config_show_parser = config_subparsers.add_parser('show', help='Display current config')
+    config_show_parser.add_argument('--all', action='store_true', dest='show_all', help='Show all settings including defaults')
     config_subparsers.add_parser('edit', help='Open config in editor')
     
     # waybar command
@@ -222,7 +223,7 @@ def main():
             if not args.config_action:
                 config_parser.print_help()
                 sys.exit(1)
-            config_command(args.config_action)
+            config_command(args.config_action, show_all=getattr(args, 'show_all', False))
         elif args.command == 'waybar':
             if not args.waybar_action:
                 waybar_parser.print_help()
