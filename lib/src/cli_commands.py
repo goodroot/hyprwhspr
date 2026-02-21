@@ -4383,14 +4383,14 @@ def record_command(action: str, language: str = None):
     """
     Control recording via CLI - useful when keyboard grab is not possible.
 
-    This writes to the recording control FIFO to trigger start/stop/toggle
+    This writes to the recording control FIFO to trigger start/stop/cancel/toggle
     without requiring keyboard grab. Useful for users with:
     - External hotkey systems (KDE, GNOME, sxhkd, etc.)
     - Keyboard remappers that grab devices (Espanso, keyd, kmonad)
     - Multiple keyboard tools that conflict with grab_keys
 
     Args:
-        action: The action to perform (start, stop, toggle, status)
+        action: The action to perform (start, stop, cancel, toggle, status)
         language: Optional language code for transcription (e.g., 'en', 'it', 'de')
     """
     import stat
@@ -4473,6 +4473,13 @@ def record_command(action: str, language: str = None):
         if send_control('stop'):
             log_success("Recording stopped")
 
+    elif action == 'cancel':
+        if not is_recording():
+            log_warning("Not currently recording")
+            return
+        if send_control('cancel'):
+            log_success("Recording cancelled (audio discarded)")
+
     elif action == 'toggle':
         if is_recording():
             if send_control('stop'):
@@ -4490,5 +4497,5 @@ def record_command(action: str, language: str = None):
 
     else:
         log_error(f"Unknown action: {action}")
-        log_info("Available actions: start, stop, toggle, status")
+        log_info("Available actions: start, stop, cancel, toggle, status")
 

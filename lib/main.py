@@ -86,6 +86,7 @@ class hyprwhsprApp:
         self.text_injector = TextInjector(self.config)
         self.global_shortcuts = None
         self.secondary_shortcuts = None
+        self._cancel_shortcuts = None
 
         # Application state
         self.is_recording = False
@@ -309,6 +310,27 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Failed to initialize secondary shortcuts: {e}", flush=True)
             self.secondary_shortcuts = None
+
+        # Set up cancel shortcut if configured
+        try:
+            cancel_shortcut_key = self.config.get_setting("cancel_shortcut", None)
+            if cancel_shortcut_key:
+                self._cancel_shortcuts = GlobalShortcuts(
+                    cancel_shortcut_key,
+                    self._on_cancel_shortcut_triggered,
+                    None,  # No release callback
+                    device_path=selected_device_path,
+                    device_name=selected_device_name,
+                    grab_keys=grab_keys,
+                )
+                if self._cancel_shortcuts.start():
+                    print(f"[INFO] Cancel shortcut registered: {cancel_shortcut_key}", flush=True)
+                else:
+                    print(f"[WARNING] Failed to start cancel shortcut: {cancel_shortcut_key}", flush=True)
+                    self._cancel_shortcuts = None
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize cancel shortcut: {e}", flush=True)
+            self._cancel_shortcuts = None
 
         # Set up submit shortcut for long-form mode
         if recording_mode == 'long_form':
@@ -627,6 +649,16 @@ class hyprwhsprApp:
     # Secondary release is identical to primary release - reuse the same handler
     _on_secondary_shortcut_released = _on_shortcut_released
 
+    def _on_cancel_shortcut_triggered(self):
+        """Handle cancel shortcut trigger - discard recording without transcribing"""
+        recording_mode = self.config.get_setting("recording_mode", "toggle")
+        if recording_mode == "long_form":
+            self._ensure_longform_initialized()
+            with self._longform_lock:
+                self._cancel_longform_recording()
+        else:
+            self._cancel_recording()
+
     # Long-form recording mode handlers
     def _ensure_longform_initialized(self):
         """Ensure long-form segment manager is initialized (lazy initialization)"""
@@ -754,6 +786,34 @@ class hyprwhsprApp:
 
         # Play start sound
         self.audio_manager.play_start_sound()
+
+    def _cancel_longform_recording(self):
+        """Cancel long-form recording session and discard all segments"""
+        if self._longform_state not in ('RECORDING', 'PAUSED'):
+            return
+
+        print("[LONGFORM] Recording cancelled (discarded)", flush=True)
+
+        try:
+            self._stop_longform_auto_save_timer()
+            self.audio_capture.stop_recording()
+            self._longform_segment_manager.clear_session()
+            self._longform_error_audio = None
+            self._longform_language_override = None
+            self._longform_state = 'IDLE'
+            self._write_longform_state('IDLE')
+            self._hide_mic_osd()
+            self._write_recording_status(False)
+            self.audio_manager.play_error_sound()
+        except Exception as e:
+            print(f"[ERROR] Error cancelling long-form recording: {e}", flush=True)
+            try:
+                self._longform_state = 'IDLE'
+                self._write_longform_state('IDLE')
+                self._hide_mic_osd()
+                self._write_recording_status(False)
+            except Exception:
+                pass  # Best effort cleanup
 
     def _longform_submit(self, retry=False):
         """Submit all accumulated segments for transcription"""
@@ -1131,6 +1191,47 @@ class hyprwhsprApp:
                 # Restore audio if it was ducked
                 if self.audio_ducker.is_ducked:
                     self.audio_ducker.restore()
+            except Exception:
+                pass  # Best effort cleanup
+
+    def _cancel_recording(self):
+        """Cancel recording and discard audio without transcribing or injecting text"""
+        with self._recording_lock:
+            if not self.is_recording:
+                return
+            self.is_recording = False
+            self._current_language_override = None
+
+        print("Recording cancelled (discarded)", flush=True)
+
+        try:
+            self._hide_mic_osd()
+            self._stop_audio_level_monitoring()
+            self._write_recording_status(False)
+
+            # Restore audio if it was ducked
+            if self.audio_ducker.is_ducked:
+                self.audio_ducker.restore()
+
+            # Stop capture and discard the audio data
+            self.audio_capture.stop_recording()
+
+            # Close WebSocket if using realtime-ws backend (no transcription needed)
+            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
+                self.whisper_manager._cleanup_realtime_client()
+
+            self.audio_manager.play_error_sound()
+        except Exception as e:
+            print(f"[ERROR] Error cancelling recording: {e}", flush=True)
+            # Ensure cleanup even if error occurs (is_recording already False from above)
+            try:
+                self._hide_mic_osd()
+                self._stop_audio_level_monitoring()
+                self._write_recording_status(False)
+                if self.audio_ducker.is_ducked:
+                    self.audio_ducker.restore()
+                self.audio_capture.stop_recording()
             except Exception:
                 pass  # Best effort cleanup
 
@@ -1605,8 +1706,8 @@ class hyprwhsprApp:
                 # Handle multiple commands written to FIFO before read
                 # (e.g., user clicks rapidly during timeout - "start\nstart")
                 # Take only the last valid command (most recent intent)
-                # Commands can be: 'start', 'start:lang', 'stop', 'submit'
-                valid_base_commands = {'start', 'stop', 'submit'}
+                # Commands can be: 'start', 'start:lang', 'stop', 'cancel', 'submit'
+                valid_base_commands = {'start', 'stop', 'cancel', 'submit'}
                 lines = [line.strip() for line in raw_data.splitlines() if line.strip()]
 
                 # Parse commands - extract base command and optional language
@@ -1673,6 +1774,20 @@ class hyprwhsprApp:
                         self._stop_recording()
                     else:
                         print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
+                elif action == "cancel":
+                    if recording_mode == "long_form":
+                        self._ensure_longform_initialized()
+                        with self._longform_lock:
+                            if self._longform_state in ('RECORDING', 'PAUSED'):
+                                print("[CONTROL] Long-form cancel requested (immediate)", flush=True)
+                                self._cancel_longform_recording()
+                            else:
+                                print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring cancel request", flush=True)
+                    elif self.is_recording:
+                        print("[CONTROL] Recording cancel requested (immediate)", flush=True)
+                        self._cancel_recording()
+                    else:
+                        print("[CONTROL] Not currently recording, ignoring cancel request", flush=True)
                 elif action == "submit":
                     # Submit command for long-form mode submit shortcut
                     if recording_mode == "long_form":
@@ -2090,6 +2205,10 @@ class hyprwhsprApp:
             # Stop secondary shortcuts
             if self.secondary_shortcuts:
                 self.secondary_shortcuts.stop()
+
+            # Stop cancel shortcut
+            if self._cancel_shortcuts:
+                self._cancel_shortcuts.stop()
 
             # Stop audio capture
             if self.is_recording:

@@ -25,6 +25,11 @@
       "default": null,
       "description": "Language code for secondary shortcut (e.g., 'it', 'en', 'fr')"
     },
+    "cancel_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional shortcut to cancel recording and discard audio without transcribing (e.g., 'SUPER+ESCAPE')"
+    },
     "recording_mode": {
       "type": "string",
       "enum": ["toggle", "push_to_talk", "auto"],

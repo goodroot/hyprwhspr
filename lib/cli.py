@@ -146,6 +146,7 @@ def main():
     record_start_parser.add_argument('--lang', dest='language', metavar='CODE',
                                      help='Language code for transcription (e.g., en, it, de)')
     record_subparsers.add_parser('stop', help='Stop recording')
+    record_subparsers.add_parser('cancel', help='Cancel recording and discard audio')
     record_toggle_parser = record_subparsers.add_parser('toggle', help='Toggle recording on/off')
     record_toggle_parser.add_argument('--lang', dest='language', metavar='CODE',
                                       help='Language code for transcription (e.g., en, it, de)')
