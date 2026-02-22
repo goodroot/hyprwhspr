@@ -153,6 +153,28 @@ Configure via CLI:
 hyprwhspr config secondary-shortcut
 ```
 
+### Cancel shortcut
+
+Bind a dedicated key to cancel an in-progress recording and discard the audio — no transcription, no text injection. Useful when you trigger the shortcut by accident or start speaking and want to bail out.
+
+```jsonc
+{
+    "cancel_shortcut": "SUPER+ESCAPE"  // Any key combo (default: null = disabled)
+}
+```
+
+The cancel shortcut works in all recording modes. In long-form mode it discards all accumulated segments and resets the session to idle. It plays the error sound on cancel so you have clear audio feedback.
+
+You can also cancel without a dedicated shortcut:
+
+```bash
+# Via CLI
+hyprwhspr record cancel
+
+# Via FIFO directly (useful for Hyprland binds or sxhkd)
+echo cancel > ~/.config/hyprwhspr/recording_control
+```
+
 ### Hyprland native bindings
 
 Use Hyprland's compositor bindings instead of evdev keyboard grabbing.
@@ -188,6 +210,11 @@ bindr = SUPER ALT, D, exec, echo "stop" > ~/.config/hyprwhspr/recording_control
 bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record
 # Submit shortcut: submit recording for transcription
 bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > ~/.config/hyprwhspr/recording_control
+```
+
+```bash
+# Cancel recording (all modes) - discard audio without transcribing
+bind = SUPER, ESCAPE, exec, echo "cancel" > ~/.config/hyprwhspr/recording_control
 ```
 
 Restart service to lock in changes:
@@ -668,8 +695,11 @@ hyprwhspr record start --lang it    # Italian
 hyprwhspr record start --lang de    # German
 hyprwhspr record start --lang es    # Spanish
 
-# Stop recording
+# Stop recording (transcribes and pastes)
 hyprwhspr record stop
+
+# Cancel recording (discards audio, no transcription)
+hyprwhspr record cancel
 
 # Toggle recording on/off
 hyprwhspr record toggle
@@ -689,10 +719,12 @@ Then bind these commands to your preferred hotkeys in KDE, GNOME, sxhkd, or any 
 # Example: KDE custom shortcuts
 # English: hyprwhspr record toggle
 # Italian: hyprwhspr record start --lang it
+# Cancel:  hyprwhspr record cancel
 
 # Example: Hyprland config
 bind = SUPER ALT, D, exec, hyprwhspr record toggle
 bind = SUPER ALT, I, exec, hyprwhspr record start --lang it
+bind = SUPER, ESCAPE, exec, hyprwhspr record cancel
 ```
 
 ### Mute detection
