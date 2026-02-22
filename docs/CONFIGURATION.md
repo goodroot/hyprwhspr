@@ -4,7 +4,9 @@ Perform basic setup and configuration via `hyprwhspr setup`.
 
 Or use the CLI, or edit `~/.config/hyprwhspr/config.json` directly.
 
-The config file uses **sparse storage** and will only contain values you've explicitly changed from the defaults. This keeps your config clean and means upstream default changes apply automatically on update.
+The config file uses **sparse storage** and will only contain values you've explicitly changed from the defaults. 
+
+This keeps your config clean and means upstream default changes apply automatically on update.
 
 There is also a `$schema` reference for IDE autocompletion and validation:
 
@@ -823,7 +825,9 @@ exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CUR
 
 **Hyprland:**
 
-If `graphical-session.target` is inactive, you likely need a session manager to activate it. The recommended approach is to launch Hyprland via [uwsm](https://github.com/Vladimir-csp/uwsm) (it activates `graphical-session.target` and exports the session environment to systemd).
+If `graphical-session.target` is inactive, you likely need a session manager to activate it. 
+
+The recommended approach is to launch Hyprland via [uwsm](https://github.com/Vladimir-csp/uwsm) (it activates `graphical-session.target` and exports the session environment to systemd).
 
 If you *aren't* using a session manager and your system allows it, you can try starting it manually:
 
