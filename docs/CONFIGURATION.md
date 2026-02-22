@@ -155,7 +155,9 @@ hyprwhspr config secondary-shortcut
 
 ### Cancel shortcut
 
-Bind a dedicated key to cancel an in-progress recording and discard the audio â€” no transcription, no text injection. Useful when you trigger the shortcut by accident or start speaking and want to bail out.
+Useful when you trigger the shortcut by accident or start speaking and want to bail out.
+
+pPays the error sound on cancel so you have clear audio feedback.
 
 ```jsonc
 {
@@ -163,7 +165,9 @@ Bind a dedicated key to cancel an in-progress recording and discard the audio â€
 }
 ```
 
-The cancel shortcut works in all recording modes. In long-form mode it discards all accumulated segments and resets the session to idle. It plays the error sound on cancel so you have clear audio feedback.
+The cancel shortcut works in all recording modes. 
+
+**In long-form mode it discards all accumulated segments and resets the session to idle.**
 
 You can also cancel without a dedicated shortcut:
 
