@@ -811,6 +811,32 @@ def _prompt_model_selection():
             continue
 
 
+def _prompt_faster_whisper_model_selection() -> str:
+    """Prompt user for faster-whisper model selection"""
+    print("\n" + "="*60)
+    print("Model Selection")
+    print("="*60)
+    print("\nChoose a faster-whisper model:")
+    print()
+    for i, (model_name, size, notes) in enumerate(FASTER_WHISPER_MODELS, 1):
+        print(f"  [{i}] {model_name:<22} {size:<10} {notes}")
+    print()
+
+    choices = [str(i) for i in range(1, len(FASTER_WHISPER_MODELS) + 1)]
+    while True:
+        try:
+            choice = Prompt.ask("Select model", choices=choices, default='2')  # default to 'base'
+            selected = FASTER_WHISPER_MODELS[int(choice) - 1][0]
+            print(f"\n✓ Selected: {selected}")
+            return selected
+        except KeyboardInterrupt:
+            print("\n\nCancelled by user.")
+            raise
+        except (ValueError, IndexError):
+            print("\nInvalid selection. Please try again.")
+            continue
+
+
 def _prompt_remote_provider_selection(filter_realtime: bool = False):
     """
     Prompt user for remote provider and model selection.
@@ -1304,6 +1330,7 @@ def setup_command(python_path: Optional[str] = None):
     # Step 2: Provider/model selection (if REST API backend)
     remote_config = None
     selected_model = None
+    faster_whisper_model = None
     if backend_normalized in ['rest-api', 'remote']:
         # Prompt for remote provider selection
         provider_result = _prompt_remote_provider_selection()
@@ -1485,6 +1512,13 @@ def setup_command(python_path: Optional[str] = None):
         # Local backend - prompt for model selection
         # Note: ONNX-ASR and faster-whisper don't use Whisper.cpp models
         selected_model = _prompt_model_selection()
+    elif backend_normalized == 'faster-whisper':
+        faster_whisper_model = _prompt_faster_whisper_model_selection()
+        if download_faster_whisper_model(faster_whisper_model):
+            log_success(f"Model {faster_whisper_model} downloaded successfully")
+        else:
+            log_warning(f"Model download failed. You can download it later with:")
+            log_warning(f"  hyprwhspr model download {faster_whisper_model}")
     
     # Step 3: Waybar integration
     print("\n" + "="*60)
@@ -1621,6 +1655,8 @@ def setup_command(python_path: Optional[str] = None):
             api_key = remote_config.get('rest_api_key')
             masked = mask_api_key(api_key)
             print(f"API Key: {masked} (legacy - will be migrated)")
+    elif faster_whisper_model:
+        print(f"Model: {faster_whisper_model}")
     elif selected_model:
         print(f"Model: {selected_model}")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
@@ -1653,6 +1689,10 @@ def setup_command(python_path: Optional[str] = None):
             setup_config(backend=backend_normalized, remote_config=remote_config)
         else:
             setup_config(backend=backend_normalized, model=selected_model)
+        if faster_whisper_model:
+            config = ConfigManager()
+            config.set_setting('faster_whisper_model', faster_whisper_model)
+            config.save_config()
         
         # Check if running manually before systemd setup
         if _is_running_manually():
