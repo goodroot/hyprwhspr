@@ -63,8 +63,8 @@ hyprwhspr setup
 
 **The setup will walk you through the process:**
 
-1. ✅ Configure transcription backend (Parakeet TDT V3, pywhispercpp, REST API, or Realtime WebSocket)
-2. ✅ Download models (if using pywhispercpp backend)
+1. ✅ Configure transcription backend (Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
+2. ✅ Download models
 3. ✅ Configure themed visualizer for maximum coolness (optional)
 4. ✅ Configure Waybar integration (optional)
 5. ✅ Set up systemd user services 
