@@ -2010,12 +2010,24 @@ def install_onnx_asr(pip_bin: Path, enable_gpu: bool = False) -> bool:
 
 # ==================== faster-whisper Installation ====================
 
-def install_faster_whisper(pip_bin: Path) -> bool:
-    """Install faster-whisper into the main venv."""
+def install_faster_whisper(pip_bin: Path, enable_gpu: bool = False) -> bool:
+    """Install faster-whisper into the main venv.
+
+    Args:
+        pip_bin: Path to pip executable in the target venv
+        enable_gpu: If True, also install nvidia-cublas-cu12 and nvidia-cudnn-cu12
+                    so CTranslate2 can load CUDA libs from the venv without requiring
+                    system cuda/cudnn packages.
+    """
     log_info("Installing faster-whisper...")
     try:
         run_command([str(pip_bin), 'install', 'faster-whisper'], check=True)
-        log_success("faster-whisper installed")
+        if enable_gpu:
+            log_info("Installing CUDA libraries for GPU support (nvidia-cublas-cu12, nvidia-cudnn-cu12)...")
+            run_command([str(pip_bin), 'install', 'nvidia-cublas-cu12', 'nvidia-cudnn-cu12'], check=True)
+            log_success("faster-whisper installed with CUDA support")
+        else:
+            log_success("faster-whisper installed (CPU mode)")
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to install faster-whisper: {e}")
@@ -2249,6 +2261,29 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 created_items['venv_created'] = True
                 created_items['venv_path'] = str(VENV_DIR)
 
+            # Detect NVIDIA GPU — if present, install CUDA pip libs so CTranslate2 can
+            # find libcublas/libcudnn without requiring the system cuda/cudnn packages.
+            # faster-whisper only supports NVIDIA CUDA (not AMD/Intel Vulkan/ROCm).
+            enable_gpu = False
+            if shutil.which('nvidia-smi'):
+                try:
+                    result = run_command(['nvidia-smi', '-L'], check=False, capture_output=True, timeout=2)
+                    if result.returncode == 0 and result.stdout:
+                        output = _safe_decode(result.stdout).strip()
+                        output_lower = output.lower()
+                        if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
+                            enable_gpu = True
+                            log_info("NVIDIA GPU detected - will install faster-whisper with CUDA support")
+                        else:
+                            log_info("NVIDIA driver present but no GPU hardware detected")
+                    else:
+                        log_info("NVIDIA driver check failed - will use CPU mode")
+                except Exception:
+                    log_info("GPU detection failed - will use CPU mode")
+
+            if not enable_gpu:
+                log_info("Installing faster-whisper (CPU mode)")
+
             # Install base requirements first
             requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
             log_info("Installing base dependencies...")
@@ -2263,7 +2298,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 set_install_state('failed', error_msg)
                 return False
 
-            if not install_faster_whisper(pip_bin):
+            if not install_faster_whisper(pip_bin, enable_gpu=enable_gpu):
                 error_msg = "Failed to install faster-whisper"
                 log_error(error_msg)
                 if cleanup_on_failure:

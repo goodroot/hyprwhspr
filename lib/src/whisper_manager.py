@@ -170,11 +170,83 @@ class WhisperManager:
 
                 # Resolve 'auto' device
                 if device == 'auto':
+                    device = 'cpu'  # default
                     try:
                         import ctranslate2
-                        device = 'cuda' if ctranslate2.get_cuda_device_count() > 0 else 'cpu'
+                        if ctranslate2.get_cuda_device_count() > 0:
+                            # GPU visible — verify compute libraries are actually loadable.
+                            # CTranslate2 loads libcublas lazily; a missing library won't
+                            # surface until the first encode(), so we probe upfront.
+                            # Check both: system libcublas.so.12 AND pip-installed nvidia-cublas-cu12
+                            # (CTranslate2 ≥ 4.0 searches Python package dirs for nvidia libs).
+                            cuda_libs_ok = False
+                            try:
+                                import ctypes
+                                ctypes.CDLL('libcublas.so.12')
+                                cuda_libs_ok = True
+                            except OSError:
+                                pass
+                            if not cuda_libs_ok:
+                                try:
+                                    import importlib.util
+                                    if importlib.util.find_spec('nvidia.cublas') is not None:
+                                        cuda_libs_ok = True
+                                except Exception:
+                                    pass
+                            if cuda_libs_ok:
+                                device = 'cuda'
+                                # Preload pip-installed nvidia CUDA libs with RTLD_GLOBAL so
+                                # CTranslate2 can find them at inference time.
+                                # LD_LIBRARY_PATH alone is unreliable because the dynamic linker
+                                # may cache search paths at process startup. Preloading by full
+                                # path registers the library under its SONAME in the linker table,
+                                # so any subsequent dlopen("libcublas.so.12") finds it already loaded.
+                                try:
+                                    import ctypes as _ctypes
+                                    import glob as _glob
+                                    import site as _site
+                                    _site_dirs = []
+                                    try:
+                                        _site_dirs.extend(_site.getsitepackages())
+                                    except Exception:
+                                        pass
+                                    try:
+                                        _site_dirs.append(_site.getusersitepackages())
+                                    except Exception:
+                                        pass
+                                    _preloaded = []
+                                    for _sd in _site_dirs:
+                                        for _pkg, _soname in [('cublas', 'libcublas.so.12'), ('cudnn', 'libcudnn.so.9')]:
+                                            _lib_dir = os.path.join(_sd, 'nvidia', _pkg, 'lib')
+                                            if not os.path.isdir(_lib_dir):
+                                                continue
+                                            # Also add to LD_LIBRARY_PATH as belt-and-suspenders
+                                            _ld = os.environ.get('LD_LIBRARY_PATH', '')
+                                            if _lib_dir not in _ld:
+                                                os.environ['LD_LIBRARY_PATH'] = f"{_lib_dir}:{_ld}" if _ld else _lib_dir
+                                            # Preload: try exact soname, then versioned variants
+                                            _candidates = (
+                                                [os.path.join(_lib_dir, _soname)]
+                                                + sorted(_glob.glob(os.path.join(_lib_dir, _soname + '.*')))
+                                            )
+                                            for _lib_path in _candidates:
+                                                if os.path.exists(_lib_path):
+                                                    try:
+                                                        _ctypes.CDLL(_lib_path, _ctypes.RTLD_GLOBAL)
+                                                        _preloaded.append(os.path.basename(_lib_path))
+                                                        break
+                                                    except OSError:
+                                                        continue
+                                    if _preloaded:
+                                        print(f'[BACKEND] Preloaded CUDA libs: {", ".join(_preloaded)}', flush=True)
+                                except Exception as _e:
+                                    print(f'[WARN] Could not preload CUDA libs: {_e}', flush=True)
+                            else:
+                                print('[WARN] NVIDIA GPU detected but CUDA libraries not found.', flush=True)
+                                print('[WARN] Re-run: hyprwhspr setup (select faster-whisper) to install CUDA libs.', flush=True)
+                                print('[WARN] Falling back to CPU.', flush=True)
                     except Exception:
-                        device = 'cpu'
+                        pass
 
                 # Resolve 'auto' compute_type
                 if compute_type == 'auto':
@@ -1099,27 +1171,99 @@ class WhisperManager:
                 result = ' '.join(seg.text for seg in segments).strip()
                 self._last_use_time = time.monotonic()
                 return result
+            except RuntimeError as e:
+                if 'cannot be loaded' in str(e) or 'not found' in str(e):
+                    print(f'[WARN] CUDA library unavailable ({e}), falling back to CPU', flush=True)
+                    if self._reinitialize_faster_whisper(force_cpu=True):
+                        try:
+                            segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
+                            result = ' '.join(seg.text for seg in segments).strip()
+                            self._last_use_time = time.monotonic()
+                            return result
+                        except Exception as retry_e:
+                            print(f'[ERROR] faster-whisper CPU fallback failed: {retry_e}', flush=True)
+                    return ''
+                print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
+                import traceback
+                traceback.print_exc()
+                return ''
             except Exception as e:
                 print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
                 import traceback
                 traceback.print_exc()
                 return ''
 
-    def _reinitialize_faster_whisper(self) -> bool:
-        """Reinitialize faster-whisper model after suspend/resume."""
+    def _reinitialize_faster_whisper(self, force_cpu: bool = False) -> bool:
+        """Reinitialize faster-whisper model after suspend/resume or CUDA library failure."""
         try:
             from faster_whisper import WhisperModel
             model_name = self.config.get_setting('faster_whisper_model', 'base')
-            device = self.config.get_setting('faster_whisper_device', 'auto')
-            compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
-            if device == 'auto':
-                try:
-                    import ctranslate2
-                    device = 'cuda' if ctranslate2.get_cuda_device_count() > 0 else 'cpu'
-                except Exception:
+            if force_cpu:
+                device = 'cpu'
+                compute_type = 'float32'
+                print('[MODEL] Reinitializing faster-whisper on CPU (CUDA libraries unavailable)', flush=True)
+            else:
+                device = self.config.get_setting('faster_whisper_device', 'auto')
+                compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
+                if device == 'auto':
                     device = 'cpu'
-            if compute_type == 'auto':
-                compute_type = 'int8' if device == 'cuda' else 'float32'
+                    try:
+                        import ctranslate2
+                        if ctranslate2.get_cuda_device_count() > 0:
+                            cuda_libs_ok = False
+                            try:
+                                import ctypes
+                                ctypes.CDLL('libcublas.so.12')
+                                cuda_libs_ok = True
+                            except OSError:
+                                pass
+                            if not cuda_libs_ok:
+                                try:
+                                    import importlib.util
+                                    if importlib.util.find_spec('nvidia.cublas') is not None:
+                                        cuda_libs_ok = True
+                                except Exception:
+                                    pass
+                            if cuda_libs_ok:
+                                device = 'cuda'
+                                try:
+                                    import ctypes as _ctypes
+                                    import glob as _glob
+                                    import site as _site
+                                    _site_dirs = []
+                                    try:
+                                        _site_dirs.extend(_site.getsitepackages())
+                                    except Exception:
+                                        pass
+                                    try:
+                                        _site_dirs.append(_site.getusersitepackages())
+                                    except Exception:
+                                        pass
+                                    for _sd in _site_dirs:
+                                        for _pkg, _soname in [('cublas', 'libcublas.so.12'), ('cudnn', 'libcudnn.so.9')]:
+                                            _lib_dir = os.path.join(_sd, 'nvidia', _pkg, 'lib')
+                                            if not os.path.isdir(_lib_dir):
+                                                continue
+                                            _ld = os.environ.get('LD_LIBRARY_PATH', '')
+                                            if _lib_dir not in _ld:
+                                                os.environ['LD_LIBRARY_PATH'] = f"{_lib_dir}:{_ld}" if _ld else _lib_dir
+                                            _candidates = (
+                                                [os.path.join(_lib_dir, _soname)]
+                                                + sorted(_glob.glob(os.path.join(_lib_dir, _soname + '.*')))
+                                            )
+                                            for _lib_path in _candidates:
+                                                if os.path.exists(_lib_path):
+                                                    try:
+                                                        _ctypes.CDLL(_lib_path, _ctypes.RTLD_GLOBAL)
+                                                        break
+                                                    except OSError:
+                                                        continue
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                if compute_type == 'auto':
+                    compute_type = 'int8' if device == 'cuda' else 'float32'
             self._faster_whisper_model = WhisperModel(model_name, device=device, compute_type=compute_type)
             self._last_use_time = time.monotonic()
             return True
