@@ -393,7 +393,7 @@ Run `hyprwhspr setup` and select **[4] faster-whisper** to install.
 | `large-v3-turbo` | ~1.6 GB | **Recommended for CUDA** |
 | `distil-large-v3` | ~1.5 GB | Distilled, CPU/GPU balance |
 
-Models are downloaded automatically from HuggingFace on first load, or via:
+Models are downloaded during setup or via:
 
 ```bash
 hyprwhspr model download large-v3-turbo
@@ -403,48 +403,41 @@ Models stored in: `~/.cache/huggingface/hub/`
 
 #### whisper.cpp via pywhispercpp
 
-Default multi-lingual model installed: `ggml-base.bin` (~175MB) to `~/.local/share/pywhispercpp/models/`
+**Best for:**
 
-#### GPU acceleration
+Fastest, the top choice for modern Nvidia cards or discrete AMD use (via Vulkan).
 
-NVIDIA (CUDA) and AMD/Intel (Vulkan) are detected automatically; pywhispercpp will use GPU when selected.
+#### Available models (GGML format)
 
-CPU performance options - improve CPU transcription speed:
+Models stored in: `~/.local/share/pywhispercpp/models/`
 
-```jsonc
-{
-    "threads": 4            // thread count for whisper cpu processing
-}
-```
+| Model | Size | Notes |
+|-------|------|-------|
+| `tiny` / `tiny.en` | ~75 MB | Fastest |
+| `base` / `base.en` | ~148 MB | Recommended (default) |
+| `small` / `small.en` | ~488 MB | Better accuracy |
+| `medium` / `medium.en` | ~1.5 GB | High accuracy |
+| `large-v3` | ~2.9 GB | Best accuracy, **requires GPU** |
+| `large-v3-turbo` | ~1.6 GB | Fast + accurate, **requires GPU** |
 
-#### Available models
+`.en` variants are English-only — smaller and faster for English-only speakers.
 
-- **`tiny`** - Fastest, good for real-time dictation
-- **`base`** - Best balance of speed/accuracy (recommended)
-- **`small`** - Better accuracy, still fast
-- **`medium`** - High accuracy, slower processing
-- **`large`** - Best accuracy, **requires GPU acceleration** for reasonable speed
-- **`large-v3`** - Latest large model, **requires GPU acceleration** for reasonable speed
+> **GPU required:** `large-v3` and `large-v3-turbo` require GPU acceleration for reasonable speed.
 
-> **GPU required:** Models `large` and `large-v3` require GPU acceleration to perform. 
+`hyprwhspr model` commands route to the active backend automatically:
 
 ```bash
-# List available models
 hyprwhspr model list
-
-# Download a model
 hyprwhspr model download base
 hyprwhspr model download small.en
-
-# Check what's installed
 hyprwhspr model status
 ```
 
-Update config after downloading:
+Set model in config (pywhispercpp only — faster-whisper uses `faster_whisper_model`):
 
 ```jsonc
 {
-    "model": "small.en" // Or just small if multi-lingual model. If both available, general model is chosen.
+    "model": "small.en"  // .en = English-only; omit suffix for multilingual
 }
 ```
 
@@ -935,13 +928,13 @@ Install `ffplay` (ffmpeg) or ensure `paplay` (pulseaudio-utils) or `pw-play` (pi
 #### Model not found
 
 ```bash
-# Check installed models (pywhispercpp backend)
+# Check installed models (routes to active backend)
 hyprwhspr model status
 
 # Download a model
-hyprwhspr model download base.en
+hyprwhspr model download base
 
-# Verify model path in config
+# Verify model in config
 cat ~/.config/hyprwhspr/config.json | grep model
 ```
 
