@@ -3079,18 +3079,23 @@ def list_faster_whisper_models():
 
 
 def download_faster_whisper_model(model_name: str = 'base'):
-    """Download a faster-whisper model by instantiating it (triggers HuggingFace download)"""
+    """Download a faster-whisper model via the venv Python (triggers HuggingFace download)"""
     log_info(f"Downloading faster-whisper model: {model_name}")
     print("Models are fetched from HuggingFace. This may take a while for large models.")
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        log_error("faster-whisper not installed. Run: hyprwhspr setup and select faster-whisper")
+
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        log_error("faster-whisper venv not found. Run: hyprwhspr setup and select faster-whisper")
         return False
 
+    download_script = (
+        'from faster_whisper import WhisperModel; '
+        f'print("Downloading {model_name}...", flush=True); '
+        f'WhisperModel("{model_name}", device="cpu", compute_type="float32"); '
+        'print("Download complete", flush=True)'
+    )
     try:
-        print(f"Loading {model_name} on CPU (float32) to trigger download...", flush=True)
-        WhisperModel(model_name, device='cpu', compute_type='float32')
+        run_command([str(venv_python), '-c', download_script], check=True)
         log_success(f"Model '{model_name}' downloaded successfully.")
         print("Storage: ~/.cache/huggingface/hub/")
         return True
