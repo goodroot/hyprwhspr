@@ -2312,8 +2312,6 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
 
             set_install_state('completed')
             log_success("faster-whisper backend installation completed!")
-            log_info("The model will be downloaded automatically on first use.")
-            log_info("Or run: hyprwhspr model download <model-name>")
             return True
 
         elif backend_type == 'onnx-asr':
