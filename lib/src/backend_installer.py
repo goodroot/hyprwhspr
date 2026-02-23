@@ -2008,6 +2008,20 @@ def install_onnx_asr(pip_bin: Path, enable_gpu: bool = False) -> bool:
             return False
 
 
+# ==================== faster-whisper Installation ====================
+
+def install_faster_whisper(pip_bin: Path) -> bool:
+    """Install faster-whisper into the main venv."""
+    log_info("Installing faster-whisper...")
+    try:
+        run_command([str(pip_bin), 'install', 'faster-whisper'], check=True)
+        log_success("faster-whisper installed")
+        return True
+    except subprocess.CalledProcessError as e:
+        log_error(f"Failed to install faster-whisper: {e}")
+        return False
+
+
 # ==================== Parallel Installation Helpers ====================
 
 def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False,
@@ -2159,7 +2173,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         log_warning("To fix: mise deactivate (or: mise unuse -g python)")
 
     # Validate backend type
-    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr']:
+    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr', 'faster-whisper']:
         error_msg = f"Invalid backend type: {backend_type}"
         log_error(error_msg)
         set_install_state('failed', error_msg)
@@ -2227,6 +2241,46 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             set_install_state('completed')
             log_success("Parakeet backend installation completed!")
             return True
+        elif backend_type == 'faster-whisper':
+            # faster-whisper uses main venv with faster-whisper package
+            venv_existed = VENV_DIR.exists()
+            pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
+            if (force_rebuild or not venv_existed) and VENV_DIR.exists():
+                created_items['venv_created'] = True
+                created_items['venv_path'] = str(VENV_DIR)
+
+            # Install base requirements first
+            requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
+            log_info("Installing base dependencies...")
+            try:
+                run_command([str(pip_bin), 'install', '-r', str(requirements_file)], check=True)
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Failed to install base dependencies: {e}"
+                log_error(error_msg)
+                if cleanup_on_failure:
+                    log_info("Cleaning up partial installation...")
+                    _cleanup_partial_installation(created_items, pip_bin)
+                set_install_state('failed', error_msg)
+                return False
+
+            if not install_faster_whisper(pip_bin):
+                error_msg = "Failed to install faster-whisper"
+                log_error(error_msg)
+                if cleanup_on_failure:
+                    log_info("Cleaning up partial installation...")
+                    _cleanup_partial_installation(created_items, pip_bin)
+                set_install_state('failed', error_msg)
+                return False
+
+            cur_req_hash = compute_file_hash(requirements_file)
+            set_state("requirements_hash", cur_req_hash)
+
+            set_install_state('completed')
+            log_success("faster-whisper backend installation completed!")
+            log_info("The model will be downloaded automatically on first use.")
+            log_info("Or run: hyprwhspr model download <model-name>")
+            return True
+
         elif backend_type == 'onnx-asr':
             # ONNX-ASR uses main venv with onnx-asr package
             # Setup main venv

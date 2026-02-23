@@ -79,6 +79,11 @@ class ConfigManager:
             'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
             'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
             'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
+            # faster-whisper backend settings (CTranslate2, NVIDIA CUDA)
+            'faster_whisper_model': 'base',          # Model name (e.g., 'base', 'small', 'large-v3-turbo')
+            'faster_whisper_device': 'auto',         # 'auto' | 'cuda' | 'cpu'
+            'faster_whisper_compute_type': 'auto',   # 'auto' → int8 on cuda, float32 on cpu
+            'faster_whisper_vad_filter': True,       # Enable Silero VAD (strips silence, reduces hallucinations)
             # Audio feedback settings
             'audio_feedback': False,             # Play sounds on recording start/stop/error
             'audio_volume': 1.0,                 # Master audio feedback volume (0.0-1.0)

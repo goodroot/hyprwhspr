@@ -157,7 +157,7 @@
     },
     "transcription_backend": {
       "type": "string",
-      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr"],
+      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "faster-whisper"],
       "default": "pywhispercpp",
       "description": "Transcription backend to use"
     },
@@ -248,6 +248,28 @@
       "type": "boolean",
       "default": true,
       "description": "Use Voice Activity Detection for long recordings (>30s)"
+    },
+    "faster_whisper_model": {
+      "type": "string",
+      "default": "base",
+      "description": "Model name for faster-whisper backend (e.g., 'base', 'large-v3-turbo')"
+    },
+    "faster_whisper_device": {
+      "type": "string",
+      "enum": ["auto", "cuda", "cpu"],
+      "default": "auto",
+      "description": "'auto' detects CUDA; falls back to CPU. Set explicitly if needed."
+    },
+    "faster_whisper_compute_type": {
+      "type": "string",
+      "enum": ["auto", "int8", "float16", "int8_float16", "float32"],
+      "default": "auto",
+      "description": "'auto' uses int8 on CUDA, float32 on CPU. Set to 'int8' explicitly on CPU for faster inference at some accuracy cost."
+    },
+    "faster_whisper_vad_filter": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable built-in Silero VAD to strip silence and reduce hallucination loops"
     },
     "audio_feedback": {
       "type": "boolean",

@@ -34,4 +34,5 @@ BACKEND_DISPLAY_NAMES = {
     'nvidia': 'Whisper NVIDIA (CUDA)',
     'amd': 'Whisper AMD/Intel (Vulkan)',
     'vulkan': 'Whisper AMD/Intel (Vulkan)',
+    'faster-whisper': 'faster-whisper (CTranslate2, CPU/CUDA)',
 }

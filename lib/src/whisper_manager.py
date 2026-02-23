@@ -66,6 +66,9 @@ class WhisperManager:
         # ONNX-ASR model (CPU-optimized)
         self._onnx_asr_model = None
 
+        # faster-whisper model (CTranslate2)
+        self._faster_whisper_model = None
+
         # Thread safety for model operations
         self._model_lock = threading.Lock()
 
@@ -151,6 +154,45 @@ class WhisperManager:
                 # onnx-asr doesn't use current_model in the same way
                 self.current_model = None
                 self.ready = True
+                return True
+
+            # Configure faster-whisper backend (CTranslate2, CUDA INT8)
+            if backend == 'faster-whisper':
+                try:
+                    from faster_whisper import WhisperModel
+                except ImportError:
+                    print('ERROR: faster-whisper not installed. Run: hyprwhspr setup and select faster-whisper', flush=True)
+                    return False
+
+                model_name = self.config.get_setting('faster_whisper_model', 'base')
+                device = self.config.get_setting('faster_whisper_device', 'auto')
+                compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
+
+                # Resolve 'auto' device
+                if device == 'auto':
+                    try:
+                        import ctranslate2
+                        device = 'cuda' if ctranslate2.get_cuda_device_count() > 0 else 'cpu'
+                    except Exception:
+                        device = 'cpu'
+
+                # Resolve 'auto' compute_type
+                if compute_type == 'auto':
+                    compute_type = 'int8' if device == 'cuda' else 'float32'
+
+                try:
+                    print(f'[BACKEND] Loading faster-whisper model: {model_name} (device={device}, compute_type={compute_type})', flush=True)
+                    self._faster_whisper_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+                    print(f'[BACKEND] faster-whisper ready (model={model_name}, device={device}, compute_type={compute_type})', flush=True)
+                except Exception as e:
+                    print(f'ERROR: Failed to load faster-whisper model: {e}', flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    return False
+
+                self.current_model = model_name
+                self.ready = True
+                self._last_use_time = time.monotonic()
                 return True
 
             # Configure Realtime WebSocket backend
@@ -1024,6 +1066,67 @@ class WhisperManager:
             traceback.print_exc()
             return ""
 
+    def _transcribe_faster_whisper(self, audio_data: np.ndarray, sample_rate: int = 16000,
+                                    language_override: Optional[str] = None) -> str:
+        """Transcribe using faster-whisper (CTranslate2)."""
+        if self._faster_whisper_model is None:
+            print('[ERROR] faster-whisper model not initialized', flush=True)
+            return ''
+
+        language = language_override if language_override is not None else self.config.get_setting('language', None)
+        whisper_prompt = self.config.get_setting('whisper_prompt', None)
+        vad_filter = self.config.get_setting('faster_whisper_vad_filter', True)
+
+        with self._model_lock:
+            current_time = time.monotonic()
+            time_since_last_use = current_time - self._last_use_time
+            if time_since_last_use > 300 and self._last_use_time > 0:
+                print('[MODEL] Long idle detected - reinitializing faster-whisper model', flush=True)
+                if not self._reinitialize_faster_whisper():
+                    return ''
+
+            try:
+                transcribe_kwargs = {
+                    'vad_filter': vad_filter,
+                    'beam_size': 5,
+                }
+                if language:
+                    transcribe_kwargs['language'] = language
+                if whisper_prompt:
+                    transcribe_kwargs['initial_prompt'] = whisper_prompt
+
+                segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
+                result = ' '.join(seg.text for seg in segments).strip()
+                self._last_use_time = time.monotonic()
+                return result
+            except Exception as e:
+                print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
+                import traceback
+                traceback.print_exc()
+                return ''
+
+    def _reinitialize_faster_whisper(self) -> bool:
+        """Reinitialize faster-whisper model after suspend/resume."""
+        try:
+            from faster_whisper import WhisperModel
+            model_name = self.config.get_setting('faster_whisper_model', 'base')
+            device = self.config.get_setting('faster_whisper_device', 'auto')
+            compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
+            if device == 'auto':
+                try:
+                    import ctranslate2
+                    device = 'cuda' if ctranslate2.get_cuda_device_count() > 0 else 'cpu'
+                except Exception:
+                    device = 'cpu'
+            if compute_type == 'auto':
+                compute_type = 'int8' if device == 'cuda' else 'float32'
+            self._faster_whisper_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            self._last_use_time = time.monotonic()
+            return True
+        except Exception as e:
+            print(f'[ERROR] faster-whisper reinitialization failed: {e}', flush=True)
+            return False
+
     def get_realtime_streaming_callback(self) -> Optional[Callable]:
         """
         Get the streaming callback for realtime-ws backend.
@@ -1185,6 +1288,9 @@ class WhisperManager:
         if backend == 'onnx-asr':
             # Use ONNX-ASR transcription (CPU-optimized)
             return self._transcribe_onnx_asr(audio_data, sample_rate)
+
+        if backend == 'faster-whisper':
+            return self._transcribe_faster_whisper(audio_data, sample_rate, language_override=language_override)
 
         # Use model lock to prevent concurrent transcription calls
         # This prevents crashes from concurrent access to the whisper model

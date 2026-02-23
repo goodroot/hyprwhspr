@@ -231,6 +231,9 @@ systemctl --user restart hyprwhspr
 
 ## Transcription backends
 
+Local backends (Parakeet + Whisper) are documented in the **Models** section below.
+Cloud / network backends are documented here.
+
 ### REST API
 
 Use any ASR backend via HTTP API (local or cloud).
@@ -339,7 +342,66 @@ Also great for GPUs.
 
 Select Parakeet V3 within `hyprwhspr setup`.
 
-### Whisper (OpenAI)
+### Whisper (local)
+
+Two local Whisper backends are available:
+
+- **`faster-whisper`**: CTranslate2 + Silero VAD (CPU or NVIDIA CUDA)
+- **`pywhispercpp`**: whisper.cpp models (`cpu` / `nvidia` / `vulkan` builds)
+
+#### faster-whisper (CTranslate2)
+
+Local Whisper via [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
+
+**Best for:** 
+
+CPU users who want faster inference than whisper.cpp, or NVIDIA GPU users
+where VRAM is constrained. 
+
+INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for
+float16. 
+
+AMD/Intel GPU users should use Parakeet or Whisper (Vulkan) instead — CTranslate2
+does not support Vulkan or ROCm.
+
+Built-in Silero VAD strips silence before inference — the most effective
+mitigation for Whisper's hallucination loops on longer recordings.
+
+```jsonc
+{
+    "transcription_backend": "faster-whisper",
+    "faster_whisper_model": "large-v3-turbo",   // CUDA; use "base" or "small" for CPU
+    "faster_whisper_device": "auto",             // auto | cuda | cpu
+    "faster_whisper_compute_type": "auto",       // auto → int8 on cuda, float32 on cpu; set "int8" on cpu for speed
+    "faster_whisper_vad_filter": true            // Silero VAD (default: true)
+}
+```
+
+##### Installation
+
+Run `hyprwhspr setup` and select **[4] faster-whisper** to install.
+
+##### Available models
+
+| Model | Size (INT8) | Notes |
+|-------|-------------|-------|
+| `tiny` | ~75 MB | Fastest |
+| `base` | ~145 MB | Recommended for CPU |
+| `small` | ~484 MB | Better accuracy |
+| `medium` | ~1.5 GB | High accuracy |
+| `large-v3` | ~3.1 GB | Best accuracy (needs GPU) |
+| `large-v3-turbo` | ~1.6 GB | **Recommended for CUDA** |
+| `distil-large-v3` | ~1.5 GB | Distilled, CPU/GPU balance |
+
+Models are downloaded automatically from HuggingFace on first load, or via:
+
+```bash
+hyprwhspr model download large-v3-turbo
+```
+
+Models stored in: `~/.cache/huggingface/hub/`
+
+#### whisper.cpp via pywhispercpp
 
 Default multi-lingual model installed: `ggml-base.bin` (~175MB) to `~/.local/share/pywhispercpp/models/`
 
@@ -367,27 +429,15 @@ CPU performance options - improve CPU transcription speed:
 > **GPU required:** Models `large` and `large-v3` require GPU acceleration to perform. 
 
 ```bash
-cd ~/.local/share/pywhispercpp/models/
+# List available models
+hyprwhspr model list
 
-# Tiny models (fastest, least accurate)
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+# Download a model
+hyprwhspr model download base
+hyprwhspr model download small.en
 
-# Base models (good balance)
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
-
-# Small models (better accuracy)
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
-
-# Medium models (high accuracy)
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
-
-# Large models (best accuracy, requires GPU)
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large.bin
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
+# Check what's installed
+hyprwhspr model status
 ```
 
 Update config after downloading:
@@ -885,12 +935,11 @@ Install `ffplay` (ffmpeg) or ensure `paplay` (pulseaudio-utils) or `pw-play` (pi
 #### Model not found
 
 ```bash
-# Check if model exists
-ls -la ~/.local/share/pywhispercpp/models/
+# Check installed models (pywhispercpp backend)
+hyprwhspr model status
 
-# Download a different model
-cd ~/.local/share/pywhispercpp/models/
-wget https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+# Download a model
+hyprwhspr model download base.en
 
 # Verify model path in config
 cat ~/.config/hyprwhspr/config.json | grep model

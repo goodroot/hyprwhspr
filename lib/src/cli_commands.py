@@ -486,6 +486,22 @@ def _detect_current_backend() -> Optional[str]:
                 except Exception:
                     pass
             # onnx-asr configured but not installed - fall through to return None
+        if backend == 'faster-whisper':
+            # Verify faster-whisper is actually installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'import faster_whisper; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'faster-whisper'
+                except Exception:
+                    pass
+            # faster-whisper configured but not installed - fall through to return None
         if backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']:
             # Verify it's actually installed in venv
             venv_python = VENV_DIR / 'bin' / 'python'
@@ -586,6 +602,21 @@ def _cleanup_backend(backend_type: str) -> bool:
             log_warning(f"Cleanup warning: {e}")
             return True  # Don't fail on cleanup errors
 
+    if backend_type == 'faster-whisper':
+        log_info("Cleaning up faster-whisper backend...")
+        pip_bin = VENV_DIR / 'bin' / 'pip'
+        if pip_bin.exists():
+            try:
+                subprocess.run(
+                    [str(pip_bin), 'uninstall', '-y', 'faster-whisper'],
+                    check=False,
+                    capture_output=True
+                )
+                log_success("faster-whisper backend cleaned up")
+            except Exception as e:
+                log_warning(f"Cleanup warning: {e}")
+        return True
+
     if backend_type in ['rest-api', 'remote']:
         # REST API doesn't have venv, nothing to clean
         return True
@@ -630,26 +661,28 @@ def _prompt_backend_selection():
     print("\nChoose your transcription backend:")
     print()
     print("Local In-Memory Backends:")
-    print("  [1] Parakeet TDT V3   - Solid performance for most people (Autodetects CPU/GPU)")
-    print("  [2] Whisper (CPU)     - whisper.cpp, works everywhere")
-    print("  [3] Whisper (NVIDIA)  - whisper.cpp + CUDA, perfect for NVIDIA GPUs")
-    print("  [4] Whisper (Vulkan)  - whisper.cpp + Vulkan, AMD/Intel GPUs")
+    print("  [1] Parakeet TDT V3       - Solid performance for most people (Autodetects CPU/GPU)")
+    print("  [2] Whisper (CPU)         - whisper.cpp, works everywhere")
+    print("  [3] Whisper (NVIDIA)      - whisper.cpp + CUDA, perfect for NVIDIA GPUs")
+    print("  [4] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
+    print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, AMD/Intel GPUs")
     print()
     print("Cloud/REST Backends:")
-    print("  [5] REST API          - OpenAI, Groq, or custom endpoint")
-    print("  [6] Realtime WS       - Low-latency streaming (experimental)")
+    print("  [6] REST API              - OpenAI, Groq, or custom endpoint")
+    print("  [7] Realtime WS           - Low-latency streaming (experimental)")
     print()
 
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7'], default='1')
             backend_map = {
                 '1': 'onnx-asr',
                 '2': 'cpu',
                 '3': 'nvidia',
-                '4': 'vulkan',
-                '5': 'rest-api',
-                '6': 'realtime-ws'
+                '4': 'faster-whisper',
+                '5': 'vulkan',
+                '6': 'rest-api',
+                '7': 'realtime-ws'
             }
             selected = backend_map[choice]
 
@@ -658,6 +691,7 @@ def _prompt_backend_selection():
                 'onnx-asr': 'Parakeet TDT V3 (onnx-asr)',
                 'cpu': 'Whisper CPU',
                 'nvidia': 'Whisper NVIDIA (CUDA)',
+                'faster-whisper': 'faster-whisper (CTranslate2)',
                 'amd': 'Whisper AMD/Intel (Vulkan)',
                 'vulkan': 'Whisper AMD/Intel (Vulkan)',
                 'rest-api': 'REST API',
@@ -684,8 +718,8 @@ def _prompt_backend_selection():
                     return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
 
             # If re-selecting same backend, offer reinstall option
-            # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr
-            local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr']
+            # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr, faster-whisper
+            local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper']
             if current_backend == selected and selected in local_install_backends:
                 print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
@@ -1247,6 +1281,12 @@ def setup_command(python_path: Optional[str] = None):
                 print("This backend automatically detects and uses GPU acceleration when available,")
                 print("or falls back to CPU-optimized mode. Uses ONNX runtime for fast transcription.")
                 print("This may take several minutes as it downloads models and dependencies.")
+            elif backend_normalized == 'faster-whisper':
+                print("\nThis will install the faster-whisper backend (CTranslate2).")
+                print("Works on CPU and NVIDIA GPUs. INT8 quantization is fast and memory-efficient.")
+                print("On NVIDIA: large-v3-turbo runs in ~3.1 GB VRAM. On CPU: INT8 is faster than pywhispercpp.")
+                print("Built-in Silero VAD reduces hallucination loops on longer recordings.")
+                print("Models are downloaded automatically on first use.")
             else:
                 print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
@@ -1441,9 +1481,9 @@ def setup_command(python_path: Optional[str] = None):
             log_info("Base Python dependencies up to date")
     
     # Step 2: Model selection for local backends (always prompt, regardless of install/reinstall)
-    if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr']:
+    if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper']:
         # Local backend - prompt for model selection
-        # Note: ONNX-ASR doesn't use Whisper models, it has its own models
+        # Note: ONNX-ASR and faster-whisper don't use Whisper.cpp models
         selected_model = _prompt_model_selection()
     
     # Step 3: Waybar integration
@@ -2847,14 +2887,27 @@ def mic_osd_status():
 
 def model_command(action: str, model_name: str = 'base'):
     """Handle model subcommands"""
-    if action == 'download':
-        download_model(model_name)
-    elif action == 'list':
-        list_models()
-    elif action == 'status':
-        model_status()
+    config = ConfigManager()
+    backend = normalize_backend(config.get_setting('transcription_backend', 'pywhispercpp'))
+
+    if backend == 'faster-whisper':
+        if action == 'download':
+            download_faster_whisper_model(model_name)
+        elif action == 'list':
+            list_faster_whisper_models()
+        elif action == 'status':
+            faster_whisper_model_status()
+        else:
+            log_error(f"Unknown model action: {action}")
     else:
-        log_error(f"Unknown model action: {action}")
+        if action == 'download':
+            download_model(model_name)
+        elif action == 'list':
+            list_models()
+        elif action == 'status':
+            model_status()
+        else:
+            log_error(f"Unknown model action: {action}")
 
 
 def download_model(model_name: str = 'base'):
@@ -2955,6 +3008,81 @@ def model_status():
     for model in sorted(models):
         size = model.stat().st_size / (1024 * 1024)  # MB
         print(f"  - {model.name} ({size:.1f} MB)")
+
+
+# ==================== faster-whisper Model Commands ====================
+
+FASTER_WHISPER_MODELS = [
+    ('tiny',            '~75 MB',   'Fastest, lowest accuracy'),
+    ('base',            '~145 MB',  'Good balance (recommended for CPU)'),
+    ('small',           '~484 MB',  'Better accuracy, still fast'),
+    ('medium',          '~1.5 GB',  'High accuracy'),
+    ('large-v3',        '~3.1 GB',  'Best accuracy (INT8 on GPU ~3.1 GB VRAM)'),
+    ('large-v3-turbo',  '~1.6 GB',  'Fast + accurate, recommended for NVIDIA GPUs'),
+    ('distil-large-v3', '~1.5 GB',  'Distilled large-v3, great CPU/GPU balance'),
+]
+
+
+def list_faster_whisper_models():
+    """List available faster-whisper models"""
+    print("Available faster-whisper models:\n")
+    print(f"  {'Model':<22} {'Size (INT8)':<12} Notes")
+    print(f"  {'-'*22} {'-'*12} {'-'*35}")
+    for model_name, size, notes in FASTER_WHISPER_MODELS:
+        print(f"  {model_name:<22} {size:<12} {notes}")
+    print()
+    print("Models are downloaded automatically from HuggingFace on first load.")
+    print("Storage: ~/.cache/huggingface/hub/")
+    print()
+    print("To download a model manually:")
+    print("  hyprwhspr model download large-v3-turbo")
+
+
+def download_faster_whisper_model(model_name: str = 'base'):
+    """Download a faster-whisper model by instantiating it (triggers HuggingFace download)"""
+    log_info(f"Downloading faster-whisper model: {model_name}")
+    print("Models are fetched from HuggingFace. This may take a while for large models.")
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        log_error("faster-whisper not installed. Run: hyprwhspr setup and select faster-whisper")
+        return False
+
+    try:
+        print(f"Loading {model_name} on CPU (float32) to trigger download...", flush=True)
+        WhisperModel(model_name, device='cpu', compute_type='float32')
+        log_success(f"Model '{model_name}' downloaded successfully.")
+        print("Storage: ~/.cache/huggingface/hub/")
+        return True
+    except Exception as e:
+        log_error(f"Failed to download model '{model_name}': {e}")
+        return False
+
+
+def faster_whisper_model_status():
+    """Report which faster-whisper models are installed"""
+    hf_hub_dir = Path.home() / '.cache' / 'huggingface' / 'hub'
+    if not hf_hub_dir.exists():
+        log_warning("HuggingFace cache directory does not exist (~/.cache/huggingface/hub/)")
+        log_warning("No faster-whisper models downloaded yet.")
+        return
+
+    model_dirs = sorted(hf_hub_dir.glob('models--Systran--faster-whisper-*'))
+    if not model_dirs:
+        log_warning("No faster-whisper models found in ~/.cache/huggingface/hub/")
+        return
+
+    print("Installed faster-whisper models:")
+    for model_dir in model_dirs:
+        model_name = model_dir.name.replace('models--Systran--faster-whisper-', '')
+        # Calculate total size
+        total_bytes = sum(f.stat().st_size for f in model_dir.rglob('*') if f.is_file())
+        size_mb = total_bytes / (1024 * 1024)
+        if size_mb >= 1024:
+            size_str = f"{size_mb / 1024:.1f} GB"
+        else:
+            size_str = f"{size_mb:.0f} MB"
+        print(f"  - {model_name} ({size_str})")
 
 
 # ==================== Status Command ====================
@@ -3162,6 +3290,8 @@ def backend_repair_command():
     # Determine which module to check based on backend
     if configured_backend == 'onnx-asr':
         backend_module = 'onnx_asr'
+    elif configured_backend == 'faster-whisper':
+        backend_module = 'faster_whisper'
     elif configured_backend in ['cpu', 'nvidia', 'vulkan', 'amd', 'pywhispercpp']:
         backend_module = 'pywhispercpp'
     # For rest-api, realtime-ws, parakeet - no local module to check
@@ -3778,6 +3908,17 @@ def test_command(live: bool = False, mic_only: bool = False):
             backend_ready = True
         except ImportError:
             log_error("onnx-asr not installed")
+            all_passed = False
+
+    elif backend == 'faster-whisper':
+        # Test faster-whisper availability
+        try:
+            import faster_whisper  # noqa: F401
+            model_name = config.get_setting('faster_whisper_model', 'base')
+            log_success(f"faster-whisper available, model: {model_name}")
+            backend_ready = True
+        except ImportError:
+            log_error("faster-whisper not installed. Run: hyprwhspr setup")
             all_passed = False
 
     elif backend in ('pywhispercpp', 'nvidia', 'cpu', 'vulkan'):
