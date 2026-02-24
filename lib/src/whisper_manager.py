@@ -1152,7 +1152,7 @@ class WhisperManager:
         with self._model_lock:
             current_time = time.monotonic()
             time_since_last_use = current_time - self._last_use_time
-            if time_since_last_use > 300 and self._last_use_time > 0:
+            if time_since_last_use > 1800 and self._last_use_time > 0:
                 print('[MODEL] Long idle detected - reinitializing faster-whisper model', flush=True)
                 if not self._reinitialize_faster_whisper():
                     return ''
@@ -1445,9 +1445,9 @@ class WhisperManager:
             current_time = time.monotonic()
             time_since_last_use = current_time - self._last_use_time
 
-            # If model hasn't been used in 5+ minutes, likely suspend/resume occurred
+            # If model hasn't been used in 30+ minutes, likely suspend/resume occurred
             # Reinitialize to refresh CUDA context before using stale model
-            if time_since_last_use > 300 and self._last_use_time > 0:
+            if time_since_last_use > 1800 and self._last_use_time > 0:
                 print("[MODEL] Long idle period detected - reinitializing model (suspend/resume likely)", flush=True)
                 if not self._reinitialize_model():
                     print("[MODEL] Reinitialization failed, transcription may fail", flush=True)
