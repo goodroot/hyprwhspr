@@ -280,7 +280,7 @@ class GlobalShortcuts:
                                 processed_paths.add(device.path)
                                 try:
                                     device.close()
-                                except:
+                                except Exception:
                                     pass
                                 continue
                         
@@ -292,7 +292,7 @@ class GlobalShortcuts:
                             for dev in matching_devices:
                                 try:
                                     dev.close()
-                                except:
+                                except Exception:
                                     pass
                             return
                         
@@ -308,7 +308,7 @@ class GlobalShortcuts:
                         for dev in matching_devices[1:]:
                             try:
                                 dev.close()
-                            except:
+                            except Exception:
                                 pass
                         
                         devices = [selected_device]
@@ -318,14 +318,14 @@ class GlobalShortcuts:
                         for dev in matching_devices:
                             try:
                                 dev.close()
-                            except:
+                            except Exception:
                                 pass
                         # Close any remaining unprocessed devices
                         for device in devices:
                             if device.path not in processed_paths:
                                 try:
                                     device.close()
-                                except:
+                                except Exception:
                                     pass
                         raise
                 elif self.selected_device_path:
@@ -579,7 +579,7 @@ class GlobalShortcuts:
             # It ensures cleanup even if flag is cleared early
             try:
                 device.ungrab()
-            except:
+            except Exception:
                 pass  # Device may already be ungrab or closed
             
             # Protect device list modifications with lock to prevent race conditions
@@ -591,7 +591,7 @@ class GlobalShortcuts:
                     del self.device_fds[device.fd]
             
             device.close()
-        except:
+        except Exception:
             pass
     
     # Modifier keys that should never get "stuck" - always pass through releases
@@ -668,7 +668,7 @@ class GlobalShortcuts:
             # Pass through non-key events (like EV_SYN, EV_MSC, etc.)
             try:
                 self.uinput.write(event.type, event.code, event.value)
-            except:
+            except Exception:
                 pass
     
     def _check_shortcut_combination(self):
@@ -816,7 +816,7 @@ class GlobalShortcuts:
                 if self.uinput:
                     try:
                         self.uinput.close()
-                    except:
+                    except Exception:
                         pass
                     self.uinput = None
                 self.devices_grabbed = False
@@ -840,7 +840,7 @@ class GlobalShortcuts:
             for device in self.devices:
                 try:
                     device.ungrab()
-                except:
+                except Exception:
                     pass
             self.devices_grabbed = False
             # Small delay to let kernel release devices before closing
@@ -851,7 +851,7 @@ class GlobalShortcuts:
         if self.uinput:
             try:
                 self.uinput.close()
-            except:
+            except Exception:
                 pass
             self.uinput = None
 
@@ -953,7 +953,7 @@ class GlobalShortcuts:
         """Cleanup when object is destroyed"""
         try:
             self.stop()
-        except:
+        except Exception:
             pass
 
 # Utility functions for key handling

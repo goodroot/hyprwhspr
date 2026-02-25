@@ -224,7 +224,7 @@ class AudioCapture:
                     'sample_rate': self.device_info['default_samplerate']
                 }
             return None
-        except:
+        except Exception:
             return None
     
     def set_device(self, device_id):
@@ -671,7 +671,7 @@ class AudioCapture:
                 try:
                     self.stream.stop()
                     self.stream.close()
-                except:
+                except Exception:
                     pass
                 with self.lock:
                     self.stream = None
@@ -1025,5 +1025,5 @@ class AudioCapture:
                 self.stop_recording()
             if self.is_monitoring:
                 self.stop_monitoring()
-        except:
+        except Exception:
             pass  # Ignore errors during cleanup
