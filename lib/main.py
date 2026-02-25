@@ -1590,7 +1590,7 @@ class hyprwhsprApp:
                 try:
                     if AUDIO_LEVEL_FILE.exists():
                         AUDIO_LEVEL_FILE.unlink()
-                except:
+                except Exception:
                     pass
 
         self.audio_level_thread = threading.Thread(target=monitor_audio_level, daemon=True)

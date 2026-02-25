@@ -1027,7 +1027,7 @@ def detect_gpu_type() -> str:
             try:
                 log_debug("vulkaninfo not found, installing vulkan-tools for detection")
                 run_sudo_command(['pacman', '-S', '--needed', '--noconfirm', 'vulkan-tools'], check=False, verbose=False)
-            except:
+            except Exception:
                 pass
 
     if shutil.which('vulkaninfo'):
