@@ -157,6 +157,9 @@ class hyprwhsprApp:
         self._startup_time = time.monotonic()
         self._startup_grace_period = 5.0  # Ignore hotplug events for 5 seconds after startup
 
+        # Clear stale runtime state from any previous session (crash, SIGKILL, reboot)
+        self._reset_stale_state()
+
         # Set up device hotplug monitoring (for automatic mic recovery)
         self._setup_device_monitor()
 
@@ -1465,6 +1468,39 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[WARN] Failed to write recording status: {e}")
 
+    def _reset_stale_state(self):
+        """Clear runtime state files that may be stale from a previous session.
+
+        If the service was killed (SIGKILL, crash, reboot), state files like
+        recording_status can be left with stale values. This causes problems
+        for external consumers (e.g. 'record toggle' reads recording_status
+        to decide whether to send 'start' or 'stop', and a stale 'true' means
+        toggle always sends 'stop' — so recording never starts).
+        """
+        stale_files = [
+            RECORDING_STATUS_FILE,
+            AUDIO_LEVEL_FILE,
+            MIC_ZERO_VOLUME_FILE,
+            RECOVERY_REQUESTED_FILE,
+            RECOVERY_RESULT_FILE,
+        ]
+        for f in stale_files:
+            try:
+                if f.exists():
+                    f.unlink()
+            except Exception:
+                pass
+
+        # Reset long-form state to IDLE (rather than deleting, since other
+        # components may expect the file to exist with a valid state)
+        try:
+            if LONGFORM_STATE_FILE.exists():
+                content = LONGFORM_STATE_FILE.read_text().strip()
+                if content != 'IDLE':
+                    LONGFORM_STATE_FILE.write_text('IDLE')
+        except Exception:
+            pass
+
     def _show_mic_osd(self):
         """Show mic-osd visualization overlay"""
         # Cancel any pending delayed-hide from a previous recording's _show_result_and_hide
@@ -2133,14 +2169,6 @@ class hyprwhsprApp:
             print("[ERROR] Global shortcuts not initialized!")
             return False
 
-        # Clean up any stale recovery file (tray script no longer creates these)
-        if RECOVERY_REQUESTED_FILE.exists():
-            try:
-                RECOVERY_REQUESTED_FILE.unlink()
-                print("[STARTUP] Removed stale recovery file", flush=True)
-            except Exception:
-                pass
-
         # Start FIFO listener thread for immediate recording control
         if RECORDING_CONTROL_FILE.exists() and RECORDING_CONTROL_FILE.is_fifo():
             self._recording_control_thread = threading.Thread(
@@ -2249,6 +2277,10 @@ class hyprwhsprApp:
 
             # Save configuration
             self.config.save_config()
+
+            # Clear runtime state files so external consumers (tray, CLI)
+            # don't see stale values after shutdown
+            self._reset_stale_state()
 
             print("[CLEANUP] Cleanup completed")
             
