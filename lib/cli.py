@@ -23,6 +23,7 @@ from cli_commands import (
     config_command,
     waybar_command,
     mic_osd_command,
+    tts_osd_command,
     systemd_command,
     model_command,
     status_command,
@@ -104,6 +105,12 @@ def main():
     mic_osd_subparsers.add_parser('enable', help='Enable visualization during recording')
     mic_osd_subparsers.add_parser('disable', help='Disable visualization')
     mic_osd_subparsers.add_parser('status', help='Check mic-osd status')
+
+    # tts-osd command (TTS overlay)
+    tts_osd_parser = subparsers.add_parser('tts-osd', help='TTS reading overlay')
+    tts_osd_subparsers = tts_osd_parser.add_subparsers(dest='tts_osd_action', help='TTS-OSD actions')
+    tts_osd_subparsers.add_parser('restart', help='Restart overlay daemon (pick up design/code changes)')
+    tts_osd_subparsers.add_parser('status', help='Check tts-osd status')
     
     # systemd command
     systemd_parser = subparsers.add_parser('systemd', help='Systemd service management')
@@ -243,6 +250,11 @@ def main():
                 mic_osd_parser.print_help()
                 sys.exit(1)
             mic_osd_command(args.mic_osd_action)
+        elif args.command == 'tts-osd':
+            if not args.tts_osd_action:
+                tts_osd_parser.print_help()
+                sys.exit(1)
+            tts_osd_command(args.tts_osd_action)
         elif args.command == 'systemd':
             if not args.systemd_action:
                 systemd_parser.print_help()

@@ -82,14 +82,20 @@ class TTSOSD:
             self.window = None
 
         load_css()
-        self.window = TTSOSDWindow(self.visualization, self.width, self.height)
+        self.window = TTSOSDWindow(
+            self.visualization, self.width, self.height,
+            on_close=None,  # No close button; use shortcut to cancel
+        )
         app.add_window(self.window)
         self._initial_visibility()
 
     def _run_with_main_loop(self):
         Gtk.init()
         load_css()
-        self.window = TTSOSDWindow(self.visualization, self.width, self.height)
+        self.window = TTSOSDWindow(
+            self.visualization, self.width, self.height,
+            on_close=None,  # No close button; use shortcut to cancel
+        )
         self._initial_visibility()
 
         if self._should_stop:

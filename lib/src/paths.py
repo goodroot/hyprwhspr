@@ -25,6 +25,7 @@ MIC_ZERO_VOLUME_FILE = CONFIG_DIR / '.mic_zero_volume'
 MIC_OSD_PID_FILE = CONFIG_DIR / 'mic_osd.pid'
 TTS_OSD_STATE_FILE = CONFIG_DIR / 'tts_osd_state'  # generating|speaking|success|error
 TTS_OSD_PID_FILE = CONFIG_DIR / 'tts_osd.pid'
+TTS_SPEAK_PID_FILE = CONFIG_DIR / 'tts_speak.pid'  # PID of active speak process (for stop-on-second-press)
 SUSPEND_MARKER_FILE = CONFIG_DIR / '.suspend_marker'
 LOCK_FILE = CONFIG_DIR / 'hyprwhspr.lock'
 VISUALIZER_STATE_FILE = CONFIG_DIR / 'visualizer_state'  # recording|paused|processing|error|success

@@ -2920,93 +2920,157 @@ def mic_osd_command(action: str):
         log_error(f"Unknown mic-osd action: {action}")
 
 
+def tts_osd_command(action: str):
+    """Handle tts-osd subcommands"""
+    try:
+        from .paths import TTS_OSD_PID_FILE
+    except ImportError:
+        from paths import TTS_OSD_PID_FILE
+
+    if action == 'restart':
+        pid_file = TTS_OSD_PID_FILE
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, 15)  # SIGTERM
+                pid_file.unlink(missing_ok=True)
+                log_success("TTS OSD daemon stopped. Next TTS will use the updated design.")
+            except (ValueError, ProcessLookupError, PermissionError, OSError):
+                pid_file.unlink(missing_ok=True)
+                log_info("TTS OSD daemon was not running (stale PID file cleared)")
+        else:
+            log_info("TTS OSD daemon was not running. Next TTS will start a fresh instance.")
+    elif action == 'status':
+        if TTS_OSD_PID_FILE.exists():
+            try:
+                pid = int(TTS_OSD_PID_FILE.read_text().strip())
+                os.kill(pid, 0)
+                log_success(f"TTS OSD daemon is running (PID {pid})")
+            except (ValueError, ProcessLookupError, OSError):
+                log_info("TTS OSD daemon PID file exists but process is not running")
+                TTS_OSD_PID_FILE.unlink(missing_ok=True)
+        else:
+            log_info("TTS OSD daemon is not running")
+    else:
+        log_error(f"Unknown tts-osd action: {action}")
+
+
 # ==================== Speak (TTS) Command ====================
 
 def speak_command(args):
     """Read selected text or clipboard aloud using Pocket TTS."""
+    import signal as signal_module
     try:
         from .tts_manager import TTSManager
-        from .paths import TTS_OSD_STATE_FILE
+        from .paths import TTS_OSD_STATE_FILE, TTS_SPEAK_PID_FILE, TTS_OSD_PID_FILE
     except ImportError:
         from tts_manager import TTSManager
-        from paths import TTS_OSD_STATE_FILE
+        from paths import TTS_OSD_STATE_FILE, TTS_SPEAK_PID_FILE, TTS_OSD_PID_FILE
 
     config = ConfigManager()
     tts_manager = TTSManager(config)
 
-    if not tts_manager.is_available():
-        log_error("Pocket TTS is not installed. Run: hyprwhspr setup  # and enable TTS")
-        return
-
-    # Get text: --text > primary selection > clipboard
-    use_clipboard_only = getattr(args, 'clipboard', False)
-    text = None
-    if getattr(args, 'text', None):
-        text = args.text.strip()
-    if not text:
-        text = tts_manager.get_text_from_input(
-            use_primary=not use_clipboard_only,
-            use_clipboard=True
-        )
-
-    if not text:
-        print("No text to read. Select text or use --text \"...\"")
-        return
-
-    voice = getattr(args, 'voice', None) or config.get_setting('tts_voice', 'alba')
-    tts_osd_enabled = config.get_setting('tts_osd_enabled', True)
-
-    # TTS OSD runner (show "Reading..." pop-up)
-    tts_osd_runner = None
-    if tts_osd_enabled:
+    def _cleanup_pid():
         try:
-            import sys
-            lib_path = Path(__file__).parent.parent
-            if str(lib_path) not in sys.path:
-                sys.path.insert(0, str(lib_path))
-            from tts_osd.runner import TTSOSDRunner
-            tts_osd_runner = TTSOSDRunner()
-        except ImportError as e:
-            tts_osd_runner = None
+            if TTS_SPEAK_PID_FILE.exists():
+                TTS_SPEAK_PID_FILE.unlink()
+        except Exception:
+            pass
+
+    def _on_sigterm(signum, frame):
+        _cleanup_pid()
+        # Hide OSD before exit
+        try:
+            if TTS_OSD_PID_FILE.exists():
+                os.kill(int(TTS_OSD_PID_FILE.read_text().strip()), signal_module.SIGUSR2)
+        except Exception:
+            pass
+        raise SystemExit(0)
+
+    signal_module.signal(signal_module.SIGTERM, _on_sigterm)
+
+    # Write PID for stop-on-second-press; ensure cleanup on exit
+    try:
+        TTS_SPEAK_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TTS_SPEAK_PID_FILE.write_text(str(os.getpid()))
+    except Exception:
+        pass
 
     try:
-        if tts_osd_runner and tts_osd_runner.is_available():
-            tts_osd_runner.set_state('generating')
-            tts_osd_runner.show()
+        if not tts_manager.is_available():
+            log_error("Pocket TTS is not installed. Run: hyprwhspr setup  # and enable TTS")
+            return
 
-        # Synthesize and play with streaming (playback starts as soon as first chunk is ready)
-        volume = config.get_setting('tts_volume', 1.0)
-        volume = max(0.1, min(1.0, float(volume)))
+        # Get text: --text > primary selection > clipboard
+        use_clipboard_only = getattr(args, 'clipboard', False)
+        text = None
+        if getattr(args, 'text', None):
+            text = args.text.strip()
+        if not text:
+            text = tts_manager.get_text_from_input(
+                use_primary=not use_clipboard_only,
+                use_clipboard=True
+            )
 
-        def on_playback_started():
+        if not text:
+            print("No text to read. Select text or use --text \"...\"")
+            return
+
+        voice = getattr(args, 'voice', None) or config.get_setting('tts_voice', 'alba')
+        tts_osd_enabled = config.get_setting('tts_osd_enabled', True)
+
+        # TTS OSD runner
+        tts_osd_runner = None
+        if tts_osd_enabled:
+            try:
+                import sys
+                lib_path = Path(__file__).parent.parent
+                if str(lib_path) not in sys.path:
+                    sys.path.insert(0, str(lib_path))
+                from tts_osd.runner import TTSOSDRunner
+                tts_osd_runner = TTSOSDRunner()
+            except ImportError:
+                tts_osd_runner = None
+
+        try:
             if tts_osd_runner and tts_osd_runner.is_available():
-                tts_osd_runner.set_state('speaking')
+                tts_osd_runner.set_state('generating')
+                tts_osd_runner.show()
 
-        ok = tts_manager.synthesize_and_play_streaming(
-            text, voice=voice, volume=volume,
-            on_playback_started=on_playback_started,
-        )
-        if not ok:
-            if tts_osd_runner:
+            volume = config.get_setting('tts_volume', 1.0)
+            volume = max(0.1, min(1.0, float(volume)))
+
+            def on_playback_started():
+                if tts_osd_runner and tts_osd_runner.is_available():
+                    tts_osd_runner.set_state('speaking')
+
+            ok = tts_manager.synthesize_and_play_streaming(
+                text, voice=voice, volume=volume,
+                on_playback_started=on_playback_started,
+            )
+            if not ok:
+                if tts_osd_runner:
+                    tts_osd_runner.set_state('error')
+                    import time
+                    time.sleep(0.5)
+                    tts_osd_runner.hide()
+                log_error("TTS synthesis failed")
+                return
+
+            if tts_osd_runner and tts_osd_runner.is_available():
+                tts_osd_runner.set_state('success')
+                import time
+                time.sleep(0.8)
+                tts_osd_runner.hide()
+        except Exception as e:
+            log_error(f"TTS failed: {e}")
+            if tts_osd_runner and tts_osd_runner.is_available():
                 tts_osd_runner.set_state('error')
                 import time
                 time.sleep(0.5)
                 tts_osd_runner.hide()
-            log_error("TTS synthesis failed")
-            return
-
-        if tts_osd_runner and tts_osd_runner.is_available():
-            tts_osd_runner.set_state('success')
-            import time
-            time.sleep(0.8)
-            tts_osd_runner.hide()
-    except Exception as e:
-        log_error(f"TTS failed: {e}")
-        if tts_osd_runner and tts_osd_runner.is_available():
-            tts_osd_runner.set_state('error')
-            import time
-            time.sleep(0.5)
-            tts_osd_runner.hide()
+    finally:
+        _cleanup_pid()
 
 
 def mic_osd_enable():

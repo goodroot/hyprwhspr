@@ -58,17 +58,22 @@ class TTSManager:
         if explicit_text and str(explicit_text).strip():
             return str(explicit_text).strip()
 
+        def _decode_paste(output: bytes) -> str:
+            """Decode wl-paste output; clipboard may contain non-UTF-8 (e.g. Latin-1)."""
+            if not output:
+                return ''
+            return output.decode('utf-8', errors='replace').strip()
+
         text = ''
         if use_primary:
             try:
                 result = subprocess.run(
                     ['wl-paste', '-p'],
                     capture_output=True,
-                    text=True,
                     timeout=2
                 )
                 if result.returncode == 0 and result.stdout:
-                    text = result.stdout.strip()
+                    text = _decode_paste(result.stdout)
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
                 pass
 
@@ -77,11 +82,10 @@ class TTSManager:
                 result = subprocess.run(
                     ['wl-paste'],
                     capture_output=True,
-                    text=True,
                     timeout=2
                 )
                 if result.returncode == 0 and result.stdout:
-                    text = result.stdout.strip()
+                    text = _decode_paste(result.stdout)
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
                 pass
 
@@ -193,6 +197,7 @@ class TTSManager:
             )
             try:
                 import numpy as np
+                total_samples = 0
                 for chunk in self._model.generate_audio_stream(voice_state, text):
                     if not first_chunk_logged:
                         first_chunk_logged = True
@@ -210,6 +215,7 @@ class TTSManager:
                     arr = np.asarray(arr)
                     if arr.dtype.kind == 'f':
                         arr = (np.clip(arr, -1.0, 1.0) * 32767).astype(np.int16)
+                    total_samples += arr.size
                     try:
                         proc.stdin.write(arr.tobytes())
                         proc.stdin.flush()
@@ -227,6 +233,11 @@ class TTSManager:
                 except (BrokenPipeError, OSError):
                     pass
                 proc.wait()
+
+            # Allow playback buffer to drain (pw-play/pipewire may exit before audio fully plays)
+            buffer_drain_s = 0.5 + (total_samples / self._model.sample_rate) * 0.05
+            buffer_drain_s = min(1.5, buffer_drain_s)
+            time.sleep(buffer_drain_s)
 
             return proc.returncode == 0
         except BrokenPipeError:

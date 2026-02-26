@@ -9,6 +9,7 @@ import threading
 import os
 import fcntl
 import atexit
+import signal
 import subprocess
 import shutil
 from pathlib import Path
@@ -59,7 +60,8 @@ from audio_ducker import AudioDucker
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
-    RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR
+    RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR,
+    TTS_SPEAK_PID_FILE, TTS_OSD_PID_FILE,
 )
 from backend_utils import normalize_backend
 from segment_manager import SegmentManager
@@ -674,8 +676,25 @@ class hyprwhsprApp:
     _on_secondary_shortcut_released = _on_shortcut_released
 
     def _on_tts_shortcut_triggered(self):
-        """Handle TTS shortcut - read selected text aloud (spawn hyprwhspr speak)"""
+        """Handle TTS shortcut - start speak or stop if already playing."""
         try:
+            # If TTS is running, stop it
+            if TTS_SPEAK_PID_FILE.exists():
+                try:
+                    pid = int(TTS_SPEAK_PID_FILE.read_text().strip())
+                    os.kill(pid, 0)  # Check if process exists
+                    os.kill(pid, signal.SIGTERM)
+                    # Hide TTS OSD
+                    if TTS_OSD_PID_FILE.exists():
+                        try:
+                            osd_pid = int(TTS_OSD_PID_FILE.read_text().strip())
+                            os.kill(osd_pid, signal.SIGUSR2)
+                        except (ValueError, ProcessLookupError, OSError):
+                            pass
+                    return
+                except (ProcessLookupError, OSError):
+                    TTS_SPEAK_PID_FILE.unlink(missing_ok=True)
+
             root = os.environ.get("HYPRWHSPR_ROOT", "/usr/lib/hyprwhspr")
             hyprwhspr_bin = Path(root) / "bin" / "hyprwhspr"
             if not hyprwhspr_bin.exists():
@@ -1840,10 +1859,25 @@ class hyprwhsprApp:
                     else:
                         print("[CONTROL] Submit command only valid in long_form mode", flush=True)
                 elif action == "speak":
-                    # TTS - read selected text aloud
+                    # TTS - read selected text aloud (or stop if already playing)
                     if self.config.get_setting("tts_enabled", False):
-                        voice_arg = ["--voice", language_param] if language_param else []
                         try:
+                            if TTS_SPEAK_PID_FILE.exists():
+                                try:
+                                    pid = int(TTS_SPEAK_PID_FILE.read_text().strip())
+                                    os.kill(pid, 0)
+                                    os.kill(pid, signal.SIGTERM)
+                                    if TTS_OSD_PID_FILE.exists():
+                                        try:
+                                            osd_pid = int(TTS_OSD_PID_FILE.read_text().strip())
+                                            os.kill(osd_pid, signal.SIGUSR2)
+                                        except (ValueError, ProcessLookupError, OSError):
+                                            pass
+                                    print("[CONTROL] TTS stopped", flush=True)
+                                    continue
+                                except (ProcessLookupError, OSError):
+                                    TTS_SPEAK_PID_FILE.unlink(missing_ok=True)
+                            voice_arg = ["--voice", language_param] if language_param else []
                             root = os.environ.get("HYPRWHSPR_ROOT", "/usr/lib/hyprwhspr")
                             hyprwhspr_bin = Path(root) / "bin" / "hyprwhspr"
                             if not hyprwhspr_bin.exists():

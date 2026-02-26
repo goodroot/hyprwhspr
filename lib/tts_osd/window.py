@@ -2,7 +2,7 @@
 GTK4 Layer Shell window for tts-osd.
 
 Creates an overlay window at the bottom center of the screen
-for displaying TTS "Reading..." visualization.
+for displaying TTS audio visualization.
 """
 
 import gi
@@ -23,7 +23,7 @@ if LAYER_SHELL_AVAILABLE:
 
 class TTSOSDWindow(Gtk.Window):
     """
-    An overlay window for displaying TTS "Reading..." visualization.
+    An overlay window for displaying TTS audio visualization.
 
     Uses gtk4-layer-shell to create a Wayland layer surface
     that appears above all windows at the bottom of the screen.
