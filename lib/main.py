@@ -10,6 +10,7 @@ import os
 import fcntl
 import atexit
 import subprocess
+import shutil
 from pathlib import Path
 
 try:
@@ -310,6 +311,29 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Failed to initialize secondary shortcuts: {e}", flush=True)
             self.secondary_shortcuts = None
+
+        # Set up TTS shortcut if configured
+        self._tts_shortcuts = None
+        try:
+            tts_enabled = self.config.get_setting("tts_enabled", False)
+            if tts_enabled:
+                tts_shortcut_key = self.config.get_setting("tts_shortcut", "SUPER+ALT+S")
+                if tts_shortcut_key:
+                    self._tts_shortcuts = GlobalShortcuts(
+                        tts_shortcut_key,
+                        self._on_tts_shortcut_triggered,
+                        None,
+                        device_path=selected_device_path,
+                        device_name=selected_device_name,
+                        grab_keys=grab_keys,
+                    )
+                    if self._tts_shortcuts.start():
+                        print(f"[INFO] TTS shortcut registered: {tts_shortcut_key}", flush=True)
+                    else:
+                        self._tts_shortcuts = None
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize TTS shortcut: {e}", flush=True)
+            self._tts_shortcuts = None
 
         # Set up cancel shortcut if configured
         try:
@@ -648,6 +672,22 @@ class hyprwhsprApp:
 
     # Secondary release is identical to primary release - reuse the same handler
     _on_secondary_shortcut_released = _on_shortcut_released
+
+    def _on_tts_shortcut_triggered(self):
+        """Handle TTS shortcut - read selected text aloud (spawn hyprwhspr speak)"""
+        try:
+            root = os.environ.get("HYPRWHSPR_ROOT", "/usr/lib/hyprwhspr")
+            hyprwhspr_bin = Path(root) / "bin" / "hyprwhspr"
+            if not hyprwhspr_bin.exists():
+                hyprwhspr_bin = Path(shutil.which("hyprwhspr") or "hyprwhspr")
+            subprocess.Popen(
+                [str(hyprwhspr_bin), "speak"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=os.environ.copy(),
+            )
+        except Exception as e:
+            print(f"[ERROR] TTS shortcut failed: {e}", flush=True)
 
     def _on_cancel_shortcut_triggered(self):
         """Handle cancel shortcut trigger - discard recording without transcribing"""
@@ -1706,19 +1746,22 @@ class hyprwhsprApp:
                 # Handle multiple commands written to FIFO before read
                 # (e.g., user clicks rapidly during timeout - "start\nstart")
                 # Take only the last valid command (most recent intent)
-                # Commands can be: 'start', 'start:lang', 'stop', 'cancel', 'submit'
-                valid_base_commands = {'start', 'stop', 'cancel', 'submit'}
+                # Commands can be: 'start', 'start:lang', 'stop', 'cancel', 'submit', 'speak', 'speak:voice'
+                valid_base_commands = {'start', 'stop', 'cancel', 'submit', 'speak'}
                 lines = [line.strip() for line in raw_data.splitlines() if line.strip()]
 
-                # Parse commands - extract base command and optional language
+                # Parse commands - extract base command and optional param (lang or voice)
                 parsed_commands = []
                 for line in lines:
                     line_lower = line.lower()
                     if ':' in line_lower and line_lower.startswith('start:'):
-                        # start:lang format - preserve language case
                         parts = line.split(':', 1)
                         lang = parts[1].strip() if len(parts) > 1 else None
                         parsed_commands.append(('start', lang))
+                    elif ':' in line_lower and line_lower.startswith('speak:'):
+                        parts = line.split(':', 1)
+                        voice = parts[1].strip() if len(parts) > 1 else None
+                        parsed_commands.append(('speak', voice))
                     elif line_lower in valid_base_commands:
                         parsed_commands.append((line_lower, None))
 
@@ -1796,6 +1839,26 @@ class hyprwhsprApp:
                         self._on_longform_submit_triggered()
                     else:
                         print("[CONTROL] Submit command only valid in long_form mode", flush=True)
+                elif action == "speak":
+                    # TTS - read selected text aloud
+                    if self.config.get_setting("tts_enabled", False):
+                        voice_arg = ["--voice", language_param] if language_param else []
+                        try:
+                            root = os.environ.get("HYPRWHSPR_ROOT", "/usr/lib/hyprwhspr")
+                            hyprwhspr_bin = Path(root) / "bin" / "hyprwhspr"
+                            if not hyprwhspr_bin.exists():
+                                hyprwhspr_bin = Path(shutil.which("hyprwhspr") or "hyprwhspr")
+                            subprocess.Popen(
+                                [str(hyprwhspr_bin), "speak"] + voice_arg,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                env=os.environ.copy(),
+                            )
+                            print("[CONTROL] TTS speak requested", flush=True)
+                        except Exception as e:
+                            print(f"[CONTROL] TTS speak failed: {e}", flush=True)
+                    else:
+                        print("[CONTROL] TTS not enabled", flush=True)
                 else:
                     print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
                     
@@ -2238,6 +2301,10 @@ class hyprwhsprApp:
             # Stop cancel shortcut
             if self._cancel_shortcuts:
                 self._cancel_shortcuts.stop()
+
+            # Stop TTS shortcut
+            if hasattr(self, '_tts_shortcuts') and self._tts_shortcuts:
+                self._tts_shortcuts.stop()
 
             # Stop audio capture
             if self.is_recording:

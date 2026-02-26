@@ -104,7 +104,13 @@ class ConfigManager:
             # Long-form recording mode settings
             'long_form_submit_shortcut': None,   # Shortcut to submit long-form recording (e.g., "Super+Return")
             'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
-            'long_form_auto_save_interval': 300  # Auto-save interval in seconds (default: 5 minutes)
+            'long_form_auto_save_interval': 300,  # Auto-save interval in seconds (default: 5 minutes)
+            # TTS (text-to-speech) settings
+            'tts_enabled': False,
+            'tts_shortcut': 'SUPER+ALT+S',
+            'tts_voice': 'alba',
+            'tts_volume': 1.0,
+            'tts_osd_enabled': True,
         }
         
         # Set up config directory and file path

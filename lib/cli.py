@@ -28,6 +28,7 @@ from cli_commands import (
     status_command,
     validate_command,
     test_command,
+    speak_command,
     backend_repair_command,
     backend_reset_command,
     state_show_command,
@@ -71,6 +72,7 @@ def main():
     auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
     auto_parser.add_argument('--no-waybar', action='store_true', help='Skip waybar integration')
     auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization')
+    auto_parser.add_argument('--tts', action='store_true', help='Enable text-to-speech (Pocket TTS)')
     auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')
     auto_parser.add_argument('--hypr-bindings', action='store_true', help='Enable Hyprland compositor bindings')
     auto_parser.add_argument('--python', dest='python_path', metavar='PATH',
@@ -138,6 +140,12 @@ def main():
     keyboard_subparsers = keyboard_parser.add_subparsers(dest='keyboard_action', help='Keyboard actions')
     keyboard_subparsers.add_parser('list', help='List available keyboard devices')
     keyboard_subparsers.add_parser('test', help='Test keyboard device accessibility')
+
+    # speak command (TTS - read selected text aloud)
+    speak_parser = subparsers.add_parser('speak', help='Read selected text or clipboard aloud (TTS)')
+    speak_parser.add_argument('--text', metavar='TEXT', help='Text to read (default: primary selection, then clipboard)')
+    speak_parser.add_argument('--clipboard', action='store_true', help='Use clipboard instead of primary selection')
+    speak_parser.add_argument('--voice', metavar='VOICE', help='Voice to use (default: from config)')
 
     # record command (for external hotkey systems)
     record_parser = subparsers.add_parser('record', help='Control recording (for external hotkeys)')
@@ -278,6 +286,8 @@ def main():
                 state_validate_command()
             elif args.state_action == 'reset':
                 state_reset_command(getattr(args, 'all', False))
+        elif args.command == 'speak':
+            speak_command(args)
         elif args.command == 'record':
             if not args.record_action:
                 record_parser.print_help()

@@ -74,8 +74,8 @@ if [[ "$1" == "help" ]]; then
 fi
 
 # Subcommands: route to CLI if recognized
-# 'test' needs venv Python since it loads the transcription backend
-if [[ "$1" == "test" ]]; then
+# 'test' and 'speak' need venv Python (transcription backend, pocket-tts)
+if [[ "$1" == "test" || "$1" == "speak" ]]; then
   exec "$PYTHON_CMD" "$LIB_DIR/cli.py" "$@"
 fi
 if [[ "$1" =~ ^(setup|install|config|waybar|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record)$ ]]; then
