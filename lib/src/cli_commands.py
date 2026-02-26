@@ -2926,16 +2926,13 @@ def speak_command(args):
     """Read selected text or clipboard aloud using Pocket TTS."""
     try:
         from .tts_manager import TTSManager
-        from .audio_manager import AudioManager
         from .paths import TTS_OSD_STATE_FILE
     except ImportError:
         from tts_manager import TTSManager
-        from audio_manager import AudioManager
         from paths import TTS_OSD_STATE_FILE
 
     config = ConfigManager()
     tts_manager = TTSManager(config)
-    audio_manager = AudioManager(config)
 
     if not tts_manager.is_available():
         log_error("Pocket TTS is not installed. Run: hyprwhspr setup  # and enable TTS")
@@ -2977,9 +2974,19 @@ def speak_command(args):
             tts_osd_runner.set_state('generating')
             tts_osd_runner.show()
 
-        # Synthesize
-        wav_path = tts_manager.synthesize(text, voice=voice)
-        if not wav_path:
+        # Synthesize and play with streaming (playback starts as soon as first chunk is ready)
+        volume = config.get_setting('tts_volume', 1.0)
+        volume = max(0.1, min(1.0, float(volume)))
+
+        def on_playback_started():
+            if tts_osd_runner and tts_osd_runner.is_available():
+                tts_osd_runner.set_state('speaking')
+
+        ok = tts_manager.synthesize_and_play_streaming(
+            text, voice=voice, volume=volume,
+            on_playback_started=on_playback_started,
+        )
+        if not ok:
             if tts_osd_runner:
                 tts_osd_runner.set_state('error')
                 import time
@@ -2987,14 +2994,6 @@ def speak_command(args):
                 tts_osd_runner.hide()
             log_error("TTS synthesis failed")
             return
-
-        if tts_osd_runner and tts_osd_runner.is_available():
-            tts_osd_runner.set_state('speaking')
-
-        # Play (blocking - wait for playback to complete)
-        volume = config.get_setting('tts_volume', 1.0)
-        volume = max(0.1, min(1.0, float(volume)))
-        audio_manager.play_file(wav_path, volume=volume, blocking=True)
 
         if tts_osd_runner and tts_osd_runner.is_available():
             tts_osd_runner.set_state('success')
