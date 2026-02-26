@@ -106,11 +106,11 @@ class ConfigManager:
             'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
             'long_form_auto_save_interval': 300,  # Auto-save interval in seconds (default: 5 minutes)
             # TTS (text-to-speech) settings
-            'tts_enabled': False,
-            'tts_shortcut': 'SUPER+ALT+S',
-            'tts_voice': 'alba',
-            'tts_volume': 1.0,
-            'tts_osd_enabled': True,
+            'tts_enabled': False,            # Enable text-to-speech (TTS)
+            'tts_shortcut': 'SUPER+ALT+S',   # Shortcut key for TTS
+            'tts_voice': 'alba',             # Default TTS voice
+            'tts_volume': 1.0,               # Playback volume for TTS (0.1–1.0)
+            'tts_osd_enabled': True,         # Show overlay during TTS playback
         }
         
         # Set up config directory and file path
