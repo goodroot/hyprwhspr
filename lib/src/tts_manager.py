@@ -27,6 +27,17 @@ def _log_tts(msg: str) -> None:
     print(f"[TTS] {msg}", file=sys.stderr, flush=True)
 
 
+def estimate_speech_duration(text: str, words_per_minute: float = 150.0) -> float:
+    """
+    Estimate speaking duration in seconds from text.
+    Uses ~150 WPM as typical TTS rate.
+    """
+    if not text or not text.strip():
+        return 1.0
+    word_count = len(text.split())
+    return max(1.0, word_count / (words_per_minute / 60.0))
+
+
 class TTSManager:
     """Manages Pocket TTS synthesis and playback."""
 
@@ -43,6 +54,10 @@ class TTSManager:
         else:
             self.voice = 'alba'
             self.volume = 1.0
+
+    def estimate_speech_duration(self, text: str, words_per_minute: float = 150.0) -> float:
+        """Estimate speaking duration in seconds from text (~150 WPM typical for TTS)."""
+        return estimate_speech_duration(text, words_per_minute)
 
     def get_text_from_input(
         self,

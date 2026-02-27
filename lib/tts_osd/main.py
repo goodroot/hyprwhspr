@@ -1,14 +1,16 @@
 """
-tts-osd - TTS "Reading..." overlay for Wayland/Hyprland.
+tts-osd - TTS wave audio overlay for Wayland/Hyprland.
 
 Shows overlay during TTS synthesis and playback.
 Daemon mode: start hidden, show on SIGUSR1, hide on SIGUSR2.
 """
 
+import json
 import sys
 import signal
 import os
 from pathlib import Path
+from typing import Optional
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -18,14 +20,29 @@ from .window import TTSOSDWindow, load_css
 from .visualization import SpeakingVisualization
 
 try:
-    from ..src.paths import TTS_OSD_STATE_FILE
+    from ..src.paths import TTS_OSD_STATE_FILE, TTS_OSD_DURATION_FILE, CONFIG_FILE
 except ImportError:
-    from src.paths import TTS_OSD_STATE_FILE
+    from src.paths import TTS_OSD_STATE_FILE, TTS_OSD_DURATION_FILE, CONFIG_FILE
 
 
 def is_gnome():
     desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
     return 'gnome' in desktop
+
+
+def _get_tts_osd_timeout() -> Optional[float]:
+    """Read tts_osd_timeout from config. Returns seconds or None for no timeout."""
+    try:
+        if not CONFIG_FILE.exists():
+            return 30
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+        val = cfg.get('tts_osd_timeout', 30)
+        if val is None or (isinstance(val, str) and val.lower() == 'none'):
+            return None
+        return float(val)
+    except Exception:
+        return 30
 
 
 class TTSOSD:
@@ -48,7 +65,7 @@ class TTSOSD:
         self.height = height
 
     def run(self):
-        if is_gnome():
+        if is_gnome() and not self.daemon:
             self._run_with_gtk_application()
         else:
             self._run_with_main_loop()
@@ -82,20 +99,14 @@ class TTSOSD:
             self.window = None
 
         load_css()
-        self.window = TTSOSDWindow(
-            self.visualization, self.width, self.height,
-            on_close=None,  # No close button; use shortcut to cancel
-        )
+        self.window = TTSOSDWindow(self.visualization, self.width, self.height)
         app.add_window(self.window)
         self._initial_visibility()
 
     def _run_with_main_loop(self):
         Gtk.init()
         load_css()
-        self.window = TTSOSDWindow(
-            self.visualization, self.width, self.height,
-            on_close=None,  # No close button; use shortcut to cancel
-        )
+        self.window = TTSOSDWindow(self.visualization, self.width, self.height)
         self._initial_visibility()
 
         if self._should_stop:
@@ -136,7 +147,10 @@ class TTSOSD:
 
         if self._auto_hide_timeout_id:
             GLib.source_remove(self._auto_hide_timeout_id)
-        self._auto_hide_timeout_id = GLib.timeout_add_seconds(30, self._auto_hide_callback)
+            self._auto_hide_timeout_id = None
+        timeout_sec = _get_tts_osd_timeout()
+        if timeout_sec is not None and timeout_sec > 0:
+            self._auto_hide_timeout_id = GLib.timeout_add_seconds(int(timeout_sec), self._auto_hide_callback)
 
     def _hide(self):
         if not self.visible:
@@ -149,6 +163,7 @@ class TTSOSD:
         try:
             self.visible = False
             self.window.set_visible(False)
+            self._last_state = None  # Reset so next show will re-read state and reset countdown
 
             if self.update_timer_id:
                 GLib.source_remove(self.update_timer_id)
@@ -196,12 +211,19 @@ class TTSOSD:
             if TTS_OSD_STATE_FILE.exists():
                 with open(TTS_OSD_STATE_FILE, 'r') as f:
                     state = f.read().strip()
-                    if state and state != self._last_state:
-                        self._last_state = state
-                        self.visualization.set_state(state)
+                duration_sec = None
+                if TTS_OSD_DURATION_FILE.exists():
+                    try:
+                        duration_sec = float(TTS_OSD_DURATION_FILE.read_text().strip())
+                    except (ValueError, OSError):
+                        pass
+                state_key = (state, duration_sec)
+                if state and state_key != self._last_state:
+                    self._last_state = state_key
+                    self.visualization.set_state(state, duration_sec=duration_sec)
             else:
-                if self._last_state != 'speaking':
-                    self._last_state = 'speaking'
+                if self._last_state != ('speaking', None):
+                    self._last_state = ('speaking', None)
                     self.visualization.set_state('speaking')
         except Exception:
             pass

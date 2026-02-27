@@ -111,6 +111,7 @@ class ConfigManager:
             'tts_voice': 'alba',             # Default TTS voice
             'tts_volume': 1.0,               # Playback volume for TTS (0.1–1.0)
             'tts_osd_enabled': True,         # Show overlay during TTS playback
+            'tts_osd_timeout': 30,           # Seconds before auto-hiding OSD (None = never auto-hide)
         }
         
         # Set up config directory and file path

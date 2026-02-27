@@ -3040,9 +3040,11 @@ def speak_command(args):
             volume = config.get_setting('tts_volume', 1.0)
             volume = max(0.1, min(1.0, float(volume)))
 
+            estimated_duration = tts_manager.estimate_speech_duration(text)
+
             def on_playback_started():
                 if tts_osd_runner and tts_osd_runner.is_available():
-                    tts_osd_runner.set_state('speaking')
+                    tts_osd_runner.set_state('speaking', duration_sec=estimated_duration)
 
             ok = tts_manager.synthesize_and_play_streaming(
                 text, voice=voice, volume=volume,

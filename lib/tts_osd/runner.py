@@ -8,11 +8,12 @@ import subprocess
 import signal
 import os
 from pathlib import Path
+from typing import Optional
 
 try:
-    from ..src.paths import TTS_OSD_PID_FILE, TTS_OSD_STATE_FILE
+    from ..src.paths import TTS_OSD_PID_FILE, TTS_OSD_STATE_FILE, TTS_OSD_DURATION_FILE
 except ImportError:
-    from src.paths import TTS_OSD_PID_FILE, TTS_OSD_STATE_FILE
+    from src.paths import TTS_OSD_PID_FILE, TTS_OSD_STATE_FILE, TTS_OSD_DURATION_FILE
 
 
 class TTSOSDRunner:
@@ -96,7 +97,7 @@ sys.exit(main())
             )
 
             import time
-            time.sleep(0.15)
+            time.sleep(0.4)  # Allow daemon to create window and enter main loop
             if self._process.poll() is not None:
                 stderr_output = ""
                 try:
@@ -173,19 +174,28 @@ sys.exit(main())
             self._process = None
             self._orphaned_daemon_pid = None
 
-    def set_state(self, state: str):
-        """Set the visualizer state (generating, speaking, success, error)."""
+    def set_state(self, state: str, duration_sec: Optional[float] = None):
+        """Set the visualizer state (generating, speaking, success, error).
+        If duration_sec is set (for speaking), also writes duration to separate file.
+        """
         try:
             TTS_OSD_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            # Write duration before state so poller sees both together (avoids 0s display)
+            if duration_sec is not None:
+                TTS_OSD_DURATION_FILE.write_text(f"{duration_sec:.1f}")
+            elif TTS_OSD_DURATION_FILE.exists():
+                TTS_OSD_DURATION_FILE.unlink(missing_ok=True)
             TTS_OSD_STATE_FILE.write_text(state)
         except Exception as e:
             print(f"[TTS-OSD] Failed to write state: {e}", flush=True)
 
     def clear_state(self):
-        """Clear the state file."""
+        """Clear the state and duration files."""
         try:
             if TTS_OSD_STATE_FILE.exists():
                 TTS_OSD_STATE_FILE.unlink()
+            if TTS_OSD_DURATION_FILE.exists():
+                TTS_OSD_DURATION_FILE.unlink(missing_ok=True)
         except Exception as e:
             print(f"[TTS-OSD] Failed to clear state: {e}", flush=True)
 

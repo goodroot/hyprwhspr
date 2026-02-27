@@ -351,6 +351,12 @@
       "default": true,
       "description": "Show 'Reading...' overlay during TTS playback"
     },
+    "tts_osd_timeout": {
+      "type": ["number", "null", "string"],
+      "default": 30,
+      "minimum": 1,
+      "description": "Seconds before auto-hiding TTS overlay (null or \"none\" = never auto-hide)"
+    },
     "mute_detection": {
       "type": "boolean",
       "default": true,
