@@ -324,6 +324,39 @@
       "default": true,
       "description": "Show microphone visualization overlay during recording"
     },
+    "tts_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable text-to-speech: select text and press shortcut to hear it spoken"
+    },
+    "tts_shortcut": {
+      "type": "string",
+      "default": "SUPER+ALT+S",
+      "description": "Keyboard shortcut to trigger TTS (read selected text aloud)"
+    },
+    "tts_voice": {
+      "type": "string",
+      "default": "alba",
+      "description": "Pocket TTS voice: alba, marius, javert, jean, fantine, cosette, eponine, azelma"
+    },
+    "tts_volume": {
+      "type": "number",
+      "default": 1.0,
+      "minimum": 0.1,
+      "maximum": 1.0,
+      "description": "TTS playback volume"
+    },
+    "tts_osd_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show 'Reading...' overlay during TTS playback"
+    },
+    "tts_osd_timeout": {
+      "type": ["number", "null", "string"],
+      "default": 30,
+      "minimum": 1,
+      "description": "Seconds before auto-hiding TTS overlay (null or \"none\" = never auto-hide)"
+    },
     "mute_detection": {
       "type": "boolean",
       "default": true,
