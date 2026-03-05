@@ -139,7 +139,18 @@ class AudioCapture:
             if not device_found:
                 if self.preferred_device_id is None:
                     print("Using system default audio device")
-                self._set_system_default_device()
+                # Query PipeWire for its current default so mid-session changes
+                # (e.g. via mic-select picker) are actually picked up.
+                pulse_default_id = self._get_pulse_default_source_device_id()
+                if pulse_default_id is not None:
+                    try:
+                        device_info = sd.query_devices(device=pulse_default_id, kind='input')
+                        sd.default.device[0] = pulse_default_id
+                        device_found = True
+                    except Exception:
+                        pass
+                if not device_found:
+                    self._set_system_default_device()
             
             # Get device information
             try:
