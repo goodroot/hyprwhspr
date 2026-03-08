@@ -520,8 +520,8 @@ class GlobalShortcuts:
         """Convert evdev keycode to human readable name"""
         try:
             key_name = ecodes.KEY[keycode]
-            # Handle case where evdev returns a tuple of multiple event codes
-            if isinstance(key_name, tuple):
+            # Handle case where evdev returns a list/tuple of multiple event codes
+            if isinstance(key_name, (tuple, list)):
                 key_name = key_name[0]
             return key_name.replace('KEY_', '')
         except KeyError:
