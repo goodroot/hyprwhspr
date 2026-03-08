@@ -190,53 +190,11 @@ class MicOSD:
             self.audio_monitor.start()
         except RuntimeError as e:
             # Audio monitoring failed (e.g., mic unavailable)
-            # Hide window and reset state to prevent hanging
-            print(f"[MIC-OSD] Failed to start audio monitoring: {e}", flush=True)
-            self.visible = False
-            if self.window:
-                self.window.set_visible(False)
+            # Keep window visible (show flat line) — the main hyprwhspr process
+            # already verified audio before signaling us to show.
+            print(f"[MIC-OSD] Audio monitoring unavailable, showing without waveform: {e}", flush=True)
+            self.audio_monitor = None
 
-            # Stop update timer if it was started
-            if self.update_timer_id:
-                GLib.source_remove(self.update_timer_id)
-                self.update_timer_id = None
-
-            return  # Exit early - don't start timer
-
-        # Verify that audio stream is actually receiving audio (not just zeros)
-        # This prevents showing window when mic is unplugged but stream opens successfully
-        import time
-        verification_start = time.monotonic()
-        verification_duration = 1.5  # 1.5s verification period
-        max_zero_level = 1e-6  # Threshold for considering audio as zero (very small)
-        audio_detected = False
-
-        while time.monotonic() - verification_start < verification_duration:
-            # Check if audio_monitor was cleaned up by a re-activation (race condition)
-            if not self.audio_monitor:
-                # Audio monitor was stopped by cleanup, abort verification
-                self.visible = False
-                if self.window:
-                    self.window.set_visible(False)
-                return  # Exit early - don't start timers
-            
-            level = self.audio_monitor.get_level()
-            if level > max_zero_level:
-                audio_detected = True
-                break
-            time.sleep(0.01)  # Check every 10ms
-        
-        if not audio_detected:
-            # Stream is returning zeros - mic likely unavailable
-            print("[MIC-OSD] Audio stream returning zeros - hiding window", flush=True)
-            if self.audio_monitor:
-                self.audio_monitor.stop()
-                self.audio_monitor = None
-            self.visible = False
-            if self.window:
-                self.window.set_visible(False)
-            return  # Exit early - don't start timers
-        
         # Start update timer (60 FPS)
         if not self.update_timer_id:
             self.update_timer_id = GLib.timeout_add(16, self._update)
