@@ -146,6 +146,7 @@ class AudioCapture:
                     try:
                         device_info = sd.query_devices(device=pulse_default_id, kind='input')
                         sd.default.device[0] = pulse_default_id
+                        self.preferred_device_id = pulse_default_id
                         device_found = True
                     except Exception:
                         pass
