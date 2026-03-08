@@ -113,6 +113,13 @@ class MicOSDRunner:
         # Build the Python code to run
         lib_dir = self._mic_osd_dir.parent
         code = f"""
+import signal
+# Ignore SIGUSR1/SIGUSR2 during startup so early signals don't kill the
+# process (default disposition is SIG_DFL=terminate).  The real handlers
+# are installed inside main() before the GLib main-loop starts.
+signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+signal.signal(signal.SIGUSR2, signal.SIG_IGN)
+
 import sys
 sys.path.insert(0, '{lib_dir}')
 from mic_osd.main import main
