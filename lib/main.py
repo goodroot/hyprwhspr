@@ -97,6 +97,7 @@ class hyprwhsprApp:
         self.is_processing = False
         self.current_transcription = ""
         self.audio_level_thread = None
+        self._audio_level_stop = threading.Event()  # Signals audio level thread to exit immediately
         self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
         self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
         self._last_mic_error_log_time = 0.0  # Track when we last logged mic error (prevent duplicates)
@@ -1059,7 +1060,8 @@ class hyprwhsprApp:
             backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
             if backend == 'realtime-ws' and streaming_callback is None:
                 # Fail fast: realtime-ws requires an active streaming callback (and a connected client)
-                self.is_recording = False
+                with self._recording_lock:
+                    self.is_recording = False
                 self._write_recording_status(False)
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
@@ -1116,7 +1118,8 @@ class hyprwhsprApp:
                     self.audio_capture.stop_recording()
 
                     # Reset state
-                    self.is_recording = False
+                    with self._recording_lock:
+                        self.is_recording = False
                     self._write_recording_status(False)
                     
                     # Hide mic-osd visualization
@@ -1143,7 +1146,8 @@ class hyprwhsprApp:
                 if not verify_stream_stable():
                     # Stream stopped working shortly after starting
                     self.audio_capture.stop_recording()
-                    self.is_recording = False
+                    with self._recording_lock:
+                        self.is_recording = False
                     self._write_recording_status(False)
                     
                     # Hide mic-osd visualization
@@ -1195,7 +1199,8 @@ class hyprwhsprApp:
                     pass  # Ignore if already stopped
 
                 # Reset state - fail fast, don't attempt recovery
-                self.is_recording = False
+                with self._recording_lock:
+                    self.is_recording = False
                 self._write_recording_status(False)
                 self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
 
@@ -1217,7 +1222,8 @@ class hyprwhsprApp:
                 print("[CLEANUP] Closing WebSocket after recording start failure", flush=True)
                 self.whisper_manager._cleanup_realtime_client()
 
-            self.is_recording = False
+            with self._recording_lock:
+                self.is_recording = False
             self._write_recording_status(False)
 
             # Restore audio if it was ducked
@@ -1226,12 +1232,15 @@ class hyprwhsprApp:
 
     def _cancel_recording_muted(self):
         """Cancel recording early due to muted microphone"""
-        if not self.is_recording:
-            return
-
-        try:
+        with self._recording_lock:
+            if not self.is_recording:
+                return
             self.is_recording = False
             self._current_language_override = None  # Clear language override on error
+
+        print("[MUTE] Recording cancelled - microphone returned silence for 1 second", flush=True)
+
+        try:
             self._hide_mic_osd()
             self._stop_audio_level_monitoring()
             self._write_recording_status(False)
@@ -1299,13 +1308,14 @@ class hyprwhsprApp:
 
     def _stop_recording(self):
         """Stop voice recording and process audio"""
-        if not self.is_recording:
-            return
+        with self._recording_lock:
+            if not self.is_recording:
+                return
+            self.is_recording = False
 
         print("Recording stopped", flush=True)
-        
+
         try:
-            self.is_recording = False
 
             # Set visualizer to processing state (keep it visible during transcription)
             self._set_visualizer_state('processing')
@@ -1646,8 +1656,10 @@ class hyprwhsprApp:
 
     def _start_audio_level_monitoring(self):
         """Start monitoring and writing audio levels to file"""
-        if self.audio_level_thread and self.audio_level_thread.is_alive():
-            return
+        # Stop any lingering thread from a previous recording before starting a new one
+        self._stop_audio_level_monitoring()
+
+        self._audio_level_stop.clear()
 
         def monitor_audio_level():
             AUDIO_LEVEL_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -1656,17 +1668,21 @@ class hyprwhsprApp:
             zero_samples = 0
             zero_threshold = 5e-7
             samples_to_cancel = 10  # 1 second at 100ms intervals
+            grace_samples = 5  # Skip first 0.5s to let stream stabilize (avoids false mute on rapid toggle)
+            total_samples = 0
 
             try:
-                while self.is_recording:
+                while self.is_recording and not self._audio_level_stop.is_set():
                     try:
                         # Get scaled level for visualization (0.0-1.0)
                         level = self.audio_capture.get_audio_level()
                         with open(AUDIO_LEVEL_FILE, 'w') as f:
                             f.write(f'{level:.3f}')
 
-                        # Mute detection (only if enabled)
-                        if self.config.get_setting('mute_detection', True):
+                        total_samples += 1
+
+                        # Mute detection (only if enabled, after grace period)
+                        if self.config.get_setting('mute_detection', True) and total_samples > grace_samples:
                             # get_audio_level() scales by 10x, so we need raw value for accurate detection
                             raw_level = self.audio_capture.current_level
                             if raw_level < zero_threshold:
@@ -1679,7 +1695,8 @@ class hyprwhsprApp:
                     except Exception as e:
                         # Silently fail - don't spam errors
                         pass
-                    time.sleep(0.1)  # Update 10 times per second
+                    # Sleep in small increments so the stop event wakes us quickly
+                    self._audio_level_stop.wait(0.1)
             finally:
                 # Clean up file when not recording (always runs, even on early return)
                 try:
@@ -1692,10 +1709,22 @@ class hyprwhsprApp:
         self.audio_level_thread.start()
 
     def _stop_audio_level_monitoring(self):
-        """Stop audio level monitoring"""
+        """Stop audio level monitoring and wait for thread to exit"""
+        self._audio_level_stop.set()
         if self.audio_level_thread and self.audio_level_thread.is_alive():
-            # Thread will exit when is_recording becomes False
-            pass
+            if threading.current_thread() is not self.audio_level_thread:
+                # External caller: join and clear the reference only after the
+                # thread (and its finally block) has actually finished.
+                self.audio_level_thread.join(timeout=0.3)
+                self.audio_level_thread = None
+            # else: self-join — leave the reference intact.  The thread exits
+            # immediately after returning here; the next _start call from the
+            # main thread will find is_alive()==False (or join if still winding
+            # down) and clear the reference before starting a new thread.
+            # Nulling here would lose the reference and allow a new thread to
+            # race against this thread's finally block on AUDIO_LEVEL_FILE.
+        else:
+            self.audio_level_thread = None
 
     def _setup_recording_control_fifo(self):
         """Create named pipe (FIFO) for immediate recording control"""
@@ -2240,6 +2269,25 @@ class hyprwhsprApp:
 
     def run(self):
         """Start the application"""
+        # Restore user's preferred default source (persisted by mic-select picker)
+        saved_source_file = Path.home() / '.config' / 'hyprwhspr' / '.default_source'
+        if saved_source_file.exists():
+            try:
+                source_name = saved_source_file.read_text().strip()
+                if source_name:
+                    result = subprocess.run(
+                        ['pactl', 'set-default-source', source_name],
+                        timeout=5, check=False,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+                    )
+                    if result.returncode == 0:
+                        print(f"[INIT] Restored default source: {source_name}", flush=True)
+                    else:
+                        err = result.stderr.decode(errors='replace').strip()
+                        print(f"[WARN] Could not restore default source '{source_name}': {err}", flush=True)
+            except Exception as e:
+                print(f"[WARN] Could not restore default source: {e}", flush=True)
+
         # Check audio capture availability
         if not self.audio_capture.is_available():
             print("[ERROR] Audio capture not available!")
