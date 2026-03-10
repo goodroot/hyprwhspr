@@ -342,6 +342,12 @@ Also great for GPUs.
 
 Select Parakeet V3 within `hyprwhspr setup`.
 
+Model storage: `~/.cache/huggingface/hub/`. 
+
+The Parakeet model is downloaded automatically when the backend starts. 
+
+With Parakeet selected, `hyprwhspr model list` and `hyprwhspr model status` show Parakeet info.
+
 ### Whisper (local)
 
 Two local Whisper backends are available:
