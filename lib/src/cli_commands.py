@@ -3141,6 +3141,16 @@ def model_command(action: str, model_name: str = 'base'):
             faster_whisper_model_status()
         else:
             log_error(f"Unknown model action: {action}")
+    elif backend == 'onnx-asr':
+        if action == 'list':
+            list_onnx_asr_models()
+        elif action == 'status':
+            onnx_asr_model_status()
+        elif action == 'download':
+            log_info("Parakeet model is downloaded automatically when the backend starts.")
+            log_info("To pre-download: start the Parakeet service once (e.g. hyprwhspr start, or enable systemd and log in).")
+        else:
+            log_error(f"Unknown model action: {action}")
     else:
         if action == 'download':
             download_model(model_name)
@@ -3235,21 +3245,64 @@ def list_models():
 
 
 def model_status():
-    """Check installed models"""
+    """Check installed pywhispercpp (Whisper.cpp) models in ~/.local/share/pywhispercpp/models"""
     if not PYWHISPERCPP_MODELS_DIR.exists():
         log_warning("Models directory does not exist")
         return
-    
+
     models = list(PYWHISPERCPP_MODELS_DIR.glob('ggml-*.bin'))
-    
+
     if not models:
         log_warning("No models installed")
         return
-    
+
     print("Installed models:")
     for model in sorted(models):
         size = model.stat().st_size / (1024 * 1024)  # MB
         print(f"  - {model.name} ({size:.1f} MB)")
+
+
+def onnx_asr_model_status():
+    """Check Parakeet/onnx-asr model in Hugging Face cache (~/.cache/huggingface/hub/)"""
+    hf_hub_dir = Path.home() / '.cache' / 'huggingface' / 'hub'
+    if not hf_hub_dir.exists():
+        log_warning("Hugging Face cache directory does not exist (~/.cache/huggingface/hub/)")
+        log_info("Parakeet model is downloaded on first use when the backend starts.")
+        return
+
+    # Parakeet TDT 0.6B v3: HF repo is nvidia/parakeet-tdt-0.6b-v3 -> cache: models--nvidia--parakeet-tdt-0.6b-v3
+    parakeet_patterns = ['models--nvidia--parakeet-tdt-0.6b-v3', 'models--*parakeet*']
+    found = []
+    seen = set()
+    for pattern in parakeet_patterns:
+        for model_dir in sorted(hf_hub_dir.glob(pattern)):
+            if model_dir.is_dir() and model_dir.resolve() not in seen:
+                seen.add(model_dir.resolve())
+                found.append(model_dir)
+    if not found:
+        log_warning("No Parakeet model found in ~/.cache/huggingface/hub/")
+        log_info("The model will download automatically when the Parakeet backend starts.")
+        return
+
+    print("Parakeet (onnx-asr) model cache:")
+    for model_dir in found:
+        total_bytes = sum(f.stat().st_size for f in model_dir.rglob('*') if f.is_file())
+        size_mb = total_bytes / (1024 * 1024)
+        if size_mb >= 1024:
+            size_str = f"{size_mb / 1024:.1f} GB"
+        else:
+            size_str = f"{size_mb:.0f} MB"
+        log_success(f"  {model_dir.name} ({size_str})")
+
+
+def list_onnx_asr_models():
+    """List Parakeet/onnx-asr model option (single supported model for now)."""
+    print("Parakeet (onnx-asr) model:\n")
+    print("  - nemo-parakeet-tdt-0.6b-v3  (default; downloaded from Hugging Face on first use)")
+    print()
+    print("Storage: ~/.cache/huggingface/hub/")
+    print("To check if the model is cached: hyprwhspr model status")
+    print("The model downloads automatically when the Parakeet service starts.")
 
 
 # ==================== faster-whisper Model Commands ====================
@@ -3370,9 +3423,19 @@ def status_command():
     else:
         log_warning("Config file not found")
     
-    # Check models
+    # Check models (backend-aware: pywhispercpp vs faster-whisper vs Parakeet/onnx-asr)
     print("\n[Models]")
-    model_status()
+    try:
+        config = ConfigManager()
+        backend = normalize_backend(config.get_setting('transcription_backend', 'pywhispercpp'))
+        if backend == 'faster-whisper':
+            faster_whisper_model_status()
+        elif backend == 'onnx-asr':
+            onnx_asr_model_status()
+        else:
+            model_status()
+    except Exception:
+        model_status()
     
     # Check permissions
     print("\n[Permissions]")
