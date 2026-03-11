@@ -229,6 +229,17 @@ Restart service to lock in changes:
 systemctl --user restart hyprwhspr
 ```
 
+### Running without keyboard access
+
+With `grab_keys: false` (default), hyprwhspr can start even if you are not in the `input` group. 
+
+The global shortcut will not work.
+
+Control recording via:
+
+* CLI (`hyprwhspr record toggle`, `hyprwhspr record start`, etc.) 
+& the `recording_control` file (e.g. bind in Hyprland to `echo start > ~/.config/hyprwhspr/recording_control`)
+
 ## Transcription backends
 
 Local backends (Parakeet + Whisper) are documented in the **Models** section below.

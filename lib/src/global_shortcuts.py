@@ -445,9 +445,13 @@ class GlobalShortcuts:
                 else:
                     print("[ERROR] No accessible devices found that can emit the configured shortcut!")
                     print("[ERROR] Solutions:")
-                    print("[ERROR]   1. Add yourself to 'input' group: sudo usermod -aG input $USER")
-                    print("[ERROR]   2. Disable key grabbing in config (grab_keys: false)")
-                    print(f"[ERROR]   3. Check that your shortcut '{self.primary_key}' uses keys available on your keyboard")
+                    print("[ERROR]   1. Add yourself to 'input' group: sudo usermod -aG input $USER (then log out and back in)")
+                    if self.grab_keys:
+                        print("[ERROR]   2. Disable key grabbing in config (grab_keys: false)")
+                        print(f"[ERROR]   3. Check that your shortcut '{self.primary_key}' uses keys available on your keyboard")
+                    else:
+                        print("[ERROR]   2. Or use compositor bindings: set use_hypr_bindings: true and bind the shortcut in Hyprland to write to recording_control (see docs)")
+                        print(f"[ERROR]   3. Check that your shortcut '{self.primary_key}' uses keys available on your keyboard")
     
     def _parse_key_combination(self, key_string: str) -> Set[int]:
         """Parse a key combination string into a set of evdev key codes"""
@@ -741,8 +745,17 @@ class GlobalShortcuts:
             self._discover_keyboards()
 
         if not self.devices:
-            print("No keyboard devices available")
-            return False
+            if self.grab_keys:
+                print("No keyboard devices available")
+                return False
+            # With grab_keys false, allow starting without any keyboard: shortcut won't work
+            # but recording_control and compositor bindings (use_hypr_bindings) still work
+            print("[INFO] No keyboard access. Shortcut disabled; control recording via CLI (e.g. hyprwhspr record toggle) or recording_control file.")
+            self.stop_event.clear()
+            self.listener_thread = threading.Thread(target=self._event_loop, daemon=True)
+            self.listener_thread.start()
+            self.is_running = True
+            return True
 
         try:
             # Set up key grabbing if enabled
