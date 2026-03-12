@@ -6,6 +6,7 @@
     "return-type": "json",
     "exec-on-event": true,
     "on-click": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record",
+    "on-click-middle": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh mic-select",
     "on-click-right": "/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh restart",
     "tooltip": true
   }

@@ -294,6 +294,16 @@ mic_tooltip_line() {
     mic_recording_now && bits+=("recording") || bits+=("idle")
     local fid; fid="$(mic_fidelity_label)"
     [[ -n "$fid" ]] && bits+=("$fid")
+    # Include friendly name of current default source
+    local def_src def_desc
+    def_src="$(try 'pactl get-default-source')"
+    if [[ -n "$def_src" ]]; then
+        def_desc=$(pactl list sources 2>/dev/null | awk -v N="$def_src" '
+            /^\s*Name:/ { found=($2==N) }
+            found && /^\s*Description:/ { sub(/^\s*Description:\s*/, ""); print; exit }
+        ')
+        [[ -n "$def_desc" ]] && bits+=("[$def_desc]")
+    fi
     echo "Mic: ${bits[*]}"
 }
 
@@ -724,6 +734,83 @@ get_current_state() {
     echo "ready"
 }
 
+# Select microphone via rofi/wofi/dmenu picker
+select_microphone() {
+    local save_file="$HOME/.config/hyprwhspr/.default_source"
+    local current_default
+    current_default="$(pactl get-default-source 2>/dev/null)"
+
+    # Build list of non-monitor sources: "source_name\tDescription"
+    local sources=()
+    local descriptions=()
+    while IFS=$'\t' read -r idx name _driver spec _state; do
+        [[ "$name" == *.monitor ]] && continue
+        [[ -z "$name" ]] && continue
+        # Get friendly description for this source
+        local desc
+        desc=$(pactl list sources 2>/dev/null | awk -v N="$name" '
+            /^\s*Name:/ { found=($2==N) }
+            found && /^\s*Description:/ { sub(/^\s*Description:\s*/, ""); print; exit }
+        ')
+        desc="${desc:-$name}"
+        sources+=("$name")
+        descriptions+=("$desc")
+    done < <(pactl list short sources 2>/dev/null)
+
+    if [[ ${#sources[@]} -eq 0 ]]; then
+        show_notification "hyprwhspr" "No input sources found" "critical"
+        return 1
+    fi
+
+    # Build rofi menu lines, marking current default with *
+    local menu=""
+    for i in "${!sources[@]}"; do
+        local marker=""
+        [[ "${sources[$i]}" == "$current_default" ]] && marker="* "
+        menu+="${marker}${descriptions[$i]}\n"
+    done
+
+    # Pick a launcher: rofi → wofi → dmenu
+    local launcher=()
+    if command -v rofi &>/dev/null; then
+        launcher=(rofi -dmenu -i -p "Microphone")
+    elif command -v wofi &>/dev/null; then
+        launcher=(wofi --dmenu -p "Microphone")
+    elif command -v dmenu &>/dev/null; then
+        launcher=(dmenu -p "Microphone:")
+    else
+        show_notification "hyprwhspr" "No menu launcher found (install rofi)" "critical"
+        return 1
+    fi
+
+    local choice
+    choice=$(printf '%b' "$menu" | "${launcher[@]}")
+    [[ -z "$choice" ]] && return 0  # user cancelled
+
+    # Strip leading "* " marker if present
+    choice="${choice#\* }"
+
+    # Find matching source name by description
+    local selected_source=""
+    for i in "${!descriptions[@]}"; do
+        if [[ "${descriptions[$i]}" == "$choice" ]]; then
+            selected_source="${sources[$i]}"
+            break
+        fi
+    done
+
+    if [[ -z "$selected_source" ]]; then
+        show_notification "hyprwhspr" "Could not match selection" "critical"
+        return 1
+    fi
+
+    # Apply and persist
+    pactl set-default-source "$selected_source"
+    mkdir -p "$(dirname "$save_file")"
+    printf '%s\n' "$selected_source" > "$save_file"
+    show_notification "hyprwhspr" "Microphone set to: $choice" "normal"
+}
+
 # Main menu
 case "${1:-status}" in
     "status")
@@ -804,16 +891,20 @@ case "${1:-status}" in
             emit_json "$s" "$r" "$(mic_tooltip_line)"
         fi
         ;;
+    "mic-select")
+        select_microphone
+        ;;
     *)
-        echo "Usage: $0 [status|toggle|record|start|stop|ydotoold|restart|health]"
+        echo "Usage: $0 [status|toggle|record|start|stop|ydotoold|restart|health|mic-select]"
         echo ""
         echo "Commands:"
-        echo "  status    - Show current status (JSON output)"
-        echo "  toggle    - Toggle hyprwhspr on/off"
-        echo "  start     - Start hyprwhspr"
-        echo "  stop      - Stop hyprwhspr"
-        echo "  ydotoold  - Start ydotoold daemon"
-        echo "  restart   - Restart hyprwhspr"
-        echo "  health    - Check service health and recover if needed"
+        echo "  status      - Show current status (JSON output)"
+        echo "  toggle      - Toggle hyprwhspr on/off"
+        echo "  start       - Start hyprwhspr"
+        echo "  stop        - Stop hyprwhspr"
+        echo "  ydotoold    - Start ydotoold daemon"
+        echo "  restart     - Restart hyprwhspr"
+        echo "  health      - Check service health and recover if needed"
+        echo "  mic-select  - Pick default microphone via rofi menu"
         ;;
 esac
