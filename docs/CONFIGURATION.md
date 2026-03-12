@@ -495,8 +495,22 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 - `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
 
 - `"Transcribe as casual conversation with natural speech patterns."`
-  
+
 - `"Transcribe as an ornery pirate on the cusp of scurvy."`
+
+### Language-specific prompts
+
+Set a per-language prompt using `whisper_prompt_{lang}`:
+
+```jsonc
+{
+    "whisper_prompt": "Transcribe with proper capitalization.",
+    "whisper_prompt_de": "Transkribiere auf Deutsch. Verwende Schweizer Rechtschreibung: kein ß, immer ss."
+}
+```
+
+- Falls back to `whisper_prompt` if no language-specific prompt is configured
+- Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
 
 ## Audio and visual feedback
 
@@ -570,6 +584,19 @@ Customize transcriptions:
 ```
 
 Use empty string `""` to delete words entirely.
+
+Single-character overrides match anywhere in a word (not just at word boundaries):
+
+```json
+{
+    "word_overrides": {
+        "ß": "ss"
+    }
+}
+```
+
+- `"Straße"` → `"Strasse"`, `"Fuß"` → `"Fuss"`, etc.
+- Multi-character overrides use whole-word matching only
 
 ### Filler word filtering
 

@@ -909,12 +909,6 @@ class WhisperManager:
 
                 extra_body[key_str] = value
 
-            # Fill prompt from config if not provided
-            if 'prompt' not in extra_body:
-                whisper_prompt = self.config.get_setting('whisper_prompt', None)
-                if whisper_prompt:
-                    extra_body['prompt'] = whisper_prompt
-
             if not endpoint_url:
                 raise ValueError('REST endpoint URL not configured')
 
@@ -969,6 +963,16 @@ class WhisperManager:
             language = language_override if language_override is not None else self.config.get_setting('language', None)
             if language and 'language' not in data:
                 data['language'] = language
+
+            # Fill prompt from config - use language-specific prompt if available
+            if 'prompt' not in data:
+                whisper_prompt = None
+                if language:
+                    whisper_prompt = self.config.get_setting(f'whisper_prompt_{language}', None)
+                if not whisper_prompt:
+                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                if whisper_prompt:
+                    data['prompt'] = whisper_prompt
 
             # Log request parameters for debugging
             if data:
@@ -1146,7 +1150,7 @@ class WhisperManager:
             return ''
 
         language = language_override if language_override is not None else self.config.get_setting('language', None)
-        whisper_prompt = self.config.get_setting('whisper_prompt', None)
+        whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
         vad_filter = self.config.get_setting('faster_whisper_vad_filter', True)
 
         with self._model_lock:
@@ -1456,7 +1460,7 @@ class WhisperManager:
             try:
                 # Use language_override if provided, otherwise get from config (None = auto-detect)
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
-                whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
 
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():
