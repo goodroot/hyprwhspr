@@ -2516,18 +2516,27 @@ def setup_systemd(mode: str = 'install'):
     return True
 
 
+def _show_systemd_unit_status(unit_name: str):
+    """Stream systemctl status output directly to terminal without capturing."""
+    run_command(
+        ['systemctl', '--user', 'status', unit_name],
+        check=False,
+        verbose=True,
+        show_output_on_error=False,
+    )
+
+
 def systemd_status():
     """Show systemd service status"""
     try:
-
         log_info("hyprwhspr service status:")
-        run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
+        _show_systemd_unit_status(SERVICE_NAME)
         print()  # Add spacing
 
         # Show suspend/resume service status if it exists
         if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
             log_info("Suspend/resume handler status:")
-            run_command(['systemctl', '--user', 'status', RESUME_SERVICE_NAME], check=False)
+            _show_systemd_unit_status(RESUME_SERVICE_NAME)
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to get status: {e}")
 
