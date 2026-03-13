@@ -512,6 +512,38 @@ Set a per-language prompt using `whisper_prompt_{lang}`:
 - Falls back to `whisper_prompt` if no language-specific prompt is configured
 - Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
 
+## GPU resource management
+
+Free GPU VRAM without stopping the service - useful before running a local LLM, game, or other GPU-intensive workload.
+
+The service keeps running with all keyboard shortcuts active. Recording is blocked while the model is unloaded, with a desktop notification on attempt.
+
+```bash
+# Unload model from GPU memory (service stays alive, shortcuts still active)
+hyprwhspr model unload
+
+# Reload model back into memory when ready to dictate again
+hyprwhspr model reload
+```
+
+Only applies to local-model backends (`pywhispercpp`, `faster-whisper`, `onnx-asr`). No-op for `rest-api` and `realtime-ws` (those hold no local GPU memory).
+
+The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
+
+### Hyprland keybindings
+
+For quick access, bind unload and reload to keys in `~/.config/hypr/hyprland.conf`:
+
+```bash
+# Free GPU before starting a local LLM
+bindd = SUPER ALT, U, Unload Whisper model, exec, hyprwhspr model unload
+
+# Reclaim dictation when done
+bindd = SUPER ALT, L, Reload Whisper model, exec, hyprwhspr model reload
+```
+
+`Super+Alt+U` / `Super+Alt+L` (unload/load) keeps the pattern consistent with `Super+Alt+D` for dictation.
+
 ## Audio and visual feedback
 
 ### Themed visualizer
