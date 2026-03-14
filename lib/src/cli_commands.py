@@ -2,6 +2,8 @@
 CLI command implementations for hyprwhspr
 """
 
+import atexit
+import fcntl
 import os
 import sys
 import json
@@ -2970,8 +2972,17 @@ def speak_command(args):
     config = ConfigManager()
     tts_manager = TTSManager(config)
 
+    _speak_pid_file_handle = None
+
     def _cleanup_pid():
+        nonlocal _speak_pid_file_handle
         try:
+            if _speak_pid_file_handle is not None:
+                try:
+                    _speak_pid_file_handle.close()
+                except Exception:
+                    pass
+                _speak_pid_file_handle = None
             if TTS_SPEAK_PID_FILE.exists():
                 TTS_SPEAK_PID_FILE.unlink()
         except Exception:
@@ -2989,10 +3000,23 @@ def speak_command(args):
 
     signal_module.signal(signal_module.SIGTERM, _on_sigterm)
 
-    # Write PID for stop-on-second-press; ensure cleanup on exit
+    # Acquire exclusive lock on PID file to prevent race when speak is triggered twice
+    # quickly via FIFO (second process would overwrite PID and orphan the first)
     try:
         TTS_SPEAK_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        TTS_SPEAK_PID_FILE.write_text(str(os.getpid()))
+        _speak_pid_file_handle = open(TTS_SPEAK_PID_FILE, 'w')
+        fcntl.flock(_speak_pid_file_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _speak_pid_file_handle.write(str(os.getpid()))
+        _speak_pid_file_handle.flush()
+        atexit.register(_cleanup_pid)
+    except (BlockingIOError, OSError):
+        # Another speak process holds the lock - exit to avoid PID file race
+        if _speak_pid_file_handle is not None:
+            try:
+                _speak_pid_file_handle.close()
+            except Exception:
+                pass
+        return
     except Exception:
         pass
 
