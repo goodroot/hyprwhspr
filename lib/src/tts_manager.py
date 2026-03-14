@@ -145,9 +145,11 @@ class TTSManager:
         try:
             r = subprocess.run(['which', 'paplay'], capture_output=True, timeout=2)
             if r.returncode == 0:
+                # paplay --volume: 0 (silent) to 65536 (100%)
+                vol_pa = int(vol * 65536)
                 return [
                     'paplay', '--raw', '--format=s16le', f'--rate={sr}',
-                    '--channels=1', '-',
+                    '--channels=1', f'--volume={vol_pa}', '-',
                 ]
         except Exception:
             pass
