@@ -107,7 +107,7 @@ class ConfigManager:
             'long_form_auto_save_interval': 300,  # Auto-save interval in seconds (default: 5 minutes)
             # TTS (text-to-speech) settings
             'tts_enabled': False,            # Enable text-to-speech (TTS)
-            'tts_shortcut': 'SUPER+ALT+S',   # Shortcut key for TTS
+            'tts_shortcut': 'SUPER+ALT+T',   # Shortcut key for TTS (T for Text-to-speech; S conflicts with STT)
             'tts_voice': 'alba',             # Default TTS voice
             'tts_volume': 1.0,               # Playback volume for TTS (0.1–1.0)
             'tts_osd_enabled': True,         # Show overlay during TTS playback

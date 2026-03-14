@@ -719,7 +719,7 @@ Voice licenses and audio samples: [Kyutai TTS Voices on Hugging Face](https://hu
 ```jsonc
 {
     "tts_enabled": true,
-    "tts_shortcut": "SUPER+ALT+S",
+    "tts_shortcut": "SUPER+ALT+T",
     "tts_voice": "alba",
     "tts_volume": 1.0,
     "tts_osd_enabled": true
@@ -728,7 +728,7 @@ Voice licenses and audio samples: [Kyutai TTS Voices on Hugging Face](https://hu
 
 ### Usage
 
-- **Shortcut**: Press `tts_shortcut` (default SUPER+ALT+S) to read the currently selected text or clipboard.
+- **Shortcut**: Press `tts_shortcut` (default SUPER+ALT+T) to read the currently selected text or clipboard.
 - **CLI**: `hyprwhspr speak` — reads primary selection; use `--text "..."` or `--clipboard` for other sources.
 - **FIFO** (when using Hyprland bindings): `echo speak > ~/.config/hyprwhspr/recording_control`
 

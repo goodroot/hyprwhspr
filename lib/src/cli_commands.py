@@ -1734,7 +1734,7 @@ def setup_command(python_path: Optional[str] = None):
                 config = ConfigManager()
                 config.set_setting('tts_enabled', True)
                 config.set_setting('tts_voice', tts_voice)
-                config.set_setting('tts_shortcut', 'SUPER+ALT+S')
+                config.set_setting('tts_shortcut', 'SUPER+ALT+T')
                 config.set_setting('tts_osd_enabled', True)
                 config.save_config()
                 log_success("Text-to-speech enabled")
@@ -2184,7 +2184,7 @@ def omarchy_command(args=None):
         if install_tts_backend(custom_python=python_path):
             config.set_setting('tts_enabled', True)
             config.set_setting('tts_voice', 'alba')
-            config.set_setting('tts_shortcut', 'SUPER+ALT+S')
+            config.set_setting('tts_shortcut', 'SUPER+ALT+T')
             config.set_setting('tts_osd_enabled', True)
             log_success("Text-to-speech enabled")
         else:

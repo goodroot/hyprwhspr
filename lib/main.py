@@ -323,7 +323,7 @@ class hyprwhsprApp:
         try:
             tts_enabled = self.config.get_setting("tts_enabled", False)
             if tts_enabled:
-                tts_shortcut_key = self.config.get_setting("tts_shortcut", "SUPER+ALT+S")
+                tts_shortcut_key = self.config.get_setting("tts_shortcut", "SUPER+ALT+T")
                 if tts_shortcut_key:
                     self._tts_shortcuts = GlobalShortcuts(
                         tts_shortcut_key,
