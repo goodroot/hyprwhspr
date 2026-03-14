@@ -2381,6 +2381,13 @@ class hyprwhsprApp:
                     self._mic_osd_runner.stop()
                 except Exception:
                     pass  # Silently fail - daemon cleanup is best-effort
+
+            # Stop TTS OSD daemon (may have been started by speak subprocess)
+            try:
+                from tts_osd.runner import TTSOSDRunner
+                TTSOSDRunner.stop_daemon_if_running()
+            except Exception:
+                pass  # Silently fail - daemon cleanup is best-effort
             
             # Stop device monitor
             if hasattr(self, 'device_monitor') and self.device_monitor:

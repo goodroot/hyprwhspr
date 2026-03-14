@@ -199,6 +199,31 @@ sys.exit(main())
         except Exception as e:
             print(f"[TTS-OSD] Failed to clear state: {e}", flush=True)
 
+    @staticmethod
+    def stop_daemon_if_running() -> bool:
+        """Stop the TTS OSD daemon by PID file if it exists. Used during main service shutdown."""
+        if not TTS_OSD_PID_FILE.exists():
+            return False
+        try:
+            pid = int(TTS_OSD_PID_FILE.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            import time
+            time.sleep(0.5)
+            try:
+                os.kill(pid, 0)
+            except (ProcessLookupError, OSError):
+                pass
+            else:
+                os.kill(pid, signal.SIGKILL)
+        except (ValueError, ProcessLookupError, OSError):
+            pass
+        finally:
+            try:
+                TTS_OSD_PID_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return True
+
     def stop(self):
         """Stop the daemon completely."""
         if self._process is None:
