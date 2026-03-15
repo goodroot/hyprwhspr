@@ -229,6 +229,17 @@ Restart service to lock in changes:
 systemctl --user restart hyprwhspr
 ```
 
+### Running without keyboard access
+
+With `grab_keys: false` (default), hyprwhspr can start even if you are not in the `input` group. 
+
+The global shortcut will not work.
+
+Control recording via:
+
+* CLI (`hyprwhspr record toggle`, `hyprwhspr record start`, etc.) 
+& the `recording_control` file (e.g. bind in Hyprland to `echo start > ~/.config/hyprwhspr/recording_control`)
+
 ## Transcription backends
 
 Local backends (Parakeet + Whisper) are documented in the **Models** section below.
@@ -341,6 +352,12 @@ It provides very strong accuracy and nigh unbelievable speed on modest CPUs.
 Also great for GPUs.
 
 Select Parakeet V3 within `hyprwhspr setup`.
+
+Model storage: `~/.cache/huggingface/hub/`. 
+
+The Parakeet model is downloaded automatically when the backend starts. 
+
+With Parakeet selected, `hyprwhspr model list` and `hyprwhspr model status` show Parakeet info.
 
 ### Whisper (local)
 
@@ -478,8 +495,54 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 - `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
 
 - `"Transcribe as casual conversation with natural speech patterns."`
-  
+
 - `"Transcribe as an ornery pirate on the cusp of scurvy."`
+
+### Language-specific prompts
+
+Set a per-language prompt using `whisper_prompt_{lang}`:
+
+```jsonc
+{
+    "whisper_prompt": "Transcribe with proper capitalization.",
+    "whisper_prompt_de": "Transkribiere auf Deutsch. Verwende Schweizer Rechtschreibung: kein ß, immer ss."
+}
+```
+
+- Falls back to `whisper_prompt` if no language-specific prompt is configured
+- Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
+
+## GPU resource management
+
+Free GPU VRAM without stopping the service - useful before running a local LLM, game, or other GPU-intensive workload.
+
+The service keeps running with all keyboard shortcuts active. Recording is blocked while the model is unloaded, with a desktop notification on attempt.
+
+```bash
+# Unload model from GPU memory (service stays alive, shortcuts still active)
+hyprwhspr model unload
+
+# Reload model back into memory when ready to dictate again
+hyprwhspr model reload
+```
+
+Only applies to local-model backends (`pywhispercpp`, `faster-whisper`, `onnx-asr`). No-op for `rest-api` and `realtime-ws` (those hold no local GPU memory).
+
+The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
+
+### Hyprland keybindings
+
+For quick access, bind unload and reload to keys in `~/.config/hypr/hyprland.conf`:
+
+```bash
+# Free GPU before starting a local LLM
+bindd = SUPER ALT, U, Unload Whisper model, exec, hyprwhspr model unload
+
+# Reclaim dictation when done
+bindd = SUPER ALT, L, Reload Whisper model, exec, hyprwhspr model reload
+```
+
+`Super+Alt+U` / `Super+Alt+L` (unload/load) keeps the pattern consistent with `Super+Alt+D` for dictation.
 
 ## Audio and visual feedback
 
@@ -553,6 +616,19 @@ Customize transcriptions:
 ```
 
 Use empty string `""` to delete words entirely.
+
+Single-character overrides match anywhere in a word (not just at word boundaries):
+
+```json
+{
+    "word_overrides": {
+        "ß": "ss"
+    }
+}
+```
+
+- `"Straße"` → `"Strasse"`, `"Fuß"` → `"Fuss"`, etc.
+- Multi-character overrides use whole-word matching only
 
 ### Filler word filtering
 

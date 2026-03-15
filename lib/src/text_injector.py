@@ -355,8 +355,12 @@ class TextInjector:
         for original, replacement in word_overrides.items():
             # Only require original to be non-empty; replacement can be empty string to delete words
             if original:
-                pattern = r'\b' + re.escape(original) + r'\b'
-                processed = re.sub(pattern, replacement, processed, flags=re.IGNORECASE)
+                if len(original) == 1:
+                    # Single characters can't use \b word boundaries (e.g. ß mid-word in Straße)
+                    processed = re.sub(re.escape(original), replacement, processed, flags=re.IGNORECASE)
+                else:
+                    pattern = r'\b' + re.escape(original) + r'\b'
+                    processed = re.sub(pattern, replacement, processed, flags=re.IGNORECASE)
 
         # Clean up extra spaces left by word deletions (multiple spaces -> single space)
         processed = re.sub(r' +', ' ', processed)

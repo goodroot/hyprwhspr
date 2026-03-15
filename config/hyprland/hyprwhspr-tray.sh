@@ -594,6 +594,11 @@ emit_json() {
             text="$icon"
             tooltip="hyprwhspr: Ready to record\n\nLeft-click: Start recording\nRight-click: Restart service"
             ;;
+        "unloaded")
+            icon="󰒲"
+            text="$icon"
+            tooltip="hyprwhspr: Model unloaded — GPU resources freed\n\nReload with: hyprwhspr model reload\nRight-click: Restart service"
+            ;;
         "stopped")
             icon=""
             text="$icon"
@@ -659,13 +664,19 @@ get_current_state() {
         fi
     fi
     
+    # Service is running - check if model is manually unloaded
+    local model_unloaded_file="$HOME/.config/hyprwhspr/model_unloaded"
+    if [[ -f "$model_unloaded_file" ]]; then
+        echo "unloaded"; return
+    fi
+
     # Service is running - check if recording
     if is_hyprwhspr_recording; then
         # Recording is active - don't check audio levels (low levels are normal during speech pauses)
         # Only check mic availability when service is running but NOT recording
         echo "recording"; return
     fi
-    
+
     # Service running but not recording - check dependencies
     if ! is_ydotoold_running; then
         echo "error:ydotoold"; return

@@ -21,6 +21,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Built for Linux** - Native AUR package for Arch, or use Debian/Ubuntu/Fedora/openSUSE
 - **Local, very fast defaults** - Instant, private and accurate performance via in-memory models
 - **Latest models** - Turbo-v3? Parakeet TDT V3? Latest and greatest
+- **GPU memory efficient** - Limit or zero memory usage easily, more for other local models
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **REST API or websockets** - Secure, fast wires to top clouds like ElevenLabs
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
@@ -215,7 +216,7 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr waybar` - Manage Waybar integration (install/remove/status)
 - `hyprwhspr mic-osd` - Manage microphone visualization overlay (enable/disable/status)
 - `hyprwhspr systemd` - Manage systemd services (install/enable/disable/status/restart)
-- `hyprwhspr model` - Manage models (download/list/status)
+- `hyprwhspr model` - Manage models (download/list/status/unload/reload)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation
 - `hyprwhspr test` - Test microphone and backend connectivity end-to-end
@@ -235,6 +236,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 - [Custom hotkeys](docs/CONFIGURATION.md#custom-hotkeys) -- key support, secondary shortcuts, Hyprland bindings
 - [Transcription backends](docs/CONFIGURATION.md#transcription-backends) -- REST API, Realtime WebSocket
 - [Models](docs/CONFIGURATION.md#models) -- Parakeet, Whisper
+- [GPU resource management](docs/CONFIGURATION.md#gpu-resource-management) -- unload/reload model to free VRAM
 - [Audio and visual feedback](docs/CONFIGURATION.md#audio-and-visual-feedback) -- visualizer, audio feedback, ducking
 - [Text processing](docs/CONFIGURATION.md#text-processing) -- word overrides, filler words, symbol replacements
 - [Paste and clipboard behavior](docs/CONFIGURATION.md#paste-and-clipboard-behavior) -- paste mode, non-QWERTY, auto-submit
