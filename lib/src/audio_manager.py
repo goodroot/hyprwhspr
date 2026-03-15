@@ -104,49 +104,47 @@ class AudioManager:
         # Fall back to default
         return self.assets_dir / default_filename
 
-    def _play_sound(self, sound_file: Path, volume: float = None) -> bool:
+    def _play_sound(self, sound_file: Path, volume: float = None, blocking: bool = False) -> bool:
         """
-        Play an audio file with volume control
-        
+        Play an audio file with volume control.
+
         Args:
             sound_file: Path to the audio file
             volume: Volume level (0.1 to 1.0), uses instance volume if None
-            
-        Returns:
-            True if successful, False otherwise
+            blocking: If True, wait for playback to complete (for TTS)
         """
         if not sound_file.exists():
             print(f"Audio file not found: {sound_file}")
             return False
-        
+
         if volume is None:
             volume = self.volume
-        
+
         try:
-            # Try using ffplay (most reliable, supports volume control and all formats)
             if self._is_tool_available('ffplay'):
-                return self._play_with_ffplay(sound_file, volume)
-
-            # Fallback to paplay (PulseAudio/PipeWire, supports OGG)
+                return self._play_with_ffplay(sound_file, volume, blocking=blocking)
             elif self._is_tool_available('paplay'):
+                if blocking:
+                    result = subprocess.run(['paplay', str(sound_file)], capture_output=True)
+                    return result.returncode == 0
                 return self._play_with_paplay(sound_file)
-
-            # Fallback to pw-play (native PipeWire, supports OGG)
             elif self._is_tool_available('pw-play'):
+                if blocking:
+                    result = subprocess.run(['pw-play', str(sound_file)], capture_output=True)
+                    return result.returncode == 0
                 return self._play_with_pwplay(sound_file)
-
-            # Fallback to aplay (ALSA) - only for WAV files, not OGG
             elif self._is_tool_available('aplay'):
                 if sound_file.suffix.lower() in ['.wav', '.wave']:
+                    if blocking:
+                        result = subprocess.run(['aplay', '-q', str(sound_file)], capture_output=True)
+                        return result.returncode == 0
                     return self._play_with_aplay(sound_file)
                 else:
                     print(f"aplay does not support {sound_file.suffix} files (only WAV). Install ffplay or paplay for OGG support.")
                     return False
-
             else:
                 print("No audio playback tools available (ffplay, paplay, pw-play, or aplay)")
                 return False
-                
         except Exception as e:
             print(f"Failed to play audio: {e}")
             return False
@@ -159,32 +157,34 @@ class AudioManager:
         except Exception:
             return False
 
-    def _run_audio_command(self, cmd: list, tool_name: str) -> bool:
-        """Run an audio command in a background thread"""
+    def _run_audio_command(self, cmd: list, tool_name: str, blocking: bool = False) -> bool:
+        """Run an audio command. If blocking=True, wait for playback to complete."""
         try:
-            def play_audio():
-                subprocess.run(cmd, capture_output=True, timeout=5)
-
-            thread = threading.Thread(target=play_audio, daemon=True)
-            thread.start()
-            return True
+            if blocking:
+                # TTS playback: wait until done (no timeout for long text)
+                subprocess.run(cmd, capture_output=True)
+                return True
+            else:
+                def play_audio():
+                    subprocess.run(cmd, capture_output=True, timeout=5)
+                thread = threading.Thread(target=play_audio, daemon=True)
+                thread.start()
+                return True
         except Exception as e:
             print(f"{tool_name} failed: {e}")
             return False
 
-    def _play_with_ffplay(self, sound_file: Path, volume: float) -> bool:
+    def _play_with_ffplay(self, sound_file: Path, volume: float, blocking: bool = False) -> bool:
         """Play audio with ffplay (supports volume control)"""
-        # Convert volume from 0.1-1.0 to ffplay's -volume (0-100)
         ffplay_volume = int(volume * 100)
         cmd = [
             'ffplay',
-            '-nodisp',  # No display window
-            '-autoexit',  # Exit after playing
+            '-nodisp', '-autoexit',
             '-volume', str(ffplay_volume),
-            '-loglevel', 'error',  # Minimal logging
+            '-loglevel', 'error',
             str(sound_file)
         ]
-        return self._run_audio_command(cmd, 'ffplay')
+        return self._run_audio_command(cmd, 'ffplay', blocking=blocking)
 
     def _play_with_aplay(self, sound_file: Path) -> bool:
         """Play audio with aplay (ALSA, no volume control)"""
@@ -198,6 +198,18 @@ class AudioManager:
         """Play audio with pw-play (native PipeWire, no volume control)"""
         return self._run_audio_command(['pw-play', str(sound_file)], 'pw-play')
     
+    def play_file(self, sound_file, volume: float = None, blocking: bool = False) -> bool:
+        """
+        Play an audio file (public API for TTS playback, etc.).
+
+        Args:
+            sound_file: Path to the audio file (Path or str)
+            volume: Volume level (0.1 to 1.0), uses instance volume if None
+            blocking: If True, wait for playback to complete (for TTS)
+        """
+        path = Path(sound_file) if not isinstance(sound_file, Path) else sound_file
+        return self._play_sound(path, volume, blocking=blocking)
+
     def play_start_sound(self) -> bool:
         """Play the recording start sound"""
         if not self.enabled or not self.start_sound_available:

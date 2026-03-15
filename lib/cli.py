@@ -23,11 +23,13 @@ from cli_commands import (
     config_command,
     waybar_command,
     mic_osd_command,
+    tts_osd_command,
     systemd_command,
     model_command,
     status_command,
     validate_command,
     test_command,
+    speak_command,
     backend_repair_command,
     backend_reset_command,
     state_show_command,
@@ -71,6 +73,7 @@ def main():
     auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
     auto_parser.add_argument('--no-waybar', action='store_true', help='Skip waybar integration')
     auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization')
+    auto_parser.add_argument('--tts', action='store_true', help='Enable text-to-speech (Pocket TTS)')
     auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')
     auto_parser.add_argument('--hypr-bindings', action='store_true', help='Enable Hyprland compositor bindings')
     auto_parser.add_argument('--python', dest='python_path', metavar='PATH',
@@ -102,6 +105,12 @@ def main():
     mic_osd_subparsers.add_parser('enable', help='Enable visualization during recording')
     mic_osd_subparsers.add_parser('disable', help='Disable visualization')
     mic_osd_subparsers.add_parser('status', help='Check mic-osd status')
+
+    # tts-osd command (TTS overlay)
+    tts_osd_parser = subparsers.add_parser('tts-osd', help='TTS reading overlay')
+    tts_osd_subparsers = tts_osd_parser.add_subparsers(dest='tts_osd_action', help='TTS-OSD actions')
+    tts_osd_subparsers.add_parser('restart', help='Restart overlay daemon (pick up design/code changes)')
+    tts_osd_subparsers.add_parser('status', help='Check tts-osd status')
     
     # systemd command
     systemd_parser = subparsers.add_parser('systemd', help='Systemd service management')
@@ -140,6 +149,12 @@ def main():
     keyboard_subparsers = keyboard_parser.add_subparsers(dest='keyboard_action', help='Keyboard actions')
     keyboard_subparsers.add_parser('list', help='List available keyboard devices')
     keyboard_subparsers.add_parser('test', help='Test keyboard device accessibility')
+
+    # speak command (TTS - read selected text aloud)
+    speak_parser = subparsers.add_parser('speak', help='Read selected text or clipboard aloud (TTS)')
+    speak_parser.add_argument('--text', metavar='TEXT', help='Text to read (default: primary selection, then clipboard)')
+    speak_parser.add_argument('--clipboard', action='store_true', help='Use clipboard instead of primary selection')
+    speak_parser.add_argument('--voice', metavar='VOICE', help='Voice to use (default: from config)')
 
     # record command (for external hotkey systems)
     record_parser = subparsers.add_parser('record', help='Control recording (for external hotkeys)')
@@ -237,6 +252,11 @@ def main():
                 mic_osd_parser.print_help()
                 sys.exit(1)
             mic_osd_command(args.mic_osd_action)
+        elif args.command == 'tts-osd':
+            if not args.tts_osd_action:
+                tts_osd_parser.print_help()
+                sys.exit(1)
+            tts_osd_command(args.tts_osd_action)
         elif args.command == 'systemd':
             if not args.systemd_action:
                 systemd_parser.print_help()
@@ -280,6 +300,8 @@ def main():
                 state_validate_command()
             elif args.state_action == 'reset':
                 state_reset_command(getattr(args, 'all', False))
+        elif args.command == 'speak':
+            speak_command(args)
         elif args.command == 'record':
             if not args.record_action:
                 record_parser.print_help()
