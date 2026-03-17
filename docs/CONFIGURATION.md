@@ -743,7 +743,9 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 ### Inject mode
 
-By default, hyprwhspr copies text to the clipboard and sends a paste keystroke. This fails in terminals that use the **Kitty keyboard protocol** (Ghostty, Kitty, WezTerm), where synthetic Ctrl+V from ydotool is misinterpreted.
+By default, hyprwhspr copies text to the clipboard and sends a paste keystroke. 
+
+This fails in terminals that use the **Kitty keyboard protocol** (Ghostty, Kitty, WezTerm), where synthetic Ctrl+V from ydotool is misinterpreted.
 
 Use `inject_mode` for direct character injection that bypasses the clipboard entirely:
 
