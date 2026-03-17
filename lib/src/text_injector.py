@@ -32,9 +32,12 @@ class TextInjector:
 
         # Detect available injectors
         self.ydotool_available = self._check_ydotool()
+        self.wtype_available = shutil.which('wtype') is not None
 
-        if not self.ydotool_available:
-            print("⚠️  No typing backend found (ydotool). hyprwhspr requires ydotool for paste injection.")
+        if not self.ydotool_available and not self.wtype_available:
+            print("⚠️  No typing backend found (ydotool or wtype). hyprwhspr requires ydotool for paste injection.")
+        elif not self.ydotool_available:
+            print("ℹ️  ydotool not found. Paste injection unavailable; wtype is present for inject_mode=wtype.")
 
     def _check_ydotool(self) -> bool:
         """Check if ydotool is available on the system"""
@@ -195,8 +198,10 @@ class TextInjector:
 
     def _send_enter_if_auto_submit(self):
         """Send Enter key if auto_submit is enabled"""
-        if self.config_manager and self.config_manager.get_setting('auto_submit', False):
-            try:
+        if not (self.config_manager and self.config_manager.get_setting('auto_submit', False)):
+            return
+        try:
+            if self.ydotool_available:
                 enter_result = subprocess.run(
                     ['ydotool', 'key', '28:1', '28:0'],  # 28 = Enter key
                     capture_output=True, timeout=1
@@ -204,8 +209,18 @@ class TextInjector:
                 if enter_result.returncode != 0:
                     stderr = (enter_result.stderr or b"").decode("utf-8", "ignore")
                     print(f"  ydotool Enter key failed: {stderr}")
-            except Exception as e:
-                print(f"  auto_submit Enter key failed: {e}")
+            elif self.wtype_available:
+                enter_result = subprocess.run(
+                    ['wtype', '-k', 'Return'],
+                    capture_output=True, timeout=1
+                )
+                if enter_result.returncode != 0:
+                    stderr = (enter_result.stderr or b"").decode("utf-8", "ignore")
+                    print(f"  wtype Enter key failed: {stderr}")
+            else:
+                print("  auto_submit enabled but no key-injection tool available (ydotool or wtype required)")
+        except Exception as e:
+            print(f"  auto_submit Enter key failed: {e}")
 
     def _clear_clipboard(self):
         """Clear the clipboard by setting it to empty content"""
@@ -228,6 +243,40 @@ class TextInjector:
         clear_thread = threading.Thread(target=clear_after_delay, daemon=True)
         clear_thread.start()
 
+    def _inject_via_wtype(self, text: str) -> bool:
+        """Inject text by typing it directly with wtype (no clipboard)."""
+        try:
+            result = subprocess.run(
+                ['wtype', '--', text],
+                capture_output=True, timeout=10
+            )
+            if result.returncode != 0:
+                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
+                print(f"  wtype injection failed: {stderr}")
+                return False
+            self._send_enter_if_auto_submit()
+            return True
+        except Exception as e:
+            print(f"wtype injection failed: {e}")
+            return False
+
+    def _inject_via_ydotool_type(self, text: str) -> bool:
+        """Inject text by typing it directly with ydotool type (no clipboard)."""
+        try:
+            result = subprocess.run(
+                ['ydotool', 'type', '--', text],
+                capture_output=True, timeout=10
+            )
+            if result.returncode != 0:
+                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
+                print(f"  ydotool type injection failed: {stderr}")
+                return False
+            self._send_enter_if_auto_submit()
+            return True
+        except Exception as e:
+            print(f"ydotool type injection failed: {e}")
+            return False
+
     # ------------------------ Public API ------------------------
 
     def inject_text(self, text: str) -> bool:
@@ -248,15 +297,45 @@ class TextInjector:
         processed_text = self._preprocess_text(text).rstrip("\r\n") + ' '
 
         try:
-            # Use strategy-based injection
+            # Check for direct-type inject_mode first (bypasses clipboard entirely)
+            inject_mode = None
+            if self.config_manager:
+                inject_mode = self.config_manager.get_setting('inject_mode', None)
+
             success = False
-            if self.ydotool_available:
+            used_clipboard = False
+            if inject_mode == 'wtype':
+                if self.wtype_available:
+                    success = self._inject_via_wtype(processed_text)
+                else:
+                    print("inject_mode=wtype but wtype not found; falling back to clipboard+paste")
+                    if self.ydotool_available:
+                        success = self._inject_via_clipboard_and_hotkey(processed_text)
+                        used_clipboard = True
+                    else:
+                        success = self._inject_via_clipboard(processed_text)
+                        used_clipboard = True
+            elif inject_mode == 'ydotool_type':
+                if self.ydotool_available:
+                    success = self._inject_via_ydotool_type(processed_text)
+                elif self.wtype_available:
+                    print("inject_mode=ydotool_type but ydotool not found; falling back to wtype")
+                    success = self._inject_via_wtype(processed_text)
+                else:
+                    print("inject_mode=ydotool_type but ydotool not found; falling back to clipboard")
+                    success = self._inject_via_clipboard(processed_text)
+                    used_clipboard = True
+            elif self.ydotool_available:
                 success = self._inject_via_clipboard_and_hotkey(processed_text)
+                used_clipboard = True
             else:
                 success = self._inject_via_clipboard(processed_text)
+                used_clipboard = True
 
-            # Check if clipboard clearing is enabled
-            if success and self.config_manager:
+            # Check if clipboard clearing is enabled. Use the actual method chosen,
+            # not the configured inject_mode — fallback paths may have used the
+            # clipboard even when a direct-type mode was requested.
+            if success and self.config_manager and used_clipboard:
                 clipboard_behavior = self.config_manager.get_setting('clipboard_behavior', False)
                 if clipboard_behavior:
                     clear_delay = self.config_manager.get_setting('clipboard_clear_delay', 5.0)
@@ -513,8 +592,11 @@ class TextInjector:
                 subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True)
             else:
                 pyperclip.copy(text)
-            
+
             print("Text copied to clipboard (ydotool not available for paste)")
+            # Do NOT call _send_enter_if_auto_submit() here: text is only on the
+            # clipboard, not yet injected into the application. Sending Enter now
+            # would submit an empty field before the user has a chance to paste.
             return True
         except Exception as e:
             print(f"ERROR: Clipboard fallback failed: {e}")

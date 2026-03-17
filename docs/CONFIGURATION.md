@@ -741,6 +741,24 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 ... Be careful!
 
+### Inject mode
+
+By default, hyprwhspr copies text to the clipboard and sends a paste keystroke. This fails in terminals that use the **Kitty keyboard protocol** (Ghostty, Kitty, WezTerm), where synthetic Ctrl+V from ydotool is misinterpreted.
+
+Use `inject_mode` for direct character injection that bypasses the clipboard entirely:
+
+```jsonc
+{
+    "inject_mode": "wtype"  // null (default) | "wtype" | "ydotool_type"
+}
+```
+
+- **`null`** (default) — clipboard + paste keystroke. Works everywhere except Kitty-protocol terminals.
+- **`"wtype"`** — types text directly via `wtype`. Requires `wtype`. Works in all Wayland windows including Kitty-protocol terminals.
+- **`"ydotool_type"`** — types text directly via `ydotool type`. Works in Kitty-protocol terminals.
+
+If the configured tool is not installed, hyprwhspr falls back to clipboard+paste (or clipboard-only if ydotool is also absent).
+
 ### Clipboard behavior
 
 Control what happens to clipboard after text injection:
