@@ -5,6 +5,7 @@ Spawns mic-osd once in daemon mode, then uses SIGUSR1/SIGUSR2 to show/hide.
 This eliminates subprocess spawn latency on each recording.
 """
 
+import glob
 import subprocess
 import signal
 import sys
@@ -127,15 +128,26 @@ sys.argv = ['mic-osd', '--daemon']
 sys.exit(main())
 """
 
-        # Set LD_PRELOAD for gtk4-layer-shell
-        # Use the actual .so file (not symlink) to ensure proper loading
+        # Set LD_PRELOAD for gtk4-layer-shell.
+        # Search common library paths including lib64 (Fedora/RHEL) and versioned
+        # .so files (distros that only ship the unversioned symlink in -devel).
         env = os.environ.copy()
-        # Try to find the actual library file
-        lib_path = '/usr/lib/libgtk4-layer-shell.so'
-        if os.path.islink(lib_path):
-            # Resolve symlink to actual file
-            lib_path = os.path.realpath(lib_path)
-        env['LD_PRELOAD'] = lib_path
+        lib_path = None
+        for pattern in [
+            '/usr/lib64/libgtk4-layer-shell.so*',
+            '/usr/lib/libgtk4-layer-shell.so*',
+            '/usr/local/lib64/libgtk4-layer-shell.so*',
+            '/usr/local/lib/libgtk4-layer-shell.so*',
+        ]:
+            for candidate in sorted(glob.glob(pattern)):
+                resolved = os.path.realpath(candidate)
+                if os.path.isfile(resolved):
+                    lib_path = resolved
+                    break
+            if lib_path:
+                break
+        if lib_path:
+            env['LD_PRELOAD'] = lib_path
 
         try:
             self._process = subprocess.Popen(

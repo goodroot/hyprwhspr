@@ -159,7 +159,7 @@ hyprwhspr config secondary-shortcut
 
 Useful when you trigger the shortcut by accident or start speaking and want to bail out.
 
-pPays the error sound on cancel so you have clear audio feedback.
+Plays the error sound on cancel so you have clear audio feedback.
 
 ```jsonc
 {
