@@ -495,8 +495,54 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 - `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
 
 - `"Transcribe as casual conversation with natural speech patterns."`
-  
+
 - `"Transcribe as an ornery pirate on the cusp of scurvy."`
+
+### Language-specific prompts
+
+Set a per-language prompt using `whisper_prompt_{lang}`:
+
+```jsonc
+{
+    "whisper_prompt": "Transcribe with proper capitalization.",
+    "whisper_prompt_de": "Transkribiere auf Deutsch. Verwende Schweizer Rechtschreibung: kein ß, immer ss."
+}
+```
+
+- Falls back to `whisper_prompt` if no language-specific prompt is configured
+- Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
+
+## GPU resource management
+
+Free GPU VRAM without stopping the service - useful before running a local LLM, game, or other GPU-intensive workload.
+
+The service keeps running with all keyboard shortcuts active. Recording is blocked while the model is unloaded, with a desktop notification on attempt.
+
+```bash
+# Unload model from GPU memory (service stays alive, shortcuts still active)
+hyprwhspr model unload
+
+# Reload model back into memory when ready to dictate again
+hyprwhspr model reload
+```
+
+Only applies to local-model backends (`pywhispercpp`, `faster-whisper`, `onnx-asr`). No-op for `rest-api` and `realtime-ws` (those hold no local GPU memory).
+
+The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
+
+### Hyprland keybindings
+
+For quick access, bind unload and reload to keys in `~/.config/hypr/hyprland.conf`:
+
+```bash
+# Free GPU before starting a local LLM
+bindd = SUPER ALT, U, Unload Whisper model, exec, hyprwhspr model unload
+
+# Reclaim dictation when done
+bindd = SUPER ALT, L, Reload Whisper model, exec, hyprwhspr model reload
+```
+
+`Super+Alt+U` / `Super+Alt+L` (unload/load) keeps the pattern consistent with `Super+Alt+D` for dictation.
 
 ## Audio and visual feedback
 
@@ -570,6 +616,19 @@ Customize transcriptions:
 ```
 
 Use empty string `""` to delete words entirely.
+
+Single-character overrides match anywhere in a word (not just at word boundaries):
+
+```json
+{
+    "word_overrides": {
+        "ß": "ss"
+    }
+}
+```
+
+- `"Straße"` → `"Strasse"`, `"Fuß"` → `"Fuss"`, etc.
+- Multi-character overrides use whole-word matching only
 
 ### Filler word filtering
 
@@ -681,6 +740,26 @@ Automatically press Enter after pasting.
 Useful for chat applications, search boxes, or any input where you want to submit immediately after dictation.
 
 ... Be careful!
+
+### Inject mode
+
+By default, hyprwhspr copies text to the clipboard and sends a paste keystroke. 
+
+This fails in terminals that use the **Kitty keyboard protocol** (Ghostty, Kitty, WezTerm), where synthetic Ctrl+V from ydotool is misinterpreted.
+
+Use `inject_mode` for direct character injection that bypasses the clipboard entirely:
+
+```jsonc
+{
+    "inject_mode": "wtype"  // null (default) | "wtype" | "ydotool_type"
+}
+```
+
+- **`null`** (default) — clipboard + paste keystroke. Works everywhere except Kitty-protocol terminals.
+- **`"wtype"`** — types text directly via `wtype`. Requires `wtype`. Works in all Wayland windows including Kitty-protocol terminals.
+- **`"ydotool_type"`** — types text directly via `ydotool type`. Works in Kitty-protocol terminals.
+
+If the configured tool is not installed, hyprwhspr falls back to clipboard+paste (or clipboard-only if ydotool is also absent).
 
 ### Clipboard behavior
 

@@ -37,9 +37,9 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
-    from .paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE
+    from .paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 except ImportError:
-    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE
+    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 
 try:
     from .backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
@@ -2516,18 +2516,27 @@ def setup_systemd(mode: str = 'install'):
     return True
 
 
+def _show_systemd_unit_status(unit_name: str):
+    """Stream systemctl status output directly to terminal without capturing."""
+    run_command(
+        ['systemctl', '--user', 'status', unit_name],
+        check=False,
+        verbose=True,
+        show_output_on_error=False,
+    )
+
+
 def systemd_status():
     """Show systemd service status"""
     try:
-
         log_info("hyprwhspr service status:")
-        run_command(['systemctl', '--user', 'status', SERVICE_NAME], check=False)
+        _show_systemd_unit_status(SERVICE_NAME)
         print()  # Add spacing
 
         # Show suspend/resume service status if it exists
         if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
             log_info("Suspend/resume handler status:")
-            run_command(['systemctl', '--user', 'status', RESUME_SERVICE_NAME], check=False)
+            _show_systemd_unit_status(RESUME_SERVICE_NAME)
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to get status: {e}")
 
@@ -2925,10 +2934,79 @@ def mic_osd_status():
 
 # ==================== Model Commands ====================
 
+def _send_model_control(command: str) -> bool:
+    """Send a model_unload or model_reload command to the running service via FIFO."""
+    import stat, select
+    if not RECORDING_CONTROL_FILE.exists():
+        log_error("Recording control file not found — is the hyprwhspr service running?")
+        log_info("Start it with: systemctl --user start hyprwhspr")
+        return False
+    try:
+        file_stat = RECORDING_CONTROL_FILE.stat()
+        is_fifo = stat.S_ISFIFO(file_stat.st_mode)
+    except Exception:
+        is_fifo = False
+    try:
+        if is_fifo:
+            fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
+            fd_closed = False
+            try:
+                _, ready, _ = select.select([], [fd], [], 2.0)
+                if not ready:
+                    os.close(fd)
+                    fd_closed = True
+                    log_error("Service not responding (timeout)")
+                    return False
+                os.write(fd, (command + '\n').encode())
+            finally:
+                if not fd_closed:
+                    os.close(fd)
+        else:
+            RECORDING_CONTROL_FILE.write_text(command + '\n')
+        return True
+    except OSError as e:
+        if e.errno == 6:
+            log_error("Service not listening on control FIFO — is hyprwhspr running?")
+        else:
+            log_error(f"Failed to send command: {e}")
+        return False
+    except Exception as e:
+        log_error(f"Failed to send command: {e}")
+        return False
+
+
 def model_command(action: str, model_name: str = 'base'):
     """Handle model subcommands"""
     config = ConfigManager()
     backend = normalize_backend(config.get_setting('transcription_backend', 'pywhispercpp'))
+
+    # unload / reload are valid for any local-model backend
+    if action == 'unload':
+        if backend in ('rest-api', 'realtime-ws'):
+            log_error(f"Model unload not applicable for backend: {backend}")
+            log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr) hold GPU memory.")
+            return
+        if MODEL_UNLOADED_FILE.exists():
+            log_warning("Model is already unloaded.")
+            log_info("Reload it with: hyprwhspr model reload")
+            return
+        log_info("Sending model unload request to service...")
+        if _send_model_control('model_unload'):
+            log_success("Model unload requested — GPU resources will be freed.")
+        return
+
+    if action == 'reload':
+        if backend in ('rest-api', 'realtime-ws'):
+            log_error(f"Model reload not applicable for backend: {backend}")
+            return
+        if not MODEL_UNLOADED_FILE.exists():
+            log_warning("Model does not appear to be unloaded.")
+            log_info("Use this after: hyprwhspr model unload")
+            return
+        log_info("Sending model reload request to service...")
+        if _send_model_control('model_reload'):
+            log_success("Model reload requested — service will load model back into memory.")
+        return
 
     if backend == 'faster-whisper':
         if action == 'download':

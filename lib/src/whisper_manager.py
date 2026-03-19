@@ -74,9 +74,12 @@ class WhisperManager:
 
         # State
         self.ready = False
-        
+
         # Track last successful transcription time for suspend/resume detection
         self._last_use_time = 0.0
+
+        # Set when model is deliberately unloaded via unload_model() to free GPU resources
+        self._model_manually_unloaded = False
 
     def initialize(self) -> bool:
         """Initialize the whisper manager and check dependencies"""
@@ -909,12 +912,6 @@ class WhisperManager:
 
                 extra_body[key_str] = value
 
-            # Fill prompt from config if not provided
-            if 'prompt' not in extra_body:
-                whisper_prompt = self.config.get_setting('whisper_prompt', None)
-                if whisper_prompt:
-                    extra_body['prompt'] = whisper_prompt
-
             if not endpoint_url:
                 raise ValueError('REST endpoint URL not configured')
 
@@ -969,6 +966,16 @@ class WhisperManager:
             language = language_override if language_override is not None else self.config.get_setting('language', None)
             if language and 'language' not in data:
                 data['language'] = language
+
+            # Fill prompt from config - use language-specific prompt if available
+            if 'prompt' not in data:
+                whisper_prompt = None
+                if language:
+                    whisper_prompt = self.config.get_setting(f'whisper_prompt_{language}', None)
+                if not whisper_prompt:
+                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                if whisper_prompt:
+                    data['prompt'] = whisper_prompt
 
             # Log request parameters for debugging
             if data:
@@ -1146,7 +1153,7 @@ class WhisperManager:
             return ''
 
         language = language_override if language_override is not None else self.config.get_setting('language', None)
-        whisper_prompt = self.config.get_setting('whisper_prompt', None)
+        whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
         vad_filter = self.config.get_setting('faster_whisper_vad_filter', True)
 
         with self._model_lock:
@@ -1456,7 +1463,7 @@ class WhisperManager:
             try:
                 # Use language_override if provided, otherwise get from config (None = auto-detect)
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
-                whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
 
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():
@@ -1583,6 +1590,68 @@ class WhisperManager:
         """Public cleanup method to clean up all resources"""
         # Cleanup realtime WebSocket client if active
         self._cleanup_realtime_client()
+
+    def unload_model(self) -> bool:
+        """
+        Unload the model from memory (including GPU VRAM) to free resources for other applications.
+
+        The service continues running with all shortcuts active; recording will be blocked
+        until reload_model() is called.
+
+        Returns:
+            True if a model was unloaded, False if backend has no local model to unload.
+        """
+        backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+        if backend in ('rest-api', 'realtime-ws'):
+            print("[MODEL] Unload not applicable for non-local backend", flush=True)
+            return False
+
+        with self._model_lock:
+            try:
+                self._cleanup_model()
+                self._faster_whisper_model = None
+                self._onnx_asr_model = None
+
+                # Trigger Python GC so C++ destructors and ONNX sessions release immediately
+                import gc
+                gc.collect()
+
+                # Free cached CUDA allocations if torch is present
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        print("[MODEL] CUDA cache cleared", flush=True)
+                except ImportError:
+                    pass
+
+                self.ready = False
+                self._model_manually_unloaded = True
+                print("[MODEL] Model unloaded from memory — GPU resources freed", flush=True)
+                return True
+
+            except Exception as e:
+                print(f"[MODEL] ERROR: Failed to unload model: {e}", flush=True)
+                return False
+
+    def reload_model(self) -> bool:
+        """
+        Reload the model into memory after unload_model() was called.
+
+        Returns:
+            True if model loaded successfully, False otherwise.
+        """
+        print("[MODEL] Reloading model...", flush=True)
+        result = self.initialize()
+        if result:
+            # Clear the flag only after initialize() fully completes so that
+            # _start_recording()'s guard stays active until the model is ready.
+            with self._model_lock:
+                self._model_manually_unloaded = False
+            print("[MODEL] Model reloaded successfully", flush=True)
+        else:
+            print("[MODEL] ERROR: Failed to reload model", flush=True)
+        return result
 
     def set_threads(self, num_threads: int) -> bool:
         """Update the number of threads used by the backend."""

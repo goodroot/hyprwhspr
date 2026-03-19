@@ -119,7 +119,9 @@ def main():
     model_download_parser.add_argument('name', nargs='?', default='base', help='Model name (default: base)')
     model_subparsers.add_parser('list', help='List available models')
     model_subparsers.add_parser('status', help='Check installed models')
-    
+    model_subparsers.add_parser('unload', help='Unload model from memory to free GPU resources')
+    model_subparsers.add_parser('reload', help='Reload model into memory after unload')
+
     # status command
     subparsers.add_parser('status', help='Overall status check')
     

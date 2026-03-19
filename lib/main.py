@@ -58,7 +58,8 @@ from audio_ducker import AudioDucker
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
-    RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR
+    RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR,
+    MODEL_UNLOADED_FILE,
 )
 from backend_utils import normalize_backend
 from segment_manager import SegmentManager
@@ -976,8 +977,20 @@ class hyprwhsprApp:
             # Store language override for this recording session
             self._current_language_override = language_override
         
+        # Block recording if model was deliberately unloaded to free GPU resources
+        if getattr(self.whisper_manager, '_model_manually_unloaded', False):
+            with self._recording_lock:
+                self.is_recording = False
+            self._notify_user(
+                "hyprwhspr",
+                "Model unloaded — run: hyprwhspr model reload",
+                urgency="normal",
+            )
+            print("[CONTROL] Recording blocked: model is unloaded. Run: hyprwhspr model reload", flush=True)
+            return
+
         print("Recording started", flush=True)
-        
+
         try:
             # Clear zero-volume signal file when starting a new recording
             # This allows waybar to recover immediately on successful start
@@ -1493,6 +1506,7 @@ class hyprwhsprApp:
             MIC_ZERO_VOLUME_FILE,
             RECOVERY_REQUESTED_FILE,
             RECOVERY_RESULT_FILE,
+            MODEL_UNLOADED_FILE,
         ]
         for f in stale_files:
             try:
@@ -1771,8 +1785,9 @@ class hyprwhsprApp:
                 # Handle multiple commands written to FIFO before read
                 # (e.g., user clicks rapidly during timeout - "start\nstart")
                 # Take only the last valid command (most recent intent)
-                # Commands can be: 'start', 'start:lang', 'stop', 'cancel', 'submit'
-                valid_base_commands = {'start', 'stop', 'cancel', 'submit'}
+                # Commands can be: 'start', 'start:lang', 'stop', 'cancel', 'submit',
+                #                  'model_unload', 'model_reload'
+                valid_base_commands = {'start', 'stop', 'cancel', 'submit', 'model_unload', 'model_reload'}
                 lines = [line.strip() for line in raw_data.splitlines() if line.strip()]
 
                 # Parse commands - extract base command and optional language
@@ -1861,6 +1876,30 @@ class hyprwhsprApp:
                         self._on_longform_submit_triggered()
                     else:
                         print("[CONTROL] Submit command only valid in long_form mode", flush=True)
+                elif action == "model_unload":
+                    if self.is_recording:
+                        print("[CONTROL] Cannot unload model while recording", flush=True)
+                        self._notify_user("hyprwhspr", "Stop recording before unloading model", urgency="normal")
+                    else:
+                        print("[CONTROL] Model unload requested", flush=True)
+                        if self.whisper_manager.unload_model():
+                            try:
+                                MODEL_UNLOADED_FILE.touch()
+                            except Exception:
+                                pass
+                            self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
+                        else:
+                            self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
+                elif action == "model_reload":
+                    print("[CONTROL] Model reload requested", flush=True)
+                    if self.whisper_manager.reload_model():
+                        try:
+                            MODEL_UNLOADED_FILE.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                        self._notify_user("hyprwhspr", "Model reloaded — ready to record", urgency="low")
+                    else:
+                        self._notify_user("hyprwhspr", "Model reload failed — check logs", urgency="critical")
                 else:
                     print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
                     
