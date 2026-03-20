@@ -37,7 +37,6 @@ class ConfigManager:
             'audio_device_vendor_id': None, # USB vendor ID (most stable, from udev)
             'audio_device_model_id': None,  # USB model ID (most stable, from udev)
             'model': 'base',
-            'threads': 4,           # Thread count for whisper processing
             'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
             'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
             'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
@@ -59,6 +58,11 @@ class ConfigManager:
             'paste_keycode': 47,
             # Back-compat for older configs (used only if paste_mode is absent):
             'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
+            # Direct-type injection mode (bypasses clipboard entirely)
+            # null (default) = clipboard + paste keystroke (existing behavior)
+            # "wtype"         = wtype -- <text>  (native Wayland, works in Kitty-protocol terminals)
+            # "ydotool_type"  = ydotool type -- <text>  (works in Kitty-protocol terminals)
+            'inject_mode': None,
             # Transcription backend settings
             'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"vulkan"/"amd") or "rest-api"
             'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription

@@ -37,3 +37,6 @@ TEMP_DIR = DATA_DIR / 'temp'
 # Long-form recording mode
 LONGFORM_STATE_FILE = CONFIG_DIR / 'longform_state'  # IDLE|RECORDING|PAUSED|PROCESSING|ERROR
 LONGFORM_SEGMENTS_DIR = TEMP_DIR / 'longform_segments'
+
+# Model lifecycle signal file (presence = model is manually unloaded from memory)
+MODEL_UNLOADED_FILE = CONFIG_DIR / 'model_unloaded'
