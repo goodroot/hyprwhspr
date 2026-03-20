@@ -160,7 +160,7 @@ check_python_version() {
         echo ""
         echo "  3) Continue anyway (installation may fail for local backends)"
         echo ""
-        read -p "Continue with dependency installation? [y/N] " -n 1 -r
+        read -p "Continue with dependency installation? [y/N] " -n 1 -r < /dev/tty
         echo ""
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             log_info "Installation cancelled."
@@ -506,7 +506,7 @@ handle_ydotool_debian() {
         echo "  1) Install ydotool 1.0.4 from Debian backports (recommended)"
         echo "  2) Skip - I'll install ydotool manually later"
         echo ""
-        read -p "Choice [1/2]: " -n 1 -r
+        read -p "Choice [1/2]: " -n 1 -r < /dev/tty
         echo ""
 
         if [[ $REPLY == "1" ]]; then
@@ -531,7 +531,7 @@ handle_ydotool_debian() {
         echo "  1) Replace with ydotool 1.0.4 from Debian backports (recommended)"
         echo "  2) Skip - I'll handle this manually later"
         echo ""
-        read -p "Choice [1/2]: " -n 1 -r
+        read -p "Choice [1/2]: " -n 1 -r < /dev/tty
         echo ""
 
         if [[ $REPLY == "1" ]]; then
@@ -574,7 +574,7 @@ main() {
     echo ""
     log_info "This script will install dependencies for hyprwhspr."
     echo ""
-    read -p "Continue? [Y/n] " -n 1 -r
+    read -p "Continue? [Y/n] " -n 1 -r < /dev/tty
     echo ""
 
     if [[ $REPLY =~ ^[Nn]$ ]]; then

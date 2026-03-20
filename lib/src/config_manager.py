@@ -37,7 +37,6 @@ class ConfigManager:
             'audio_device_vendor_id': None, # USB vendor ID (most stable, from udev)
             'audio_device_model_id': None,  # USB model ID (most stable, from udev)
             'model': 'base',
-            'threads': 4,           # Thread count for whisper processing
             'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
             'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
             'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
