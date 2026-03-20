@@ -498,6 +498,22 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 
 - `"Transcribe as an ornery pirate on the cusp of scurvy."`
 
+### Translation
+
+Translate non-English speech into English:
+
+```jsonc
+{
+    "task": "translate",
+    "language": "it"  // optional: set source language, or null to auto-detect
+}
+```
+
+- **`"transcribe"`** (default) - Output in the source language
+- **`"translate"`** - Translate speech into English
+
+> **Note**: Supported by `faster-whisper` and `pywhispercpp` backends. `language` and `task` are independent — setting a non-English language does not imply translation.
+
 ### Language-specific prompts
 
 Set a per-language prompt using `whisper_prompt_{lang}`:

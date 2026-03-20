@@ -1155,6 +1155,7 @@ class WhisperManager:
         language = language_override if language_override is not None else self.config.get_setting('language', None)
         whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
         vad_filter = self.config.get_setting('faster_whisper_vad_filter', True)
+        task = self.config.get_setting('task', 'transcribe')
 
         with self._model_lock:
             current_time = time.monotonic()
@@ -1168,6 +1169,7 @@ class WhisperManager:
                 transcribe_kwargs = {
                     'vad_filter': vad_filter,
                     'beam_size': 5,
+                    'task': task,
                 }
                 if language:
                     transcribe_kwargs['language'] = language
@@ -1465,10 +1467,14 @@ class WhisperManager:
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
                 whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
 
+                task = self.config.get_setting('task', 'transcribe')
+
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():
                     # Build transcribe kwargs with available values
                     transcribe_kwargs = {}
+                    if task == 'translate':
+                        transcribe_kwargs['translate'] = True
                     if language:
                         transcribe_kwargs['language'] = language
                     if whisper_prompt:

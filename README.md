@@ -23,6 +23,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Latest models** - Turbo-v3? Parakeet TDT V3? Latest and greatest
 - **GPU memory efficient** - Limit or zero memory usage easily, more for other local models
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
+- **Translation** - Translate non-English to English with a single config
 - **REST API or websockets** - Secure, fast wires to top clouds like ElevenLabs
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
 - **Word overides and prompts** - Custom hot keys, common words, and more
