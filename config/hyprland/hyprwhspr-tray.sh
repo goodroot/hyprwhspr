@@ -124,16 +124,10 @@ except Exception:
 PY
     )
 
-    # Backward compatibility: map old values
-    if [[ "$backend" == "local" ]]; then
-        backend="pywhispercpp"
-    elif [[ "$backend" == "remote" ]]; then
-        backend="rest-api"
-    fi
     backend="${backend:-pywhispercpp}"
 
     # Remote backends don't require a local model file
-    if [[ "$backend" == "rest-api" ]] || [[ "$backend" == "remote" ]] || [[ "$backend" == "realtime-ws" ]]; then
+    if [[ "$backend" == "rest-api" ]] || [[ "$backend" == "realtime-ws" ]]; then
         return 0
     fi
 

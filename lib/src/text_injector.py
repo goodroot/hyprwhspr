@@ -178,11 +178,32 @@ class TextInjector:
             print(f"wtype paste failed: {e}")
             return False
 
+    # ydotool evdev keycodes for modifier press/release per paste mode.
+    # Keys within each list are sent as a single ydotool command (simultaneous).
+    # Release order is reversed so chord unwinds cleanly.
+    _YDOTOOL_MOD_PRESS = {
+        'ctrl_shift': ['29:1', '42:1'],  # Ctrl + Shift
+        'ctrl':       ['29:1'],
+        'super':      ['125:1'],
+        'alt':        ['56:1'],
+    }
+    _YDOTOOL_MOD_RELEASE = {
+        'ctrl_shift': ['42:0', '29:0'],  # reverse order
+        'ctrl':       ['29:0'],
+        'super':      ['125:0'],
+        'alt':        ['56:0'],
+    }
+
     def _send_paste_keys_slow(self, paste_mode: str) -> bool:
         """
         Send paste keystroke with delays between events via ydotool.
         Used as fallback when wtype is unavailable.
         """
+        press_args = self._YDOTOOL_MOD_PRESS.get(paste_mode)
+        release_args = self._YDOTOOL_MOD_RELEASE.get(paste_mode)
+        if press_args is None:
+            return False
+
         def _key(*args):
             result = subprocess.run(['ydotool', 'key'] + list(args), capture_output=True, timeout=1)
             if result.returncode != 0:
@@ -191,40 +212,11 @@ class TextInjector:
 
         try:
             paste_keycode = self._get_paste_keycode()
-            paste_keycode_pressed = f'{paste_keycode}:1'
-            paste_keycode_released = f'{paste_keycode}:0'
-
-            if paste_mode == 'super':
-                _key('125:1')
-                time.sleep(0.015)
-                _key(paste_keycode_pressed, paste_keycode_released)
-                time.sleep(0.010)
-                _key('125:0')
-
-            elif paste_mode == 'ctrl_shift':
-                _key('29:1', '42:1')
-                time.sleep(0.015)
-                _key(paste_keycode_pressed, paste_keycode_released)
-                time.sleep(0.010)
-                _key('42:0', '29:0')
-
-            elif paste_mode == 'ctrl':
-                _key('29:1')
-                time.sleep(0.015)
-                _key(paste_keycode_pressed, paste_keycode_released)
-                time.sleep(0.010)
-                _key('29:0')
-
-            elif paste_mode == 'alt':
-                _key('56:1')
-                time.sleep(0.015)
-                _key(paste_keycode_pressed, paste_keycode_released)
-                time.sleep(0.010)
-                _key('56:0')
-
-            else:
-                return False
-
+            _key(*press_args)
+            time.sleep(0.015)
+            _key(f'{paste_keycode}:1', f'{paste_keycode}:0')
+            time.sleep(0.010)
+            _key(*release_args)
             return True
 
         except Exception as e:
@@ -514,7 +506,10 @@ class TextInjector:
             # Only restore clipboard after a successful hotkey paste — if paste failed,
             # leave dictated text on clipboard so the user can paste manually.
             if pasted:
-                self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"))
+                restore_delay = 0.5
+                if self.config_manager:
+                    restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 0.5))
+                self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
                 self._send_enter_if_auto_submit()
 
             return pasted

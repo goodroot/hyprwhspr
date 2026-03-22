@@ -123,6 +123,7 @@ class hyprwhsprApp:
 
         # Cancel pending delayed-hide from _show_result_and_hide when a new recording starts
         self._cancel_pending_hide = False
+        self._cancel_pending_hide_lock = threading.Lock()
 
         # Background recovery retry state (for suspend/resume)
         self._background_recovery_needed = threading.Event()  # Signal that recovery should be retried
@@ -265,7 +266,7 @@ class hyprwhsprApp:
                     grab_keys=grab_keys,
                 )
         except Exception as e:
-            print(f"[ERROR] Failed to initialize global shortcuts: {e}")
+            print(f"[ERROR] Failed to initialize global shortcuts: {e}", flush=True)
             self.global_shortcuts = None
 
         # Set up secondary shortcut if configured
@@ -444,21 +445,24 @@ class hyprwhsprApp:
                     should_recover = True
 
             if should_recover:
-                # Debounce recovery attempts: USB reseat generates multiple events
+                # Debounce recovery attempts: USB reseat generates multiple events.
+                # Also cancel any in-progress background recovery and reset its cooldown
+                # while still holding _hotplug_lock — this closes the window where another
+                # thread reads a stale _last_recovery_attempt_time between the two steps.
+                canceled_background_recovery = False
                 with self._hotplug_lock:
                     current_time = time.monotonic()
                     if current_time - self._last_hotplug_add_time < 2.0:
                         return  # Skip duplicate
                     self._last_hotplug_add_time = current_time
 
-                # Check if background recovery is already running - cancel it
-                if self._background_recovery_needed.is_set():
-                    self._background_recovery_needed.clear()
-                    # Reset cooldown timer to allow hotplug recovery to proceed immediately
-                    # Without this, if background recovery just attempted, hotplug would hit cooldown
-                    # Must hold recovery_lock when writing _last_recovery_attempt_time (same lock used in recover_audio_capture)
-                    with self.audio_capture.recovery_lock:
-                        self.audio_capture._last_recovery_attempt_time = 0.0
+                    if self._background_recovery_needed.is_set():
+                        self._background_recovery_needed.clear()
+                        canceled_background_recovery = True
+                        with self.audio_capture.recovery_lock:
+                            self.audio_capture._last_recovery_attempt_time = 0.0
+
+                if canceled_background_recovery:
                     time.sleep(0.1)
 
                 print(f"[HOTPLUG] Microphone detected - recovering...", flush=True)
@@ -889,7 +893,7 @@ class hyprwhsprApp:
                 self._set_visualizer_state('error')
 
         except Exception as e:
-            print(f"[LONGFORM] Transcription error: {e}")
+            print(f"[LONGFORM] Transcription error: {e}", flush=True)
             self.audio_manager.play_error_sound()
             self._longform_error_audio = audio_data  # Store for retry
             self._longform_state = 'ERROR'
@@ -932,7 +936,7 @@ class hyprwhsprApp:
             LONGFORM_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             LONGFORM_STATE_FILE.write_text(state)
         except Exception as e:
-            print(f"[LONGFORM] Failed to write state file: {e}")
+            print(f"[LONGFORM] Failed to write state file: {e}", flush=True)
 
     def _cleanup_longform_temp_on_startup(self):
         """Check temp directory size on startup and clean up old segments if needed"""
@@ -958,7 +962,7 @@ class hyprwhsprApp:
             elif total_size > 0:
                 print(f"[LONGFORM] Found {total_size / 1024 / 1024:.1f}MB of previous segments (limit: {max_size / 1024 / 1024:.1f}MB)")
         except Exception as e:
-            print(f"[LONGFORM] Error during startup cleanup: {e}")
+            print(f"[LONGFORM] Error during startup cleanup: {e}", flush=True)
 
     def _start_recording(self, language_override=None):
         """Start voice recording
@@ -978,9 +982,11 @@ class hyprwhsprApp:
             self._current_language_override = language_override
         
         # Block recording if model was deliberately unloaded to free GPU resources
-        if getattr(self.whisper_manager, '_model_manually_unloaded', False):
-            with self._recording_lock:
+        with self._recording_lock:
+            model_unloaded = getattr(self.whisper_manager, '_model_manually_unloaded', False)
+            if model_unloaded:
                 self.is_recording = False
+        if model_unloaded:
             self._notify_user(
                 "hyprwhspr",
                 "Model unloaded — run: hyprwhspr model reload",
@@ -1184,6 +1190,26 @@ class hyprwhsprApp:
             if self.audio_ducker.is_ducked:
                 self.audio_ducker.restore()
 
+    def _cleanup_recording_state(self):
+        """Best-effort cleanup after any recording ends. Safe to call multiple times."""
+        try:
+            self._hide_mic_osd()
+        except Exception:
+            pass
+        try:
+            self._stop_audio_level_monitoring()
+        except Exception:
+            pass
+        try:
+            self._write_recording_status(False)
+        except Exception:
+            pass
+        try:
+            if self.audio_ducker.is_ducked:
+                self.audio_ducker.restore()
+        except Exception:
+            pass
+
     def _cancel_recording_muted(self):
         """Cancel recording early due to muted microphone"""
         with self._recording_lock:
@@ -1194,30 +1220,13 @@ class hyprwhsprApp:
 
         print("[MUTE] Recording cancelled - microphone returned silence for 1 second", flush=True)
 
+        self._cleanup_recording_state()
         try:
-            self._hide_mic_osd()
-            self._stop_audio_level_monitoring()
-            self._write_recording_status(False)
-
-            # Restore audio if it was ducked
-            if self.audio_ducker.is_ducked:
-                self.audio_ducker.restore()
-
             self.audio_capture.stop_recording()
             self.audio_manager.play_error_sound()
             # Note: No desktop notification - tray will detect muted state via audio level monitoring
         except Exception as e:
-            print(f"[ERROR] Error canceling recording: {e}")
-            # Ensure cleanup even if error occurs
-            try:
-                self._hide_mic_osd()
-                self._stop_audio_level_monitoring()
-                self._write_recording_status(False)
-                # Restore audio if it was ducked
-                if self.audio_ducker.is_ducked:
-                    self.audio_ducker.restore()
-            except Exception:
-                pass  # Best effort cleanup
+            print(f"[ERROR] Error canceling recording: {e}", flush=True)
 
     def _cancel_recording(self):
         """Cancel recording and discard audio without transcribing or injecting text"""
@@ -1229,15 +1238,8 @@ class hyprwhsprApp:
 
         print("Recording cancelled (discarded)", flush=True)
 
+        self._cleanup_recording_state()
         try:
-            self._hide_mic_osd()
-            self._stop_audio_level_monitoring()
-            self._write_recording_status(False)
-
-            # Restore audio if it was ducked
-            if self.audio_ducker.is_ducked:
-                self.audio_ducker.restore()
-
             # Stop capture and discard the audio data
             self.audio_capture.stop_recording()
 
@@ -1249,16 +1251,6 @@ class hyprwhsprApp:
             self.audio_manager.play_error_sound()
         except Exception as e:
             print(f"[ERROR] Error cancelling recording: {e}", flush=True)
-            # Ensure cleanup even if error occurs (is_recording already False from above)
-            try:
-                self._hide_mic_osd()
-                self._stop_audio_level_monitoring()
-                self._write_recording_status(False)
-                if self.audio_ducker.is_ducked:
-                    self.audio_ducker.restore()
-                self.audio_capture.stop_recording()
-            except Exception:
-                pass  # Best effort cleanup
 
     def _stop_recording(self):
         """Stop voice recording and process audio"""
@@ -1375,7 +1367,7 @@ class hyprwhsprApp:
                 self.audio_manager.play_error_sound()
 
         except Exception as e:
-            print(f"[ERROR] Error processing audio: {e}")
+            print(f"[ERROR] Error processing audio: {e}", flush=True)
         finally:
             self.is_processing = False
             # Show success/error state and hide OSD after delay
@@ -1403,7 +1395,7 @@ class hyprwhsprApp:
             except Exception:
                 pass
         except Exception as e:
-            print(f"[ERROR] Text injection failed: {e}")
+            print(f"[ERROR] Text injection failed: {e}", flush=True)
 
     def _is_zero_volume(self, audio_data) -> bool:
         """Check if audio data has zero or near-zero volume"""
@@ -1529,7 +1521,8 @@ class hyprwhsprApp:
         """Show mic-osd visualization overlay"""
         # Cancel any pending delayed-hide from a previous recording's _show_result_and_hide
         # so we don't hide the visualizer for this new recording
-        self._cancel_pending_hide = True
+        with self._cancel_pending_hide_lock:
+            self._cancel_pending_hide = True
         if self._mic_osd_runner and self._mic_osd_runner.is_available():
             self._mic_osd_runner.set_state('recording')
             self._mic_osd_runner.show()
@@ -1560,12 +1553,15 @@ class hyprwhsprApp:
 
         # Clear cancel so this scheduled hide is allowed to run (avoids inheriting
         # cancel from an earlier _show_mic_osd that already completed)
-        self._cancel_pending_hide = False
+        with self._cancel_pending_hide_lock:
+            self._cancel_pending_hide = False
 
         # Schedule hiding after 1.25 seconds (matches animation fade duration)
         def delayed_hide():
             time.sleep(1.25)
-            if self._cancel_pending_hide:
+            with self._cancel_pending_hide_lock:
+                should_hide = not self._cancel_pending_hide
+            if not should_hide:
                 return  # New recording started; don't hide
             self._hide_mic_osd()
 
@@ -1648,8 +1644,12 @@ class hyprwhsprApp:
                             else:
                                 zero_samples = 0
                     except Exception as e:
-                        # Silently fail - don't spam errors
-                        pass
+                        # Rate-limit to avoid log spam on repeated failure
+                        import time as _time
+                        now = _time.monotonic()
+                        if not hasattr(self, '_last_level_error_log') or now - self._last_level_error_log > 10.0:
+                            print(f"[WARN] Audio level monitoring error: {e}", flush=True)
+                            self._last_level_error_log = now
                     # Sleep in small increments so the stop event wakes us quickly
                     self._audio_level_stop.wait(0.1)
             finally:
@@ -1712,51 +1712,6 @@ class hyprwhsprApp:
             print("[WARN] Recording control will fall back to file polling (1 second delay)", flush=True)
         except Exception as e:
             print(f"[WARN] Unexpected error creating recording control FIFO: {e}", flush=True)
-
-    def _check_recording_control(self):
-        """
-        Check for recording control requests from tray script and start/stop recording
-        
-        DEPRECATED: This method is replaced by _recording_control_listener() which uses
-        a FIFO for immediate response. Kept for reference/fallback only.
-        """
-        # Check if recording control file exists
-        if not RECORDING_CONTROL_FILE.exists():
-            return
-        
-        try:
-            # Read the control file to determine action
-            with open(RECORDING_CONTROL_FILE, 'r') as f:
-                action = f.read().strip().lower()
-            
-            # Clear the file immediately to prevent duplicate processing
-            RECORDING_CONTROL_FILE.unlink()
-            
-            if action == "start":
-                # Start recording if not already recording
-                if not self.is_recording:
-                    print("[CONTROL] Recording start requested by tray script", flush=True)
-                    self._start_recording()
-                else:
-                    print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
-            elif action == "stop":
-                # Stop recording if currently recording
-                if self.is_recording:
-                    print("[CONTROL] Recording stop requested by tray script", flush=True)
-                    self._stop_recording()
-                else:
-                    print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
-            else:
-                print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
-                
-        except Exception as e:
-            print(f"[CONTROL] Error processing recording control: {e}", flush=True)
-            # Try to clear the file even if there was an error
-            try:
-                if RECORDING_CONTROL_FILE.exists():
-                    RECORDING_CONTROL_FILE.unlink()
-            except Exception:
-                pass
 
     def _recording_control_listener(self):
         """Listen on FIFO for recording control commands (blocking, immediate)"""
@@ -2283,7 +2238,7 @@ class hyprwhsprApp:
             print("\n[SHUTDOWN] Shutting down hyprwhspr...")
             self._cleanup()
         except Exception as e:
-            print(f"[ERROR] Error in main loop: {e}")
+            print(f"[ERROR] Error in main loop: {e}", flush=True)
             self._cleanup()
             return False
         
@@ -2369,10 +2324,10 @@ class hyprwhsprApp:
             # don't see stale values after shutdown
             self._reset_stale_state()
 
-            print("[CLEANUP] Cleanup completed")
-            
+            print("[CLEANUP] Cleanup completed", flush=True)
+
         except Exception as e:
-            print(f"[WARN] Error during cleanup: {e}")
+            print(f"[WARN] Error during cleanup: {e}", flush=True)
         finally:
             # Release lock file
             _release_lock_file()

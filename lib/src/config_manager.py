@@ -57,7 +57,7 @@ class ConfigManager:
             # for the physical key that produces 'v' on your layout).
             'paste_keycode': 47,
             # Back-compat for older configs (used only if paste_mode is absent):
-            'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
+            'shift_paste': None,  # true = Ctrl+Shift+V, false = Ctrl+V; None = use auto-detect
             # Direct-type injection mode (bypasses clipboard entirely)
             # null (default) = clipboard + paste keystroke (existing behavior)
             # "wtype"         = wtype -- <text>  (native Wayland, works in Kitty-protocol terminals)
