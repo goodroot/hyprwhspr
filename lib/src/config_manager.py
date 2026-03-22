@@ -45,9 +45,9 @@ class ConfigManager:
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
             'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
             'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
-            # Values: "super" | "ctrl_shift" | "ctrl"
-            # Default "ctrl_shift" for flexible unix-y primitive
-            'paste_mode': 'ctrl_shift',
+            # Values: "super" | "ctrl_shift" | "ctrl" | null (auto-detect)
+            # null = auto-detect: terminals get Ctrl+Shift+V, other apps get Ctrl+V
+            'paste_mode': None,
             # Wayland/XKB keycode as printed by `wev` for the key that types 'v'.
             # If set, hyprwhspr will convert it to Linux evdev by subtracting 8.
             # This avoids users having to do the math themselves.

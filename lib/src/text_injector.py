@@ -35,9 +35,9 @@ class TextInjector:
         self.wtype_available = shutil.which('wtype') is not None
 
         if not self.ydotool_available and not self.wtype_available:
-            print("⚠️  No typing backend found (ydotool or wtype). hyprwhspr requires ydotool for paste injection.")
-        elif not self.ydotool_available:
-            print("ℹ️  ydotool not found. Paste injection unavailable; wtype is present for inject_mode=wtype.")
+            print("⚠️  No injection backend found (wtype or ydotool). hyprwhspr requires wtype or ydotool for paste injection.")
+        elif not self.wtype_available and self.ydotool_available:
+            print("ℹ️  wtype not found. Falling back to ydotool for paste hotkey injection.")
 
     def _check_ydotool(self) -> bool:
         """Check if ydotool is available on the system"""
@@ -91,101 +91,136 @@ class TextInjector:
             pass
         return None
 
-    def _is_kitty_protocol_terminal(self, window_info: Optional[Dict[str, Any]] = None) -> bool:
-        """
-        Check if focused window is a terminal that uses Kitty keyboard protocol.
-        These terminals need special handling to avoid escape sequence artifacts.
-        """
+    def _is_terminal(self, window_info: Optional[Dict[str, Any]] = None) -> bool:
+        """Check if focused window is a terminal emulator."""
         if window_info is None:
             window_info = self._get_active_window_info()
-
         if not window_info:
             return False
-
-        # Known terminals that use Kitty keyboard protocol
-        kitty_terminals = {
-            'ghostty',
-            'kitty',
-            'wezterm',
-            'org.wezfurlong.wezterm'
-        }
-
         window_class = window_info.get('class', '').lower()
-        return any(term in window_class for term in kitty_terminals)
+        terminals = {
+            'ghostty', 'com.mitchellh.ghostty',
+            'kitty',
+            'wezterm', 'org.wezfurlong.wezterm',
+            'alacritty',
+            'foot',
+            'konsole', 'org.kde.konsole',
+            'gnome-terminal', 'org.gnome.terminal',
+            'xfce4-terminal',
+            'terminator',
+            'tilix',
+            'urxvt',
+            'xterm',
+            'st-256color',
+            'sakura',
+            'guake',
+            'yakuake',
+            'terminology',
+            'cool-retro-term',
+            'contour',
+            'rio',
+            'warp',
+            'tabby',
+            'hyper',
+        }
+        return window_class in terminals
+
+    def _detect_paste_mode(self, window_info: Optional[Dict[str, Any]] = None) -> str:
+        """Auto-detect paste key combo. Terminals → Ctrl+Shift+V, else → Ctrl+V."""
+        if self._is_terminal(window_info):
+            return 'ctrl_shift'
+        return 'ctrl'
 
     def _clear_stuck_modifiers(self):
         """
-        Clear any stuck modifier keys that might interfere with paste.
-        This is especially important for Kitty-protocol terminals that can
-        misinterpret synthetic key events when modifiers are stuck.
+        Clear any stuck modifier keys via ydotool uinput.
+        Required after wtype paste: wtype sends Wayland modifier events, but
+        ydotool's uinput layer may still consider those modifiers held, causing
+        subsequent physical keypresses to behave incorrectly.
         """
         if not self.ydotool_available:
             return
 
         try:
             # Release common modifier keys that might be stuck:
-            # 125 = LeftMeta/Super
-            # 126 = RightMeta/Super
-            # 56 = LeftAlt
-            # 100 = RightAlt
-            # 29 = LeftCtrl
-            # 97 = RightCtrl
-            # 42 = LeftShift
-            # 54 = RightShift
-
+            # 125 = LeftMeta/Super,  126 = RightMeta/Super
+            # 56  = LeftAlt,         100 = RightAlt
+            # 29  = LeftCtrl,        97  = RightCtrl
+            # 42  = LeftShift,       54  = RightShift
             modifiers_to_clear = ['125:0', '126:0', '56:0', '100:0', '29:0', '97:0', '42:0', '54:0']
-
             subprocess.run(
                 ['ydotool', 'key'] + modifiers_to_clear,
                 capture_output=True,
                 timeout=1
             )
         except Exception as e:
-            # Non-fatal, just log
             print(f"Warning: Could not clear stuck modifiers: {e}")
+
+    def _send_paste_keys_wtype(self, paste_mode: str) -> bool:
+        """Send paste hotkey via wtype's Wayland virtual-keyboard protocol."""
+        mode_map = {
+            'ctrl_shift': ['-M', 'ctrl', '-M', 'shift', '-k', 'v', '-m', 'shift', '-m', 'ctrl'],
+            'ctrl':       ['-M', 'ctrl', '-k', 'v', '-m', 'ctrl'],
+            'super':      ['-M', 'logo', '-k', 'v', '-m', 'logo'],
+            'alt':        ['-M', 'alt', '-k', 'v', '-m', 'alt'],
+        }
+        args = mode_map.get(paste_mode)
+        if not args:
+            return False
+        try:
+            result = subprocess.run(['wtype'] + args, capture_output=True, timeout=5)
+            if result.returncode != 0:
+                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
+                print(f"  wtype paste failed: {stderr}")
+                return False
+            return True
+        except Exception as e:
+            print(f"wtype paste failed: {e}")
+            return False
 
     def _send_paste_keys_slow(self, paste_mode: str) -> bool:
         """
-        Send paste keystroke with delays between events.
-        This prevents Kitty-protocol terminals from misinterpreting
-        the key sequence when modifiers arrive too quickly.
+        Send paste keystroke with delays between events via ydotool.
+        Used as fallback when wtype is unavailable.
         """
+        def _key(*args):
+            result = subprocess.run(['ydotool', 'key'] + list(args), capture_output=True, timeout=1)
+            if result.returncode != 0:
+                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
+                raise RuntimeError(f"ydotool key {' '.join(args)} failed: {stderr}")
+
         try:
             paste_keycode = self._get_paste_keycode()
             paste_keycode_pressed = f'{paste_keycode}:1'
             paste_keycode_released = f'{paste_keycode}:0'
 
             if paste_mode == 'super':
-                # Super+V with delays: Super down, delay, V down, V up, Super up
-                subprocess.run(['ydotool', 'key', '125:1'], capture_output=True, timeout=1)
+                _key('125:1')
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', paste_keycode_pressed, paste_keycode_released], capture_output=True, timeout=1)
+                _key(paste_keycode_pressed, paste_keycode_released)
                 time.sleep(0.010)
-                subprocess.run(['ydotool', 'key', '125:0'], capture_output=True, timeout=1)
+                _key('125:0')
 
             elif paste_mode == 'ctrl_shift':
-                # Ctrl+Shift+V with delays: mods down, delay, V, delay, mods up
-                subprocess.run(['ydotool', 'key', '29:1', '42:1'], capture_output=True, timeout=1)
+                _key('29:1', '42:1')
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', paste_keycode_pressed, paste_keycode_released], capture_output=True, timeout=1)
+                _key(paste_keycode_pressed, paste_keycode_released)
                 time.sleep(0.010)
-                subprocess.run(['ydotool', 'key', '42:0', '29:0'], capture_output=True, timeout=1)
+                _key('42:0', '29:0')
 
             elif paste_mode == 'ctrl':
-                # Ctrl+V with delays
-                subprocess.run(['ydotool', 'key', '29:1'], capture_output=True, timeout=1)
+                _key('29:1')
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', paste_keycode_pressed, paste_keycode_released], capture_output=True, timeout=1)
+                _key(paste_keycode_pressed, paste_keycode_released)
                 time.sleep(0.010)
-                subprocess.run(['ydotool', 'key', '29:0'], capture_output=True, timeout=1)
+                _key('29:0')
 
             elif paste_mode == 'alt':
-                # Alt+V with delays
-                subprocess.run(['ydotool', 'key', '56:1'], capture_output=True, timeout=1)
+                _key('56:1')
                 time.sleep(0.015)
-                subprocess.run(['ydotool', 'key', paste_keycode_pressed, paste_keycode_released], capture_output=True, timeout=1)
+                _key(paste_keycode_pressed, paste_keycode_released)
                 time.sleep(0.010)
-                subprocess.run(['ydotool', 'key', '56:0'], capture_output=True, timeout=1)
+                _key('56:0')
 
             else:
                 return False
@@ -195,6 +230,57 @@ class TextInjector:
         except Exception as e:
             print(f"Slow paste key injection failed: {e}")
             return False
+
+    def _save_clipboard(self) -> Optional[bytes]:
+        """Save current clipboard contents. Returns raw bytes or None."""
+        if shutil.which("wl-paste"):
+            try:
+                result = subprocess.run(["wl-paste", "--no-newline"], capture_output=True, timeout=2)
+                if result.returncode == 0:
+                    return result.stdout
+            except Exception:
+                pass
+        # Fallback: pyperclip (X11 or non-standard Wayland setups)
+        try:
+            text = pyperclip.paste()
+            if text:
+                return text.encode("utf-8")
+        except Exception:
+            pass
+        return None
+
+    def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 0.5):
+        """Restore clipboard to saved contents after a delay (background thread).
+
+        If `injected` is provided, the restore is skipped if the clipboard no longer
+        contains the injected text — meaning the user has copied something else.
+        """
+        if saved is None:
+            return
+
+        def _restore():
+            time.sleep(delay)
+            try:
+                # Guard: if the user copied something else during the delay, don't clobber it.
+                if injected is not None:
+                    current = self._save_clipboard()
+                    if current != injected:
+                        return
+
+                if shutil.which("wl-copy"):
+                    subprocess.run(["wl-copy"], input=saved, check=True, timeout=2)
+                else:
+                    # pyperclip is text-only; only restore if the saved bytes are
+                    # valid UTF-8 text. Binary clipboard data (images, etc.) cannot
+                    # be round-tripped through pyperclip without corruption.
+                    try:
+                        pyperclip.copy(saved.decode("utf-8"))
+                    except UnicodeDecodeError:
+                        pass  # Binary data — skip rather than corrupt
+            except Exception as e:
+                print(f"Warning: Could not restore clipboard: {e}")
+
+        threading.Thread(target=_restore, daemon=True).start()
 
     def _send_enter_if_auto_submit(self):
         """Send Enter key if auto_submit is enabled"""
@@ -222,61 +308,6 @@ class TextInjector:
         except Exception as e:
             print(f"  auto_submit Enter key failed: {e}")
 
-    def _clear_clipboard(self):
-        """Clear the clipboard by setting it to empty content"""
-        try:
-            if shutil.which("wl-copy"):
-                subprocess.run(["wl-copy"], input=b"", check=True)
-            else:
-                pyperclip.copy("")
-        except Exception as e:
-            print(f"Warning: Could not clear clipboard: {e}")
-
-    def _schedule_clipboard_clear(self, delay: float):
-        """Schedule clipboard clearing after the specified delay"""
-        def clear_after_delay():
-            time.sleep(delay)
-            self._clear_clipboard()
-            print(f"📋 Clipboard cleared after {delay}s delay")
-        
-        # Run in a separate thread to avoid blocking
-        clear_thread = threading.Thread(target=clear_after_delay, daemon=True)
-        clear_thread.start()
-
-    def _inject_via_wtype(self, text: str) -> bool:
-        """Inject text by typing it directly with wtype (no clipboard)."""
-        try:
-            result = subprocess.run(
-                ['wtype', '--', text],
-                capture_output=True, timeout=10
-            )
-            if result.returncode != 0:
-                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
-                print(f"  wtype injection failed: {stderr}")
-                return False
-            self._send_enter_if_auto_submit()
-            return True
-        except Exception as e:
-            print(f"wtype injection failed: {e}")
-            return False
-
-    def _inject_via_ydotool_type(self, text: str) -> bool:
-        """Inject text by typing it directly with ydotool type (no clipboard)."""
-        try:
-            result = subprocess.run(
-                ['ydotool', 'type', '--', text],
-                capture_output=True, timeout=10
-            )
-            if result.returncode != 0:
-                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
-                print(f"  ydotool type injection failed: {stderr}")
-                return False
-            self._send_enter_if_auto_submit()
-            return True
-        except Exception as e:
-            print(f"ydotool type injection failed: {e}")
-            return False
-
     # ------------------------ Public API ------------------------
 
     def inject_text(self, text: str) -> bool:
@@ -297,56 +328,18 @@ class TextInjector:
         processed_text = self._preprocess_text(text).rstrip("\r\n") + ' '
 
         try:
-            # Check for direct-type inject_mode first (bypasses clipboard entirely)
             inject_mode = None
             if self.config_manager:
                 inject_mode = self.config_manager.get_setting('inject_mode', None)
 
-            success = False
-            used_clipboard = False
-            if inject_mode == 'wtype':
-                if self.wtype_available:
-                    success = self._inject_via_wtype(processed_text)
-                else:
-                    print("inject_mode=wtype but wtype not found; falling back to clipboard+paste")
-                    if self.ydotool_available:
-                        success = self._inject_via_clipboard_and_hotkey(processed_text)
-                        used_clipboard = True
-                    else:
-                        success = self._inject_via_clipboard(processed_text)
-                        used_clipboard = True
-            elif inject_mode == 'ydotool_type':
-                if self.ydotool_available:
-                    success = self._inject_via_ydotool_type(processed_text)
-                elif self.wtype_available:
-                    print("inject_mode=ydotool_type but ydotool not found; falling back to wtype")
-                    success = self._inject_via_wtype(processed_text)
-                else:
-                    print("inject_mode=ydotool_type but ydotool not found; falling back to clipboard")
-                    success = self._inject_via_clipboard(processed_text)
-                    used_clipboard = True
-            elif self.ydotool_available:
-                success = self._inject_via_clipboard_and_hotkey(processed_text)
-                used_clipboard = True
-            else:
-                success = self._inject_via_clipboard(processed_text)
-                used_clipboard = True
+            if inject_mode in ('wtype', 'ydotool_type'):
+                print(f"⚠️  inject_mode='{inject_mode}' is deprecated: direct typing drops characters at speed. "
+                      f"Using clipboard+paste instead.")
 
-            # Check if clipboard clearing is enabled. Use the actual method chosen,
-            # not the configured inject_mode — fallback paths may have used the
-            # clipboard even when a direct-type mode was requested.
-            if success and self.config_manager and used_clipboard:
-                clipboard_behavior = self.config_manager.get_setting('clipboard_behavior', False)
-                if clipboard_behavior:
-                    clear_delay = self.config_manager.get_setting('clipboard_clear_delay', 5.0)
-                    self._schedule_clipboard_clear(clear_delay)
-
-            return success
+            return self._inject_via_clipboard_and_hotkey(processed_text)
 
         except Exception as e:
             print(f"Primary injection method failed: {e}")
-
-            # No fallback needed - paste strategy is always reliable
             return False
 
     # ------------------------ Helpers ------------------------
@@ -381,7 +374,7 @@ class TextInjector:
             r'\bexclamation mark\b': '!',
             r'\bcolon\b': ':',
             r'\bsemicolon\b': ';',
-            r'\bnew line\b': '\n', 
+            r'\bnew line\b': '\n',
             r'\btab\b': '\t',
             r'\bdash\b': '-',
             r'\bunderscore\b': '_',
@@ -474,131 +467,72 @@ class TextInjector:
     # ------------------------ Paste injection (primary method) ------------------------
 
     def _inject_via_clipboard_and_hotkey(self, text: str) -> bool:
-        """Fast path: copy to clipboard, then press Ctrl+V via ydotool."""
+        """Copy text to clipboard, then trigger paste via wtype (or ydotool fallback)."""
         try:
-            # Get active window info once for all checks
             window_info = self._get_active_window_info()
-            is_kitty_terminal = self._is_kitty_protocol_terminal(window_info)
+            saved_clipboard = self._save_clipboard()
 
-            # 1) Set clipboard (prefer wl-copy on Wayland)
+            # Copy text to clipboard
             if shutil.which("wl-copy"):
-                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True)
+                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=2)
             else:
                 pyperclip.copy(text)
+            time.sleep(0.15)
 
-            # Use longer delay for Kitty-protocol terminals to ensure clipboard sync
-            clipboard_delay = 0.25 if is_kitty_terminal else 0.12
-            time.sleep(clipboard_delay)
-
-            # 2) Press paste key combination based on config
-            if self.ydotool_available:
-                # For Kitty-protocol terminals, clear stuck modifiers first
-                # (especially Super, which can interfere with paste recognition)
-                if is_kitty_terminal:
-                    self._clear_stuck_modifiers()
-                    time.sleep(0.02)  # Brief settle after clearing modifiers
-
-                paste_keycode = self._get_paste_keycode()
-                paste_keycode_pressed = f'{paste_keycode}:1'
-                paste_keycode_released = f'{paste_keycode}:0'
-
-                # Paste chords are sent as modifiers + a configurable keycode (default KEY_V=47).
-                paste_mode = None
-                if self.config_manager:
-                    paste_mode = self.config_manager.get_setting('paste_mode', None)
-
-                # Use spaced-out key events for Kitty-protocol terminals to prevent
-                # escape sequence artifacts (8;8u fragments from misinterpreted modifiers)
-                if is_kitty_terminal:
-                    if paste_mode in ['super', 'ctrl_shift', 'ctrl', 'alt']:
-                        success = self._send_paste_keys_slow(paste_mode)
-                        if not success:
-                            print(f"  Slow paste failed for mode {paste_mode}")
-                            return False
-                        self._send_enter_if_auto_submit()
-                        return True
-                    elif paste_mode is None:
-                        # Back-compat: use shift_paste setting
-                        shift_paste = True
-                        if self.config_manager:
-                            shift_paste = self.config_manager.get_setting('shift_paste', True)
-
-                        mode = 'ctrl_shift' if shift_paste else 'ctrl'
-                        success = self._send_paste_keys_slow(mode)
-                        if not success:
-                            print(f"  Slow paste failed for back-compat mode {mode}")
-                            return False
-                        self._send_enter_if_auto_submit()
-                        return True
-
-                # Fast path for non-Kitty terminals (original behavior)
-                if paste_mode == 'super':
-                    # LeftMeta (Super) = 125
-                    result = subprocess.run(
-                        ['ydotool', 'key', '125:1', paste_keycode_pressed, paste_keycode_released, '125:0'],
-                        capture_output=True, timeout=5
-                    )
-                elif paste_mode == 'ctrl_shift':
-                    result = subprocess.run(
-                        ['ydotool', 'key', '29:1', '42:1', paste_keycode_pressed, paste_keycode_released, '42:0', '29:0'],
-                        capture_output=True, timeout=5
-                    )
-                elif paste_mode == 'ctrl':
-                    result = subprocess.run(
-                        ['ydotool', 'key', '29:1', paste_keycode_pressed, paste_keycode_released, '29:0'],
-                        capture_output=True, timeout=5
-                    )
-                elif paste_mode == 'alt':
-                    # LeftAlt = 56
-                    result = subprocess.run(
-                        ['ydotool', 'key', '56:1', paste_keycode_pressed, paste_keycode_released, '56:0'],
-                        capture_output=True, timeout=5
-                    )
+            # Resolve paste mode: explicit config override → shift_paste back-compat → auto-detect
+            paste_mode = None
+            if self.config_manager:
+                paste_mode = self.config_manager.get_setting('paste_mode', None)
+            if not paste_mode:
+                # Back-compat: honour shift_paste boolean if set in config
+                shift_paste = self.config_manager.get_setting('shift_paste', None) if self.config_manager else None
+                if shift_paste is not None:
+                    paste_mode = 'ctrl_shift' if shift_paste else 'ctrl'
                 else:
-                    # Back-compat path: fall back to legacy shift_paste boolean
-                    shift_paste = True
-                    if self.config_manager:
-                        shift_paste = self.config_manager.get_setting('shift_paste', True)
-                    if shift_paste:
-                        result = subprocess.run(
-                            ['ydotool', 'key', '29:1', '42:1', paste_keycode_pressed, paste_keycode_released, '42:0', '29:0'],
-                            capture_output=True, timeout=5
-                        )
-                    else:
-                        result = subprocess.run(
-                            ['ydotool', 'key', '29:1', paste_keycode_pressed, paste_keycode_released, '29:0'],
-                            capture_output=True, timeout=5
-                        )
-                
-                if result.returncode != 0:
-                    stderr = (result.stderr or b"").decode("utf-8", "ignore")
-                    print(f"  ydotool paste command failed: {stderr}")
-                    return False
+                    paste_mode = self._detect_paste_mode(window_info)
 
-                self._send_enter_if_auto_submit()
+            # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back to ydotool
+            pasted = False
+            if self.wtype_available:
+                pasted = self._send_paste_keys_wtype(paste_mode)
+                if pasted:
+                    # wtype sends Wayland modifier events; clear ydotool's uinput modifier
+                    # state so subsequent physical keypresses are not affected.
+                    self._clear_stuck_modifiers()
+
+            if not pasted and self.ydotool_available:
+                self._clear_stuck_modifiers()
+                time.sleep(0.02)
+                pasted = self._send_paste_keys_slow(paste_mode)
+
+            if not pasted and not self.wtype_available and not self.ydotool_available:
+                print("No key-injection tool available; text is on the clipboard.")
+                # Text is clipboard-only: don't restore old clipboard (would erase it)
+                # and don't auto-submit (nothing was pasted into the field).
                 return True
 
-            print("No key-injection tool available; text is on the clipboard.")
-            return True
+            # Only restore clipboard after a successful hotkey paste — if paste failed,
+            # leave dictated text on clipboard so the user can paste manually.
+            if pasted:
+                self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"))
+                self._send_enter_if_auto_submit()
+
+            return pasted
 
         except Exception as e:
             print(f"Clipboard+hotkey injection failed: {e}")
             return False
 
     def _inject_via_clipboard(self, text: str) -> bool:
-        """Fallback: copy text to clipboard if ydotool is not available."""
+        """Fallback: copy text to clipboard when no paste tool is available."""
         try:
             if shutil.which("wl-copy"):
-                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True)
+                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=2)
             else:
                 pyperclip.copy(text)
 
-            print("Text copied to clipboard (ydotool not available for paste)")
-            # Do NOT call _send_enter_if_auto_submit() here: text is only on the
-            # clipboard, not yet injected into the application. Sending Enter now
-            # would submit an empty field before the user has a chance to paste.
+            print("Text copied to clipboard (no paste tool available)")
             return True
         except Exception as e:
             print(f"ERROR: Clipboard fallback failed: {e}")
             return False
-

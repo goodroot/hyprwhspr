@@ -13,8 +13,6 @@ There is also a `$schema` reference for IDE autocompletion and validation:
 ```jsonc
 {
     "$schema": "https://raw.githubusercontent.com/goodroot/hyprwhspr/main/share/config.schema.json",
-    "transcription_backend": "rest-api",
-    "language": "en"
 }
 ```
 
@@ -689,21 +687,25 @@ Toggle this behavior in `~/.config/hyprwhspr/config.json`:
 
 ### Paste mode
 
-Control how text is pasted into applications:
+hyprwhspr auto-detects the correct paste shortcut based on the focused window:
+
+- **Terminals** (Ghostty, Kitty, WezTerm, Alacritty, foot, etc.) → Ctrl+Shift+V
+- **Everything else** (editors, browsers, chat apps) → Ctrl+V
+
+No configuration needed for most setups. Override with `paste_mode` if your app needs something different:
 
 ```jsonc
 {
-    "paste_mode": "ctrl_shift",  // "ctrl_shift" | "ctrl" | "super" (default: "ctrl_shift")
+    "paste_mode": "ctrl_shift",  // "ctrl_shift" | "ctrl" | "super" | "alt"
 }
 ```
 
 Options:
 
-- **`"ctrl_shift"`** (default) — Sends Ctrl+Shift+V. Works in most terminals.
-
+- **`"ctrl_shift"`** — Sends Ctrl+Shift+V. Standard terminal paste.
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
-
-- **`"super"`** — Sends Super+V. Maybe finicky.
+- **`"super"`** — Sends Super+V.
+- **`"alt"`** — Sends Alt+V.
 
 ### Non-QWERTY layouts
 
@@ -739,39 +741,11 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 ... Be careful!
 
-### Inject mode
-
-By default, hyprwhspr copies text to the clipboard and sends a paste keystroke. 
-
-This fails in terminals that use the **Kitty keyboard protocol** (Ghostty, Kitty, WezTerm), where synthetic Ctrl+V from ydotool is misinterpreted.
-
-Use `inject_mode` for direct character injection that bypasses the clipboard entirely:
-
-```jsonc
-{
-    "inject_mode": "wtype"  // null (default) | "wtype" | "ydotool_type"
-}
-```
-
-- **`null`** (default) — clipboard + paste keystroke. Works everywhere except Kitty-protocol terminals.
-- **`"wtype"`** — types text directly via `wtype`. Requires `wtype`. Works in all Wayland windows including Kitty-protocol terminals.
-- **`"ydotool_type"`** — types text directly via `ydotool type`. Works in Kitty-protocol terminals.
-
-If the configured tool is not installed, hyprwhspr falls back to clipboard+paste (or clipboard-only if ydotool is also absent).
-
 ### Clipboard behavior
 
-Control what happens to clipboard after text injection:
+hyprwhspr saves your clipboard before injection and restores it automatically afterward — your clipboard contents are never permanently overwritten by dictated text.
 
-```jsonc
-{
-    "clipboard_behavior": false,       // Boolean: true = clear after delay, false = keep (default: false)
-    "clipboard_clear_delay": 5.0      // Float: seconds to wait before clearing (default: 5.0, only used if clipboard_behavior is true)
-}
-```
-
-- **`clipboard_behavior: true`** - Clipboard is automatically cleared after the specified delay
-- **`clipboard_clear_delay`** - How long to wait before clearing (only matters when `clipboard_behavior` is `true`)
+The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool` is used as a fallback when `wtype` is not installed.
 
 ## Integrations
 
