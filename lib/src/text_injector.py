@@ -131,7 +131,7 @@ class TextInjector:
             'foot',
             'konsole', 'org.kde.konsole',
             'gnome-terminal', 'org.gnome.terminal',
-            'ptyxis', 'io.gitlab.ptyxis.ptyxis',
+            'ptyxis', 'org.gnome.ptyxis', 'io.gitlab.ptyxis.ptyxis',
             'xfce4-terminal',
             'terminator',
             'tilix',
