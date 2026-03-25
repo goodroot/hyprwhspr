@@ -26,7 +26,8 @@ class ConfigManager:
             'secondary_shortcut': None,  # Optional secondary hotkey for language-specific recording (e.g., "SUPER+ALT+I")
             'secondary_language': None,  # Language code for secondary shortcut (e.g., "it", "en", "fr", etc.)
             'cancel_shortcut': None,  # Optional shortcut to cancel recording and discard audio (e.g., "SUPER+ESCAPE")
-            'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' (hybrid tap/hold)
+            'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
+            'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
             'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
             'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
             'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
