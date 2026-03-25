@@ -22,6 +22,13 @@ pyperclip = require_package('pyperclip')
 
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
 
+# AT-SPI is not thread-safe — only one thread may access it at a time.
+# _atspi_available: None = untested, True = working, False = unavailable.
+# The module reference is cached after successful init so init runs only once.
+_atspi_lock: threading.Lock = threading.Lock()
+_atspi_module = None
+_atspi_available = None
+
 
 class TextInjector:
     """Handles injecting text into focused applications"""
@@ -113,6 +120,76 @@ class TextInjector:
                             return {'class': wm_class}
             except Exception:
                 pass
+
+        # AT-SPI fallback for native Wayland compositors (GNOME, KDE, etc.)
+        # gi.repository ships with python3-gi, part of the GNOME/GTK stack —
+        # no additional packages needed on systems where this problem exists.
+        global _atspi_module, _atspi_available
+
+        # Acquire the lock before reading _atspi_available so concurrent first-callers
+        # cannot each pass the None check and spawn parallel Atspi.init() calls.
+        if not _atspi_lock.acquire(timeout=0.5):
+            return None
+        try:
+            if _atspi_available is None:
+                # First call: probe in a thread with a timeout to guard against a
+                # missing or slow AT-SPI bus. Caches the result for all future calls.
+                _probe_result: list = [None]
+
+                def _probe():
+                    try:
+                        import gi
+                        gi.require_version('Atspi', '2.0')
+                        from gi.repository import Atspi
+                        Atspi.init()
+                        _probe_result[0] = Atspi
+                    except Exception:
+                        pass
+
+                t = threading.Thread(target=_probe, daemon=True)
+                t.start()
+                t.join(timeout=0.5)
+
+                if _probe_result[0] is not None:
+                    _atspi_module = _probe_result[0]
+                    _atspi_available = True
+                else:
+                    _atspi_available = False
+
+            if not _atspi_available:
+                return None
+
+            # Query under the same lock — AT-SPI is not thread-safe.
+            Atspi = _atspi_module
+            desktop = Atspi.get_desktop(0)
+            for i in range(desktop.get_child_count()):
+                app = desktop.get_child_at_index(i)
+                if app is None:
+                    continue
+                for j in range(app.get_child_count()):
+                    window = app.get_child_at_index(j)
+                    if window is None:
+                        continue
+                    if window.get_state_set().contains(Atspi.StateType.ACTIVE):
+                        # Prefer the process name from /proc (matches WM_CLASS-style
+                        # identifiers like "gnome-terminal", "ptyxis", "kitty").
+                        # Fall back to the AT-SPI app display name if unavailable.
+                        name = None
+                        try:
+                            pid = app.get_process_id()
+                            if pid > 0:
+                                with open(f'/proc/{pid}/comm') as f:
+                                    name = f.read().strip().lower()
+                        except Exception:
+                            pass
+                        if not name:
+                            name = (app.get_name() or '').lower()
+                        if name:
+                            return {'class': name}
+        except Exception:
+            pass
+        finally:
+            _atspi_lock.release()
 
         return None
 
