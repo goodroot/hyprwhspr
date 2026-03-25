@@ -79,7 +79,8 @@ class TextInjector:
             return DEFAULT_PASTE_KEYCODE
 
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
-        """Get active window info from Hyprland (if available)"""
+        """Get active window info, trying multiple compositor APIs."""
+        # Hyprland
         try:
             result = subprocess.run(
                 ['hyprctl', 'activewindow', '-j'],
@@ -89,6 +90,30 @@ class TextInjector:
                 return json.loads(result.stdout)
         except Exception:
             pass
+
+        # X11 / XWayland fallback (works on GNOME, KDE, etc. when XWayland is running)
+        if shutil.which('xdotool') and shutil.which('xprop'):
+            try:
+                id_result = subprocess.run(
+                    ['xdotool', 'getactivewindow'],
+                    capture_output=True, text=True, timeout=0.5
+                )
+                if id_result.returncode == 0:
+                    window_id = id_result.stdout.strip()
+                    prop_result = subprocess.run(
+                        ['xprop', '-id', window_id, 'WM_CLASS'],
+                        capture_output=True, text=True, timeout=0.5
+                    )
+                    if prop_result.returncode == 0:
+                        # WM_CLASS(STRING) = "ptyxis", "io.gitlab.ptyxis.Ptyxis"
+                        # Use the second (instance) class which is more specific
+                        matches = re.findall(r'"([^"]+)"', prop_result.stdout)
+                        if matches:
+                            wm_class = matches[-1] if len(matches) >= 2 else matches[0]
+                            return {'class': wm_class}
+            except Exception:
+                pass
+
         return None
 
     def _is_terminal(self, window_info: Optional[Dict[str, Any]] = None) -> bool:
@@ -106,6 +131,7 @@ class TextInjector:
             'foot',
             'konsole', 'org.kde.konsole',
             'gnome-terminal', 'org.gnome.terminal',
+            'ptyxis', 'io.gitlab.ptyxis.ptyxis',
             'xfce4-terminal',
             'terminator',
             'tilix',
