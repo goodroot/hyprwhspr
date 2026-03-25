@@ -79,7 +79,8 @@ class TextInjector:
             return DEFAULT_PASTE_KEYCODE
 
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
-        """Get active window info from Hyprland (if available)"""
+        """Get active window info from Hyprland or GNOME (focused-window-dbus extension)"""
+        # Try Hyprland first
         try:
             result = subprocess.run(
                 ['hyprctl', 'activewindow', '-j'],
@@ -89,6 +90,28 @@ class TextInjector:
                 return json.loads(result.stdout)
         except Exception:
             pass
+
+        # Fallback: GNOME with focused-window-dbus extension
+        try:
+            result = subprocess.run(
+                ['gdbus', 'call', '--session',
+                 '--dest', 'org.gnome.Shell',
+                 '--object-path', '/org/gnome/shell/extensions/FocusedWindow',
+                 '--method', 'org.gnome.shell.extensions.FocusedWindow.Get'],
+                capture_output=True, text=True, timeout=0.5
+            )
+            if result.returncode == 0:
+                # gdbus wraps output in ('...',) — extract the JSON string
+                raw = result.stdout.strip()
+                if raw.startswith("('") and raw.endswith("',)"):
+                    raw = raw[2:-3]
+                info = json.loads(raw)
+                # Normalize to match hyprctl format: map wm_class -> class
+                info['class'] = info.get('wm_class', '')
+                return info
+        except Exception:
+            pass
+
         return None
 
     def _is_terminal(self, window_info: Optional[Dict[str, Any]] = None) -> bool:
@@ -106,6 +129,7 @@ class TextInjector:
             'foot',
             'konsole', 'org.kde.konsole',
             'gnome-terminal', 'org.gnome.terminal',
+            'ptyxis', 'org.gnome.ptyxis',
             'xfce4-terminal',
             'terminator',
             'tilix',

@@ -692,6 +692,8 @@ hyprwhspr auto-detects the correct paste shortcut based on the focused window:
 - **Terminals** (Ghostty, Kitty, WezTerm, Alacritty, foot, etc.) → Ctrl+Shift+V
 - **Everything else** (editors, browsers, chat apps) → Ctrl+V
 
+**GNOME/Wayland:** Auto-detection requires the [Focused Window D-Bus](https://extensions.gnome.org/extension/5592/focused-window-d-bus/) GNOME Shell extension. Without it, hyprwhspr cannot detect the focused window and will default to Ctrl+V.
+
 No configuration needed for most setups. Override with `paste_mode` if your app needs something different:
 
 ```jsonc
