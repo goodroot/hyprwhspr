@@ -661,11 +661,11 @@ def _prompt_backend_selection():
     print("\nChoose your transcription backend:")
     print()
     print("Local In-Memory Backends:")
-    print("  [1] Parakeet TDT V3       - Solid performance for most people (Autodetects CPU/GPU)")
+    print("  [1] Parakeet TDT V3       - Leading accuracy, no GPU required (autodetects CPU/GPU)")
     print("  [2] Whisper (CPU)         - whisper.cpp, works everywhere")
-    print("  [3] Whisper (NVIDIA)      - whisper.cpp + CUDA, perfect for NVIDIA GPUs")
+    print("  [3] Whisper (NVIDIA)      - whisper.cpp + CUDA, fastest local transcription (NVIDIA GPUs)")
     print("  [4] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
-    print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, AMD/Intel GPUs")
+    print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, fastest local transcription (AMD/Intel GPUs)")
     print()
     print("Cloud/REST Backends:")
     print("  [6] REST API              - OpenAI, Groq, or custom endpoint")
@@ -1260,18 +1260,24 @@ def setup_command(python_path: Optional[str] = None):
             is_parakeet_config = True
     
     if is_parakeet_config:
-        log_info("Parakeet REST backend detected.")
-        if Confirm.ask("\nMigrate to in-process onnx-asr backend (GPU-accelerated, no REST server)?", default=True):
+        print("\n" + "="*60)
+        print("Backend Migration Available")
+        print("="*60)
+        print("\nYou're currently using the Parakeet REST backend (deprecated).")
+        print("The onnx-asr backend replaces it with an in-process version:")
+        print("  • No REST server to manage")
+        print("  • GPU-accelerated (auto-detected)")
+        print("  • Same Parakeet model, faster startup")
+        if Confirm.ask("\nMigrate to onnx-asr?", default=True):
             backend_normalized = 'onnx-asr'
             backend = 'onnx-asr'
-            log_info("Migrating to onnx-asr backend...")
             # Clean up Parakeet REST service
             if _cleanup_backend('parakeet'):
-                log_success("Parakeet REST backend cleaned up")
-            log_info("Will install onnx-asr backend instead")
+                log_success("Parakeet REST backend removed")
+            log_info("Will install onnx-asr backend")
         else:
             log_warning("Keeping Parakeet REST backend. Note: Parakeet REST is deprecated.")
-            log_warning("Consider migrating to onnx-asr for better performance and simpler setup.")
+            log_warning("You can migrate later by re-running: hyprwhspr setup")
             # Preserve Parakeet backend to prevent cleanup
             backend_normalized = 'parakeet'
             backend = 'parakeet'
@@ -1292,6 +1298,7 @@ def setup_command(python_path: Optional[str] = None):
                 log_success("Venv removed")
     
     # Step 1.5: Backend installation (if not cloud backend)
+    backend_install_skipped = False
     if backend_normalized not in ['rest-api', 'remote', 'realtime-ws']:
         # Skip installation section if user selected the same backend and declined reinstalling
         if current_backend == backend_normalized and not wants_reinstall:
@@ -1319,7 +1326,9 @@ def setup_command(python_path: Optional[str] = None):
             if not Confirm.ask("Proceed with backend installation?", default=True):
                 log_warning("Skipping backend installation. You can install it later.")
                 log_warning("Backend installation is required for local transcription to work.")
+                backend_install_skipped = True
             else:
+                backend_install_skipped = False
                 # Pass force_rebuild=True when reinstalling to ensure clean venv
                 # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
                 if not install_backend(backend_normalized, force_rebuild=wants_reinstall, custom_python=python_path):
@@ -1507,18 +1516,19 @@ def setup_command(python_path: Optional[str] = None):
         else:
             log_info("Base Python dependencies up to date")
     
-    # Step 2: Model selection for local backends (always prompt, regardless of install/reinstall)
-    if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper']:
-        # Local backend - prompt for model selection
-        # Note: ONNX-ASR and faster-whisper don't use Whisper.cpp models
-        selected_model = _prompt_model_selection()
-    elif backend_normalized == 'faster-whisper':
-        faster_whisper_model = _prompt_faster_whisper_model_selection()
-        if download_faster_whisper_model(faster_whisper_model):
-            log_success(f"Model {faster_whisper_model} downloaded successfully")
-        else:
-            log_warning(f"Model download failed. You can download it later with:")
-            log_warning(f"  hyprwhspr model download {faster_whisper_model}")
+    # Model selection for local backends
+    if not backend_install_skipped:
+        if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper']:
+            # Local backend - prompt for model selection
+            # Note: ONNX-ASR and faster-whisper don't use Whisper.cpp models
+            selected_model = _prompt_model_selection()
+        elif backend_normalized == 'faster-whisper':
+            faster_whisper_model = _prompt_faster_whisper_model_selection()
+            if download_faster_whisper_model(faster_whisper_model):
+                log_success(f"Model {faster_whisper_model} downloaded successfully")
+            else:
+                log_warning(f"Model download failed. You can download it later with:")
+                log_warning(f"  hyprwhspr model download {faster_whisper_model}")
     
     # Step 3: Waybar integration
     print("\n" + "="*60)
@@ -1635,7 +1645,7 @@ def setup_command(python_path: Optional[str] = None):
     print("\n" + "="*60)
     print("Setup Summary")
     print("="*60)
-    print(f"\nBackend: {backend}")
+    print(f"\nBackend: {backend_normalized}")
     if remote_config:
         print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
         if remote_config.get('rest_body'):
@@ -1659,6 +1669,8 @@ def setup_command(python_path: Optional[str] = None):
         print(f"Model: {faster_whisper_model}")
     elif selected_model:
         print(f"Model: {selected_model}")
+    elif backend_normalized == 'onnx-asr':
+        print("Model: nemo-parakeet-tdt-0.6b-v3 (default, auto-downloaded on first use)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
     if setup_audio_ducking_choice:
@@ -1671,8 +1683,20 @@ def setup_command(python_path: Optional[str] = None):
     else:
         print("Systemd service: No")
     print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
+
+    # Paste mode detection notice — only shown when auto-detection won't work at runtime.
+    # Hyprland users get hyprctl; XWayland users get xdotool. Pure Wayland non-Hyprland
+    # users get neither, so terminal paste (Ctrl+Shift+V) won't be auto-selected.
+    _has_hyprctl = bool(shutil.which('hyprctl'))
+    _has_xdotool = bool(shutil.which('xdotool'))
+    if not _has_hyprctl and not _has_xdotool:
+        print("\nNote: Window detection unavailable on this system (no hyprctl or xdotool).")
+        print("Paste will default to Ctrl+V, which works in most apps but not terminals.")
+        print("If you primarily dictate into terminals, run after setup:")
+        print("  hyprwhspr config set paste_mode ctrl_shift")
+
     print()
-    
+
     # Final confirmation
     if not Confirm.ask("Proceed with setup?", default=True):
         print("\nSetup cancelled.")
@@ -1693,11 +1717,6 @@ def setup_command(python_path: Optional[str] = None):
             config = ConfigManager()
             config.set_setting('faster_whisper_model', faster_whisper_model)
             config.save_config()
-        
-        # Check if running manually before systemd setup
-        if _is_running_manually():
-            log_warning("hyprwhspr appears to be running manually (not via systemd).")
-            log_warning("Please restart it manually for configuration changes to take effect.")
         
         # Step 2: Waybar
         if setup_waybar_choice:
@@ -1764,19 +1783,19 @@ def setup_command(python_path: Optional[str] = None):
                 pass  # Service check failed, continue
         else:
             log_info("Skipping systemd setup")
-            # Check if service is running anyway and warn user
+            # Warn if the service is running and won't pick up the new config automatically
             try:
                 result = subprocess.run(
                     ['systemctl', '--user', 'is-active', SERVICE_NAME],
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                    check=False
+                    capture_output=True, text=True, timeout=2, check=False
                 )
                 if result.returncode == 0:
                     log_warning("Systemd service is running but setup was skipped.")
-                    log_warning("You may need to manually restart the service for changes to take effect:")
+                    log_warning("Restart it for configuration changes to take effect:")
                     log_warning("  systemctl --user restart hyprwhspr")
+                elif _is_running_manually():
+                    log_warning("hyprwhspr appears to be running manually (not via systemd).")
+                    log_warning("Restart it manually for configuration changes to take effect.")
             except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
                 pass
         
