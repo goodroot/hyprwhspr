@@ -69,6 +69,7 @@ PARAKEET_VENV_DIR = USER_BASE / 'parakeet-venv'
 PARAKEET_DIR = Path(HYPRWHSPR_ROOT) / 'lib' / 'backends' / 'parakeet'
 PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
 PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
+POCKET_TTS_DATA_DIR = USER_BASE / 'pocket-tts'
 
 # Pre-built wheel configuration
 WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v1"
@@ -1957,6 +1958,52 @@ def install_parakeet_dependencies(pip_bin: Path) -> bool:
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to install Parakeet dependencies: {e}")
+        return False
+
+
+# ==================== Pocket TTS Installation ====================
+
+def install_pocket_tts(pip_bin: Path) -> bool:
+    """
+    Install Pocket TTS into the main venv.
+
+    Pocket TTS is a lightweight CPU-only text-to-speech model.
+    Requires PyTorch 2.5+; pocket-tts pulls it as a dependency.
+
+    Args:
+        pip_bin: Path to pip binary in the venv
+
+    Returns:
+        True if installation succeeded, False otherwise
+    """
+    log_info("Installing Pocket TTS...")
+    try:
+        run_command([str(pip_bin), 'install', 'pocket-tts'], check=True)
+        log_success("Pocket TTS installed")
+        return True
+    except subprocess.CalledProcessError as e:
+        log_error(f"Failed to install Pocket TTS: {e}")
+        return False
+
+
+def install_tts_backend(custom_python: Optional[str] = None) -> bool:
+    """
+    Install the TTS backend (Pocket TTS). Ensures venv exists, then installs pocket-tts.
+
+    Reuses the main VENV_DIR (same venv as Whisper backends).
+    Creates venv if it does not exist (e.g. cloud-only users).
+
+    Args:
+        custom_python: Optional path to Python executable for venv creation
+
+    Returns:
+        True if installation succeeded, False otherwise
+    """
+    try:
+        pip_bin = setup_python_venv(force_rebuild=False, custom_python=custom_python)
+        return install_pocket_tts(pip_bin)
+    except Exception as e:
+        log_error(f"TTS backend installation failed: {e}")
         return False
 
 

@@ -747,6 +747,69 @@ hyprwhspr saves your clipboard before injection and restores it automatically af
 
 The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool` is used as a fallback when `wtype` is not installed.
 
+## Text-to-speech (TTS)
+
+hyprwhspr can read selected text aloud using [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) by Kyutai Labs — a lightweight, CPU-only text-to-speech model.
+
+### Overview
+
+Pocket TTS runs entirely on your CPU: no GPU or cloud API required. It features ~200ms first-chunk latency, ~6× real-time speed on typical CPUs, and supports English with 8 built-in voices. See the [Kyutai tech report](https://kyutai.org/blog/2026-01-13-pocket-tts) for technical details.
+
+### Setup
+
+1. Run `hyprwhspr setup` and answer **Yes** when prompted to enable text-to-speech.
+2. Choose a default voice (or keep `alba`).
+3. The setup installs Pocket TTS into your hyprwhspr venv (`~/.local/share/hyprwhspr/venv/`).
+
+For automated setup:
+
+```bash
+hyprwhspr setup auto --tts
+```
+
+### Built-in voices
+
+| Voice   | Source / notes |
+|---------|----------------|
+| alba    | Default, casual voice |
+| marius  | Voice donation |
+| javert  | Voice donation |
+| jean    | Ears dataset |
+| fantine | VCTK (p244) |
+| cosette | Expresso dataset |
+| eponine | VCTK (p262) |
+| azelma  | VCTK (p303) |
+
+Voice licenses and audio samples: [Kyutai TTS Voices on Hugging Face](https://huggingface.co/kyutai/tts-voices)
+
+### Configuration
+
+```jsonc
+{
+    "tts_enabled": true,
+    "tts_shortcut": "SUPER+ALT+T",
+    "tts_voice": "alba",
+    "tts_volume": 1.0,
+    "tts_osd_enabled": true
+}
+```
+
+### Usage
+
+- **Shortcut**: Press `tts_shortcut` (default SUPER+ALT+T) to read the currently selected text or clipboard.
+- **CLI**: `hyprwhspr speak` — reads primary selection; use `--text "..."` or `--clipboard` for other sources.
+- **FIFO** (when using Hyprland bindings): `echo speak > ~/.config/hyprwhspr/recording_control`
+
+### Voice cloning (advanced)
+
+Pocket TTS supports custom voices via WAV files. Provide a path or Hugging Face URL:
+
+```bash
+hyprwhspr speak --text "Hello" --voice /path/to/your_voice.wav
+```
+
+Use clean, high-quality samples; Pocket TTS reproduces the sample's quality. You can pre-export voice embeddings to `.safetensors` for faster loading.
+
 ## Integrations
 
 ### Waybar
