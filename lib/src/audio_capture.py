@@ -464,6 +464,11 @@ class AudioCapture:
                 audio_array = audio_array.flatten()
             if audio_array.dtype != np.float32:
                 audio_array = audio_array.astype(np.float32)
+            if not audio_array.flags['C_CONTIGUOUS']:
+                audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
+            if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
+                print("[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
+                return None
             return audio_array
         except Exception as e:
             print(f"[ERROR] Failed to collect audio data: {e}")
