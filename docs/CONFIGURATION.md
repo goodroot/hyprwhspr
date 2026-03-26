@@ -76,7 +76,8 @@ Press to start, speak naturally, and when you pause for a couple seconds the tex
 ```jsonc
 {
     "recording_mode": "continuous",
-    "continuous_silence_seconds": 2.0  // Optional: seconds of silence before auto-paste (default: 2.0)
+    "continuous_silence_seconds": 2.0,  // Optional: seconds of silence before auto-paste (default: 2.0)
+    "continuous_silence_threshold": 0.0005  // Optional: RMS silence threshold (increase if mic has high noise floor)
 }
 ```
 
