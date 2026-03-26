@@ -19,9 +19,7 @@ except ImportError:
 
 # Whisper hallucination markers for silence/noise segments
 _HALLUCINATION_MARKERS = {
-    'blank audio', 'blank', 'video playback',
-    'music', 'music playing', 'music plays',
-    'keyboard clicking', 'silence', 'no speech',
+    'blank audio', 'blank', 'silence', 'no speech',
     'thanks for watching', 'thank you for watching',
 }
 
@@ -158,6 +156,8 @@ class hyprwhsprApp:
         self._continuous_silence_thread = None
         self._continuous_silence_stop = threading.Event()
         self._continuous_flush_lock = threading.Lock()
+        self._continuous_transcription_done = threading.Event()
+        self._continuous_transcription_done.set()  # no transcription in flight
 
         # Long-form recording mode state
         self._longform_state = 'IDLE'  # IDLE, RECORDING, PAUSED, PROCESSING, ERROR
@@ -714,19 +714,14 @@ class hyprwhsprApp:
         self._continuous_silence_thread = None
 
     def _continuous_stop_and_wait(self):
-        """Stop the silence monitor and wait for any in-progress flush to finish"""
+        """Stop the silence monitor and wait for any in-progress transcription"""
         self._continuous_stop_silence_monitor()
-        # Acquire+release acts as a barrier: blocks until any in-progress
-        # flush thread releases the lock, ensuring transcription is done
-        self._continuous_flush_lock.acquire()
-        self._continuous_flush_lock.release()
+        self._continuous_transcription_done.wait(timeout=30)
 
     def _continuous_flush_audio(self):
         """Flush accumulated audio: transcribe and paste without stopping recording"""
         if not self._continuous_flush_lock.acquire(blocking=False):
             return  # another flush in progress
-
-        should_process = False
         try:
             audio_data = self.audio_capture.flush_buffer()
             if audio_data is None or len(audio_data) == 0:
@@ -735,12 +730,16 @@ class hyprwhsprApp:
             duration = len(audio_data) / self.audio_capture.sample_rate
             if duration < 0.5 or self._is_zero_volume(audio_data):
                 return
-            should_process = True
+        except Exception:
+            return
         finally:
-            if not should_process:
-                self._continuous_flush_lock.release()
+            self._continuous_flush_lock.release()
 
         print(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription", flush=True)
+
+        # Transcribe in background thread; audio_data is a detached snapshot
+        # so no lock is needed. The event signals completion to stop_and_wait.
+        self._continuous_transcription_done.clear()
 
         def process():
             try:
@@ -760,7 +759,7 @@ class hyprwhsprApp:
             except Exception as e:
                 print(f"[CONTINUOUS] Transcription error: {e}", flush=True)
             finally:
-                self._continuous_flush_lock.release()
+                self._continuous_transcription_done.set()
 
         threading.Thread(target=process, daemon=True).start()
 
