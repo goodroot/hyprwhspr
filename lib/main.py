@@ -17,6 +17,13 @@ try:
 except ImportError:
     np = None  # Will be checked when needed
 
+# Whisper hallucination markers for silence/noise segments
+_HALLUCINATION_MARKERS = (
+    'blank audio', 'blank', 'video playback',
+    'music', 'music playing', 'music plays',
+    'keyboard clicking', 'silence', 'no speech',
+)
+
 # Ensure unbuffered output for journald logging
 if sys.stdout.isatty():
     # Interactive terminal - keep buffering
@@ -149,8 +156,7 @@ class hyprwhsprApp:
         # Continuous mode state (auto-paste on speech pause)
         self._continuous_silence_thread = None
         self._continuous_silence_stop = threading.Event()
-        self._continuous_flush_done = threading.Event()  # Signaled when no flush is in progress
-        self._continuous_flush_done.set()
+        self._continuous_flush_lock = threading.Lock()
 
         # Long-form recording mode state
         self._longform_state = 'IDLE'  # IDLE, RECORDING, PAUSED, PROCESSING, ERROR
@@ -575,10 +581,10 @@ class hyprwhsprApp:
         recording_mode = self.config.get_setting("recording_mode", "toggle")
 
         if recording_mode in ('toggle', 'continuous'):
-            # Toggle mode: start/stop recording
+            # Toggle/continuous mode: start/stop recording
             if self.is_recording:
-                self._continuous_stop_silence_monitor()
-                self._continuous_flush_done.wait(timeout=5.0)
+                if recording_mode == 'continuous':
+                    self._continuous_stop_and_wait()
                 self._stop_recording()
             else:
                 self._start_recording(language_override=language_override)
@@ -669,6 +675,8 @@ class hyprwhsprApp:
     _on_secondary_shortcut_released = _on_shortcut_released
 
     # Continuous mode: auto-paste on speech pause
+    _POLL_INTERVAL = 0.1  # seconds between silence checks
+
     def _continuous_start_silence_monitor(self):
         """Start monitoring for silence to trigger auto-paste in continuous mode"""
         self._continuous_stop_silence_monitor()
@@ -676,8 +684,8 @@ class hyprwhsprApp:
 
         silence_seconds = self.config.get_setting('continuous_silence_seconds', 2.0)
         silence_threshold = self.config.get_setting('continuous_silence_threshold', 5e-3)
-        samples_needed = int(silence_seconds / 0.1)
-        grace_samples = 10  # Ignore first 1s to let stream stabilize
+        samples_needed = int(silence_seconds / self._POLL_INTERVAL)
+        grace_samples = int(1.0 / self._POLL_INTERVAL)  # ignore first 1s to let stream stabilize
 
         def monitor():
             silent_count = 0
@@ -694,7 +702,7 @@ class hyprwhsprApp:
                                 silent_count = 0
                         else:
                             silent_count = 0
-                    self._continuous_silence_stop.wait(0.1)
+                    self._continuous_silence_stop.wait(self._POLL_INTERVAL)
             except Exception as e:
                 print(f"[CONTINUOUS] Silence monitor error: {e}", flush=True)
 
@@ -708,60 +716,50 @@ class hyprwhsprApp:
             self._continuous_silence_thread.join(timeout=0.5)
         self._continuous_silence_thread = None
 
+    def _continuous_stop_and_wait(self):
+        """Stop the silence monitor and wait for any in-progress flush to finish"""
+        self._continuous_stop_silence_monitor()
+        self._continuous_flush_lock.acquire()
+        self._continuous_flush_lock.release()
+
     def _continuous_flush_audio(self):
         """Flush accumulated audio: transcribe and paste without stopping recording"""
-        if self._continuous_flush_done.is_set():
-            self._continuous_flush_done.clear()
-        else:
-            return  # Another flush in progress
+        if not self._continuous_flush_lock.acquire(blocking=False):
+            return  # another flush in progress
 
-        try:
-            # Atomically copy and clear buffer to avoid losing audio between operations
-            audio_data = self.audio_capture.flush_buffer()
-            if audio_data is None or len(audio_data) == 0:
-                self._continuous_flush_done.set()
-                return
+        audio_data = self.audio_capture.flush_buffer()
+        if audio_data is None or len(audio_data) == 0:
+            self._continuous_flush_lock.release()
+            return
 
-            duration = len(audio_data) / self.audio_capture.sample_rate
-            if duration < 0.5:
-                self._continuous_flush_done.set()
-                return
+        duration = len(audio_data) / self.audio_capture.sample_rate
+        if duration < 0.5 or self._is_zero_volume(audio_data):
+            self._continuous_flush_lock.release()
+            return
 
-            if self._is_zero_volume(audio_data):
-                self._continuous_flush_done.set()
-                return
+        print(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription", flush=True)
 
-            print(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription", flush=True)
+        def process():
+            try:
+                transcription = self.whisper_manager.transcribe_audio(
+                    audio_data, language_override=self._current_language_override
+                )
+                if transcription and transcription.strip():
+                    text = transcription.strip()
+                    normalized = text.lower().replace('_', ' ').strip('[]() .')
+                    if normalized in _HALLUCINATION_MARKERS or normalized.startswith('♪'):
+                        print(f"[CONTINUOUS] Hallucination ignored: {text!r}", flush=True)
+                        return
+                    self._inject_text(text)
+                    print(f"[CONTINUOUS] Pasted: {text[:80]}{'...' if len(text) > 80 else ''}", flush=True)
+                else:
+                    print("[CONTINUOUS] No transcription from flushed audio", flush=True)
+            except Exception as e:
+                print(f"[CONTINUOUS] Transcription error: {e}", flush=True)
+            finally:
+                self._continuous_flush_lock.release()
 
-            def process():
-                try:
-                    transcription = self.whisper_manager.transcribe_audio(
-                        audio_data, language_override=self._current_language_override
-                    )
-                    if transcription and transcription.strip():
-                        text = transcription.strip()
-                        normalized = text.lower().replace('_', ' ').strip('[]() .')
-                        hallucination_markers = (
-                            'blank audio', 'blank', 'video playback',
-                            'music', 'music playing', 'music plays',
-                            'keyboard clicking', 'silence', 'no speech',
-                        )
-                        if normalized in hallucination_markers or normalized.startswith('♪'):
-                            print(f"[CONTINUOUS] Hallucination ignored: {text!r}", flush=True)
-                            return
-                        self._inject_text(text)
-                        print(f"[CONTINUOUS] Pasted: {text[:80]}{'...' if len(text) > 80 else ''}", flush=True)
-                    else:
-                        print("[CONTINUOUS] No transcription from flushed audio", flush=True)
-                except Exception as e:
-                    print(f"[CONTINUOUS] Transcription error: {e}", flush=True)
-                finally:
-                    self._continuous_flush_done.set()
-
-            threading.Thread(target=process, daemon=True).start()
-        except Exception:
-            self._continuous_flush_done.set()
-            raise
+        threading.Thread(target=process, daemon=True).start()
 
     def _on_cancel_shortcut_triggered(self):
         """Handle cancel shortcut trigger - discard recording without transcribing"""
@@ -772,8 +770,7 @@ class hyprwhsprApp:
                 self._cancel_longform_recording()
         else:
             if recording_mode == "continuous":
-                self._continuous_stop_silence_monitor()
-                self._continuous_flush_done.wait(timeout=5.0)
+                self._continuous_stop_and_wait()
             self._cancel_recording()
 
     # Long-form recording mode handlers
@@ -1916,8 +1913,8 @@ class hyprwhsprApp:
                                 print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring stop request", flush=True)
                     elif self.is_recording:
                         print("[CONTROL] Recording stop requested (immediate)", flush=True)
-                        self._continuous_stop_silence_monitor()
-                        self._continuous_flush_done.wait(timeout=5.0)
+                        if recording_mode == "continuous":
+                            self._continuous_stop_and_wait()
                         self._stop_recording()
                     else:
                         print("[CONTROL] Not currently recording, ignoring stop request", flush=True)

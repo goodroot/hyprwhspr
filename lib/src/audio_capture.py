@@ -482,6 +482,21 @@ class AudioCapture:
             else:
                 return None
 
+    def _collect_audio_array(self) -> Optional[np.ndarray]:
+        """Concatenate audio_data into a flat float32 array. Must be called with self.lock held."""
+        if not self.audio_data:
+            return None
+        try:
+            audio_array = np.concatenate(self.audio_data, axis=0)
+            if audio_array.ndim > 1:
+                audio_array = audio_array.flatten()
+            if audio_array.dtype != np.float32:
+                audio_array = audio_array.astype(np.float32)
+            return audio_array
+        except Exception as e:
+            print(f"[ERROR] Failed to collect audio data: {e}")
+            return None
+
     def get_current_audio_copy(self) -> Optional[np.ndarray]:
         """
         Get a copy of the current audio buffer without stopping recording.
@@ -490,18 +505,8 @@ class AudioCapture:
             Copy of audio data as numpy array, or None if no data
         """
         with self.lock:
-            if not self.audio_data:
-                return None
-            try:
-                audio_array = np.concatenate(self.audio_data, axis=0)
-                if audio_array.ndim > 1:
-                    audio_array = audio_array.flatten()
-                if audio_array.dtype != np.float32:
-                    audio_array = audio_array.astype(np.float32)
-                return audio_array.copy()
-            except Exception as e:
-                print(f"[ERROR] Failed to copy audio data: {e}")
-                return None
+            data = self._collect_audio_array()
+            return data.copy() if data is not None else None
 
     def clear_buffer(self):
         """Clear the audio buffer without stopping recording."""
@@ -512,19 +517,10 @@ class AudioCapture:
     def flush_buffer(self) -> Optional[np.ndarray]:
         """Atomically copy and clear the audio buffer. Returns audio data or None."""
         with self.lock:
-            if not self.audio_data:
-                return None
-            try:
-                audio_array = np.concatenate(self.audio_data, axis=0)
-                if audio_array.ndim > 1:
-                    audio_array = audio_array.flatten()
-                if audio_array.dtype != np.float32:
-                    audio_array = audio_array.astype(np.float32)
+            data = self._collect_audio_array()
+            if data is not None:
                 self.audio_data = []
-                return audio_array
-            except Exception as e:
-                print(f"[ERROR] Failed to flush audio data: {e}")
-                return None
+            return data
 
     def pause_recording(self) -> Optional[np.ndarray]:
         """
