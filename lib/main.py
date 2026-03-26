@@ -722,27 +722,34 @@ class hyprwhsprApp:
         """Flush accumulated audio: transcribe and paste without stopping recording"""
         if not self._continuous_flush_lock.acquire(blocking=False):
             return  # another flush/transcription in progress
+
+        # Lock is now held — all paths must go through the finally that releases it.
+        self._continuous_transcription_done.clear()
+        should_transcribe = False
+        audio_data = None
         try:
             audio_data = self.audio_capture.flush_buffer()
             if audio_data is None or len(audio_data) == 0:
-                self._continuous_flush_lock.release()
                 return
 
             duration = len(audio_data) / self.audio_capture.sample_rate
             if duration < 0.5 or self._is_zero_volume(audio_data):
-                self._continuous_flush_lock.release()
                 return
+
+            print(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription", flush=True)
+            should_transcribe = True
         except Exception as e:
             print(f"[CONTINUOUS] Flush error: {e}", flush=True)
-            self._continuous_flush_lock.release()
-            return
+        finally:
+            if not should_transcribe:
+                self._continuous_flush_lock.release()
+                self._continuous_transcription_done.set()
 
-        print(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription", flush=True)
+        if not should_transcribe:
+            return
 
         # Transcribe in background thread; lock is held until transcription
         # completes so the next flush is blocked until this one finishes.
-        self._continuous_transcription_done.clear()
-
         def process():
             try:
                 transcription = self.whisper_manager.transcribe_audio(
