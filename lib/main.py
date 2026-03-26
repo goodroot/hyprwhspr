@@ -730,7 +730,8 @@ class hyprwhsprApp:
             duration = len(audio_data) / self.audio_capture.sample_rate
             if duration < 0.5 or self._is_zero_volume(audio_data):
                 return
-        except Exception:
+        except Exception as e:
+            print(f"[CONTINUOUS] Flush error: {e}", flush=True)
             return
         finally:
             self._continuous_flush_lock.release()
