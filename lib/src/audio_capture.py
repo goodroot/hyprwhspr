@@ -447,40 +447,12 @@ class AudioCapture:
         
         # Return recorded data
         with self.lock:
-            if self.audio_data:
-                try:
-                    # Concatenate all audio chunks
-                    audio_array = np.concatenate(self.audio_data, axis=0)
-                    
-                    # Ensure it's 1D (flatten if needed)
-                    if audio_array.ndim > 1:
-                        audio_array = audio_array.flatten()
-                    
-                    # Ensure float32 dtype
-                    if audio_array.dtype != np.float32:
-                        audio_array = audio_array.astype(np.float32)
-                    
-                    # Ensure contiguous in memory
-                    if not audio_array.flags['C_CONTIGUOUS']:
-                        audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
-                    
-                    # Validate no NaN/inf
-                    if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
-                        print(f"[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
-                        return None
-                    
-                    duration = len(audio_array) / self.sample_rate
-                    if duration < 0.5:
-                        print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
-                    
-                    return audio_array
-                except Exception as e:
-                    print(f"[ERROR] Failed to process audio data: {e}", flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return None
-            else:
-                return None
+            audio_array = self._collect_audio_array()
+            if audio_array is not None:
+                duration = len(audio_array) / self.sample_rate
+                if duration < 0.5:
+                    print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
+            return audio_array
 
     def _collect_audio_array(self) -> Optional[np.ndarray]:
         """Concatenate audio_data into a flat float32 array. Must be called with self.lock held."""
@@ -492,11 +464,6 @@ class AudioCapture:
                 audio_array = audio_array.flatten()
             if audio_array.dtype != np.float32:
                 audio_array = audio_array.astype(np.float32)
-            if not audio_array.flags['C_CONTIGUOUS']:
-                audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
-            if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
-                print("[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
-                return None
             return audio_array
         except Exception as e:
             print(f"[ERROR] Failed to collect audio data: {e}")
@@ -523,8 +490,7 @@ class AudioCapture:
         """Atomically copy and clear the audio buffer. Returns audio data or None."""
         with self.lock:
             data = self._collect_audio_array()
-            if data is not None:
-                self.audio_data = []
+            self.audio_data = []
             return data
 
     def pause_recording(self) -> Optional[np.ndarray]:

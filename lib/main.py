@@ -22,8 +22,7 @@ _HALLUCINATION_MARKERS = {
     'blank audio', 'blank', 'video playback',
     'music', 'music playing', 'music plays',
     'keyboard clicking', 'silence', 'no speech',
-    'thank you', 'thanks for watching', 'you',
-    'thank you for watching',
+    'thanks for watching', 'thank you for watching',
 }
 
 # Ensure unbuffered output for journald logging
@@ -587,7 +586,6 @@ class hyprwhsprApp:
             if self.is_recording:
                 if recording_mode == 'continuous':
                     self._continuous_stop_and_wait()
-                    self.audio_capture.clear_buffer()
                 self._stop_recording()
             else:
                 self._start_recording(language_override=language_override)
@@ -718,6 +716,8 @@ class hyprwhsprApp:
     def _continuous_stop_and_wait(self):
         """Stop the silence monitor and wait for any in-progress flush to finish"""
         self._continuous_stop_silence_monitor()
+        # Acquire+release acts as a barrier: blocks until any in-progress
+        # flush thread releases the lock, ensuring transcription is done
         self._continuous_flush_lock.acquire()
         self._continuous_flush_lock.release()
 
@@ -726,19 +726,19 @@ class hyprwhsprApp:
         if not self._continuous_flush_lock.acquire(blocking=False):
             return  # another flush in progress
 
+        should_process = False
         try:
             audio_data = self.audio_capture.flush_buffer()
             if audio_data is None or len(audio_data) == 0:
-                self._continuous_flush_lock.release()
                 return
 
             duration = len(audio_data) / self.audio_capture.sample_rate
             if duration < 0.5 or self._is_zero_volume(audio_data):
-                self._continuous_flush_lock.release()
                 return
-        except Exception:
-            self._continuous_flush_lock.release()
-            raise
+            should_process = True
+        finally:
+            if not should_process:
+                self._continuous_flush_lock.release()
 
         print(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription", flush=True)
 
@@ -1918,7 +1918,6 @@ class hyprwhsprApp:
                         print("[CONTROL] Recording stop requested (immediate)", flush=True)
                         if recording_mode == "continuous":
                             self._continuous_stop_and_wait()
-                            self.audio_capture.clear_buffer()
                         self._stop_recording()
                     else:
                         print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
