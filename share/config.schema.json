@@ -374,8 +374,8 @@
       "type": "number",
       "minimum": 0,
       "maximum": 1,
-      "default": 0.0005,
-      "description": "RMS level below which audio is considered silence in continuous mode (default: 0.0005). Increase if your mic has a high noise floor"
+      "default": 0.005,
+      "description": "RMS level below which audio is considered silence in continuous mode (default: 0.005). Increase if your mic has a high noise floor"
     }
   }
 }

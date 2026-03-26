@@ -675,7 +675,7 @@ class hyprwhsprApp:
         self._continuous_silence_stop.clear()
 
         silence_seconds = self.config.get_setting('continuous_silence_seconds', 2.0)
-        silence_threshold = self.config.get_setting('continuous_silence_threshold', 5e-4)
+        silence_threshold = self.config.get_setting('continuous_silence_threshold', 5e-3)
         samples_needed = int(silence_seconds / 0.1)
         grace_samples = 10  # Ignore first 1s to let stream stabilize
 
