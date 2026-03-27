@@ -247,6 +247,14 @@ Cloud / network backends are documented here.
 
 Use any ASR backend via HTTP API (local or cloud).
 
+#### Cohere 🇨🇦
+
+[Sign up at dashboard.cohere.com](https://dashboard.cohere.com/welcome/register) — Canadian-hosted, Apache 2.0 model.
+
+- **Cohere Transcribe** — #1 Open ASR Leaderboard, 5.42 avg WER, 14 languages
+
+> **Note:** Cohere's API requires a `language` parameter. Set `"language": "en"` (or your language code) in your config alongside the backend selection.
+
 #### OpenAI
 
 Bring an API key from OpenAI, and choose from:

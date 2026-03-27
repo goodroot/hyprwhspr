@@ -80,6 +80,19 @@ PROVIDERS: Dict[str, Dict] = {
             },
         },
     },
+    'cohere': {
+        'name': 'Cohere (🇨🇦)',
+        'endpoint': 'https://api.cohere.com/v2/audio/transcriptions',
+        'api_key_prefix': None,
+        'api_key_description': 'Cohere API key (from dashboard.cohere.com)',
+        'models': {
+            'cohere-transcribe-03-2026': {
+                'name': 'Cohere Transcribe',
+                'description': '#1 Open ASR Leaderboard — 5.42 avg WER, 14 languages',
+                'body': {'model': 'cohere-transcribe-03-2026'},
+            },
+        },
+    },
     'elevenlabs': {
         'name': 'ElevenLabs',
         'endpoint': 'https://api.elevenlabs.io/v1/speech-to-text',
