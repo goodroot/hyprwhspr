@@ -987,6 +987,8 @@ class hyprwhsprApp:
         
         # Block recording if model is still loading in background
         if self._model_initializing:
+            with self._recording_lock:
+                self.is_recording = False
             self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
             print("[CONTROL] Recording blocked: model is still initializing", flush=True)
             return
