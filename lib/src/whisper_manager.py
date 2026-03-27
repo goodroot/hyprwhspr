@@ -293,9 +293,11 @@ class WhisperManager:
                 else:
                     device = device_setting
 
-                # Resolve dtype — float16 only makes sense on GPU
-                if dtype_setting == 'float16' and device == 'cuda':
-                    torch_dtype = torch.float16
+                # Resolve dtype — bfloat16 is required for GPU: float16 overflows at the
+                # -1e9 attention mask fill value (float16 max ~65504). bfloat16 shares
+                # float32's exponent range so handles it correctly at ~4-5 GB VRAM.
+                if device == 'cuda' and dtype_setting in ('float16', 'bfloat16'):
+                    torch_dtype = torch.bfloat16
                 else:
                     torch_dtype = torch.float32
 
@@ -1393,7 +1395,7 @@ class WhisperManager:
             dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
 
             device = 'cuda' if (device_setting == 'auto' and torch.cuda.is_available()) else device_setting if device_setting != 'auto' else 'cpu'
-            torch_dtype = torch.float16 if (dtype_setting == 'float16' and device == 'cuda') else torch.float32
+            torch_dtype = torch.bfloat16 if (device == 'cuda' and dtype_setting in ('float16', 'bfloat16')) else torch.float32
 
             hf_token = None
             try:

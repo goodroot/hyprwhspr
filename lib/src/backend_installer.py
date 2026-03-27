@@ -2392,7 +2392,7 @@ print("Downloading model weights (~4 GB)...", flush=True)
 model = AutoModelForSpeechSeq2Seq.from_pretrained(
     model_id,
     trust_remote_code=True,
-    torch_dtype=torch.float16,
+    torch_dtype=torch.bfloat16,
     low_cpu_mem_usage=True,
     token=token,
 )
