@@ -697,7 +697,7 @@ def _prompt_backend_selection():
     print("  [3] Whisper (NVIDIA)      - whisper.cpp + CUDA, fastest local transcription (NVIDIA GPUs)")
     print("  [4] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
     print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, fastest local transcription (AMD/Intel GPUs)")
-    print("  [8] Cohere Transcribe     - #1 Open ASR leaderboard, 14 languages, ~4-5 GB VRAM (fp16)")
+    print("  [8] Cohere Transcribe     - #1 Open ASR leaderboard, 14 languages, ~4-5 GB VRAM (fp16) [BETA]")
     print()
     print("Cloud/REST Backends:")
     print("  [6] REST API              - OpenAI, Groq, or custom endpoint")
@@ -1359,7 +1359,7 @@ def setup_command(python_path: Optional[str] = None):
                 print("2B parameter Conformer model — #1 on the Open ASR Leaderboard (English), 14 languages.")
                 print("Requires ~4-5 GB VRAM with fp16 (default) or ~8-9 GB with fp32.")
                 print("Falls back to CPU if no GPU is available (slow — not recommended for live dictation).")
-                print("Model (~4 GB) downloads automatically from HuggingFace on first use.")
+                print("Model weights (~4 GB) will be downloaded from HuggingFace during setup.")
             else:
                 print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
@@ -1712,7 +1712,7 @@ def setup_command(python_path: Optional[str] = None):
     elif backend_normalized == 'onnx-asr':
         print("Model: nemo-parakeet-tdt-0.6b-v3 (default, auto-downloaded on first use)")
     elif backend_normalized == 'cohere-transcribe':
-        print("Model: CohereLabs/cohere-transcribe-03-2026 (auto-downloaded on first use, ~4 GB)")
+        print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
     if setup_audio_ducking_choice:
@@ -3264,7 +3264,7 @@ def cohere_transcribe_model_status():
 
     if not model_cache.exists():
         log_warning("Cohere Transcribe model not found in ~/.cache/huggingface/hub/")
-        log_info("The model (~4 GB) will download automatically when the backend starts.")
+        log_info("Re-run: hyprwhspr setup and select cohere-transcribe to download the model.")
         return
 
     total_bytes = sum(f.stat().st_size for f in model_cache.rglob('*') if f.is_file())
@@ -3275,7 +3275,7 @@ def cohere_transcribe_model_status():
 def list_cohere_transcribe_models():
     """List Cohere Transcribe model (single model)."""
     print("Cohere Transcribe model:\n")
-    print("  - CohereLabs/cohere-transcribe-03-2026  (~4 GB, downloaded from HuggingFace on first use)")
+    print("  - CohereLabs/cohere-transcribe-03-2026  (~4 GB, downloaded during setup)")
     print()
     print("Storage: ~/.cache/huggingface/hub/")
     print("To check cache status: hyprwhspr model status")
