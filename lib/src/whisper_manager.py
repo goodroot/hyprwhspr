@@ -314,25 +314,21 @@ class WhisperManager:
                         pass
 
                 try:
-                    # Suppress transformers/huggingface_hub progress bars — they emit ANSI
-                    # escape sequences that journald records as "[NNK blob data]".
-                    try:
-                        import huggingface_hub
-                        huggingface_hub.disable_progress_bars()
-                        from transformers.utils import logging as _transformers_logging
-                        _transformers_logging.set_verbosity_error()
-                    except Exception:
-                        pass
-
+                    import contextlib, os as _os
                     print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
-                    self._cohere_processor = AutoProcessor.from_pretrained(
-                        model_id, trust_remote_code=True, token=hf_token)
-                    self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                        model_id,
-                        trust_remote_code=True,
-                        dtype=torch_dtype,
-                        token=hf_token,
-                    ).to(device)
+                    # Cohere's trust_remote_code path prints large ANSI-laden blobs that
+                    # journald records as "[NNK blob data]". Redirect during from_pretrained.
+                    with open(_os.devnull, 'w') as _devnull, \
+                            contextlib.redirect_stdout(_devnull), \
+                            contextlib.redirect_stderr(_devnull):
+                        self._cohere_processor = AutoProcessor.from_pretrained(
+                            model_id, trust_remote_code=True, token=hf_token)
+                        self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                            model_id,
+                            trust_remote_code=True,
+                            dtype=torch_dtype,
+                            token=hf_token,
+                        ).to(device)
                     self._cohere_model.eval()
                     print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
                 except Exception as e:
@@ -1418,23 +1414,19 @@ class WhisperManager:
                 except Exception:
                     pass
 
-            try:
-                import huggingface_hub
-                huggingface_hub.disable_progress_bars()
-                from transformers.utils import logging as _transformers_logging
-                _transformers_logging.set_verbosity_error()
-            except Exception:
-                pass
-
             print(f'[MODEL] Reinitializing Cohere Transcribe (device={device})', flush=True)
-            self._cohere_processor = AutoProcessor.from_pretrained(
-                model_id, trust_remote_code=True, token=hf_token)
-            self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-                dtype=torch_dtype,
-                token=hf_token,
-            ).to(device)
+            import contextlib, os as _os
+            with open(_os.devnull, 'w') as _devnull, \
+                    contextlib.redirect_stdout(_devnull), \
+                    contextlib.redirect_stderr(_devnull):
+                self._cohere_processor = AutoProcessor.from_pretrained(
+                    model_id, trust_remote_code=True, token=hf_token)
+                self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
+                    dtype=torch_dtype,
+                    token=hf_token,
+                ).to(device)
             self._cohere_model.eval()
             self._last_use_time = time.monotonic()
             return True
