@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **Built for Linux** - Native AUR package for Arch, or use Debian/Ubuntu/Fedora/openSUSE
 - **Local, very fast defaults** - Instant, private and accurate performance via in-memory models
-- **Latest models** - Turbo-v3? Parakeet TDT V3? Latest and greatest
+- **Latest models** - Cohere Transcribe? Turbo-v3? Parakeet TDT V3? Latest and greatest
 - **GPU memory efficient** - Limit or zero memory usage easily, more for other local models
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **Translation** - Translate non-English to English with a single config
