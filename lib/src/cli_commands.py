@@ -1388,7 +1388,7 @@ def setup_command(python_path: Optional[str] = None):
                             masked = token_clean[:6] + '*' * (len(token_clean) - 9) + token_clean[-3:]
                             log_success(f"Token received: {masked} ({len(token_clean)} chars)")
                         save_credential('huggingface', token_clean)
-                        log_success("HuggingFace token saved")
+                        log_success("HuggingFace token securely saved")
                     else:
                         log_warning("No token provided — model download will likely fail")
 

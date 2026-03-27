@@ -322,12 +322,14 @@ class WhisperManager:
                             contextlib.redirect_stdout(_devnull), \
                             contextlib.redirect_stderr(_devnull):
                         self._cohere_processor = AutoProcessor.from_pretrained(
-                            model_id, trust_remote_code=True, token=hf_token)
+                            model_id, trust_remote_code=True, token=hf_token,
+                            local_files_only=True)
                         self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
                             model_id,
                             trust_remote_code=True,
                             dtype=torch_dtype,
                             token=hf_token,
+                            local_files_only=True,
                         ).to(device)
                     self._cohere_model.eval()
                     print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
@@ -1420,12 +1422,14 @@ class WhisperManager:
                     contextlib.redirect_stdout(_devnull), \
                     contextlib.redirect_stderr(_devnull):
                 self._cohere_processor = AutoProcessor.from_pretrained(
-                    model_id, trust_remote_code=True, token=hf_token)
+                    model_id, trust_remote_code=True, token=hf_token,
+                    local_files_only=True)
                 self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
                     model_id,
                     trust_remote_code=True,
                     dtype=torch_dtype,
                     token=hf_token,
+                    local_files_only=True,
                 ).to(device)
             self._cohere_model.eval()
             self._last_use_time = time.monotonic()

@@ -130,6 +130,10 @@ class hyprwhsprApp:
         self._background_recovery_thread = None  # Background thread handle
         self._background_recovery_stop = threading.Event()  # Signal to stop background recovery
 
+        # Set when model is loading in background (e.g. slow backends like cohere-transcribe)
+        # Recording is blocked while True; cleared once initialize() succeeds or fails.
+        self._model_initializing = False
+
         # Recording control FIFO (for immediate push-to-talk response)
         self._recording_control_thread = None  # Background thread handle for FIFO listener
         self._recording_control_stop = threading.Event()  # Signal to stop FIFO listener
@@ -981,6 +985,12 @@ class hyprwhsprApp:
             # Store language override for this recording session
             self._current_language_override = language_override
         
+        # Block recording if model is still loading in background
+        if self._model_initializing:
+            self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
+            print("[CONTROL] Recording blocked: model is still initializing", flush=True)
+            return
+
         # Block recording if model was deliberately unloaded to free GPU resources
         with self._recording_lock:
             model_unloaded = getattr(self.whisper_manager, '_model_manually_unloaded', False)
@@ -2190,11 +2200,6 @@ class hyprwhsprApp:
             print("[ERROR] Audio capture not available!")
             return False
 
-        # Initialize whisper manager
-        if not self.whisper_manager.initialize():
-            print("[ERROR] Failed to initialize Whisper.")
-            return False
-        
         # Start global shortcuts (unless using Hyprland compositor bindings)
         use_hypr_bindings = self.config.get_setting("use_hypr_bindings", False)
         if self.global_shortcuts:
@@ -2202,12 +2207,7 @@ class hyprwhsprApp:
                 print("[ERROR] Failed to start global shortcuts!")
                 print("[ERROR] Check permissions: you may need to be in 'input' group")
                 return False
-            print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
-        elif use_hypr_bindings:
-            # Using Hyprland bindings - global_shortcuts is intentionally None
-            print("\n[READY] hyprwhspr ready - using Hyprland compositor bindings", flush=True)
-        else:
-            # global_shortcuts is None but we're not using Hyprland bindings - this is an error
+        elif not use_hypr_bindings:
             print("[ERROR] Global shortcuts not initialized!")
             return False
 
@@ -2222,6 +2222,33 @@ class hyprwhsprApp:
             print("[INIT] Started recording control FIFO listener", flush=True)
         else:
             print("[WARN] Recording control FIFO not available, using fallback polling", flush=True)
+
+        # Initialize whisper backend. Slow backends (e.g. cohere-transcribe loading a
+        # 4 GB model onto the GPU) run in a background thread so shortcuts and the FIFO
+        # listener are active immediately. Recording is blocked until ready.
+        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        slow_backends = {'cohere-transcribe'}
+        if backend in slow_backends:
+            self._model_initializing = True
+            print(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...", flush=True)
+            def _bg_init():
+                ok = self.whisper_manager.initialize()
+                self._model_initializing = False
+                if ok:
+                    print("[READY] Model ready — recording now available", flush=True)
+                    self._notify_user("hyprwhspr", "Ready", urgency="low")
+                else:
+                    print("[ERROR] Failed to initialize backend in background", flush=True)
+            threading.Thread(target=_bg_init, daemon=True, name="BackendInit").start()
+        else:
+            if not self.whisper_manager.initialize():
+                print("[ERROR] Failed to initialize Whisper.")
+                return False
+
+        if use_hypr_bindings:
+            print("\n[READY] hyprwhspr ready - using Hyprland compositor bindings", flush=True)
+        else:
+            print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
 
         # Give microphone 1 second to fully initialize before checking for recovery
         # This prevents spurious errors on startup if device is still settling
