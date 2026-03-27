@@ -2382,8 +2382,11 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             log_info("This may take several minutes depending on your connection speed.")
             venv_python = VENV_DIR / 'bin' / 'python'
             download_script = '''
-from huggingface_hub import enable_progress_bars
-enable_progress_bars()
+try:
+    from huggingface_hub import enable_progress_bars
+    enable_progress_bars()
+except ImportError:
+    pass
 from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 import torch, os, sys
 model_id = "CohereLabs/cohere-transcribe-03-2026"
