@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | Parakeet / Whisper / ElevenLabs / REST API | stylish visuals
+    instant performance | Cohere / Parakeet / Whisper / ElevenLabs / REST API | stylish visuals
 </p>
 
  <p align="center">
@@ -65,7 +65,7 @@ hyprwhspr setup
 
 **The setup will walk you through the process:**
 
-1. ✅ Configure transcription backend (Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
+1. ✅ Configure transcription backend (Cohere Transcribe, Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
 2. ✅ Download models
 3. ✅ Configure themed visualizer for maximum coolness (optional)
 4. ✅ Configure Waybar integration (optional)
@@ -236,7 +236,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 - [Recording modes](docs/CONFIGURATION.md#recording-modes) -- toggle, push-to-talk, auto, long-form
 - [Custom hotkeys](docs/CONFIGURATION.md#custom-hotkeys) -- key support, secondary shortcuts, Hyprland bindings
 - [Transcription backends](docs/CONFIGURATION.md#transcription-backends) -- REST API, Realtime WebSocket
-- [Models](docs/CONFIGURATION.md#models) -- Parakeet, Whisper
+- [Models](docs/CONFIGURATION.md#models) -- Cohere Transcribe, Parakeet, Whisper
 - [GPU resource management](docs/CONFIGURATION.md#gpu-resource-management) -- unload/reload model to free VRAM
 - [Audio and visual feedback](docs/CONFIGURATION.md#audio-and-visual-feedback) -- visualizer, audio feedback, ducking
 - [Text processing](docs/CONFIGURATION.md#text-processing) -- word overrides, filler words, symbol replacements

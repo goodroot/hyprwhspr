@@ -3121,7 +3121,7 @@ def model_command(action: str, model_name: str = 'base'):
         elif action == 'status':
             cohere_transcribe_model_status()
         elif action == 'download':
-            log_info("Cohere Transcribe model is downloaded automatically on first use (~4 GB from HuggingFace).")
+            download_cohere_transcribe_model()
         else:
             log_error(f"Unknown model action: {action}")
     else:
@@ -3302,7 +3302,66 @@ def list_cohere_transcribe_models():
     print()
     print("Storage: ~/.cache/huggingface/hub/")
     print("To check cache status: hyprwhspr model status")
-    print("Precision: fp16 on GPU (default), fp32 on CPU")
+    print("Precision: bfloat16 on GPU (default), float32 on CPU")
+
+
+def download_cohere_transcribe_model():
+    """Download (or re-download) the Cohere Transcribe model weights."""
+    try:
+        from credential_manager import get_credential
+    except ImportError:
+        try:
+            from .credential_manager import get_credential
+        except ImportError:
+            get_credential = lambda _: None
+
+    hf_token = get_credential('huggingface') or None
+    if not hf_token:
+        log_warning("No HuggingFace token found.")
+        log_info("Run hyprwhspr setup to provide your token, or accept the model license at:")
+        log_info("  https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
+        return
+
+    try:
+        from backend_installer import install_backend
+    except ImportError:
+        from .backend_installer import install_backend
+
+    from paths import VENV_DIR
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        log_error("Cohere Transcribe venv not found. Run: hyprwhspr setup")
+        return
+
+    import subprocess, os
+    download_script = '''
+try:
+    from huggingface_hub import enable_progress_bars
+    enable_progress_bars()
+except ImportError:
+    pass
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+import torch, os, sys
+model_id = "CohereLabs/cohere-transcribe-03-2026"
+token = os.environ.get("HF_TOKEN") or None
+print("Downloading processor...", flush=True)
+AutoProcessor.from_pretrained(model_id, trust_remote_code=True, token=token)
+print("Downloading model weights (~4 GB)...", flush=True)
+sys.stdout.flush()
+model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    model_id, trust_remote_code=True, dtype=torch.bfloat16,
+    low_cpu_mem_usage=True, token=token,
+)
+del model
+print("Done.", flush=True)
+'''
+    env = {**os.environ, 'HF_TOKEN': hf_token, 'PYTHONUNBUFFERED': '1'}
+    log_info("Downloading Cohere Transcribe model (~4 GB)...")
+    result = subprocess.run([str(venv_python), '-c', download_script], env=env)
+    if result.returncode == 0:
+        log_success("Model downloaded and cached successfully")
+    else:
+        log_error("Download failed — check your HuggingFace token and license acceptance")
 
 
 # ==================== faster-whisper Model Commands ====================

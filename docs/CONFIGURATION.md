@@ -341,6 +341,62 @@ Or configure manually:
 
 ## Models
 
+### Cohere Transcribe 2B
+
+**#1 on the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)** — 5.42 average WER across 9 benchmarks, outperforming Whisper large-v3 (7.44 WER) at 3× the throughput.
+
+[![Cohere Transcribe benchmark results](https://cdn-uploads.huggingface.co/production/uploads/6867ac274d8d690302fd0378/VtvUqMr9ibvv47Wj3gvI3.png)](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release)
+
+| Benchmark | Cohere Transcribe | Whisper large-v3 |
+|-----------|:-----------------:|:----------------:|
+| LibriSpeech clean | **1.25** | 2.7 |
+| LibriSpeech other | **2.37** | 5.2 |
+| TedLium | **2.49** | 4.2 |
+| SPGISpeech | **3.08** | 4.7 |
+| VoxPopuli | **5.87** | 9.1 |
+| Gigaspeech | **9.33** | 10.3 |
+| Earnings22 | **10.84** | 12.7 |
+| **Average WER** | **5.42** | 7.44 |
+
+Lower is better. Full benchmark details: [Cohere Transcribe release blog](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release).
+
+**Supported languages:** English, German, French, Italian, Spanish, Portuguese, Greek, Dutch, Polish, Arabic, Vietnamese, Chinese, Japanese, Korean
+
+**Requirements:** ~4 GB VRAM (bfloat16), or CPU with ~8 GB RAM (float32) — slower on CPU
+
+#### Setup
+
+Cohere Transcribe is a **gated model** on HuggingFace — you must accept the license before downloading.
+
+1. Accept the license agreement at: [huggingface.co/CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
+2. Generate a read token at: [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+3. Run `hyprwhspr setup` and select **[8] Cohere Transcribe** — you will be prompted for your token
+
+The model (~4 GB) is downloaded during setup. Your token is securely stored locally in `~/.config/hyprwhspr/credentials.json` and never shared.
+
+#### Configuration
+
+```jsonc
+{
+    "transcription_backend": "cohere-transcribe",
+    "cohere_transcribe_device": "auto",      // auto | cuda | cpu
+    "cohere_transcribe_dtype": "bfloat16",   // bfloat16 (GPU default) | float32 (CPU)
+    "cohere_transcribe_compile": false       // torch.compile for faster throughput (adds warmup on first call)
+}
+```
+
+#### Model commands
+
+```bash
+hyprwhspr model status    # Check model is cached
+hyprwhspr model list      # Show model info
+hyprwhspr model download  # Re-download if needed
+```
+
+Model stored in: `~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe-03-2026/`
+
+---
+
 ### Parakeet (NVIDIA)
 
 Parakeet V3 via [onnx-asr](https://github.com/istupakov/onnx-asr) is a fantastic project.
