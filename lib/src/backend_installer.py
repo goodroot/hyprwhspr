@@ -2382,17 +2382,20 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             log_info("This may take several minutes depending on your connection speed.")
             venv_python = VENV_DIR / 'bin' / 'python'
             download_script = '''
+from huggingface_hub import enable_progress_bars
+enable_progress_bars()
 from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
-import torch, os
+import torch, os, sys
 model_id = "CohereLabs/cohere-transcribe-03-2026"
 token = os.environ.get("HF_TOKEN") or None
 print("Downloading processor...", flush=True)
 processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True, token=token)
 print("Downloading model weights (~4 GB)...", flush=True)
+sys.stdout.flush()
 model = AutoModelForSpeechSeq2Seq.from_pretrained(
     model_id,
     trust_remote_code=True,
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
     low_cpu_mem_usage=True,
     token=token,
 )
@@ -2406,13 +2409,17 @@ print("Model downloaded and cached successfully", flush=True)
                 hf_token = get_credential('huggingface')
                 if hf_token:
                     import os as _os
-                    download_env = {**_os.environ, 'HF_TOKEN': hf_token}
+                    download_env = {**_os.environ, 'HF_TOKEN': hf_token, 'PYTHONUNBUFFERED': '1'}
+                else:
+                    import os as _os
+                    download_env = {**_os.environ, 'PYTHONUNBUFFERED': '1'}
             except Exception:
-                pass
+                import os as _os
+                download_env = {**_os.environ, 'PYTHONUNBUFFERED': '1'}
 
             try:
                 run_command([str(venv_python), '-c', download_script], check=True, timeout=900,
-                            env=download_env)
+                            env=download_env, verbose=True)
                 log_success("Cohere Transcribe model downloaded and cached")
             except subprocess.CalledProcessError as e:
                 log_warning(f"Model pre-download failed: {e}")

@@ -1380,7 +1380,14 @@ def setup_command(python_path: Optional[str] = None):
                     print("  2. Generate a read token at: https://huggingface.co/settings/tokens")
                     hf_token = Prompt.ask("\nHuggingFace token", password=True)
                     if hf_token and hf_token.strip():
-                        save_credential('huggingface', hf_token.strip())
+                        token_clean = hf_token.strip()
+                        # Basic format check: HF read tokens start with "hf_"
+                        if not token_clean.startswith('hf_'):
+                            log_warning("Token doesn't start with 'hf_' — double-check you copied a read token")
+                        else:
+                            masked = token_clean[:6] + '*' * (len(token_clean) - 9) + token_clean[-3:]
+                            log_success(f"Token received: {masked} ({len(token_clean)} chars)")
+                        save_credential('huggingface', token_clean)
                         log_success("HuggingFace token saved")
                     else:
                         log_warning("No token provided — model download will likely fail")

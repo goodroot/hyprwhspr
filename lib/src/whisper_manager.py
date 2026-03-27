@@ -314,13 +314,23 @@ class WhisperManager:
                         pass
 
                 try:
+                    # Suppress transformers/huggingface_hub progress bars — they emit ANSI
+                    # escape sequences that journald records as "[NNK blob data]".
+                    try:
+                        import huggingface_hub
+                        huggingface_hub.disable_progress_bars()
+                        from transformers.utils import logging as _transformers_logging
+                        _transformers_logging.set_verbosity_error()
+                    except Exception:
+                        pass
+
                     print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
                     self._cohere_processor = AutoProcessor.from_pretrained(
                         model_id, trust_remote_code=True, token=hf_token)
                     self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
                         model_id,
                         trust_remote_code=True,
-                        torch_dtype=torch_dtype,
+                        dtype=torch_dtype,
                         token=hf_token,
                     ).to(device)
                     self._cohere_model.eval()
@@ -1408,13 +1418,21 @@ class WhisperManager:
                 except Exception:
                     pass
 
+            try:
+                import huggingface_hub
+                huggingface_hub.disable_progress_bars()
+                from transformers.utils import logging as _transformers_logging
+                _transformers_logging.set_verbosity_error()
+            except Exception:
+                pass
+
             print(f'[MODEL] Reinitializing Cohere Transcribe (device={device})', flush=True)
             self._cohere_processor = AutoProcessor.from_pretrained(
                 model_id, trust_remote_code=True, token=hf_token)
             self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 model_id,
                 trust_remote_code=True,
-                torch_dtype=torch_dtype,
+                dtype=torch_dtype,
                 token=hf_token,
             ).to(device)
             self._cohere_model.eval()
