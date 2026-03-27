@@ -249,7 +249,7 @@ Use any ASR backend via HTTP API (local or cloud).
 
 #### Cohere 🇨🇦
 
-[Sign up at dashboard.cohere.com](https://dashboard.cohere.com/welcome/register) — Canadian-hosted, Apache 2.0 model.
+[Sign up at dashboard.cohere.com](https://dashboard.cohere.com/welcome/register) — Canadian-hosted, same as local Apache 2.0 model.
 
 - **Cohere Transcribe** — #1 Open ASR Leaderboard, 5.42 avg WER, 14 languages
 
