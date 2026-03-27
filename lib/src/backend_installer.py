@@ -2037,20 +2037,21 @@ def install_faster_whisper(pip_bin: Path, enable_gpu: bool = False) -> bool:
 def install_cohere_transcribe(pip_bin: Path) -> bool:
     """Install Cohere Transcribe dependencies into the main venv.
 
-    Installs transformers (with version pin per Cohere's requirements) plus
-    the supporting packages needed for model loading and audio preprocessing.
-    torch is expected to already be present via requirements.txt or a prior
-    GPU-enabled install.
+    Installs torch, transformers (with version pin per Cohere's requirements),
+    and supporting packages needed for model loading and audio preprocessing.
 
     Args:
         pip_bin: Path to pip executable in the target venv
     """
     log_info("Installing Cohere Transcribe dependencies...")
     try:
+        # torch is required for model loading and GPU inference
         # transformers version constraint is critical: 5.0 and 5.1 break weight loading
         run_command([
             str(pip_bin), 'install',
+            'torch',
             'transformers>=4.56,<5.3,!=5.0.*,!=5.1.*',
+            'huggingface_hub',
             'sentencepiece',
             'protobuf',
             'librosa',
@@ -2374,12 +2375,41 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 set_install_state('failed', error_msg)
                 return False
 
+            # Pre-download model weights so the service starts immediately without a
+            # multi-gigabyte fetch on first transcription. low_cpu_mem_usage=True avoids
+            # loading the full ~8 GB fp32 weights into RAM during the cache-only download.
+            log_info("Downloading Cohere Transcribe model from HuggingFace (~4 GB)...")
+            log_info("This may take several minutes depending on your connection speed.")
+            venv_python = VENV_DIR / 'bin' / 'python'
+            download_script = '''
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+import torch
+model_id = "CohereLabs/cohere-transcribe-03-2026"
+print("Downloading processor...", flush=True)
+processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+print("Downloading model weights (~4 GB)...", flush=True)
+model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    model_id,
+    trust_remote_code=True,
+    torch_dtype=torch.float16,
+    low_cpu_mem_usage=True,
+)
+del model
+print("Model downloaded and cached successfully", flush=True)
+'''
+            try:
+                run_command([str(venv_python), '-c', download_script], check=True, timeout=900)
+                log_success("Cohere Transcribe model downloaded and cached")
+            except subprocess.CalledProcessError as e:
+                log_warning(f"Model pre-download failed: {e}")
+                log_warning("Model will be downloaded automatically on first use instead.")
+                # Don't fail the installation — the service can still download on first start
+
             cur_req_hash = compute_file_hash(requirements_file)
             set_state("requirements_hash", cur_req_hash)
 
             set_install_state('completed')
             log_success("Cohere Transcribe backend installation completed!")
-            log_info("Model (~4 GB) will be downloaded from HuggingFace on first use.")
             return True
 
         elif backend_type == 'onnx-asr':
