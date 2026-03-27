@@ -72,6 +72,7 @@ class WhisperManager:
         # Cohere Transcribe model (transformers)
         self._cohere_model = None
         self._cohere_processor = None
+        self._cohere_compile_done = False  # True after first torch.compile run; suppression no longer needed
 
         # Thread safety for model operations
         self._model_lock = threading.Lock()
@@ -1376,13 +1377,41 @@ class WhisperManager:
                     return ''
 
             try:
-                texts = self._cohere_model.transcribe(
-                    processor=self._cohere_processor,
-                    audio_arrays=[audio_data],
-                    sample_rates=[sample_rate],
-                    language=language,
-                    compile=use_compile,
-                )
+                # On the first torch.compile call, triton spawns a C compiler subprocess
+                # whose output (warnings, notes) leaks to journald. Suppress at fd level
+                # for that one call; afterwards the kernel is cached and nothing is emitted.
+                needs_suppress = use_compile and not self._cohere_compile_done
+                if needs_suppress:
+                    import os as _os, warnings as _warnings
+                    _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
+                    _old_stderr = _os.dup(2)
+                    _os.dup2(_devnull_fd, 2)
+                try:
+                    if needs_suppress:
+                        import warnings as _warnings
+                        with _warnings.catch_warnings():
+                            _warnings.simplefilter('ignore')
+                            texts = self._cohere_model.transcribe(
+                                processor=self._cohere_processor,
+                                audio_arrays=[audio_data],
+                                sample_rates=[sample_rate],
+                                language=language,
+                                compile=use_compile,
+                            )
+                    else:
+                        texts = self._cohere_model.transcribe(
+                            processor=self._cohere_processor,
+                            audio_arrays=[audio_data],
+                            sample_rates=[sample_rate],
+                            language=language,
+                            compile=use_compile,
+                        )
+                finally:
+                    if needs_suppress:
+                        _os.dup2(_old_stderr, 2)
+                        _os.close(_old_stderr)
+                        _os.close(_devnull_fd)
+                        self._cohere_compile_done = True
                 result = texts[0].strip() if texts else ''
                 self._last_use_time = time.monotonic()
                 return result
