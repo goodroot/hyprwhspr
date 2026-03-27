@@ -1360,6 +1360,7 @@ def setup_command(python_path: Optional[str] = None):
                 print("Requires ~4-5 GB VRAM with fp16 (default) or ~8-9 GB with fp32.")
                 print("Falls back to CPU if no GPU is available (slow — not recommended for live dictation).")
                 print("Model weights (~4 GB) will be downloaded from HuggingFace during setup.")
+                print("This may take several minutes depending on your connection speed.")
             else:
                 print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
@@ -1369,6 +1370,21 @@ def setup_command(python_path: Optional[str] = None):
                 backend_install_skipped = True
             else:
                 backend_install_skipped = False
+
+                # Cohere Transcribe is a gated HuggingFace model — each user must accept
+                # the license and authenticate with their own token before downloading.
+                if backend_normalized == 'cohere-transcribe':
+                    print("\nCohere Transcribe is a gated model on HuggingFace.")
+                    print("Before continuing:")
+                    print("  1. Accept the license at: https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
+                    print("  2. Generate a read token at: https://huggingface.co/settings/tokens")
+                    hf_token = Prompt.ask("\nHuggingFace token", password=True)
+                    if hf_token and hf_token.strip():
+                        save_credential('huggingface', hf_token.strip())
+                        log_success("HuggingFace token saved")
+                    else:
+                        log_warning("No token provided — model download will likely fail")
+
                 # Pass force_rebuild=True when reinstalling to ensure clean venv
                 # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
                 if not install_backend(backend_normalized, force_rebuild=wants_reinstall, custom_python=python_path):

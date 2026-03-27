@@ -299,14 +299,27 @@ class WhisperManager:
                 else:
                     torch_dtype = torch.float32
 
+                # Get HuggingFace token for gated model access
+                hf_token = None
+                try:
+                    from .credential_manager import get_credential
+                    hf_token = get_credential('huggingface') or None
+                except ImportError:
+                    try:
+                        from credential_manager import get_credential
+                        hf_token = get_credential('huggingface') or None
+                    except Exception:
+                        pass
+
                 try:
                     print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
-                    print(f'[BACKEND] Note: first load downloads ~4GB from HuggingFace if not cached', flush=True)
-                    self._cohere_processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+                    self._cohere_processor = AutoProcessor.from_pretrained(
+                        model_id, trust_remote_code=True, token=hf_token)
                     self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
                         model_id,
                         trust_remote_code=True,
                         torch_dtype=torch_dtype,
+                        token=hf_token,
                     ).to(device)
                     self._cohere_model.eval()
                     print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
@@ -1382,12 +1395,25 @@ class WhisperManager:
             device = 'cuda' if (device_setting == 'auto' and torch.cuda.is_available()) else device_setting if device_setting != 'auto' else 'cpu'
             torch_dtype = torch.float16 if (dtype_setting == 'float16' and device == 'cuda') else torch.float32
 
+            hf_token = None
+            try:
+                from .credential_manager import get_credential
+                hf_token = get_credential('huggingface') or None
+            except ImportError:
+                try:
+                    from credential_manager import get_credential
+                    hf_token = get_credential('huggingface') or None
+                except Exception:
+                    pass
+
             print(f'[MODEL] Reinitializing Cohere Transcribe (device={device})', flush=True)
-            self._cohere_processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+            self._cohere_processor = AutoProcessor.from_pretrained(
+                model_id, trust_remote_code=True, token=hf_token)
             self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 model_id,
                 trust_remote_code=True,
                 torch_dtype=torch_dtype,
+                token=hf_token,
             ).to(device)
             self._cohere_model.eval()
             self._last_use_time = time.monotonic()
