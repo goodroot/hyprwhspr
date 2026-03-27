@@ -69,6 +69,10 @@ class WhisperManager:
         # faster-whisper model (CTranslate2)
         self._faster_whisper_model = None
 
+        # Cohere Transcribe model (transformers)
+        self._cohere_model = None
+        self._cohere_processor = None
+
         # Thread safety for model operations
         self._model_lock = threading.Lock()
 
@@ -266,6 +270,53 @@ class WhisperManager:
                     return False
 
                 self.current_model = model_name
+                self.ready = True
+                self._last_use_time = time.monotonic()
+                return True
+
+            # Configure Cohere Transcribe backend (transformers, CUDA/CPU)
+            if backend == 'cohere-transcribe':
+                try:
+                    import torch
+                    from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+                except ImportError:
+                    print('ERROR: cohere-transcribe dependencies not installed. Run: hyprwhspr setup and select cohere-transcribe', flush=True)
+                    return False
+
+                model_id = 'CohereLabs/cohere-transcribe-03-2026'
+                device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
+                dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
+
+                # Resolve device
+                if device_setting == 'auto':
+                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                else:
+                    device = device_setting
+
+                # Resolve dtype — float16 only makes sense on GPU
+                if dtype_setting == 'float16' and device == 'cuda':
+                    torch_dtype = torch.float16
+                else:
+                    torch_dtype = torch.float32
+
+                try:
+                    print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
+                    print(f'[BACKEND] Note: first load downloads ~4GB from HuggingFace if not cached', flush=True)
+                    self._cohere_processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+                    self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        torch_dtype=torch_dtype,
+                    ).to(device)
+                    self._cohere_model.eval()
+                    print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
+                except Exception as e:
+                    print(f'ERROR: Failed to load Cohere Transcribe model: {e}', flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    return False
+
+                self.current_model = model_id
                 self.ready = True
                 self._last_use_time = time.monotonic()
                 return True
@@ -1280,6 +1331,71 @@ class WhisperManager:
             print(f'[ERROR] faster-whisper reinitialization failed: {e}', flush=True)
             return False
 
+    def _transcribe_cohere_transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000,
+                                      language_override: Optional[str] = None) -> str:
+        """Transcribe using Cohere Transcribe (transformers)."""
+        if self._cohere_model is None or self._cohere_processor is None:
+            print('[ERROR] Cohere Transcribe model not initialized', flush=True)
+            return ''
+
+        language = language_override if language_override is not None else self.config.get_setting('language', None)
+        if not language:
+            language = 'en'
+
+        use_compile = self.config.get_setting('cohere_transcribe_compile', False)
+
+        with self._model_lock:
+            current_time = time.monotonic()
+            time_since_last_use = current_time - self._last_use_time
+            if time_since_last_use > 1800 and self._last_use_time > 0:
+                print('[MODEL] Long idle detected - reinitializing Cohere Transcribe model', flush=True)
+                if not self._reinitialize_cohere_transcribe():
+                    return ''
+
+            try:
+                texts = self._cohere_model.transcribe(
+                    processor=self._cohere_processor,
+                    audio_arrays=[audio_data],
+                    sample_rates=[sample_rate],
+                    language=language,
+                    compile=use_compile,
+                )
+                result = texts[0].strip() if texts else ''
+                self._last_use_time = time.monotonic()
+                return result
+            except Exception as e:
+                print(f'[ERROR] Cohere Transcribe transcription failed: {e}', flush=True)
+                import traceback
+                traceback.print_exc()
+                return ''
+
+    def _reinitialize_cohere_transcribe(self) -> bool:
+        """Reinitialize Cohere Transcribe model after suspend/resume."""
+        try:
+            import torch
+            from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+
+            model_id = 'CohereLabs/cohere-transcribe-03-2026'
+            device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
+            dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
+
+            device = 'cuda' if (device_setting == 'auto' and torch.cuda.is_available()) else device_setting if device_setting != 'auto' else 'cpu'
+            torch_dtype = torch.float16 if (dtype_setting == 'float16' and device == 'cuda') else torch.float32
+
+            print(f'[MODEL] Reinitializing Cohere Transcribe (device={device})', flush=True)
+            self._cohere_processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+            self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                model_id,
+                trust_remote_code=True,
+                torch_dtype=torch_dtype,
+            ).to(device)
+            self._cohere_model.eval()
+            self._last_use_time = time.monotonic()
+            return True
+        except Exception as e:
+            print(f'[ERROR] Cohere Transcribe reinitialization failed: {e}', flush=True)
+            return False
+
     def get_realtime_streaming_callback(self) -> Optional[Callable]:
         """
         Get the streaming callback for realtime-ws backend.
@@ -1444,6 +1560,9 @@ class WhisperManager:
 
         if backend == 'faster-whisper':
             return self._transcribe_faster_whisper(audio_data, sample_rate, language_override=language_override)
+
+        if backend == 'cohere-transcribe':
+            return self._transcribe_cohere_transcribe(audio_data, sample_rate, language_override=language_override)
 
         # Use model lock to prevent concurrent transcription calls
         # This prevents crashes from concurrent access to the whisper model
@@ -1617,6 +1736,8 @@ class WhisperManager:
                 self._cleanup_model()
                 self._faster_whisper_model = None
                 self._onnx_asr_model = None
+                self._cohere_model = None
+                self._cohere_processor = None
 
                 # Trigger Python GC so C++ destructors and ONNX sessions release immediately
                 import gc

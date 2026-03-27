@@ -88,6 +88,10 @@ class ConfigManager:
             'faster_whisper_device': 'auto',         # 'auto' | 'cuda' | 'cpu'
             'faster_whisper_compute_type': 'auto',   # 'auto' → int8 on cuda, float32 on cpu
             'faster_whisper_vad_filter': True,       # Enable Silero VAD (strips silence, reduces hallucinations)
+            # Cohere Transcribe backend settings (transformers, CUDA/CPU)
+            'cohere_transcribe_device': 'auto',      # 'auto' | 'cuda' | 'cpu'
+            'cohere_transcribe_dtype': 'float16',    # 'float16' | 'float32' — float16 halves VRAM (~4-5GB vs ~8-9GB)
+            'cohere_transcribe_compile': False,      # torch.compile encoder for faster throughput (adds warmup on first call)
             # Audio feedback settings
             'audio_feedback': False,             # Play sounds on recording start/stop/error
             'audio_volume': 1.0,                 # Master audio feedback volume (0.0-1.0)

@@ -28,6 +28,7 @@ def normalize_backend(backend: str) -> str:
 BACKEND_DISPLAY_NAMES = {
     'pywhispercpp': 'Local (pywhispercpp)',
     'onnx-asr': 'Parakeet TDT V3 (onnx-asr, CPU/GPU)',
+    'cohere-transcribe': 'Cohere Transcribe 2B (transformers, CPU/GPU)',
     'rest-api': 'REST API',
     'realtime-ws': 'Realtime WebSocket (experimental)',
     'cpu': 'Whisper CPU (pywhispercpp)',
