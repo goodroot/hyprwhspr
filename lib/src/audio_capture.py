@@ -686,9 +686,6 @@ class AudioCapture:
             # Determine device to use for recording (use validated device_id)
             device_to_use = self.device_id
 
-            # Release keepalive before opening the real stream on the same device
-            self._stop_keepalive()
-
             # Create and own the stream handle (for recovery)
             self.stream = sd.InputStream(
                 device=device_to_use,
@@ -698,15 +695,19 @@ class AudioCapture:
                 blocksize=self.chunk_size,
                 callback=audio_callback
             )
-            
+
             # Start the stream explicitly.
             # On first use ALSA's callback thread scheduler may not be ready yet,
             # causing PortAudio to time out (PaErrorCode -9987 / paTimedOut).
             # Retry up to 2 times with a brief pause and fresh stream to recover.
+            # NOTE: keepalive is stopped only after a successful start so that on
+            # multiplexed servers (PipeWire/PulseAudio) the device node stays warm
+            # throughout — closing it first was the cause of the cold-start timeout.
             _max_start_attempts = 3
             for _attempt in range(_max_start_attempts):
                 try:
                     self.stream.start()
+                    self._stop_keepalive()  # Node is warm; safe to release keepalive now
                     break  # success
                 except Exception as _start_err:
                     if _attempt < _max_start_attempts - 1 and "timed out" in str(_start_err).lower():
@@ -807,7 +808,8 @@ class AudioCapture:
             # Signal cleanup is complete (even if exception occurred)
             self._cleanup_complete.set()
 
-            # Keep the device awake for the next recording
+            # Cycle the keepalive so it's always on the current device state
+            self._stop_keepalive()
             self._start_keepalive()
 
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
