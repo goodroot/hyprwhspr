@@ -610,10 +610,35 @@ class AudioCapture:
                 callback=audio_callback
             )
             
-            # Start the stream explicitly
-            self.stream.start()
-            
-                # Keep recording while is_recording is True
+            # Start the stream explicitly.
+            # On first use ALSA's callback thread scheduler may not be ready yet,
+            # causing PortAudio to time out (PaErrorCode -9987 / paTimedOut).
+            # Retry up to 2 times with a brief pause and fresh stream to recover.
+            _max_start_attempts = 3
+            for _attempt in range(_max_start_attempts):
+                try:
+                    self.stream.start()
+                    break  # success
+                except Exception as _start_err:
+                    if _attempt < _max_start_attempts - 1 and "timed out" in str(_start_err).lower():
+                        print(f"[WARN] Stream start timed out (attempt {_attempt + 1}), retrying…", flush=True)
+                        try:
+                            self.stream.close()
+                        except Exception:
+                            pass
+                        time.sleep(0.15)
+                        self.stream = sd.InputStream(
+                            device=device_to_use,
+                            samplerate=self.sample_rate,
+                            channels=self.channels,
+                            dtype=self.dtype,
+                            blocksize=self.chunk_size,
+                            callback=audio_callback
+                        )
+                    else:
+                        raise
+
+            # Keep recording while is_recording is True
             try:
                 while self.is_recording:
                     time.sleep(0.1)
