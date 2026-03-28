@@ -64,7 +64,13 @@ class AudioCapture:
         self._cleanup_complete.set()  # Initialize as set (no cleanup in progress on startup)
         self._abort_cleanup = False  # Flag to signal stuck threads to abort cleanup
         self._abort_recovery = threading.Event()  # Flag to abort recovery mid-flight
-        
+
+        # Keepalive stream — holds the ALSA device open between recordings so the
+        # kernel never suspends it.  Without this, USB mics power-down after ~30 s
+        # of silence and PortAudio's PaUnixThread_New times out on the next open.
+        self._keepalive_stream = None
+        self._keepalive_lock = threading.Lock()  # Protects _keepalive_stream across threads
+
         # Initialize sounddevice
         self._initialize_sounddevice()
     
@@ -181,7 +187,76 @@ class AudioCapture:
             print(f"ERROR: Failed to initialize sounddevice: {e}")
             self.device_info = None
             self.device_id = None
-    
+
+        self._start_keepalive()
+
+    def _is_multiplexed_audio_server(self) -> bool:
+        """Return True if the device is routed through PipeWire or PulseAudio.
+
+        Multiplexed servers allow multiple simultaneous readers, so holding a
+        keepalive stream open won't block other apps.  Raw ALSA is exclusive —
+        a keepalive would monopolise the device.
+        """
+        try:
+            if self.device_id is None:
+                return False
+            device_info = sd.query_devices(self.device_id)
+            host_api = sd.query_hostapis(device_info['hostapi'])
+            api_name = host_api.get('name', '').lower()
+            device_name = device_info.get('name', '').lower()
+            return (
+                'pulse' in api_name or 'pipewire' in api_name or
+                'pulse' in device_name or 'pipewire' in device_name
+            )
+        except Exception:
+            return False
+
+    def _start_keepalive(self):
+        """Open a silent stream to prevent ALSA from suspending the device between recordings.
+
+        Only started when a multiplexed audio server (PipeWire/PulseAudio) is in
+        use.  On raw ALSA the stream would hold an exclusive lock and block other
+        apps (browsers, video calls) from accessing the microphone.
+        """
+        with self._keepalive_lock:
+            if self._keepalive_stream is not None or self.device_id is None:
+                return
+        if not self._is_multiplexed_audio_server():
+            return
+        try:
+            def _noop(indata, frames, time_info, status):
+                pass
+            stream = sd.InputStream(
+                device=self.device_id,
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype=self.dtype,
+                blocksize=self.chunk_size,
+                callback=_noop,
+            )
+            stream.start()
+            with self._keepalive_lock:
+                if self._keepalive_stream is None:
+                    self._keepalive_stream = stream
+                else:
+                    # Another thread started one while we were creating ours; discard ours
+                    stream.stop()
+                    stream.close()
+        except Exception as e:
+            print(f"[WARN] Keepalive stream failed to start: {e}", flush=True)
+
+    def _stop_keepalive(self):
+        """Close the keepalive stream before opening a real recording stream."""
+        with self._keepalive_lock:
+            stream = self._keepalive_stream
+            self._keepalive_stream = None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+
     def _set_system_default_device(self):
         """Set system default device when no specific device is configured"""
         try:
@@ -599,7 +674,10 @@ class AudioCapture:
             
             # Determine device to use for recording (use validated device_id)
             device_to_use = self.device_id
-            
+
+            # Release keepalive before opening the real stream on the same device
+            self._stop_keepalive()
+
             # Create and own the stream handle (for recovery)
             self.stream = sd.InputStream(
                 device=device_to_use,
@@ -690,7 +768,10 @@ class AudioCapture:
                     
                     # Signal cleanup is complete
                     self._cleanup_complete.set()
-                    
+
+                    # Keep the device awake for the next recording
+                    self._start_keepalive()
+
         except Exception as e:
             # Always log the error message
             print(f"[ERROR] Error in recording thread: {e}", flush=True)
@@ -714,7 +795,10 @@ class AudioCapture:
                     self.stream = None
             # Signal cleanup is complete (even if exception occurred)
             self._cleanup_complete.set()
-    
+
+            # Keep the device awake for the next recording
+            self._start_keepalive()
+
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
         """Start monitoring audio levels without recording"""
         if self.is_monitoring:
@@ -975,6 +1059,7 @@ class AudioCapture:
             try:
                 sd.query_devices()  # Force PortAudio refresh
                 with self.recovery_lock:
+                    self._stop_keepalive()  # Close before re-init; _initialize_sounddevice restarts it on the new device
                     self._initialize_sounddevice()
             except Exception as e:
                 print(f"[RECOVERY] Failed to re-enumerate devices: {e}", flush=True)
@@ -1062,5 +1147,6 @@ class AudioCapture:
                 self.stop_recording()
             if self.is_monitoring:
                 self.stop_monitoring()
+            self._stop_keepalive()
         except Exception:
             pass  # Ignore errors during cleanup
