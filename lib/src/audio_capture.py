@@ -3,6 +3,7 @@ Audio capture module for hyprwhspr
 Handles real-time audio capture for speech recognition
 """
 
+import os
 import sys
 import wave
 import threading
@@ -196,6 +197,10 @@ class AudioCapture:
         Multiplexed servers allow multiple simultaneous readers, so holding a
         keepalive stream open won't block other apps.  Raw ALSA is exclusive —
         a keepalive would monopolise the device.
+
+        The ALSA 'default' device routes through PipeWire/PulseAudio when either
+        server is active, but its name gives no indication of that.  Check for
+        their runtime sockets as the authoritative signal.
         """
         try:
             if self.device_id is None:
@@ -204,9 +209,15 @@ class AudioCapture:
             host_api = sd.query_hostapis(device_info['hostapi'])
             api_name = host_api.get('name', '').lower()
             device_name = device_info.get('name', '').lower()
+            if ('pulse' in api_name or 'pipewire' in api_name or
+                    'pulse' in device_name or 'pipewire' in device_name):
+                return True
+            # 'default' (and other ALSA virtual devices) silently route through
+            # PipeWire or PulseAudio when running — check their runtime sockets.
+            uid = os.getuid()
             return (
-                'pulse' in api_name or 'pipewire' in api_name or
-                'pulse' in device_name or 'pipewire' in device_name
+                os.path.exists(f"/run/user/{uid}/pipewire-0") or
+                os.path.exists(f"/run/user/{uid}/pulse/native")
             )
         except Exception:
             return False
