@@ -222,18 +222,24 @@ class AudioCapture:
         except Exception:
             return False
 
-    def _start_keepalive(self):
+    def _start_keepalive(self, _attempt: int = 0):
         """Open a silent stream to prevent ALSA from suspending the device between recordings.
 
         Only started when a multiplexed audio server (PipeWire/PulseAudio) is in
         use.  On raw ALSA the stream would hold an exclusive lock and block other
         apps (browsers, video calls) from accessing the microphone.
+
+        On service startup the audio node may be cold and stream.start() can hit
+        the same paTimedOut as recordings do.  When that happens we retry in a
+        background thread rather than giving up, so the keepalive eventually lands
+        once the node has warmed up.
         """
         with self._keepalive_lock:
             if self._keepalive_stream is not None or self.device_id is None:
                 return
         if not self._is_multiplexed_audio_server():
             return
+        stream = None
         try:
             def _noop(indata, frames, time_info, status):
                 pass
@@ -254,7 +260,19 @@ class AudioCapture:
                     stream.stop()
                     stream.close()
         except Exception as e:
-            print(f"[WARN] Keepalive stream failed to start: {e}", flush=True)
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            if "timed out" in str(e).lower() and _attempt < 3:
+                # Node is cold at startup; retry in background once it has warmed up
+                def _retry():
+                    time.sleep(2.0)
+                    self._start_keepalive(_attempt + 1)
+                threading.Thread(target=_retry, daemon=True).start()
+            else:
+                print(f"[WARN] Keepalive stream failed to start: {e}", flush=True)
 
     def _stop_keepalive(self):
         """Close the keepalive stream before opening a real recording stream."""
