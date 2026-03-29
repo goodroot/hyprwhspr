@@ -734,7 +734,8 @@ class AudioCapture:
                             self.stream.close()
                         except Exception:
                             pass
-                        time.sleep(0.15)
+                        retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
+                        time.sleep(retry_delay)
                         self.stream = sd.InputStream(
                             device=device_to_use,
                             samplerate=self.sample_rate,

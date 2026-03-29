@@ -112,7 +112,11 @@ class ConfigManager:
             # Long-form recording mode settings
             'long_form_submit_shortcut': None,   # Shortcut to submit long-form recording (e.g., "Super+Return")
             'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
-            'long_form_auto_save_interval': 300  # Auto-save interval in seconds (default: 5 minutes)
+            'long_form_auto_save_interval': 300, # Auto-save interval in seconds (default: 5 minutes)
+            # Audio stream cold-start recovery
+            # How long (seconds) to wait between stream.start() retries when PortAudio times out.
+            # Increase this if your USB mic frequently fails on the first recording after idle.
+            'stream_start_retry_delay': 1.5
         }
         
         # Set up config directory and file path
