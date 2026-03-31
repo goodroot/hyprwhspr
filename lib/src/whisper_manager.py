@@ -305,14 +305,9 @@ class WhisperManager:
                 # Get HuggingFace token for gated model access
                 hf_token = None
                 try:
-                    from .credential_manager import get_credential
                     hf_token = get_credential('huggingface') or None
-                except ImportError:
-                    try:
-                        from credential_manager import get_credential
-                        hf_token = get_credential('huggingface') or None
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
                 try:
                     import contextlib, os as _os
@@ -1436,14 +1431,9 @@ class WhisperManager:
 
             hf_token = None
             try:
-                from .credential_manager import get_credential
                 hf_token = get_credential('huggingface') or None
-            except ImportError:
-                try:
-                    from credential_manager import get_credential
-                    hf_token = get_credential('huggingface') or None
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
             print(f'[MODEL] Reinitializing Cohere Transcribe (device={device})', flush=True)
             import contextlib, os as _os
