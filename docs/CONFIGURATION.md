@@ -440,7 +440,7 @@ where VRAM is constrained.
 INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for
 float16. 
 
-AMD/Intel GPU users should use Parakeet or Whisper (Vulkan) instead — CTranslate2
+AMD/Intel GPU users should use Parakeet or whisper.cpp (below) instead — CTranslate2
 does not support Vulkan or ROCm.
 
 Built-in Silero VAD strips silence before inference — the most effective
@@ -484,7 +484,7 @@ Models stored in: `~/.cache/huggingface/hub/`
 
 **Best for:**
 
-Fastest, the top choice for modern Nvidia cards or discrete AMD use (via Vulkan).
+Modern Nvidia cards or discrete AMD use (via Vulkan).
 
 #### Available models (GGML format)
 
