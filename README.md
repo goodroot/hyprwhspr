@@ -103,134 +103,41 @@ hyprwhspr setup
 
 hyprwhspr can run on any Linux distribution with systemd.
 
-**Quick install (recommended):**
-
-Use the install script to automatically install dependencies for your distro:
-
 ```bash
-# Download and run the install script
-curl -fsSL https://raw.githubusercontent.com/goodroot/hyprwhspr/main/scripts/install-deps.sh | bash
-
-# Clone and run setup
+# Clone the repo
 git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
 cd ~/hyprwhspr
+
+# Install dependencies for your distro (Ubuntu, Debian, Fedora, openSUSE)
+./scripts/install-deps.sh
+
+# Run interactive setup
 ./bin/hyprwhspr setup
 ```
 
-The script supports Ubuntu, Debian, Fedora, and openSUSE.
-
-> Non-Arch distro support is new - please report any snags!
-
-<details>
-<summary><b>Manual installation instructions</b></summary>
-
-**Debian / Ubuntu:**
+After setup, log out and back in for group permissions, then:
 
 ```bash
-# Install system dependencies (NOTE: do NOT install ydotool from apt)
-sudo apt install python3 python3-pip python3-venv git cmake make build-essential \
-    python3-dev libportaudio2 python3-numpy python3-scipy python3-evdev \
-    python3-requests python3-psutil python3-rich \
-    python3-gi gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0 \
-    pipewire pipewire-pulse wl-clipboard wget
-
-# Install ydotool 1.0+ from Debian backports (required!)
-wget http://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb
-sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb
-sudo apt install -f  # Fix any dependency issues
-
-# Install Python packages not in Debian repos
-pip install --user --break-system-packages sounddevice pyperclip
-
-# Clone and run setup
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr
-./bin/hyprwhspr setup
-```
-
-> **Note:** On Ubuntu 22.04 LTS, `gir1.2-gtk4layershell-1.0` may not be available. The mic-osd visualizer will be disabled, but dictation works fine without it.
-
-**Fedora:**
-
-```bash
-# Install system dependencies
-sudo dnf install python3 python3-pip python3-devel git cmake make gcc-c++ \
-    python3-sounddevice python3-numpy python3-scipy python3-evdev \
-    python3-pyperclip python3-requests python3-psutil python3-rich \
-    python3-gobject gtk4 gtk4-layer-shell \
-    pipewire pipewire-pulseaudio ydotool wl-clipboard
-
-# Clone and run setup
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr
-./bin/hyprwhspr setup
-```
-
-**openSUSE:**
-
-```bash
-# Install system dependencies
-sudo zypper install python3 python3-pip python3-devel git cmake make gcc-c++ \
-    python3-sounddevice python3-numpy python3-scipy python3-evdev \
-    python3-pyperclip python3-requests python3-psutil python3-rich \
-    python3-gobject typelib-1_0-Gtk-4_0 \
-    pipewire pipewire-pulseaudio ydotool wl-clipboard
-
-# Optional: For mic-osd visualizer (Tumbleweed only, from community repo)
-# sudo zypper addrepo https://download.opensuse.org/repositories/devel:languages:zig/openSUSE_Tumbleweed/devel:languages:zig.repo
-# sudo zypper refresh && sudo zypper install gtk4-layer-shell
-
-# Clone and run setup
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr
-./bin/hyprwhspr setup
-```
-
-</details>
-
-**Post-installation (non-Arch distros):**
-
-The setup wizard handles most configuration automatically:
-
-- Creates `~/.local/bin/hyprwhspr` symlink (so the command works from anywhere)
-- Configures systemd services
-- Sets up permissions (groups, udev rules)
-
-After setup completes:
-
-```bash
-# Log out and back in for group permissions to take effect
-# Then verify everything is running:
 hyprwhspr status
 ```
+
+> Non-Arch distro support is new - please report any snags!
 
 ### CLI commands
 
 After installation, use the `hyprwhspr` CLI to manage your installation:
 
 - `hyprwhspr setup` - Interactive initial setup
-  - `hyprwhspr setup auto` - Automated setup with optional parameters:
-    - `--backend {nvidia,vulkan,cpu,onnx-asr}` - Specify backend (default: auto-detect GPU)
-    - `--model MODEL` - Model to download (default: base for whisper, auto for onnx-asr)
-    - `--no-waybar` - Skip waybar integration
-    - `--no-mic-osd` - Disable mic-osd visualization
-    - `--no-systemd` - Skip systemd service setup
-    - `--hypr-bindings` - Enable Hyprland compositor bindings
-- `hyprwhspr config` - Manage configuration (init/show/edit)
-  - `hyprwhspr config show --all` - Show all settings including defaults
-- `hyprwhspr waybar` - Manage Waybar integration (install/remove/status)
-- `hyprwhspr mic-osd` - Manage microphone visualization overlay (enable/disable/status)
-- `hyprwhspr systemd` - Manage systemd services (install/enable/disable/status/restart)
-- `hyprwhspr model` - Manage models (download/list/status/unload/reload)
+- `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit`)
+- `hyprwhspr model` - Manage models (`download` / `list` / `unload` / `reload`)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation
-- `hyprwhspr test` - Test microphone and backend connectivity end-to-end
-  - `--live` - Record live audio (3s) instead of using test.wav
-  - `--mic-only` - Only test microphone, skip transcription
-- `hyprwhspr keyboard` - Keyboard device management (list/test)
-- `hyprwhspr backend` - Backend management (repair/reset)
-- `hyprwhspr state` - State management (show/validate/reset)
-- `hyprwhspr uninstall` - Completely remove hyprwhspr and all data
+- `hyprwhspr test` - Test microphone and transcription end-to-end
+- `hyprwhspr waybar` - Manage Waybar integration
+- `hyprwhspr systemd` - Manage systemd services
+- `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle`)
+
+For the full command reference, see the **[Configuration guide](docs/CONFIGURATION.md)**.
 
 ## Documentation
 
