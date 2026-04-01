@@ -1,0 +1,874 @@
+---
+import OSD from "../components/OSD.astro";
+import "../styles/global.css";
+---
+
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="generator" content={Astro.generator} />
+        <title>hyprwhspr — system speech-to-text for Linux</title>
+        <meta
+            name="description"
+            content="Fast, accurate, system-wide dictation for Linux and Wayland. Local Whisper models, cloud APIs, zero latency."
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap"
+            rel="stylesheet"
+        />
+    </head>
+    <body>
+        <main>
+            <!-- Hero -->
+            <section class="hero">
+                <div class="hero-inner">
+                    <div class="badge">
+                        <span class="badge-dot"></span>
+                        <span>Linux · Wayland</span>
+                    </div>
+
+                    <h1>
+                        <span class="title-dim">$</span> hyprwhspr
+                    </h1>
+                    <p class="subtitle">
+                        System-wide speech&#8209;to&#8209;text.<br />
+                        Local models. Secure Cloud providers. Fully featured. Top
+                        performance.
+                    </p>
+
+                    <div class="cta-row">
+                        <a
+                            class="btn btn-primary"
+                            href="https://github.com/goodroot/hyprwhspr"
+                        >
+                            <svg
+                                class="btn-icon"
+                                viewBox="0 0 16 16"
+                                width="15"
+                                height="15"
+                                aria-hidden="true"
+                                fill="currentColor"
+                            >
+                                <path
+                                    d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+                                ></path>
+                            </svg>
+                            View on GitHub
+                        </a>
+                        <a class="btn btn-secondary" href="/#install">
+                            Quick install
+                        </a>
+                    </div>
+
+                    <OSD />
+                </div>
+            </section>
+
+            <!-- Features -->
+            <section class="features">
+                <div class="features-inner">
+                    <h2 class="section-title">
+                        <span class="title-dim">──</span> Features
+                    </h2>
+
+                    <!-- Marquee row -->
+                    <div class="marquee-grid">
+                        <div class="marquee-card">
+                            <div class="marquee-header">
+                                <span
+                                    class="marquee-icon"
+                                    style="color: var(--purple)">◈</span
+                                >
+                                <h3>Cutting-edge local</h3>
+                            </div>
+                            <p>
+                                Ships with support for <strong
+                                    >Parakeet TDT V3</strong
+                                >, <strong>Cohere Transcribe</strong>, and the
+                                full <strong>Whisper</strong> family. On CPU? <strong
+                                    >onnx-asr</strong
+                                > delivers wild speeds without a GPU. Models stay
+                                hot in memory.
+                            </p>
+                        </div>
+
+                        <div class="marquee-card">
+                            <div class="marquee-header">
+                                <span
+                                    class="marquee-icon"
+                                    style="color: var(--blue)">◎</span
+                                >
+                                <h3>GPU-intelligent</h3>
+                            </div>
+                            <p>
+                                Auto-detects <strong>NVIDIA CUDA</strong>, <strong
+                                    >AMD/Intel Vulkan</strong
+                                >, or falls back to CPU. Unload the model from
+                                VRAM on demand — free resources, then reload
+                                instantly without restarting the service.
+                            </p>
+                        </div>
+
+                        <div class="marquee-card">
+                            <div class="marquee-header">
+                                <span
+                                    class="marquee-icon"
+                                    style="color: var(--cyan)">✦</span
+                                >
+                                <h3>Private by default</h3>
+                            </div>
+                            <p>
+                                Local inference means <strong
+                                    >nothing leaves your machine</strong
+                                >. When you do reach for cloud — OpenAI,
+                                ElevenLabs, and more — credentials are stored
+                                securely and never touch config files.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Secondary grid -->
+                    <div class="feature-grid">
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--yellow)">🦆</span
+                            >
+                            <h3>Audio ducking</h3>
+                            <p>
+                                System volume steps down while you record, back
+                                up when you're done.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--magenta)">⏺</span
+                            >
+                            <h3>Four recording modes</h3>
+                            <p>
+                                Toggle, push-to-talk, auto (tap vs. hold), and
+                                long-form with pause and save.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--blue)">⌨</span
+                            >
+                            <h3>Paste anywhere</h3>
+                            <p>
+                                Text injects into any active buffer via ydotool.
+                                Auto-submit optional.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--purple)">◉</span
+                            >
+                            <h3>Themed visualizer</h3>
+                            <p>
+                                Mic-OSD overlay that auto-matches your Omarchy
+                                theme. Looks great.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--green)">⊞</span
+                            >
+                            <h3>Waybar tray</h3>
+                            <p>
+                                Live status indicator: idle, recording,
+                                processing, error — all at a glance.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--cyan)">◈</span
+                            >
+                            <h3>Multi-lingual</h3>
+                            <p>
+                                Strong performance across many languages.
+                                Optional translate-to-English mode.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--orange)">✎</span
+                            >
+                            <h3>Text processing</h3>
+                            <p>
+                                Word overrides, filler word removal, symbol
+                                replacements, custom prompts.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--magenta)">⇌</span
+                            >
+                            <h3>WebSocket streaming</h3>
+                            <p>
+                                Stream in near realtime via 11Labs, OpenAI
+                                Realtime API or similar services.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--fg-dim)">❖</span
+                            >
+                            <h3>Works everywhere</h3>
+                            <p>
+                                Hyprland, GNOME, KDE Plasma, Sway — any Wayland
+                                compositor with systemd.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="feature-full">
+                        <span class="feature-full-icon">⟁</span>
+                        <div class="feature-full-text">
+                            <h3>
+                                Free and open source, forever. For the people!
+                            </h3>
+                            <p>
+                                MIT licensed. No subscriptions, no telemetry, no
+                                monetization — ever.
+                            </p>
+                        </div>
+                        <a
+                            class="feature-full-link"
+                            href="https://github.com/goodroot/hyprwhspr/blob/main/LICENSE"
+                            >MIT License ↗</a
+                        >
+                    </div>
+                </div>
+            </section>
+
+            <!-- Install -->
+            <section class="install" id="install">
+                <div class="install-inner">
+                    <h2 class="section-title">
+                        <span class="title-dim">──</span> Install
+                    </h2>
+
+                    <div class="install-stack">
+                        <div class="install-block">
+                            <div class="install-label">Arch Linux</div>
+                            <div class="code-block multiline">
+                                <div>
+                                    <span class="code-prompt">#</span>
+                                    <span class="code-comment">stable</span>
+                                </div>
+                                <div>
+                                    <span class="code-prompt">$</span>
+                                    <span class="code-line"
+                                        >yay -S hyprwhspr</span
+                                    >
+                                </div>
+                                <div class="code-spacer"></div>
+                                <div>
+                                    <span class="code-prompt">#</span>
+                                    <span class="code-comment"
+                                        >bleeding edge</span
+                                    >
+                                </div>
+                                <div>
+                                    <span class="code-prompt">$</span>
+                                    <span class="code-line"
+                                        >yay -S hyprwhspr-git</span
+                                    >
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="install-block">
+                            <div class="install-label">
+                                Debian · Ubuntu · Fedora · openSUSE
+                            </div>
+                            <div class="code-block multiline">
+                                <div>
+                                    <span class="code-prompt">#</span>
+                                    <span class="code-comment">clone</span>
+                                </div>
+                                <div>
+                                    <span class="code-prompt">$</span>
+                                    <span class="code-line"
+                                        >git clone
+                                        https://github.com/goodroot/hyprwhspr.git
+                                        ~/hyprwhspr</span
+                                    >
+                                </div>
+                                <div class="code-spacer"></div>
+                                <div>
+                                    <span class="code-prompt">#</span>
+                                    <span class="code-comment"
+                                        >install deps, then set up</span
+                                    >
+                                </div>
+                                <div>
+                                    <span class="code-prompt">$</span>
+                                    <span class="code-line"
+                                        >cd ~/hyprwhspr &&
+                                        ./scripts/install-deps.sh</span
+                                    >
+                                </div>
+                                <div>
+                                    <span class="code-prompt">$</span>
+                                    <span class="code-line"
+                                        >./bin/hyprwhspr setup</span
+                                    >
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="install-converge">
+                        <div class="converge-rule">
+                            <span class="converge-line"></span>
+                            <span class="converge-label"
+                                >then, on either path</span
+                            >
+                            <span class="converge-line"></span>
+                        </div>
+                        <div class="code-block">
+                            <span class="code-prompt">$</span>
+                            <span class="code-line">hyprwhspr setup</span>
+                            <span class="code-comment" style="margin-left: auto"
+                                >── interactive wizard</span
+                            >
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Writing -->
+            <section class="writing">
+                <div class="writing-inner">
+                    <h2 class="section-title">
+                        <span class="title-dim">──</span> Writing
+                    </h2>
+                    <div class="post-grid">
+                        <a class="post-card" href="/linux-speech-to-text">
+                            <span class="post-card-tag">guide</span>
+                            <h3>Voice Typing on Linux in 2026</h3>
+                            <p>
+                                Speech-to-text on Linux has been broken for
+                                years. Local models and Wayland maturity have
+                                finally changed that.
+                            </p>
+                            <span class="post-card-read">Read →</span>
+                        </a>
+
+                        <a class="post-card" href="/best-speech-to-text-models">
+                            <span class="post-card-tag">models</span>
+                            <h3>Best Speech-to-Text Models for Linux</h3>
+                            <p>
+                                Parakeet TDT V3, Whisper, onnx-asr, Cohere —
+                                which model fits your hardware and workflow.
+                            </p>
+                            <span class="post-card-read">Read →</span>
+                        </a>
+
+                        <a
+                            class="post-card"
+                            href="/dictation-future-programming"
+                        >
+                            <span class="post-card-tag">opinion</span>
+                            <h3>Dictation is the Future of Programming</h3>
+                            <p>
+                                The keyboard made sense when code was the
+                                output. Now that language is the input, your
+                                voice is faster.
+                            </p>
+                            <span class="post-card-read">Read →</span>
+                        </a>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <div class="footer-inner">
+                <span class="footer-logo">hyprwhspr</span>
+                <span class="footer-sep">·</span>
+                <a
+                    href="https://github.com/goodroot/hyprwhspr/blob/main/LICENSE"
+                    >MIT</a
+                >
+                <span class="footer-sep">·</span>
+                <a href="https://github.com/goodroot/hyprwhspr">GitHub</a>
+                <span class="footer-sep">·</span>
+                <a href="/privacy">Privacy</a>
+            </div>
+        </footer>
+    </body>
+</html>
+
+<style>
+    main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 0 1.5rem;
+    }
+
+    /* ── Hero ─────────────────────────────────────────────────────── */
+    .hero {
+        padding: 5rem 0 3rem;
+        text-align: center;
+    }
+
+    .hero-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.5rem;
+    }
+
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 99px;
+        font-size: 0.72rem;
+        color: var(--fg-dim);
+        letter-spacing: 0.08em;
+        background: var(--surface);
+    }
+
+    .badge-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 6px var(--green);
+        animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+        0%,
+        100% {
+            opacity: 1;
+            box-shadow: 0 0 4px var(--green);
+        }
+        50% {
+            opacity: 0.6;
+            box-shadow: 0 0 10px var(--green);
+        }
+    }
+
+    h1 {
+        font-size: clamp(2rem, 6vw, 3.5rem);
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: var(--fg-bright);
+        line-height: 1.1;
+    }
+
+    .title-dim {
+        color: var(--comment);
+        font-weight: 300;
+    }
+
+    .subtitle {
+        font-size: clamp(0.9rem, 2.5vw, 1.1rem);
+        color: var(--fg-dim);
+        line-height: 1.7;
+        max-width: 42ch;
+    }
+
+    .cta-row {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.55rem 1.25rem;
+        border-radius: 6px;
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        letter-spacing: 0.04em;
+        transition: opacity 0.15s;
+    }
+
+    .btn:hover {
+        opacity: 0.85;
+    }
+
+    .btn-primary {
+        background: var(--blue);
+        color: var(--bg);
+        font-weight: 600;
+    }
+
+    .btn-secondary {
+        background: transparent;
+        color: var(--fg-dim);
+        border: 1px solid var(--border);
+    }
+
+    .btn-icon {
+        display: block;
+        flex-shrink: 0;
+    }
+
+    /* ── Sections ─────────────────────────────────────────────────── */
+    section {
+        padding: 4rem 0;
+        border-top: 1px solid var(--border);
+    }
+
+    .section-title {
+        font-size: 0.8rem;
+        font-weight: 500;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--comment);
+        margin-bottom: 2.5rem;
+    }
+
+    /* ── Features ─────────────────────────────────────────────────── */
+    .features-inner {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+    }
+
+    /* Marquee row */
+    .marquee-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 1rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .marquee-card {
+        padding: 1.4rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .marquee-header {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+    }
+
+    .marquee-icon {
+        font-size: 1.1rem;
+        flex-shrink: 0;
+    }
+
+    .marquee-card h3 {
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: var(--fg-bright);
+        letter-spacing: 0.02em;
+    }
+
+    .marquee-card p {
+        font-size: 0.78rem;
+        color: var(--fg-dim);
+        line-height: 1.7;
+    }
+
+    .marquee-card strong {
+        color: var(--fg);
+        font-weight: 500;
+    }
+
+    /* Secondary grid */
+    .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+        gap: 0.75rem;
+    }
+
+    .feature {
+        padding: 1rem 1.1rem;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+    }
+
+    .feature-icon {
+        font-size: 1rem;
+    }
+
+    .feature h3 {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--fg-bright);
+        letter-spacing: 0.02em;
+    }
+
+    .feature p {
+        font-size: 0.74rem;
+        color: var(--fg-dim);
+        line-height: 1.55;
+    }
+
+    .feature-full {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        padding: 1.25rem 1.5rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+    }
+
+    .feature-full-icon {
+        font-size: 1.4rem;
+        color: var(--blue);
+        flex-shrink: 0;
+    }
+
+    .feature-full-text {
+        flex: 1;
+    }
+
+    .feature-full-text h3 {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--fg-bright);
+        letter-spacing: 0.02em;
+        margin-bottom: 0.2rem;
+    }
+
+    .feature-full-text p {
+        font-size: 0.76rem;
+        color: var(--fg-dim);
+        line-height: 1.55;
+    }
+
+    .feature-full-link {
+        font-size: 0.72rem;
+        color: var(--comment);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.3rem 0.7rem;
+        white-space: nowrap;
+        flex-shrink: 0;
+        transition:
+            color 0.15s,
+            border-color 0.15s;
+    }
+
+    .feature-full-link:hover {
+        color: var(--blue);
+        border-color: var(--blue);
+    }
+
+    /* ── Install ──────────────────────────────────────────────────── */
+    .install-inner {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+    }
+
+    .install-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .install-block {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .install-label {
+        font-size: 0.72rem;
+        letter-spacing: 0.1em;
+        color: var(--comment);
+        text-transform: uppercase;
+    }
+
+    .install-after {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .install-after-label {
+        font-size: 0.72rem;
+        letter-spacing: 0.1em;
+        color: var(--comment);
+        text-transform: uppercase;
+    }
+
+    .code-block {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.9rem 1.2rem;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 0.82rem;
+    }
+
+    .code-block.multiline {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.35rem;
+    }
+
+    .code-block.multiline > div {
+        display: flex;
+        gap: 0.75rem;
+    }
+
+    .code-spacer {
+        height: 0.35rem;
+    }
+
+    .code-prompt {
+        color: var(--comment);
+        user-select: none;
+        flex-shrink: 0;
+    }
+
+    .code-line {
+        color: var(--cyan);
+    }
+
+    .code-comment {
+        color: var(--comment);
+        font-size: 0.76rem;
+    }
+
+    /* ── Install converge ─────────────────────────────────────────── */
+    .install-converge {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .converge-rule {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        color: var(--comment);
+        font-size: 0.68rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+    }
+
+    .converge-line {
+        flex: 1;
+        height: 1px;
+        background: var(--border);
+    }
+
+    /* ── Writing ─────────────────────────────────────────────────── */
+    .post-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 1rem;
+    }
+
+    .post-card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        padding: 1.25rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: inherit;
+        transition: border-color 0.15s;
+    }
+
+    .post-card:hover {
+        border-color: var(--blue);
+    }
+
+    .post-card-tag {
+        font-size: 0.66rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--purple);
+        font-weight: 500;
+    }
+
+    .post-card h3 {
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: var(--fg-bright);
+        line-height: 1.4;
+        letter-spacing: 0.01em;
+    }
+
+    .post-card p {
+        font-size: 0.76rem;
+        color: var(--fg-dim);
+        line-height: 1.6;
+        flex: 1;
+    }
+
+    .post-card-read {
+        font-size: 0.72rem;
+        color: var(--blue);
+        letter-spacing: 0.04em;
+        margin-top: 0.25rem;
+    }
+
+    /* ── Footer ───────────────────────────────────────────────────── */
+    footer {
+        border-top: 1px solid var(--border);
+        padding: 1.5rem;
+        text-align: center;
+        font-size: 0.75rem;
+        color: var(--comment);
+    }
+
+    .footer-inner {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 0.6rem;
+    }
+
+    .footer-logo {
+        color: var(--fg-dim);
+        font-weight: 500;
+    }
+
+    .footer-sep {
+        color: var(--border);
+    }
+</style>

@@ -253,14 +253,292 @@ Control recording via:
 * CLI (`hyprwhspr record toggle`, `hyprwhspr record start`, etc.) 
 & the `recording_control` file (e.g. bind in Hyprland to `echo start > ~/.config/hyprwhspr/recording_control`)
 
-## Transcription backends
+## Backends
 
-Local backends (Parakeet + Whisper) are documented in the **Models** section below.
-Cloud / network backends are documented here.
+**Quick pick by hardware:**
+
+- **NVIDIA GPU** → Cohere Transcribe is the leading edge · whisper.cpp (`large-v3-turbo`) for speed
+- **AMD / Intel GPU** → whisper.cpp (Vulkan)
+- **CPU only** → Parakeet or faster-whisper
+- **No local setup** → REST API
+
+For up-to-date accuracy rankings across open-source models, see the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard).
+
+| Backend | Privacy | GPU | Speed | Languages | Accuracy | Notes |
+|---------|---------|-----|-------|-----------|----------|-------|
+| Cohere Transcribe | Local | NVIDIA or CPU | Fast | 14 | Best | Gated model, HF token required |
+| Parakeet | Local | NVIDIA or CPU | Fast | Multi | Excellent | — |
+| faster-whisper | Local | NVIDIA or CPU | Fast | 99 | Very good | — |
+| whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Very fast | 99 | Very good | — |
+| REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
+| Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | OpenAI, ElevenLabs |
+
+---
+
+### Model commands
+
+`hyprwhspr model` commands route automatically to the configured backend:
+
+```bash
+hyprwhspr model status            # Check if model is downloaded/cached
+hyprwhspr model list              # Show model info for active backend
+hyprwhspr model download [model]  # Download or re-download model
+```
+
+Models are downloaded automatically during `hyprwhspr setup`. 
+
+Use `model download` to re-download if needed.
+
+---
+
+### Cohere Transcribe
+
+**#1 on the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)**
+
+_5.42 average WER across 9 benchmarks, outperforms Whisper large-v3 (7.44 WER) at 3× the throughput._
+
+[![Cohere Transcribe benchmark results](https://cdn-uploads.huggingface.co/production/uploads/6867ac274d8d690302fd0378/VtvUqMr9ibvv47Wj3gvI3.png)](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release)
+
+| Benchmark | Cohere Transcribe | Whisper large-v3 |
+|-----------|:-----------------:|:----------------:|
+| LibriSpeech clean | **1.25** | 2.7 |
+| LibriSpeech other | **2.37** | 5.2 |
+| TedLium | **2.49** | 4.2 |
+| SPGISpeech | **3.08** | 4.7 |
+| VoxPopuli | **5.87** | 9.1 |
+| Gigaspeech | **9.33** | 10.3 |
+| Earnings22 | **10.84** | 12.7 |
+| **Average WER** | **5.42** | 7.44 |
+
+Lower is better. 
+
+Full benchmark details: [Cohere Transcribe release blog](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release).
+
+**Supported languages:** English, German, French, Italian, Spanish, Portuguese, Greek, Dutch, Polish, Arabic, Vietnamese, Chinese, Japanese, Korean
+
+**Requirements:** ~4 GB VRAM (bfloat16), or CPU with ~8 GB RAM (float32) — slower on CPU
+
+#### Setup
+
+Cohere Transcribe is a **gated model** on HuggingFace — you must accept the license before downloading.
+
+1. Accept the license agreement at: [huggingface.co/CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
+2. Generate a read token at: [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+3. Run `hyprwhspr setup` and select **[8] Cohere Transcribe** — you will be prompted for your token
+
+The model (~4 GB) is downloaded during setup. Your token is securely stored locally in `~/.config/hyprwhspr/credentials.json` and never shared.
+
+#### Configuration
+
+```jsonc
+{
+    "transcription_backend": "cohere-transcribe",
+    "cohere_transcribe_device": "auto",      // auto | cuda | cpu
+    "cohere_transcribe_dtype": "bfloat16",   // bfloat16 (GPU default) | float32 (CPU)
+    "cohere_transcribe_compile": false       // torch.compile for faster throughput (adds warmup on first call)
+}
+```
+
+Model stored in: `~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe-03-2026/`
+
+---
+
+### Parakeet
+
+Parakeet TDT V3 via [onnx-asr](https://github.com/istupakov/onnx-asr). 
+
+Typically this model requires a large GPU — 
+
+onnx-asr makes it run well on CPU with a very small accuracy trade-off.
+
+**Requirements:** ~1 GB RAM (CPU) or VRAM (GPU)
+
+#### Setup
+
+Run `hyprwhspr setup` and select **[1] Parakeet**. The model (~1 GB) is downloaded during setup.
+
+#### Configuration
+
+```jsonc
+{
+    "transcription_backend": "onnx-asr",
+    "onnx_asr_model": "nemo-parakeet-tdt-0.6b-v3",  // default
+    "onnx_asr_quantization": "int8",                  // int8 (default) | fp32
+    "onnx_asr_use_vad": true                          // Silero VAD (default: true)
+}
+```
+
+Model stored in: `~/.cache/huggingface/hub/`
+
+---
+
+### faster-whisper
+
+Local Whisper via [faster-whisper](https://github.com/SYSTRAN/faster-whisper). 
+
+Run `hyprwhspr setup` and select **[4] faster-whisper** to install.
+
+**Best for:**
+
+CPU users wanting faster inference than whisper.cpp, or NVIDIA GPU users where VRAM is constrained. 
+
+INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for float16.
+
+AMD/Intel GPU users should use Parakeet or whisper.cpp instead — CTranslate2 does not support Vulkan or ROCm.
+
+Built-in Silero VAD strips silence before inference — the most effective mitigation for Whisper's hallucination loops on longer recordings.
+
+```jsonc
+{
+    "transcription_backend": "faster-whisper",
+    "faster_whisper_model": "large-v3-turbo",   // CUDA; use "base" or "small" for CPU
+    "faster_whisper_device": "auto",             // auto | cuda | cpu
+    "faster_whisper_compute_type": "auto",       // auto → int8 on cuda, float32 on cpu; set "int8" on cpu for speed
+    "faster_whisper_vad_filter": true            // Silero VAD (default: true)
+}
+```
+
+#### Available models
+
+| Model | Size (INT8) | Notes |
+|-------|-------------|-------|
+| `tiny` | ~75 MB | Fastest |
+| `base` | ~145 MB | Recommended for CPU |
+| `small` | ~484 MB | Better accuracy |
+| `medium` | ~1.5 GB | High accuracy |
+| `large-v3` | ~3.1 GB | Best accuracy (needs GPU) |
+| `large-v3-turbo` | ~1.6 GB | **Recommended for CUDA** |
+| `distil-large-v3` | ~1.5 GB | Distilled, CPU/GPU balance |
+
+Models stored in: `~/.cache/huggingface/hub/`
+
+---
+
+### whisper.cpp
+
+Local Whisper via [pywhispercpp](https://github.com/abdeladim-s/pywhispercpp). 
+
+Run `hyprwhspr setup` and select **[2] Whisper CPU**, **[3] Whisper NVIDIA**, or **[5] Whisper AMD/Intel (Vulkan)**.
+
+**Best for:**
+
+Modern NVIDIA cards or discrete AMD/Intel use (via Vulkan). 
+
+Extremely fast on GPU with `large-v3` or `large-v3-turbo`.
+
+#### Available models
+
+Models stored in: `~/.local/share/pywhispercpp/models/`
+
+| Model | Size | Notes |
+|-------|------|-------|
+| `tiny` / `tiny.en` | ~75 MB | Fastest |
+| `base` / `base.en` | ~148 MB | Recommended (default) |
+| `small` / `small.en` | ~488 MB | Better accuracy |
+| `medium` / `medium.en` | ~1.5 GB | High accuracy |
+| `large-v3` | ~2.9 GB | Best accuracy, **requires GPU** |
+| `large-v3-turbo` | ~1.6 GB | Fast + accurate, **requires GPU** |
+
+> **GPU required:** `large-v3` and `large-v3-turbo` require GPU acceleration for reasonable speed.
+
+Download a specific model by name:
+
+```bash
+hyprwhspr model download base
+hyprwhspr model download small.en
+```
+
+Set model in config (pywhispercpp only — faster-whisper uses `faster_whisper_model`):
+
+```jsonc
+{
+    "model": "small.en"  // .en = English-only; omit suffix for multilingual
+}
+```
+
+#### Language detection
+
+English only speakers use `.en` models which are smaller.
+
+For multi-language detection, ensure you select a model which does not say `.en`:
+
+```jsonc
+{
+    "language": null // null = auto-detect (default), or specify language code
+}
+```
+
+Language options:
+
+- **`null`** (default) - Auto-detect language from audio
+- **`"en"`** - English transcription
+- **`"nl"`** - Dutch transcription
+- **`"fr"`** - French transcription
+- **`"de"`** - German transcription
+- **`"es"`** - Spanish transcription
+- **`etc.`** - Any supported language code
+
+#### Whisper prompt
+
+Customize transcription behavior:
+
+```jsonc
+{
+    "whisper_prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+}
+```
+
+The prompt influences how Whisper interprets and transcribes your audio, eg:
+
+- `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
+
+- `"Transcribe as casual conversation with natural speech patterns."`
+
+- `"Transcribe as an ornery pirate on the cusp of scurvy."`
+
+#### Translation
+
+Translate non-English speech into English:
+
+```jsonc
+{
+    "task": "translate",
+    "language": "it"  // optional: set source language, or null to auto-detect
+}
+```
+
+- **`"transcribe"`** (default) - Output in the source language
+- **`"translate"`** - Translate speech into English
+
+> **Note**: Supported by `faster-whisper` and `pywhispercpp` backends. `language` and `task` are independent — setting a non-English language does not imply translation.
+
+#### Language-specific prompts
+
+Set a per-language prompt using `whisper_prompt_{lang}`:
+
+```jsonc
+{
+    "whisper_prompt": "Transcribe with proper capitalization.",
+    "whisper_prompt_de": "Transkribiere auf Deutsch. Verwende Schweizer Rechtschreibung: kein ß, immer ss."
+}
+```
+
+- Falls back to `whisper_prompt` if no language-specific prompt is configured
+- Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
+
+---
 
 ### REST API
 
 Use any ASR backend via HTTP API (local or cloud).
+
+#### Cohere 🇨🇦
+
+[Sign up at dashboard.cohere.com](https://dashboard.cohere.com/welcome/register) — Canadian-hosted, same as local Apache 2.0 model.
+
+- **Cohere Transcribe** — #1 Open ASR Leaderboard, 5.42 avg WER, 14 languages
+
+> **Note:** Cohere's API requires a `language` parameter. Set `"language": "en"` (or your language code) in your config alongside the backend selection.
 
 #### OpenAI
 
@@ -304,11 +582,13 @@ Connect to any backend, local or cloud, via your own custom configuration:
 }
 ```
 
+---
+
 ### Realtime WebSocket
 
 Low-latency streaming transcription.
 
-> Experimental! 
+> Experimental!
 
 #### OpenAI Realtime
 
@@ -330,19 +610,13 @@ Two modes available:
 
 #### ElevenLabs Scribe v2
 
-Ultra-low latency (~150ms) streaming transcription with 90+ languages. 
+Ultra-low latency (~150ms) streaming transcription. 
 
-Uses native 16kHz audio (no resampling), and auto-reconnects on connection drops.
+Bring an API key from [ElevenLabs](https://elevenlabs.io/) with speech-to-text capabilities enabled.
 
-Bring an API key from [ElevenLabs](https://elevenlabs.io/).
-
-Ensure the key has speech-to-text capabilities.
-
-Modes available:
+Uses native 16kHz audio (no resampling) and auto-reconnects on connection drops.
 
 - **transcribe** (default) - speech-to-text
-
-Or configure manually:
 
 ```jsonc
 {
@@ -353,207 +627,6 @@ Or configure manually:
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
 }
 ```
-
-## Models
-
-### Parakeet (NVIDIA)
-
-Parakeet V3 via [onnx-asr](https://github.com/istupakov/onnx-asr) is a fantastic project.
-
-It provides very strong accuracy and nigh unbelievable speed on modest CPUs.
-
-Also great for GPUs.
-
-Select Parakeet V3 within `hyprwhspr setup`.
-
-Model storage: `~/.cache/huggingface/hub/`. 
-
-The Parakeet model is downloaded automatically when the backend starts. 
-
-With Parakeet selected, `hyprwhspr model list` and `hyprwhspr model status` show Parakeet info.
-
-### Whisper (local)
-
-Two local Whisper backends are available:
-
-- **`faster-whisper`**: CTranslate2 + Silero VAD (CPU or NVIDIA CUDA)
-- **`pywhispercpp`**: whisper.cpp models (`cpu` / `nvidia` / `vulkan` builds)
-
-#### faster-whisper (CTranslate2)
-
-Local Whisper via [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
-
-**Best for:** 
-
-CPU users who want faster inference than whisper.cpp, or NVIDIA GPU users
-where VRAM is constrained. 
-
-INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for
-float16. 
-
-AMD/Intel GPU users should use Parakeet or Whisper (Vulkan) instead — CTranslate2
-does not support Vulkan or ROCm.
-
-Built-in Silero VAD strips silence before inference — the most effective
-mitigation for Whisper's hallucination loops on longer recordings.
-
-```jsonc
-{
-    "transcription_backend": "faster-whisper",
-    "faster_whisper_model": "large-v3-turbo",   // CUDA; use "base" or "small" for CPU
-    "faster_whisper_device": "auto",             // auto | cuda | cpu
-    "faster_whisper_compute_type": "auto",       // auto → int8 on cuda, float32 on cpu; set "int8" on cpu for speed
-    "faster_whisper_vad_filter": true            // Silero VAD (default: true)
-}
-```
-
-##### Installation
-
-Run `hyprwhspr setup` and select **[4] faster-whisper** to install.
-
-##### Available models
-
-| Model | Size (INT8) | Notes |
-|-------|-------------|-------|
-| `tiny` | ~75 MB | Fastest |
-| `base` | ~145 MB | Recommended for CPU |
-| `small` | ~484 MB | Better accuracy |
-| `medium` | ~1.5 GB | High accuracy |
-| `large-v3` | ~3.1 GB | Best accuracy (needs GPU) |
-| `large-v3-turbo` | ~1.6 GB | **Recommended for CUDA** |
-| `distil-large-v3` | ~1.5 GB | Distilled, CPU/GPU balance |
-
-Models are downloaded during setup or via:
-
-```bash
-hyprwhspr model download large-v3-turbo
-```
-
-Models stored in: `~/.cache/huggingface/hub/`
-
-#### whisper.cpp via pywhispercpp
-
-**Best for:**
-
-Fastest, the top choice for modern Nvidia cards or discrete AMD use (via Vulkan).
-
-#### Available models (GGML format)
-
-Models stored in: `~/.local/share/pywhispercpp/models/`
-
-| Model | Size | Notes |
-|-------|------|-------|
-| `tiny` / `tiny.en` | ~75 MB | Fastest |
-| `base` / `base.en` | ~148 MB | Recommended (default) |
-| `small` / `small.en` | ~488 MB | Better accuracy |
-| `medium` / `medium.en` | ~1.5 GB | High accuracy |
-| `large-v3` | ~2.9 GB | Best accuracy, **requires GPU** |
-| `large-v3-turbo` | ~1.6 GB | Fast + accurate, **requires GPU** |
-
-`.en` variants are English-only — smaller and faster for English-only speakers.
-
-> **GPU required:** `large-v3` and `large-v3-turbo` require GPU acceleration for reasonable speed.
-
-`hyprwhspr model` commands route to the active backend automatically:
-
-```bash
-hyprwhspr model list   
-hyprwhspr model download base
-hyprwhspr model download small.en
-hyprwhspr model status
-```
-
-Set model in config (pywhispercpp only — faster-whisper uses `faster_whisper_model`):
-
-```jsonc
-{
-    "model": "small.en"  // .en = English-only; omit suffix for multilingual
-}
-```
-
-#### Language detection
-
-English only speakers use `.en` models which are smaller.
-
-For multi-language detection, ensure you select a model which does not say `.en`:
-
-```jsonc
-{
-    "language": null // null = auto-detect (default), or specify language code
-}
-```
-
-Language options:
-
-- **`null`** (default) - Auto-detect language from audio
-- **`"en"`** - English transcription
-- **`"nl"`** - Dutch transcription  
-- **`"fr"`** - French transcription
-- **`"de"`** - German transcription
-- **`"es"`** - Spanish transcription
-- **`etc.`** - Any supported language code
-
-#### Whisper prompt
-
-Customize transcription behavior:
-
-```jsonc
-{
-    "whisper_prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
-}
-```
-
-The prompt influences how Whisper interprets and transcribes your audio, eg:
-
-- `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
-
-- `"Transcribe as casual conversation with natural speech patterns."`
-
-- `"Transcribe as an ornery pirate on the cusp of scurvy."`
-
-### Translation
-
-Translate non-English speech into English:
-
-```jsonc
-{
-    "task": "translate",
-    "language": "it"  // optional: set source language, or null to auto-detect
-}
-```
-
-- **`"transcribe"`** (default) - Output in the source language
-- **`"translate"`** - Translate speech into English
-
-> **Note**: Supported by `faster-whisper` and `pywhispercpp` backends. `language` and `task` are independent — setting a non-English language does not imply translation.
-
-### Language-specific prompts
-
-Set a per-language prompt using `whisper_prompt_{lang}`:
-
-```jsonc
-{
-    "whisper_prompt": "Transcribe with proper capitalization.",
-    "whisper_prompt_de": "Transkribiere auf Deutsch. Verwende Schweizer Rechtschreibung: kein ß, immer ss."
-}
-```
-
-- Falls back to `whisper_prompt` if no language-specific prompt is configured
-- Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
-
-### Hyprland keybindings
-
-For quick access, bind unload and reload to keys in `~/.config/hypr/hyprland.conf`:
-
-```bash
-# Free GPU before starting a local LLM
-bindd = SUPER ALT, U, Unload Whisper model, exec, hyprwhspr model unload
-
-# Reclaim dictation when done
-bindd = SUPER ALT, L, Reload Whisper model, exec, hyprwhspr model reload
-```
-
-`Super+Alt+U` / `Super+Alt+L` (unload/load) keeps the pattern consistent with `Super+Alt+D` for dictation.
 
 ## Audio and visual feedback
 
@@ -889,11 +962,23 @@ hyprwhspr model unload
 hyprwhspr model reload
 ```
 
-Only applies to local-model backends (`pywhispercpp`, `faster-whisper`, `onnx-asr`). 
+Only applies to local-model backends (Cohere Transcribe, `pywhispercpp`, `faster-whisper`, `onnx-asr`). 
 
 No-op for `rest-api` and `realtime-ws` (those hold no local GPU memory).
 
 The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
+
+### Hyprland keybindings
+
+For quick access, bind unload and reload to keys in `~/.config/hypr/hyprland.conf`:
+
+```bash
+# Free GPU before starting a local LLM
+bindd = SUPER ALT, U, Unload Whisper model, exec, hyprwhspr model unload
+
+# Reclaim dictation when done
+bindd = SUPER ALT, L, Reload Whisper model, exec, hyprwhspr model reload
+```
 
 ## Troubleshooting
 

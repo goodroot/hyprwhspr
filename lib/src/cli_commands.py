@@ -502,6 +502,22 @@ def _detect_current_backend() -> Optional[str]:
                 except Exception:
                     pass
             # faster-whisper configured but not installed - fall through to return None
+        if backend == 'cohere-transcribe':
+            # Verify transformers is installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'from transformers import AutoModelForSpeechSeq2Seq; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'cohere-transcribe'
+                except Exception:
+                    pass
+            # cohere-transcribe configured but not installed - fall through to return None
         if backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']:
             # Verify it's actually installed in venv
             venv_python = VENV_DIR / 'bin' / 'python'
@@ -617,6 +633,21 @@ def _cleanup_backend(backend_type: str) -> bool:
                 log_warning(f"Cleanup warning: {e}")
         return True
 
+    if backend_type == 'cohere-transcribe':
+        log_info("Cleaning up Cohere Transcribe backend...")
+        pip_bin = VENV_DIR / 'bin' / 'pip'
+        if pip_bin.exists():
+            try:
+                subprocess.run(
+                    [str(pip_bin), 'uninstall', '-y', 'transformers', 'sentencepiece', 'protobuf', 'librosa'],
+                    check=False,
+                    capture_output=True
+                )
+                log_success("Cohere Transcribe backend cleaned up")
+            except Exception as e:
+                log_warning(f"Cleanup warning: {e}")
+        return True
+
     if backend_type in ['rest-api', 'remote']:
         # REST API doesn't have venv, nothing to clean
         return True
@@ -666,6 +697,7 @@ def _prompt_backend_selection():
     print("  [3] Whisper (NVIDIA)      - whisper.cpp + CUDA, fastest local transcription (NVIDIA GPUs)")
     print("  [4] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
     print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, fastest local transcription (AMD/Intel GPUs)")
+    print("  [8] Cohere Transcribe     - #1 Open ASR leaderboard, 14 languages, ~4-5 GB VRAM (fp16) [BETA]")
     print()
     print("Cloud/REST Backends:")
     print("  [6] REST API              - OpenAI, Groq, or custom endpoint")
@@ -674,7 +706,7 @@ def _prompt_backend_selection():
 
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8'], default='1')
             backend_map = {
                 '1': 'onnx-asr',
                 '2': 'cpu',
@@ -682,7 +714,8 @@ def _prompt_backend_selection():
                 '4': 'faster-whisper',
                 '5': 'vulkan',
                 '6': 'rest-api',
-                '7': 'realtime-ws'
+                '7': 'realtime-ws',
+                '8': 'cohere-transcribe',
             }
             selected = backend_map[choice]
 
@@ -692,6 +725,7 @@ def _prompt_backend_selection():
                 'cpu': 'Whisper CPU',
                 'nvidia': 'Whisper NVIDIA (CUDA)',
                 'faster-whisper': 'faster-whisper (CTranslate2)',
+                'cohere-transcribe': 'Cohere Transcribe 2B',
                 'amd': 'Whisper AMD/Intel (Vulkan)',
                 'vulkan': 'Whisper AMD/Intel (Vulkan)',
                 'rest-api': 'REST API',
@@ -718,8 +752,8 @@ def _prompt_backend_selection():
                     return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
 
             # If re-selecting same backend, offer reinstall option
-            # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr, faster-whisper
-            local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper']
+            # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr, faster-whisper, cohere-transcribe
+            local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']
             if current_backend == selected and selected in local_install_backends:
                 print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
@@ -1320,6 +1354,13 @@ def setup_command(python_path: Optional[str] = None):
                 print("On NVIDIA: large-v3-turbo runs in ~3.1 GB VRAM. On CPU: INT8 is faster than pywhispercpp.")
                 print("Built-in Silero VAD reduces hallucination loops on longer recordings.")
                 print("Models are downloaded automatically on first use.")
+            elif backend_normalized == 'cohere-transcribe':
+                print("\nThis will install the Cohere Transcribe backend (transformers).")
+                print("2B parameter Conformer model — #1 on the Open ASR Leaderboard (English), 14 languages.")
+                print("Requires ~4-5 GB VRAM with fp16 (default) or ~8-9 GB with fp32.")
+                print("Falls back to CPU if no GPU is available (slow — not recommended for live dictation).")
+                print("Model weights (~4 GB) will be downloaded from HuggingFace during setup.")
+                print("This may take several minutes depending on your connection speed.")
             else:
                 print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
@@ -1329,6 +1370,28 @@ def setup_command(python_path: Optional[str] = None):
                 backend_install_skipped = True
             else:
                 backend_install_skipped = False
+
+                # Cohere Transcribe is a gated HuggingFace model — each user must accept
+                # the license and authenticate with their own token before downloading.
+                if backend_normalized == 'cohere-transcribe':
+                    print("\nCohere Transcribe is a gated model on HuggingFace.")
+                    print("Before continuing:")
+                    print("  1. Accept the license at: https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
+                    print("  2. Generate a read token at: https://huggingface.co/settings/tokens")
+                    hf_token = Prompt.ask("\nHuggingFace token", password=True)
+                    if hf_token and hf_token.strip():
+                        token_clean = hf_token.strip()
+                        # Basic format check: HF read tokens start with "hf_"
+                        if not token_clean.startswith('hf_'):
+                            log_warning("Token doesn't start with 'hf_' — double-check you copied a read token")
+                        else:
+                            masked = token_clean[:6] + '*' * (len(token_clean) - 9) + token_clean[-3:]
+                            log_success(f"Token received: {masked} ({len(token_clean)} chars)")
+                        save_credential('huggingface', token_clean)
+                        log_success("HuggingFace token securely saved")
+                    else:
+                        log_warning("No token provided — model download will likely fail")
+
                 # Pass force_rebuild=True when reinstalling to ensure clean venv
                 # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
                 if not install_backend(backend_normalized, force_rebuild=wants_reinstall, custom_python=python_path):
@@ -1518,9 +1581,9 @@ def setup_command(python_path: Optional[str] = None):
     
     # Model selection for local backends
     if not backend_install_skipped:
-        if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper']:
+        if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
             # Local backend - prompt for model selection
-            # Note: ONNX-ASR and faster-whisper don't use Whisper.cpp models
+            # Note: ONNX-ASR, faster-whisper, and cohere-transcribe don't use Whisper.cpp models
             selected_model = _prompt_model_selection()
         elif backend_normalized == 'faster-whisper':
             faster_whisper_model = _prompt_faster_whisper_model_selection()
@@ -1670,7 +1733,9 @@ def setup_command(python_path: Optional[str] = None):
     elif selected_model:
         print(f"Model: {selected_model}")
     elif backend_normalized == 'onnx-asr':
-        print("Model: nemo-parakeet-tdt-0.6b-v3 (default, auto-downloaded on first use)")
+        print("Model: nemo-parakeet-tdt-0.6b-v3 (~1 GB, downloaded during setup)")
+    elif backend_normalized == 'cohere-transcribe':
+        print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
     if setup_audio_ducking_choice:
@@ -1974,7 +2039,7 @@ def _verify_backend_installation(backend: str) -> bool:
     Returns:
         True if backend is importable, False otherwise
     """
-    if backend not in ['cpu', 'nvidia', 'vulkan', 'onnx-asr']:
+    if backend not in ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
         # For non-local backends, skip import check
         return True
 
@@ -1985,6 +2050,10 @@ def _verify_backend_installation(backend: str) -> bool:
     # Choose the module to import based on backend
     if backend == 'onnx-asr':
         import_module = 'onnx_asr'
+    elif backend == 'faster-whisper':
+        import_module = 'faster_whisper'
+    elif backend == 'cohere-transcribe':
+        import_module = 'transformers'
     else:
         import_module = 'pywhispercpp'
 
@@ -2186,7 +2255,7 @@ def omarchy_command(args=None):
             log_warning("Model download verification failed - model may not be available")
             log_warning(f"You can download it later with: hyprwhspr model download {model_to_download}")
     elif backend == 'onnx-asr':
-        log_info("onnx-asr model will be downloaded automatically on first use")
+        log_info("onnx-asr model downloaded during setup")
 
     # 7. Waybar integration (if detected and not skipped)
     print("\n" + "="*60)
@@ -3003,7 +3072,7 @@ def model_command(action: str, model_name: str = 'base'):
     if action == 'unload':
         if backend in ('rest-api', 'realtime-ws'):
             log_error(f"Model unload not applicable for backend: {backend}")
-            log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr) hold GPU memory.")
+            log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr, cohere-transcribe) hold GPU memory.")
             return
         if MODEL_UNLOADED_FILE.exists():
             log_warning("Model is already unloaded.")
@@ -3042,8 +3111,17 @@ def model_command(action: str, model_name: str = 'base'):
         elif action == 'status':
             onnx_asr_model_status()
         elif action == 'download':
-            log_info("Parakeet model is downloaded automatically when the backend starts.")
-            log_info("To pre-download: start the Parakeet service once (e.g. hyprwhspr start, or enable systemd and log in).")
+            log_info("Parakeet model is downloaded during setup.")
+            log_info("If the model is missing, re-run: hyprwhspr setup")
+        else:
+            log_error(f"Unknown model action: {action}")
+    elif backend == 'cohere-transcribe':
+        if action == 'list':
+            list_cohere_transcribe_models()
+        elif action == 'status':
+            cohere_transcribe_model_status()
+        elif action == 'download':
+            download_cohere_transcribe_model()
         else:
             log_error(f"Unknown model action: {action}")
     else:
@@ -3176,7 +3254,7 @@ def onnx_asr_model_status():
                 found.append(model_dir)
     if not found:
         log_warning("No Parakeet model found in ~/.cache/huggingface/hub/")
-        log_info("The model will download automatically when the Parakeet backend starts.")
+        log_info("Model not found. Re-run: hyprwhspr setup to download it.")
         return
 
     print("Parakeet (onnx-asr) model cache:")
@@ -3193,11 +3271,97 @@ def onnx_asr_model_status():
 def list_onnx_asr_models():
     """List Parakeet/onnx-asr model option (single supported model for now)."""
     print("Parakeet (onnx-asr) model:\n")
-    print("  - nemo-parakeet-tdt-0.6b-v3  (default; downloaded from Hugging Face on first use)")
+    print("  - nemo-parakeet-tdt-0.6b-v3  (~1 GB, downloaded during setup)")
     print()
     print("Storage: ~/.cache/huggingface/hub/")
     print("To check if the model is cached: hyprwhspr model status")
     print("The model downloads automatically when the Parakeet service starts.")
+
+
+# ==================== Cohere Transcribe Model Commands ====================
+
+def cohere_transcribe_model_status():
+    """Check Cohere Transcribe model in Hugging Face cache (~/.cache/huggingface/hub/)"""
+    hf_hub_dir = Path.home() / '.cache' / 'huggingface' / 'hub'
+    model_cache = hf_hub_dir / 'models--CohereLabs--cohere-transcribe-03-2026'
+
+    if not model_cache.exists():
+        log_warning("Cohere Transcribe model not found in ~/.cache/huggingface/hub/")
+        log_info("Re-run: hyprwhspr setup and select cohere-transcribe to download the model.")
+        return
+
+    total_bytes = sum(f.stat().st_size for f in model_cache.rglob('*') if f.is_file())
+    size_gb = total_bytes / (1024 ** 3)
+    log_success(f"  {model_cache.name} ({size_gb:.1f} GB)")
+
+
+def list_cohere_transcribe_models():
+    """List Cohere Transcribe model (single model)."""
+    print("Cohere Transcribe model:\n")
+    print("  - CohereLabs/cohere-transcribe-03-2026  (~4 GB, downloaded during setup)")
+    print()
+    print("Storage: ~/.cache/huggingface/hub/")
+    print("To check cache status: hyprwhspr model status")
+    print("Precision: bfloat16 on GPU (default), float32 on CPU")
+
+
+def download_cohere_transcribe_model():
+    """Download (or re-download) the Cohere Transcribe model weights."""
+    try:
+        from credential_manager import get_credential
+    except ImportError:
+        try:
+            from .credential_manager import get_credential
+        except ImportError:
+            get_credential = lambda _: None
+
+    hf_token = get_credential('huggingface') or None
+    if not hf_token:
+        log_warning("No HuggingFace token found.")
+        log_info("Run hyprwhspr setup to provide your token, or accept the model license at:")
+        log_info("  https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
+        return
+
+    try:
+        from backend_installer import install_backend
+    except ImportError:
+        from .backend_installer import install_backend
+
+    from paths import VENV_DIR
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        log_error("Cohere Transcribe venv not found. Run: hyprwhspr setup")
+        return
+
+    import subprocess, os
+    download_script = '''
+try:
+    from huggingface_hub import enable_progress_bars
+    enable_progress_bars()
+except ImportError:
+    pass
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+import torch, os, sys
+model_id = "CohereLabs/cohere-transcribe-03-2026"
+token = os.environ.get("HF_TOKEN") or None
+print("Downloading processor...", flush=True)
+AutoProcessor.from_pretrained(model_id, trust_remote_code=True, token=token)
+print("Downloading model weights (~4 GB)...", flush=True)
+sys.stdout.flush()
+model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    model_id, trust_remote_code=True, dtype=torch.bfloat16,
+    low_cpu_mem_usage=True, token=token,
+)
+del model
+print("Done.", flush=True)
+'''
+    env = {**os.environ, 'HF_TOKEN': hf_token, 'PYTHONUNBUFFERED': '1'}
+    log_info("Downloading Cohere Transcribe model (~4 GB)...")
+    result = subprocess.run([str(venv_python), '-c', download_script], env=env)
+    if result.returncode == 0:
+        log_success("Model downloaded and cached successfully")
+    else:
+        log_error("Download failed — check your HuggingFace token and license acceptance")
 
 
 # ==================== faster-whisper Model Commands ====================
@@ -3327,6 +3491,8 @@ def status_command():
             faster_whisper_model_status()
         elif backend == 'onnx-asr':
             onnx_asr_model_status()
+        elif backend == 'cohere-transcribe':
+            cohere_transcribe_model_status()
         else:
             model_status()
     except Exception:
@@ -4124,6 +4290,21 @@ def test_command(live: bool = False, mic_only: bool = False):
             backend_ready = True
         except ImportError:
             log_error("faster-whisper not installed. Run: hyprwhspr setup")
+            all_passed = False
+
+    elif backend == 'cohere-transcribe':
+        # Test Cohere Transcribe availability
+        try:
+            from transformers import AutoModelForSpeechSeq2Seq  # noqa: F401
+            log_success("Cohere Transcribe (transformers) available")
+            hf_cache = Path.home() / '.cache' / 'huggingface' / 'hub' / 'models--CohereLabs--cohere-transcribe-03-2026'
+            if hf_cache.exists():
+                log_success("Model weights cached in ~/.cache/huggingface/hub/")
+            else:
+                log_warning("Model weights not yet downloaded — will fetch on first use (~4 GB)")
+            backend_ready = True
+        except ImportError:
+            log_error("transformers not installed. Run: hyprwhspr setup and select cohere-transcribe")
             all_passed = False
 
     elif backend in ('pywhispercpp', 'nvidia', 'cpu', 'vulkan'):

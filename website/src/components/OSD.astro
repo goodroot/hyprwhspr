@@ -1,0 +1,438 @@
+---
+---
+
+<div class="osd-wrap">
+  <div class="osd">
+
+    <!-- Header bar -->
+    <div class="osd-header">
+      <span class="dot dot-red"></span>
+      <span class="dot dot-yellow"></span>
+      <span class="dot dot-green"></span>
+      <span class="osd-title">hyprwhspr</span>
+      <span class="osd-status-label">
+        <span class="state-idle">● idle</span>
+        <span class="state-recording">⏺ recording</span>
+        <span class="state-processing">◌ processing</span>
+        <span class="state-done">✓ done</span>
+      </span>
+    </div>
+
+    <!-- Body -->
+    <div class="osd-body">
+
+      <!-- Waveform (visible during recording) -->
+      <div class="osd-waveform" aria-hidden="true">
+        {Array.from({ length: 28 }).map((_, i) => (
+          <span class="bar" style={`--i: ${i}`}></span>
+        ))}
+      </div>
+
+      <!-- Processing indicator (visible during processing) -->
+      <div class="osd-processing" aria-hidden="true">
+        <span class="proc-label">transcribing</span>
+        <span class="proc-dots">
+          <span></span><span></span><span></span>
+        </span>
+      </div>
+
+      <!-- Injected text — rotates through 3 phrases over 18s -->
+      <div class="osd-result r1">
+        <span class="result-prompt">❯&nbsp;</span>
+        <span class="result-text t1">Open a pull request for the feature branch.</span>
+        <span class="result-cursor"></span>
+      </div>
+      <div class="osd-result r2">
+        <span class="result-prompt">❯&nbsp;</span>
+        <span class="result-text t2">Write unit tests for the auth module.</span>
+        <span class="result-cursor"></span>
+      </div>
+      <div class="osd-result r3">
+        <span class="result-prompt">❯&nbsp;</span>
+        <span class="result-text t3">Deploy to staging and monitor the logs.</span>
+        <span class="result-cursor"></span>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="osd-footer">
+      <span class="key">Super</span>
+      <span class="key-sep">+</span>
+      <span class="key">Alt</span>
+      <span class="key-sep">+</span>
+      <span class="key">D</span>
+      <span class="footer-hint">toggle recording</span>
+    </div>
+
+  </div>
+</div>
+
+<style>
+  /* ── Timing constants ───────────────────────────────────────────────
+     Total loop: 6s
+       0.0s–0.6s  idle (state = idle)
+       0.6s–2.6s  recording (2s)
+       2.6s–4.2s  processing (1.6s)
+       4.2s–5.8s  done / text visible
+       5.8s–6.0s  fade out, reset
+  ──────────────────────────────────────────────────────────────────── */
+  :root {
+    --loop: 6s;
+  }
+
+  /* Wrapper */
+  .osd-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem 1rem;
+  }
+
+  /* Terminal window */
+  .osd {
+    width: min(640px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow:
+      0 0 0 1px var(--border),
+      0 8px 48px rgba(0,0,0,0.6),
+      0 0 80px rgba(122, 162, 247, 0.06);
+  }
+
+  /* Header */
+  .osd-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    color: var(--comment);
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-red    { background: #f7768e44; border: 1px solid #f7768e88; }
+  .dot-yellow { background: #e0af6844; border: 1px solid #e0af6888; }
+  .dot-green  { background: #9ece6a44; border: 1px solid #9ece6a88; }
+
+  .osd-title {
+    margin-left: 0.4rem;
+    color: var(--fg-dim);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+  }
+
+  .osd-status-label {
+    margin-left: auto;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    position: relative;
+  }
+
+  /* State label animations */
+  .osd-status-label > span {
+    position: absolute;
+    right: 0;
+    opacity: 0;
+    white-space: nowrap;
+    animation: var(--loop) linear infinite;
+  }
+
+  .state-idle      { color: var(--fg-dim);   animation-name: show-idle; }
+  .state-recording { color: var(--magenta);  animation-name: show-recording; }
+  .state-processing{ color: var(--yellow);   animation-name: show-processing; }
+  .state-done      { color: var(--green);    animation-name: show-done; }
+
+  /* Each label is shown for its window, opacity 0 otherwise */
+  @keyframes show-idle {
+    0%   { opacity: 1; }
+    10%  { opacity: 1; }
+    11%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes show-recording {
+    0%   { opacity: 0; }
+    10%  { opacity: 0; }
+    11%  { opacity: 1; }
+    43%  { opacity: 1; }
+    44%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes show-processing {
+    0%   { opacity: 0; }
+    43%  { opacity: 0; }
+    44%  { opacity: 1; }
+    70%  { opacity: 1; }
+    71%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes show-done {
+    0%   { opacity: 0; }
+    70%  { opacity: 0; }
+    71%  { opacity: 1; }
+    95%  { opacity: 1; }
+    96%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* Body */
+  .osd-body {
+    padding: 2rem 1.5rem;
+    min-height: 100px;
+    display: grid;
+    place-items: center;
+    position: relative;
+  }
+
+  .osd-body > * {
+    grid-area: 1 / 1;
+    opacity: 0;
+  }
+
+  /* ── Waveform ──────────────────────────────────────────────────── */
+  .osd-waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 48px;
+    animation: fade-wave var(--loop) linear infinite;
+  }
+
+  @keyframes fade-wave {
+    0%   { opacity: 0; }
+    10%  { opacity: 0; }
+    12%  { opacity: 1; }
+    42%  { opacity: 1; }
+    44%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  .bar {
+    display: inline-block;
+    width: 4px;
+    border-radius: 2px;
+    background: var(--purple);
+    opacity: 0.85;
+    transform-origin: center;
+    animation:
+      bar-dance 0.5s ease-in-out infinite alternate,
+      fade-wave var(--loop) linear infinite;
+    /* stagger each bar slightly */
+    animation-delay: calc(var(--i) * 0.04s), 0s;
+  }
+
+  /* randomise heights via nth-child groups */
+  .bar:nth-child(4n+1) { --h-lo: 8px;  --h-hi: 36px; }
+  .bar:nth-child(4n+2) { --h-lo: 14px; --h-hi: 44px; }
+  .bar:nth-child(4n+3) { --h-lo: 6px;  --h-hi: 28px; }
+  .bar:nth-child(4n+4) { --h-lo: 10px; --h-hi: 40px; }
+
+  @keyframes bar-dance {
+    from { height: var(--h-lo, 8px);  }
+    to   { height: var(--h-hi, 40px); }
+  }
+
+  /* ── Processing ────────────────────────────────────────────────── */
+  .osd-processing {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--yellow);
+    letter-spacing: 0.1em;
+    animation: fade-proc var(--loop) linear infinite;
+  }
+
+  @keyframes fade-proc {
+    0%   { opacity: 0; }
+    44%  { opacity: 0; }
+    46%  { opacity: 1; }
+    69%  { opacity: 1; }
+    71%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  .proc-label {
+    text-transform: uppercase;
+  }
+
+  .proc-dots {
+    display: flex;
+    gap: 4px;
+  }
+
+  .proc-dots span {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--yellow);
+    animation: dot-pulse 0.8s ease-in-out infinite;
+  }
+  .proc-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .proc-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 0.2; transform: scale(0.8); }
+    50%       { opacity: 1;   transform: scale(1.2); }
+  }
+
+  /* ── Result / injected text ────────────────────────────────────── */
+  /*
+     3 texts rotate over 18s (3 × --loop).
+     Within each 6s sub-window the "done" phase is 71–97%,
+     giving more linger before reset.
+
+     Sub-window positions in the 18s cycle:
+       r1: 0–6s   → active  24%–33%
+       r2: 6–12s  → active  57%–66%
+       r3: 12–18s → active  90%–99%
+  */
+
+  .osd-result {
+    display: flex;
+    align-items: baseline;
+    font-size: 0.95rem;
+    color: var(--fg-bright);
+    opacity: 0;
+  }
+
+  .r1 { animation: result-1 18s linear infinite; }
+  .r2 { animation: result-2 18s linear infinite; }
+  .r3 { animation: result-3 18s linear infinite; }
+
+  @keyframes result-1 {
+    0%, 23%   { opacity: 0; }
+    24%       { opacity: 1; }
+    34%       { opacity: 1; }
+    35%, 100% { opacity: 0; }
+  }
+  @keyframes result-2 {
+    0%, 56%   { opacity: 0; }
+    57%       { opacity: 1; }
+    67%       { opacity: 1; }
+    68%, 100% { opacity: 0; }
+  }
+  @keyframes result-3 {
+    0%, 89%   { opacity: 0; }
+    90%       { opacity: 1; }
+    99%       { opacity: 1; }
+    100%      { opacity: 0; }
+  }
+
+  .result-prompt {
+    color: var(--blue);
+    flex-shrink: 0;
+  }
+
+  .result-text {
+    color: var(--cyan);
+    white-space: nowrap;
+    clip-path: inset(0 100% 0 0);
+  }
+
+  .t1 { animation: type-in-1 18s linear infinite; }
+  .t2 { animation: type-in-2 18s linear infinite; }
+  .t3 { animation: type-in-3 18s linear infinite; }
+
+  @keyframes type-in-1 {
+    0%, 23%   { clip-path: inset(0 100% 0 0); }
+    24%       { clip-path: inset(0 100% 0 0); }
+    30%       { clip-path: inset(0 0%   0 0); }
+    34%       { clip-path: inset(0 0%   0 0); }
+    35%, 100% { clip-path: inset(0 100% 0 0); }
+  }
+  @keyframes type-in-2 {
+    0%, 56%   { clip-path: inset(0 100% 0 0); }
+    57%       { clip-path: inset(0 100% 0 0); }
+    63%       { clip-path: inset(0 0%   0 0); }
+    67%       { clip-path: inset(0 0%   0 0); }
+    68%, 100% { clip-path: inset(0 100% 0 0); }
+  }
+  @keyframes type-in-3 {
+    0%, 89%   { clip-path: inset(0 100% 0 0); }
+    90%       { clip-path: inset(0 100% 0 0); }
+    96%       { clip-path: inset(0 0%   0 0); }
+    99%       { clip-path: inset(0 0%   0 0); }
+    100%      { clip-path: inset(0 100% 0 0); }
+  }
+
+  .result-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background: var(--cyan);
+    margin-left: 2px;
+    animation: blink 0.8s step-end infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+  }
+
+  /* ── Footer ────────────────────────────────────────────────────── */
+  .osd-footer {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.6rem 1rem;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    font-size: 0.7rem;
+    color: var(--comment);
+  }
+
+  .key {
+    display: inline-block;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--fg-dim);
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    animation: key-press var(--loop) linear infinite;
+  }
+
+  @keyframes key-press {
+    /* idle: dim */
+    0%   { color: #787c99; border-color: #2a2e42; box-shadow: none; background: #24283b; }
+    9%   { color: #787c99; border-color: #2a2e42; box-shadow: none; background: #24283b; }
+    /* recording: lit purple */
+    10%  { color: #bb9af7; border-color: #bb9af7; box-shadow: 0 0 7px rgba(187,154,247,0.35); background: rgba(187,154,247,0.1); }
+    42%  { color: #bb9af7; border-color: #bb9af7; box-shadow: 0 0 7px rgba(187,154,247,0.35); background: rgba(187,154,247,0.1); }
+    /* release: back to dim */
+    44%  { color: #787c99; border-color: #2a2e42; box-shadow: none; background: #24283b; }
+    100% { color: #787c99; border-color: #2a2e42; box-shadow: none; background: #24283b; }
+  }
+
+  .key-sep {
+    color: var(--border);
+  }
+
+  .footer-hint {
+    margin-left: 0.5rem;
+    color: var(--comment);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    animation: hint-fade var(--loop) linear infinite;
+  }
+
+  @keyframes hint-fade {
+    0%   { color: var(--comment); }
+    9%   { color: var(--comment); }
+    10%  { color: var(--fg-dim);  }
+    42%  { color: var(--fg-dim);  }
+    44%  { color: var(--comment); }
+    100% { color: var(--comment); }
+  }
+</style>

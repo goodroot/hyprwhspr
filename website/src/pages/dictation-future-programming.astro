@@ -1,0 +1,158 @@
+---
+import BlogPost from "../layouts/BlogPost.astro";
+---
+
+<BlogPost
+    title="Dictation is the Future of Programming"
+    description="We've been optimizing the wrong interface. The keyboard made sense when code was the output. Now that language is the input, your voice is faster."
+    tag="opinion"
+    date="2026-03-28"
+    readTime="4 min read"
+>
+    <h2>We've been optimizing the wrong thing</h2>
+
+    <p>
+        Fifty years of developer tooling has been about the keyboard. Faster
+        shortcuts. Better autocomplete. Modal editors. Custom layouts. The
+        implicit assumption behind all of it: <strong
+            >the bottleneck is typing speed</strong
+        >.
+    </p>
+
+    <p>
+        It never was. The bottleneck is thinking speed — and the friction
+        between a thought and its expression.
+    </p>
+
+    <h2>The agent shift changes the equation</h2>
+
+    <p>
+        This isn't incremental. For the first time in programming history, the
+        primary interface is shifting from <em>writing code</em> to <em
+            >describing intent</em
+        >. It's now a conversation with a system that understands what you mean
+        and writes the implementation. That's a different activity entirely.
+    </p>
+
+    <p>
+        When you write code character by character, keyboard fluency matters.
+        But when you write <em
+            >"add rate limiting to the API handler, 100 requests per minute per
+            user, return 429 with a retry-after header"</em
+        > — the limiting factor isn't your WPM. It's the time between forming that
+        thought and getting it into the context window.
+    </p>
+
+    <p>
+        Speaking is three to four times faster than typing for most people. More
+        importantly, spoken language carries nuance, context, and intent more
+        naturally than typed prompts. You stop editing as you go. You stop
+        abbreviating. You just say what you mean.
+    </p>
+
+    <h2>The developers already doing this</h2>
+
+    <p>
+        The pattern is showing up quietly. Developers dictating architectural
+        decisions to their AI assistant while looking at a diagram. Describing a
+        bug out loud while the agent reads the stack trace. Talking through a
+        refactor the way you'd explain it to a colleague — because that's
+        exactly what the model responds to best.
+    </p>
+
+    <p>
+        The keyboard doesn't disappear. It becomes the <em
+            >confirmation layer</em
+        >, not the primary input. You speak the intent, review the output,
+        approve or redirect.
+    </p>
+
+    <h2>What's been missing on Linux</h2>
+
+    <p>
+        This workflow has been available on macOS and Windows through built-in
+        dictation for years. On Linux, it has been <a
+            href="/linux-speech-to-text">genuinely broken</a
+        > — X11-only tools, cloud dependencies, nothing that survives a compositor
+        switch or a suspend cycle.
+    </p>
+
+    <p>
+        The missing piece was a reliable, low-latency, system-wide voice input
+        layer that:
+    </p>
+
+    <ul>
+        <li>Runs local models — no round-trip to a server, no added latency</li>
+        <li>
+            Works across every application — terminal, editor, browser, chat
+        </li>
+        <li>Stays out of the way — a hotkey, a beep, done</li>
+        <li>
+            Doesn't break — survives suspend, USB reconnects, compositor
+            restarts
+        </li>
+    </ul>
+
+    <h2>The body keeps score</h2>
+
+    <p>
+        There's another reason to care about this, and it's not about
+        productivity: <strong>your hands</strong>.
+    </p>
+
+    <p>
+        If you've been programming for a decade or two, you probably know the
+        feeling. The dull ache in your wrists after a long session. The shoulder
+        tension that never fully releases. The occasional twinge that makes you
+        wonder how many more years of this you have left. RSI doesn't announce
+        itself — it accumulates, quietly, until one day it's just part of the
+        job.
+    </p>
+
+    <p>
+        Dictation doesn't fix years of damage, but it changes the load. Speaking
+        instead of typing means hours of keyboard time you're not spending. For
+        longer prompts, explanations, documentation, commit messages — anything
+        where you're producing prose rather than navigating code — your hands
+        get a break. Over weeks and months, that adds up.
+    </p>
+
+    <p>
+        This isn't a minor ergonomic tweak. For some developers, it's the
+        difference between a sustainable career and one cut short by chronic
+        pain.
+    </p>
+
+    <h2>The compounding effect</h2>
+
+    <p>
+        There's something that happens after a few days of dictation that's hard
+        to predict in advance: it changes how you think about prompting.
+    </p>
+
+    <p>
+        Typing encourages terse, abbreviated communication. You leave out
+        context because every word costs keystrokes. Speaking doesn't have that
+        friction. You give the agent what it actually needs — the full picture,
+        the constraints, the edge cases you're already thinking about.
+    </p>
+
+    <p>Better input produces better output. The improvement compounds.</p>
+
+    <h2>Try it for a week</h2>
+
+    <p>
+        The awkwardness of talking to your screen fades by day two. By day five,
+        switching back to typed prompts feels like going from broadband to
+        dial-up. The interface overhead just becomes visible in a way it wasn't
+        before.
+    </p>
+
+    <p>
+        If you're on Linux and you work with AI tools daily — coding assistants,
+        writing tools, research — voice input isn't a novelty. It's the next
+        obvious step. <a href="/best-speech-to-text-models">Pick a model</a> that
+        fits your hardware and give it a week.
+    </p>
+</BlogPost>

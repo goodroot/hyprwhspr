@@ -90,6 +90,10 @@ class ConfigManager:
             'faster_whisper_device': 'auto',         # 'auto' | 'cuda' | 'cpu'
             'faster_whisper_compute_type': 'auto',   # 'auto' → int8 on cuda, float32 on cpu
             'faster_whisper_vad_filter': True,       # Enable Silero VAD (strips silence, reduces hallucinations)
+            # Cohere Transcribe backend settings (transformers, CUDA/CPU)
+            'cohere_transcribe_device': 'auto',      # 'auto' | 'cuda' | 'cpu'
+            'cohere_transcribe_dtype': 'bfloat16',   # 'bfloat16' | 'float32' — bfloat16 halves VRAM without float16 overflow in attention masking
+            'cohere_transcribe_compile': False,      # torch.compile encoder for faster throughput (adds warmup on first call)
             # Audio feedback settings
             'audio_feedback': False,             # Play sounds on recording start/stop/error
             'audio_volume': 1.0,                 # Master audio feedback volume (0.0-1.0)
@@ -110,7 +114,11 @@ class ConfigManager:
             # Long-form recording mode settings
             'long_form_submit_shortcut': None,   # Shortcut to submit long-form recording (e.g., "Super+Return")
             'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
-            'long_form_auto_save_interval': 300  # Auto-save interval in seconds (default: 5 minutes)
+            'long_form_auto_save_interval': 300, # Auto-save interval in seconds (default: 5 minutes)
+            # Audio stream cold-start recovery
+            # How long (seconds) to wait between stream.start() retries when PortAudio times out.
+            # Increase this if your USB mic frequently fails on the first recording after idle.
+            'stream_start_retry_delay': 1.5
         }
         
         # Set up config directory and file path
