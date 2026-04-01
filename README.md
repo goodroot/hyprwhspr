@@ -14,6 +14,10 @@
     <i>Supports Arch, Debian, Ubuntu, Fedora, openSUSE and more</i>
  </p>
 
+ <p align="center">
+    <i>[hyprwhspr.com](https://hyprwhspr.com)</i>
+ </p>
+
 https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
