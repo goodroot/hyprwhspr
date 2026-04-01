@@ -409,9 +409,9 @@ Model stored in: `~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe
 
 Parakeet V3 via [onnx-asr](https://github.com/istupakov/onnx-asr) is a fantastic project.
 
-It provides very strong accuracy and nigh unbelievable speed on modest CPUs.
+Typically, this model would need a larger GPU, similar to Whisper Turbo-V3.
 
-Also great for GPUs.
+It enables CPU-bound usage of a leading model, with a very small hit to accuracy.
 
 Select Parakeet V3 within `hyprwhspr setup`.
 
@@ -938,7 +938,7 @@ hyprwhspr model unload
 hyprwhspr model reload
 ```
 
-Only applies to local-model backends (`pywhispercpp`, `faster-whisper`, `onnx-asr`). 
+Only applies to local-model backends (Cohere Transcribe, `pywhispercpp`, `faster-whisper`, `onnx-asr`). 
 
 No-op for `rest-api` and `realtime-ws` (those hold no local GPU memory).
 
