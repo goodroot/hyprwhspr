@@ -40,7 +40,7 @@ import "../styles/global.css";
             <a class="btn btn-primary" href="https://github.com/goodroot/hyprwhspr">
               <span class="btn-icon">⌂</span> View on GitHub
             </a>
-            <a class="btn btn-secondary" href="https://github.com/goodroot/hyprwhspr?tab=readme-ov-file#quick-start-arch-linux">
+            <a class="btn btn-secondary" href="/#install">
               Quick install
             </a>
           </div>
@@ -158,7 +158,7 @@ import "../styles/global.css";
       </section>
 
       <!-- Install -->
-      <section class="install">
+      <section class="install" id="install">
         <div class="install-inner">
           <h2 class="section-title">
             <span class="title-dim">──</span> Install
@@ -207,6 +207,39 @@ import "../styles/global.css";
         </div>
       </section>
 
+      <!-- Writing -->
+      <section class="writing">
+        <div class="writing-inner">
+          <h2 class="section-title">
+            <span class="title-dim">──</span> Writing
+          </h2>
+          <div class="post-grid">
+
+            <a class="post-card" href="/linux-speech-to-text">
+              <span class="post-card-tag">guide</span>
+              <h3>Voice Typing on Linux in 2026</h3>
+              <p>Speech-to-text on Linux has been broken for years. Local models and Wayland maturity have finally changed that.</p>
+              <span class="post-card-read">Read →</span>
+            </a>
+
+            <a class="post-card" href="/best-speech-to-text-models">
+              <span class="post-card-tag">models</span>
+              <h3>Best Speech-to-Text Models for Linux</h3>
+              <p>Parakeet TDT V3, Whisper, onnx-asr, Cohere — which model fits your hardware and workflow.</p>
+              <span class="post-card-read">Read →</span>
+            </a>
+
+            <a class="post-card" href="/dictation-future-programming">
+              <span class="post-card-tag">opinion</span>
+              <h3>Dictation is the Future of Programming</h3>
+              <p>The keyboard made sense when code was the output. Now that language is the input, your voice is faster.</p>
+              <span class="post-card-read">Read →</span>
+            </a>
+
+          </div>
+        </div>
+      </section>
+
     </main>
 
     <footer>
@@ -216,6 +249,8 @@ import "../styles/global.css";
         <a href="https://github.com/goodroot/hyprwhspr/blob/main/LICENSE">MIT</a>
         <span class="footer-sep">·</span>
         <a href="https://github.com/goodroot/hyprwhspr">GitHub</a>
+        <span class="footer-sep">·</span>
+        <a href="/privacy">Privacy</a>
       </div>
     </footer>
 
@@ -578,6 +613,59 @@ import "../styles/global.css";
     flex: 1;
     height: 1px;
     background: var(--border);
+  }
+
+  /* ── Writing ─────────────────────────────────────────────────── */
+  .post-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1rem;
+  }
+
+  .post-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: inherit;
+    transition: border-color 0.15s;
+  }
+
+  .post-card:hover {
+    border-color: var(--blue);
+  }
+
+  .post-card-tag {
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--purple);
+    font-weight: 500;
+  }
+
+  .post-card h3 {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--fg-bright);
+    line-height: 1.4;
+    letter-spacing: 0.01em;
+  }
+
+  .post-card p {
+    font-size: 0.76rem;
+    color: var(--fg-dim);
+    line-height: 1.6;
+    flex: 1;
+  }
+
+  .post-card-read {
+    font-size: 0.72rem;
+    color: var(--blue);
+    letter-spacing: 0.04em;
+    margin-top: 0.25rem;
   }
 
   /* ── Footer ───────────────────────────────────────────────────── */
