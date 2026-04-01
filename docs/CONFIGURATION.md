@@ -417,7 +417,7 @@ Select Parakeet V3 within `hyprwhspr setup`.
 
 Model storage: `~/.cache/huggingface/hub/`. 
 
-The Parakeet model is downloaded automatically when the backend starts. 
+The Parakeet model (~1 GB) is downloaded during setup.
 
 With Parakeet selected, `hyprwhspr model list` and `hyprwhspr model status` show Parakeet info.
 

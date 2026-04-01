@@ -1733,7 +1733,7 @@ def setup_command(python_path: Optional[str] = None):
     elif selected_model:
         print(f"Model: {selected_model}")
     elif backend_normalized == 'onnx-asr':
-        print("Model: nemo-parakeet-tdt-0.6b-v3 (default, auto-downloaded on first use)")
+        print("Model: nemo-parakeet-tdt-0.6b-v3 (~1 GB, downloaded during setup)")
     elif backend_normalized == 'cohere-transcribe':
         print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
@@ -2255,7 +2255,7 @@ def omarchy_command(args=None):
             log_warning("Model download verification failed - model may not be available")
             log_warning(f"You can download it later with: hyprwhspr model download {model_to_download}")
     elif backend == 'onnx-asr':
-        log_info("onnx-asr model will be downloaded automatically on first use")
+        log_info("onnx-asr model downloaded during setup")
 
     # 7. Waybar integration (if detected and not skipped)
     print("\n" + "="*60)
@@ -3111,8 +3111,8 @@ def model_command(action: str, model_name: str = 'base'):
         elif action == 'status':
             onnx_asr_model_status()
         elif action == 'download':
-            log_info("Parakeet model is downloaded automatically when the backend starts.")
-            log_info("To pre-download: start the Parakeet service once (e.g. hyprwhspr start, or enable systemd and log in).")
+            log_info("Parakeet model is downloaded during setup.")
+            log_info("If the model is missing, re-run: hyprwhspr setup")
         else:
             log_error(f"Unknown model action: {action}")
     elif backend == 'cohere-transcribe':
@@ -3254,7 +3254,7 @@ def onnx_asr_model_status():
                 found.append(model_dir)
     if not found:
         log_warning("No Parakeet model found in ~/.cache/huggingface/hub/")
-        log_info("The model will download automatically when the Parakeet backend starts.")
+        log_info("Model not found. Re-run: hyprwhspr setup to download it.")
         return
 
     print("Parakeet (onnx-asr) model cache:")
@@ -3271,7 +3271,7 @@ def onnx_asr_model_status():
 def list_onnx_asr_models():
     """List Parakeet/onnx-asr model option (single supported model for now)."""
     print("Parakeet (onnx-asr) model:\n")
-    print("  - nemo-parakeet-tdt-0.6b-v3  (default; downloaded from Hugging Face on first use)")
+    print("  - nemo-parakeet-tdt-0.6b-v3  (~1 GB, downloaded during setup)")
     print()
     print("Storage: ~/.cache/huggingface/hub/")
     print("To check if the model is cached: hyprwhspr model status")
