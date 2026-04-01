@@ -1,0 +1,257 @@
+---
+import BlogPost from "../layouts/BlogPost.astro";
+---
+
+<BlogPost
+    title="Best Speech-to-Text Models for Linux in 2026"
+    description="Parakeet TDT V3, Whisper, Cohere Transcribe — a clear breakdown of which model fits your hardware and workflow."
+    tag="models"
+    date="2026-03-20"
+    readTime="5 min read"
+>
+    <h2>The model shapes everything</h2>
+
+    <p>
+        Latency, accuracy, GPU requirements, language support, privacy — all of
+        it flows from your model choice. The good news: in 2026, every tier is
+        genuinely excellent. The question is matching the model to your hardware
+        and workflow.
+    </p>
+
+    <p>
+        For an objective view of where models stand, the <a
+            href="https://huggingface.co/spaces/hf-audio/open_asr_leaderboard"
+            target="_blank"
+            rel="noopener">Open ASR Leaderboard</a
+        > on Hugging Face tracks Word Error Rate (WER) across standardised benchmarks.
+        It's the most reliable public signal for comparing transcription accuracy
+        across models.
+    </p>
+
+    <h2>Cohere Transcribe</h2>
+
+    <p>
+        <strong
+            >Best for: maximum accuracy, long-form content, technical
+            vocabulary.</strong
+        >
+    </p>
+
+    <p>
+        Cohere Transcribe currently sits at <strong
+            >#1 on the Open ASR Leaderboard</strong
+        > — 5.42 average WER versus 7.44 for Whisper large-v3. For developers dictating
+        technical language, API names, and command-line flags, that gap is meaningful.
+    </p>
+
+    <a
+        href="https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release"
+        target="_blank"
+        rel="noopener"
+    >
+        <img
+            src="https://cdn-uploads.huggingface.co/production/uploads/6867ac274d8d690302fd0378/VtvUqMr9ibvv47Wj3gvI3.png"
+            alt="Cohere Transcribe benchmark results vs Whisper large-v3"
+            style="width: 100%; border-radius: 6px; border: 1px solid #2a2e42; margin: 1rem 0;"
+        />
+    </a>
+
+    <table>
+        <thead>
+            <tr
+                ><th>Benchmark</th><th>Cohere Transcribe</th><th
+                    >Whisper large-v3</th
+                ></tr
+            >
+        </thead>
+        <tbody>
+            <tr
+                ><td>LibriSpeech clean</td><td><strong>1.25</strong></td><td
+                    >2.7</td
+                ></tr
+            >
+            <tr
+                ><td>LibriSpeech other</td><td><strong>2.37</strong></td><td
+                    >5.2</td
+                ></tr
+            >
+            <tr><td>TedLium</td><td><strong>2.49</strong></td><td>4.2</td></tr>
+            <tr
+                ><td>SPGISpeech</td><td><strong>3.08</strong></td><td>4.7</td
+                ></tr
+            >
+            <tr><td>VoxPopuli</td><td><strong>5.87</strong></td><td>9.1</td></tr
+            >
+            <tr
+                ><td>Gigaspeech</td><td><strong>9.33</strong></td><td>10.3</td
+                ></tr
+            >
+            <tr
+                ><td>Earnings22</td><td><strong>10.84</strong></td><td>12.7</td
+                ></tr
+            >
+            <tr
+                ><td><strong>Average WER</strong></td><td
+                    ><strong>5.42</strong></td
+                ><td>7.44</td></tr
+            >
+        </tbody>
+    </table>
+
+    <p>
+        Lower WER is better. Full benchmark details at the <a
+            href="https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release"
+            target="_blank"
+            rel="noopener">Cohere Transcribe release blog</a
+        >.
+    </p>
+
+    <ul>
+        <li>Runs locally — ~4 GB VRAM (bfloat16) or CPU with ~8 GB RAM</li>
+        <li>
+            14 languages including English, German, French, Spanish, Japanese,
+            Korean
+        </li>
+        <li>Gated model — requires a free HuggingFace token to download</li>
+        <li>Privacy: fully local</li>
+    </ul>
+
+    <h2>Parakeet TDT V3</h2>
+
+    <p>
+        <strong>Best for: fast local English dictation on GPU or CPU.</strong>
+    </p>
+
+    <p>
+        NVIDIA's Parakeet TDT V3 is state of the art for English transcription.
+        Sub-second latency on a mid-range GPU, accuracy that handles natural
+        speech, technical vocabulary, and fast delivery without breaking a
+        sweat. hyprwhspr runs Parakeet through the <a
+            href="https://github.com/istupakov/onnx-asr"
+            target="_blank"
+            rel="noopener">onnx-asr</a
+        > runtime, which makes a model that typically requires a large GPU run surprisingly
+        well on CPU with minimal accuracy trade-off.
+    </p>
+
+    <ul>
+        <li>Requires: ~1 GB RAM (CPU) or VRAM (GPU)</li>
+        <li>Languages: English (optimised)</li>
+        <li>Latency: under 500ms on GPU, 1–2 seconds on modern CPU</li>
+        <li>Privacy: fully local</li>
+    </ul>
+
+    <p>
+        If you're running a local LLM alongside hyprwhspr and need to conserve
+        VRAM, Parakeet on CPU is the right call — you get excellent accuracy
+        without competing for GPU memory.
+    </p>
+
+    <h2>Whisper family</h2>
+
+    <p>
+        <strong
+            >Best for: multiple languages, or when flexibility matters more than
+            raw speed.</strong
+        >
+    </p>
+
+    <p>
+        OpenAI's Whisper is the most battle-tested open-source transcription
+        model. It runs at five sizes — <code>tiny</code> through <code
+            >large-v3</code
+        > — so you can tune the accuracy/speed trade-off to your hardware. Genuinely
+        strong across 90+ languages, and it can translate directly to English from
+        any of them.
+    </p>
+
+    <ul>
+        <li>Requires: GPU for large variants, CPU workable with tiny/base</li>
+        <li>Languages: 90+</li>
+        <li>Latency: varies by size — base.en is fast, large-v3 is thorough</li>
+        <li>Privacy: fully local</li>
+    </ul>
+
+    <h2>faster-whisper</h2>
+
+    <p>
+        <strong
+            >Best for: multilingual on constrained hardware, or CPU-only setups
+            needing Whisper.</strong
+        >
+    </p>
+
+    <p>
+        <a
+            href="https://github.com/SYSTRAN/faster-whisper"
+            target="_blank"
+            rel="noopener">faster-whisper</a
+        > is a highly optimised Whisper implementation that runs large-v3-turbo in
+        ~3.1 GB VRAM (INT8) versus ~6 GB for float16. If you need Whisper's multilingual
+        support but don't have a beefy GPU, faster-whisper closes the gap. It also
+        offers faster CPU inference than whisper.cpp for users without a GPU.
+    </p>
+
+    <ul>
+        <li>Requires: ~3 GB VRAM (INT8) or CPU with ~8 GB RAM</li>
+        <li>Languages: 90+ (full Whisper language support)</li>
+        <li>Latency: 1–3 seconds depending on hardware and model size</li>
+        <li>Privacy: fully local</li>
+    </ul>
+
+    <h2>Cloud options</h2>
+
+    <p>
+        When privacy isn't a constraint and you want the fastest possible
+        turnaround — or you're dictating long documents where every word counts
+        — cloud backends are available. Groq's Whisper inference is extremely
+        fast. OpenAI's API is the most widely compatible. Cohere's cloud API
+        brings the same leaderboard-leading accuracy without local hardware
+        requirements.
+    </p>
+
+    <p>
+        All cloud options require an API key and send audio to a third-party
+        server. The <a href="/dictation-future-programming"
+            >case for keeping it local</a
+        > is worth reading if you're undecided.
+    </p>
+
+    <h2>Quick reference</h2>
+
+    <table>
+        <thead>
+            <tr><th>Use case</th><th>Model</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>Maximum accuracy</td><td>Cohere Transcribe</td></tr>
+            <tr><td>Fast local English (GPU)</td><td>Parakeet TDT V3</td></tr>
+            <tr
+                ><td>Fast local English (CPU)</td><td
+                    >Parakeet TDT V3 via onnx-asr</td
+                ></tr
+            >
+            <tr><td>Multiple languages</td><td>Whisper large-v3</td></tr>
+            <tr
+                ><td>Multilingual, constrained VRAM</td><td>faster-whisper</td
+                ></tr
+            >
+            <tr><td>Fastest cloud</td><td>Cohere Transcribe</td></tr>
+            <tr
+                ><td>Custom / self-hosted</td><td>Any OpenAI-compatible API</td
+                ></tr
+            >
+        </tbody>
+    </table>
+
+    <h2>Switching is easy</h2>
+
+    <p>
+        hyprwhspr supports all of these backends. The setup wizard walks you
+        through the initial choice based on your hardware. Changing later is one
+        config edit and a service restart — no reinstall, no data migration. If
+        you're just getting started, see <a href="/linux-speech-to-text"
+            >the full setup guide</a
+        > for a walkthrough of the complete stack.
+    </p>
+</BlogPost>
