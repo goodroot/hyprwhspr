@@ -1,5 +1,4 @@
 ---
-const demoText = "Open a pull request for the feature branch.";
 ---
 
 <div class="osd-wrap">
@@ -37,10 +36,20 @@ const demoText = "Open a pull request for the feature branch.";
         </span>
       </div>
 
-      <!-- Injected text (visible after processing) -->
-      <div class="osd-result">
+      <!-- Injected text — rotates through 3 phrases over 18s -->
+      <div class="osd-result r1">
         <span class="result-prompt">❯&nbsp;</span>
-        <span class="result-text">{demoText}</span>
+        <span class="result-text t1">Open a pull request for the feature branch.</span>
+        <span class="result-cursor"></span>
+      </div>
+      <div class="osd-result r2">
+        <span class="result-prompt">❯&nbsp;</span>
+        <span class="result-text t2">Write unit tests for the auth module.</span>
+        <span class="result-cursor"></span>
+      </div>
+      <div class="osd-result r3">
+        <span class="result-prompt">❯&nbsp;</span>
+        <span class="result-text t3">Deploy to staging and monitor the logs.</span>
         <span class="result-cursor"></span>
       </div>
 
@@ -277,21 +286,46 @@ const demoText = "Open a pull request for the feature branch.";
   }
 
   /* ── Result / injected text ────────────────────────────────────── */
+  /*
+     3 texts rotate over 18s (3 × --loop).
+     Within each 6s sub-window the "done" phase is 71–97%,
+     giving more linger before reset.
+
+     Sub-window positions in the 18s cycle:
+       r1: 0–6s   → active  24%–33%
+       r2: 6–12s  → active  57%–66%
+       r3: 12–18s → active  90%–99%
+  */
+
   .osd-result {
     display: flex;
     align-items: baseline;
     font-size: 0.95rem;
     color: var(--fg-bright);
-    animation: fade-result var(--loop) linear infinite;
+    opacity: 0;
   }
 
-  @keyframes fade-result {
-    0%   { opacity: 0; }
-    71%  { opacity: 0; }
-    73%  { opacity: 1; }
-    95%  { opacity: 1; }
-    97%  { opacity: 0; }
-    100% { opacity: 0; }
+  .r1 { animation: result-1 18s linear infinite; }
+  .r2 { animation: result-2 18s linear infinite; }
+  .r3 { animation: result-3 18s linear infinite; }
+
+  @keyframes result-1 {
+    0%, 23%   { opacity: 0; }
+    24%       { opacity: 1; }
+    34%       { opacity: 1; }
+    35%, 100% { opacity: 0; }
+  }
+  @keyframes result-2 {
+    0%, 56%   { opacity: 0; }
+    57%       { opacity: 1; }
+    67%       { opacity: 1; }
+    68%, 100% { opacity: 0; }
+  }
+  @keyframes result-3 {
+    0%, 89%   { opacity: 0; }
+    90%       { opacity: 1; }
+    99%       { opacity: 1; }
+    100%      { opacity: 0; }
   }
 
   .result-prompt {
@@ -302,18 +336,33 @@ const demoText = "Open a pull request for the feature branch.";
   .result-text {
     color: var(--cyan);
     white-space: nowrap;
-    /* reveal via clip-path so layout width stays constant */
     clip-path: inset(0 100% 0 0);
-    animation: type-in var(--loop) linear infinite;
   }
 
-  @keyframes type-in {
-    0%   { clip-path: inset(0 100% 0 0); }
-    71%  { clip-path: inset(0 100% 0 0); }
-    88%  { clip-path: inset(0 0%   0 0); }
-    95%  { clip-path: inset(0 0%   0 0); }
-    97%  { clip-path: inset(0 100% 0 0); }
-    100% { clip-path: inset(0 100% 0 0); }
+  .t1 { animation: type-in-1 18s linear infinite; }
+  .t2 { animation: type-in-2 18s linear infinite; }
+  .t3 { animation: type-in-3 18s linear infinite; }
+
+  @keyframes type-in-1 {
+    0%, 23%   { clip-path: inset(0 100% 0 0); }
+    24%       { clip-path: inset(0 100% 0 0); }
+    30%       { clip-path: inset(0 0%   0 0); }
+    34%       { clip-path: inset(0 0%   0 0); }
+    35%, 100% { clip-path: inset(0 100% 0 0); }
+  }
+  @keyframes type-in-2 {
+    0%, 56%   { clip-path: inset(0 100% 0 0); }
+    57%       { clip-path: inset(0 100% 0 0); }
+    63%       { clip-path: inset(0 0%   0 0); }
+    67%       { clip-path: inset(0 0%   0 0); }
+    68%, 100% { clip-path: inset(0 100% 0 0); }
+  }
+  @keyframes type-in-3 {
+    0%, 89%   { clip-path: inset(0 100% 0 0); }
+    90%       { clip-path: inset(0 100% 0 0); }
+    96%       { clip-path: inset(0 0%   0 0); }
+    99%       { clip-path: inset(0 0%   0 0); }
+    100%      { clip-path: inset(0 100% 0 0); }
   }
 
   .result-cursor {
@@ -322,9 +371,7 @@ const demoText = "Open a pull request for the feature branch.";
     height: 1em;
     background: var(--cyan);
     margin-left: 2px;
-    animation:
-      blink 0.8s step-end infinite,
-      fade-result var(--loop) linear infinite;
+    animation: blink 0.8s step-end infinite;
   }
 
   @keyframes blink {
