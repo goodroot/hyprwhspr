@@ -1,0 +1,159 @@
+---
+import BlogPost from "../layouts/BlogPost.astro";
+---
+
+<BlogPost
+    title="Voice Typing on Linux in 2026"
+    description="Speech-to-text on Linux has been broken for years. Local models, Wayland maturity, and the right tooling have finally changed that."
+    tag="guide"
+    date="2026-03-15"
+    readTime="4 min read"
+>
+    <h2>The old problem</h2>
+
+    <p>
+        For most of Linux history, voice input was an afterthought. Dragon
+        NaturallySpeaking was Windows-only. The open source alternatives — CMU
+        Sphinx, Julius — demanded days of configuration for mediocre results.
+        And when the Linux desktop split between X11 and Wayland, even the hacks
+        that worked stopped working.
+    </p>
+
+    <p>
+        The usual workarounds: <code>xdotool</code> for text injection (broken on
+        Wayland), ibus or fcitx voice plugins (abandoned), browser-based solutions
+        (cloud-dependent, can't type in your terminal). None of it was reliable. Most
+        of it required babysitting.
+    </p>
+
+    <h2>What changed</h2>
+
+    <p>
+        Two things converged: <strong>Whisper</strong> and <strong
+            >Wayland maturing</strong
+        >.
+    </p>
+
+    <p>
+        OpenAI's Whisper, released in 2022, brought genuinely accurate
+        open-source transcription to consumer hardware. Where previous models
+        required custom vocabulary training and weeks of tuning, Whisper worked
+        well out of the box — on a GPU you already owned. Since then, the model
+        landscape has exploded: Parakeet TDT V3, onnx-asr, Cohere Transcribe,
+        each pushing accuracy and speed further. For a detailed breakdown, see <a href="/best-speech-to-text-models">best speech-to-text models for Linux</a>.
+    </p>
+
+    <p>
+        On the Wayland side, <code>ydotool</code> solved the injection problem. Unlike
+        <code>xdotool</code>, it operates at the kernel level via <code
+            >uinput</code
+        > — compositor-agnostic, works in every application, no X11 dependency.
+    </p>
+
+    <h2>The modern stack</h2>
+
+    <p>A practical Linux speech-to-text setup in 2026 looks like this:</p>
+
+    <ul>
+        <li>
+            <strong>Model</strong>: Cohere Transcribe, Parakeet TDT V3 or
+            Whisper, running purely local
+        </li>
+        <li>
+            <strong>Hotkey</strong>: evdev-based listener — works on Hyprland,
+            GNOME, KDE, Sway
+        </li>
+        <li>
+            <strong>Injection</strong>: ydotool pastes transcribed text into any
+            active window
+        </li>
+        <li>
+            <strong>Service</strong>: systemd keeps it running in the
+            background, model hot in memory
+        </li>
+    </ul>
+
+    <p>
+        Press a key. Speak. Text appears — in your terminal, editor, browser, or
+        chat. No round-trip to a server. No copy-paste. No mode-switching.
+    </p>
+
+    <h2>Latency that doesn't break flow</h2>
+
+    <p>
+        The key design decision that makes dictation usable versus frustrating: <strong
+            >the model stays loaded in memory</strong
+        >. Most voice tools load the model on every invocation — a two to five
+        second pause before you can speak. With the model hot, transcription
+        starts immediately and completes in under a second on a mid-range GPU.
+    </p>
+
+    <p>
+        No GPU? <code>onnx-asr</code> is optimized for CPU and delivers surprisingly
+        competitive latency on modern processors. The setup wizard auto-detects your
+        hardware and picks the right backend.
+    </p>
+
+    <h2>Quality: jargon, acronyms, and why training data matters</h2>
+
+    <p>
+        Accuracy on clean, general speech is a solved problem. Where models
+        still diverge is on the stuff that actually fills a technical workday:
+        acronyms, domain jargon, product names, command-line flags, and the
+        shorthand that lives inside every team and subculture.
+    </p>
+
+    <p>
+        Whisper's broad training corpus gives it a strong baseline — it has
+        absorbed enough of the internet to recognize terms like <code
+            >systemd</code
+        >, <code>GNOME</code>, or <code>Wayland</code> without hand-holding. Newer
+        models like Parakeet TDT V3 and Cohere Transcribe push this further, trained
+        on richer and more recent data that includes technical documentation, developer
+        conversations, and domain-specific speech.
+    </p>
+
+    <p>
+        The difference shows up in practice. A model trained on narrow data will
+        hear "KVM" as a jumble, mangle "ydotool", or confidently transcribe
+        "WLR" as something unrecognizable. A well-trained model handles these
+        correctly.
+    </p>
+
+    <p>
+        The practical upshot: the more your workflow leans on technical
+        language, the more the choice of model matters. If you spend your day
+        dictating prose, most models are equivalent. If you're narrating shell
+        commands, API names, or internal tooling acronyms, the training data
+        quality of your chosen backend becomes the actual bottleneck.
+    </p>
+
+    <h2>Privacy, finally</h2>
+
+    <p>
+        Local inference means no audio leaves your machine. No account required.
+        No API key for the default backend. No one is training on your
+        dictation.
+    </p>
+
+    <p>
+        Cloud backends are available for maximum accuracy — OpenAI, Groq,
+        Cohere, ElevenLabs — but they're opt-in. The default is private.
+    </p>
+
+    <h2>Getting started</h2>
+
+    <p>
+        On Arch, a single AUR package covers the full install. On Debian,
+        Ubuntu, Fedora, and openSUSE, a dependency script handles the platform
+        differences. Either way, the interactive setup wizard walks you through
+        backend selection, model download, Waybar integration, and systemd
+        configuration in one session.
+    </p>
+
+    <p>
+        The first time you press the hotkey and your spoken words appear
+        instantly in your editor, it feels like a small unlock. By the end of
+        the week it's hard to go back — especially if you're <a href="/dictation-future-programming">using it to talk to AI tools</a>.
+    </p>
+</BlogPost>

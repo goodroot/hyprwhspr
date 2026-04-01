@@ -1,0 +1,50 @@
+/* Tokyo Night palette */
+:root {
+  --bg:        #1a1b26;
+  --bg-alt:    #16161e;
+  --surface:   #24283b;
+  --border:    #2a2e42;
+  --comment:   #565f89;
+  --fg-dim:    #787c99;
+  --fg:        #c0caf5;
+  --fg-bright: #e8eaf6;
+
+  --blue:      #7aa2f7;
+  --cyan:      #7dcfff;
+  --purple:    #bb9af7;
+  --magenta:   #f7768e;
+  --green:     #9ece6a;
+  --yellow:    #e0af68;
+  --orange:    #ff9e64;
+
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+  --font-sans: "Inter", system-ui, sans-serif;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  background: var(--bg-alt);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--cyan);
+}
