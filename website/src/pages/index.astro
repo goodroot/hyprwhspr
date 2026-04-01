@@ -691,6 +691,13 @@ import "../styles/global.css";
         border-color: var(--blue);
     }
 
+    @media (max-width: 480px) {
+        .feature-full {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+    }
+
     /* ── Install ──────────────────────────────────────────────────── */
     .install-inner {
         display: flex;
@@ -739,6 +746,7 @@ import "../styles/global.css";
         border: 1px solid var(--border);
         border-radius: 6px;
         font-size: 0.82rem;
+        overflow-x: auto;
     }
 
     .code-block.multiline {
@@ -764,6 +772,7 @@ import "../styles/global.css";
 
     .code-line {
         color: var(--cyan);
+        white-space: nowrap;
     }
 
     .code-comment {

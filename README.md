@@ -105,8 +105,8 @@ hyprwhspr can run on any Linux distribution with systemd.
 
 ```bash
 # Clone the repo
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr
+git clone https://github.com/goodroot/hyprwhspr.git
+cd hyprwhspr
 
 # Install dependencies for your distro (Ubuntu, Debian, Fedora, openSUSE)
 ./scripts/install-deps.sh
