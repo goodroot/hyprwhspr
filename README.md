@@ -235,8 +235,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 - [Minimal configuration](docs/CONFIGURATION.md#minimal-configuration)
 - [Recording modes](docs/CONFIGURATION.md#recording-modes) -- toggle, push-to-talk, auto, long-form
 - [Custom hotkeys](docs/CONFIGURATION.md#custom-hotkeys) -- key support, secondary shortcuts, Hyprland bindings
-- [Transcription backends](docs/CONFIGURATION.md#transcription-backends) -- REST API, Realtime WebSocket
-- [Models](docs/CONFIGURATION.md#models) -- Cohere Transcribe, Parakeet, Whisper
+- [Backends](docs/CONFIGURATION.md#backends) -- Cohere Transcribe, Parakeet, Whisper, REST API, Realtime WebSocket
 - [GPU resource management](docs/CONFIGURATION.md#gpu-resource-management) -- unload/reload model to free VRAM
 - [Audio and visual feedback](docs/CONFIGURATION.md#audio-and-visual-feedback) -- visualizer, audio feedback, ducking
 - [Text processing](docs/CONFIGURATION.md#text-processing) -- word overrides, filler words, symbol replacements
