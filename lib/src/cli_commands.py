@@ -1374,23 +1374,27 @@ def setup_command(python_path: Optional[str] = None):
                 # Cohere Transcribe is a gated HuggingFace model — each user must accept
                 # the license and authenticate with their own token before downloading.
                 if backend_normalized == 'cohere-transcribe':
-                    print("\nCohere Transcribe is a gated model on HuggingFace.")
-                    print("Before continuing:")
-                    print("  1. Accept the license at: https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
-                    print("  2. Generate a read token at: https://huggingface.co/settings/tokens")
-                    hf_token = Prompt.ask("\nHuggingFace token", password=True)
-                    if hf_token and hf_token.strip():
-                        token_clean = hf_token.strip()
-                        # Basic format check: HF read tokens start with "hf_"
-                        if not token_clean.startswith('hf_'):
-                            log_warning("Token doesn't start with 'hf_' — double-check you copied a read token")
-                        else:
-                            masked = token_clean[:6] + '*' * (len(token_clean) - 9) + token_clean[-3:]
-                            log_success(f"Token received: {masked} ({len(token_clean)} chars)")
-                        save_credential('huggingface', token_clean)
-                        log_success("HuggingFace token securely saved")
+                    existing_hf_token = get_credential('huggingface')
+                    if existing_hf_token:
+                        log_success("HuggingFace token already saved — skipping prompt")
                     else:
-                        log_warning("No token provided — model download will likely fail")
+                        print("\nCohere Transcribe is a gated model on HuggingFace.")
+                        print("Before continuing:")
+                        print("  1. Accept the license at: https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
+                        print("  2. Generate a read token at: https://huggingface.co/settings/tokens")
+                        hf_token = Prompt.ask("\nHuggingFace token", password=True)
+                        if hf_token and hf_token.strip():
+                            token_clean = hf_token.strip()
+                            # Basic format check: HF read tokens start with "hf_"
+                            if not token_clean.startswith('hf_'):
+                                log_warning("Token doesn't start with 'hf_' — double-check you copied a read token")
+                            else:
+                                masked = token_clean[:6] + '*' * (len(token_clean) - 9) + token_clean[-3:]
+                                log_success(f"Token received: {masked} ({len(token_clean)} chars)")
+                            save_credential('huggingface', token_clean)
+                            log_success("HuggingFace token securely saved")
+                        else:
+                            log_warning("No token provided — model download will likely fail")
 
                 # Pass force_rebuild=True when reinstalling to ensure clean venv
                 # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
