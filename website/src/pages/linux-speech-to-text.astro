@@ -38,7 +38,9 @@ import BlogPost from "../layouts/BlogPost.astro";
         OpenAI's Whisper, released in 2022, brought genuinely accurate
         open-source transcription to consumer hardware. Where previous models
         required custom vocabulary training and weeks of tuning, Whisper worked
-        well out of the box — on a GPU you already owned. Since then, the model
+        well out of the box — on a GPU you already owned. Crucially, it also
+        handled dozens of languages without separate models or retraining, a
+        stark contrast to the era of language-specific acoustic models. Since then, the model
         landscape has exploded: Parakeet TDT V3, onnx-asr, Cohere Transcribe,
         each pushing accuracy and speed further. For a detailed breakdown, see <a
             href="/best-speech-to-text-models"
@@ -93,7 +95,7 @@ import BlogPost from "../layouts/BlogPost.astro";
 
     <p>
         No GPU? <code>onnx-asr</code> is optimized for CPU and delivers surprisingly
-        competitive latency on modern processors. The setup wizard auto-detects your
+        competitive latency on modern processors. Most modern tooling auto-detects
         hardware and picks the right backend.
     </p>
 
