@@ -414,6 +414,86 @@ import "../styles/global.css";
                     </div>
                 </div>
             </section>
+            <!-- FAQ -->
+            <section class="faq">
+                <div class="faq-inner">
+                    <h2 class="section-title">
+                        <span class="title-dim">──</span> FAQ
+                    </h2>
+                    <div class="faq-list">
+                        <details class="faq-item">
+                            <summary>Why hyprwhspr over other Linux speech tools?</summary>
+                            <p>
+                                Model breadth and performance. hyprwhspr supports more local
+                                backends than any comparable tool — Cohere Transcribe,
+                                pywhispercpp, faster-whisper, onnx-asr, and Parakeet TDT V3 —
+                                plus a full range of cloud APIs. The model stays hot in memory,
+                                so transcription is instant rather than gated behind a
+                                multi-second load on every invocation. It's also the most fully
+                                featured: toggle, push-to-talk, and auto modes; Waybar
+                                integration; live model unload for VRAM management; and
+                                evdev-based hotkeys that work on any Wayland compositor —
+                                Hyprland, GNOME, KDE, Sway.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Why Python and not Rust?</summary>
+                            <p>
+                                Because the ecosystem is Python. Every transcription model that
+                                matters — Whisper, Parakeet, Cohere Transcribe — runs on PyTorch
+                                or ONNX Runtime, both of which are C++ and CUDA at the compute
+                                layer with Python as the interface. The actual inference isn't
+                                happening in hyprwhspr's code — it's happening in those runtimes.
+                                Rewriting the orchestration in Rust would add significant
+                                complexity without touching the performance-critical path.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Does it cost anything?</summary>
+                            <p>
+                                No. The default setup runs a local model — no API key, no
+                                account, no ongoing cost. Cloud backends are available for users
+                                who want maximum accuracy without local hardware requirements,
+                                but they're explicitly opt-in and require you to supply your own
+                                API key.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Can I pay you?</summary>
+                            <p>
+                                If you'd like to give something back, donate to a local wildlife
+                                charity — that would be most excellent. If you're set on buying me a coffee, I appreciate that:
+                                <a href="https://ko-fi.com/goodroot" target="_blank" rel="noopener">ko-fi.com/goodroot</a>.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Why no precompiled binary?</summary>
+                            <p>
+                                By design. The AUR builds from source — that's the philosophy,
+                                and it's the right one. A precompiled binary is a black box: no
+                                audit trail, no way to verify what you're actually running. For
+                                a tool that sits on your microphone and injects text into every
+                                application on your system, that's not a tradeoff worth making.
+                                Read the code, build it yourself, know what's on your machine.
+                            </p>
+                        </details>
+
+                        <details class="faq-item">
+                            <summary>Is my audio private?</summary>
+                            <p>
+                                With the default local backend, audio never leaves your machine.
+                                Nothing is logged, no account is required, and no third party is
+                                involved. Cloud backends send audio to the provider you configure
+                                — that tradeoff is documented and the choice is yours.
+                            </p>
+                        </details>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <footer>
@@ -874,6 +954,71 @@ import "../styles/global.css";
         color: var(--blue);
         letter-spacing: 0.04em;
         margin-top: 0.25rem;
+    }
+
+    /* ── FAQ ─────────────────────────────────────────────────────── */
+    .faq-inner {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+    }
+
+    .faq-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .faq-item {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        overflow: hidden;
+        transition: border-color 0.15s;
+    }
+
+    .faq-item[open] {
+        border-color: color-mix(in srgb, var(--blue) 35%, var(--border));
+    }
+
+    .faq-item summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.25rem;
+        font-size: 0.84rem;
+        font-weight: 600;
+        color: var(--fg-bright);
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+        letter-spacing: 0.01em;
+    }
+
+    .faq-item summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .faq-item summary::after {
+        content: '+';
+        color: var(--comment);
+        font-size: 1.1rem;
+        font-weight: 300;
+        flex-shrink: 0;
+        transition: color 0.15s;
+    }
+
+    .faq-item[open] summary::after {
+        content: '−';
+        color: var(--blue);
+    }
+
+    .faq-item p {
+        padding: 0.85rem 1.25rem 1.1rem;
+        font-size: 0.78rem;
+        color: var(--fg-dim);
+        line-height: 1.75;
+        border-top: 1px solid var(--border);
     }
 
     /* ── Footer ───────────────────────────────────────────────────── */
