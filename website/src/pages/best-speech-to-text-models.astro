@@ -199,16 +199,63 @@ import BlogPost from "../layouts/BlogPost.astro";
         <li>Privacy: fully local</li>
     </ul>
 
+    <h2>A note on GPU support</h2>
+
+    <p>
+        Most of this ecosystem was built around CUDA. NVIDIA users get a smooth
+        path across every backend listed above. AMD users have a more complicated
+        picture.
+    </p>
+
+    <p>
+        ROCm — AMD's GPU compute platform — has improved significantly, but
+        support varies by backend. whisper.cpp works well on modern AMD GPUs via
+        HIP compilation (RDNA2 and newer), and Cohere Transcribe runs cleanly
+        through PyTorch's official ROCm wheels. faster-whisper has no official
+        AMD path; community forks exist but require custom builds. onnx-asr,
+        which runs Parakeet TDT V3, recently saw its ROCm support deprecated in
+        ONNX Runtime — the replacement path (MIGraphX) is not yet verified with
+        Parakeet.
+    </p>
+
+    <p>
+        Vulkan backends exist in whisper.cpp but are unstable across hardware
+        and not recommended for production use. For AMD users on older cards or
+        unsupported configurations, CPU inference remains the most reliable
+        option — and with modern processors and optimised runtimes, it's fast
+        enough for comfortable dictation.
+    </p>
+
     <h2>Cloud options</h2>
 
     <p>
         When privacy isn't a constraint and you want the fastest possible
         turnaround — or you're dictating long documents where every word counts
-        — cloud backends are available. Groq's Whisper inference is extremely
-        fast. OpenAI's API is the most widely compatible. Cohere's cloud API
-        brings the same leaderboard-leading accuracy without local hardware
-        requirements.
+        — cloud backends are available. Where your audio is processed matters,
+        so the hosting location for each provider is noted below.
     </p>
+
+    <ul>
+        <li>
+            <strong>OpenAI</strong> — the most widely compatible API. US-hosted.
+        </li>
+        <li>
+            <strong>Groq</strong> — extremely fast Whisper inference. US-hosted.
+        </li>
+        <li>
+            <strong>Cohere</strong> — same leaderboard-leading accuracy as the
+            local model, no hardware requirements. Canada/US-hosted.
+        </li>
+        <li>
+            <strong>ElevenLabs</strong> — widely considered the SaaS leader in
+            this space. Exceptional accuracy and speaker handling. US-hosted.
+        </li>
+        <li>
+            <strong>Regolo</strong> — European provider running a broad range of
+            models on EU infrastructure. The best choice if data residency within
+            Europe matters to you.
+        </li>
+    </ul>
 
     <p>
         All cloud options require an API key and send audio to a third-party
@@ -237,6 +284,7 @@ import BlogPost from "../layouts/BlogPost.astro";
                 ></tr
             >
             <tr><td>Fastest cloud</td><td>Cohere Transcribe</td></tr>
+            <tr><td>Best European host</td><td>Regolo</td></tr>
             <tr
                 ><td>Custom / self-hosted</td><td>Any OpenAI-compatible API</td
                 ></tr

@@ -131,6 +131,17 @@ import "../styles/global.css";
                         </div>
                     </div>
 
+                    <div class="feature-full feature-full--privacy">
+                        <span class="feature-full-icon" style="color: var(--cyan)">✦</span>
+                        <div class="feature-full-text">
+                            <h3>Your voice stays on your machine.</h3>
+                            <p>
+                                Local inference by default — no data ever leaves without your say-so.
+                            </p>
+                        </div>
+                        <a class="feature-full-link" href="/privacy">Privacy policy ↗</a>
+                    </div>
+
                     <!-- Secondary grid -->
                     <div class="feature-grid">
                         <div class="feature">
@@ -691,6 +702,22 @@ import "../styles/global.css";
         border-color: var(--blue);
     }
 
+    .feature-full--privacy {
+        background: color-mix(in srgb, var(--cyan) 4%, var(--surface));
+        border-color: color-mix(in srgb, var(--cyan) 20%, var(--border));
+    }
+
+    .feature-full--privacy .feature-full-link {
+        border-color: color-mix(in srgb, var(--cyan) 18%, var(--border));
+    }
+
+    @media (max-width: 480px) {
+        .feature-full {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+    }
+
     /* ── Install ──────────────────────────────────────────────────── */
     .install-inner {
         display: flex;
@@ -739,6 +766,7 @@ import "../styles/global.css";
         border: 1px solid var(--border);
         border-radius: 6px;
         font-size: 0.82rem;
+        overflow-x: auto;
     }
 
     .code-block.multiline {
@@ -764,6 +792,7 @@ import "../styles/global.css";
 
     .code-line {
         color: var(--cyan);
+        white-space: nowrap;
     }
 
     .code-comment {

@@ -670,6 +670,24 @@ Custom sounds:
 - **Supported formats**: `.ogg`, `.wav`, `.mp3`
 - **Fallback**: Uses defaults if custom files don't exist
 
+### Audio stream keepalive
+
+By default hyprwhspr opens the microphone only while recording. 
+
+On some hardware (certain USB mics on raw ALSA), the first recording after an idle period fails with a `paTimedOut` error because the audio device suspends between uses.
+
+If you see this, enable the keepalive stream:
+
+```json
+{
+  "keepalive_stream": true
+}
+```
+
+This holds a silent input stream open in the background so the device stays warm. 
+
+**Leave this off unless you need it** — an open input stream triggers the microphone-in-use indicator on most desktops (GNOME, KDE, Ubuntu, etc.), making it appear as though hyprwhspr is always listening. It's not!
+
 ### Audio ducking
 
 Quiet system volume on record:
@@ -1094,6 +1112,18 @@ pactl list short sources
 # Restart PipeWire
 systemctl --user restart pipewire
 ```
+
+#### Microphone indicator shows on while idle
+
+If your desktop (GNOME, Ubuntu, etc.) shows the microphone as active whenever the hyprwhspr service is running, you likely have `keepalive_stream` enabled. Disable it:
+
+```json
+{
+  "keepalive_stream": false
+}
+```
+
+This is the default. If you previously enabled it to fix `paTimedOut` errors, see [Audio stream keepalive](#audio-stream-keepalive) for the trade-off.
 
 #### Audio feedback not working
 

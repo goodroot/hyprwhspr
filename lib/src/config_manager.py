@@ -118,7 +118,12 @@ class ConfigManager:
             # Audio stream cold-start recovery
             # How long (seconds) to wait between stream.start() retries when PortAudio times out.
             # Increase this if your USB mic frequently fails on the first recording after idle.
-            'stream_start_retry_delay': 1.5
+            'stream_start_retry_delay': 1.5,
+            # Keep a silent audio stream open between recordings to prevent ALSA cold-start
+            # timeouts on some hardware. Disabled by default because active input streams
+            # trigger the microphone-in-use indicator on many desktops (GNOME, Ubuntu, etc.).
+            # Enable only if you see paTimedOut errors on your first recording after idle.
+            'keepalive_stream': False
         }
         
         # Set up config directory and file path

@@ -4,7 +4,7 @@ import BlogPost from "../layouts/BlogPost.astro";
 
 <BlogPost
     title="Dictation is the Future of Programming"
-    description="We've been optimizing the wrong interface. The keyboard made sense when code was the output. Now that language is the input, your voice is faster."
+    description="Developers speaking instead of typing have a massive advantage. We've been optimizing the wrong interface. The keyboard made sense when code was the output. Now that language is the input, your voice is faster."
     tag="opinion"
     date="2026-03-28"
     readTime="4 min read"
@@ -136,6 +136,17 @@ import BlogPost from "../layouts/BlogPost.astro";
         context because every word costs keystrokes. Speaking doesn't have that
         friction. You give the agent what it actually needs — the full picture,
         the constraints, the edge cases you're already thinking about.
+    </p>
+
+    <p>
+        The difference is concrete. Typed: <em>"refactor auth middleware."</em>
+        Spoken: <em>"the auth middleware is doing three things right now —
+        token validation, role checking, and request logging. I want to pull
+        the logging out separately because it's making the tests hard to write,
+        but keep token and role together since they always run as a pair."</em>
+        The agent's output from the second prompt is categorically different. It
+        understands the motivation, the constraint, and the existing structure.
+        You didn't think harder to produce that — you just didn't abbreviate.
     </p>
 
     <p>Better input produces better output. The improvement compounds.</p>

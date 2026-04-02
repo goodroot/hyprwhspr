@@ -4,7 +4,7 @@ import BlogPost from "../layouts/BlogPost.astro";
 
 <BlogPost
     title="Voice Typing on Linux in 2026"
-    description="Speech-to-text on Linux has been broken for years. Local models, Wayland maturity, and the right tooling have finally changed that."
+    description="Speech-to-text, dictation, on Linux has been broken for years. Local models, Wayland maturity, and the right tooling have finally changed that."
     tag="guide"
     date="2026-03-15"
     readTime="4 min read"
@@ -38,9 +38,14 @@ import BlogPost from "../layouts/BlogPost.astro";
         OpenAI's Whisper, released in 2022, brought genuinely accurate
         open-source transcription to consumer hardware. Where previous models
         required custom vocabulary training and weeks of tuning, Whisper worked
-        well out of the box — on a GPU you already owned. Since then, the model
+        well out of the box — on a GPU you already owned. Crucially, it also
+        handled dozens of languages without separate models or retraining, a
+        stark contrast to the era of language-specific acoustic models. Since then, the model
         landscape has exploded: Parakeet TDT V3, onnx-asr, Cohere Transcribe,
-        each pushing accuracy and speed further. For a detailed breakdown, see <a href="/best-speech-to-text-models">best speech-to-text models for Linux</a>.
+        each pushing accuracy and speed further. For a detailed breakdown, see <a
+            href="/best-speech-to-text-models"
+            >best speech-to-text models for Linux</a
+        >.
     </p>
 
     <p>
@@ -90,7 +95,7 @@ import BlogPost from "../layouts/BlogPost.astro";
 
     <p>
         No GPU? <code>onnx-asr</code> is optimized for CPU and delivers surprisingly
-        competitive latency on modern processors. The setup wizard auto-detects your
+        competitive latency on modern processors. Most modern tooling auto-detects
         hardware and picks the right backend.
     </p>
 
@@ -154,6 +159,8 @@ import BlogPost from "../layouts/BlogPost.astro";
     <p>
         The first time you press the hotkey and your spoken words appear
         instantly in your editor, it feels like a small unlock. By the end of
-        the week it's hard to go back — especially if you're <a href="/dictation-future-programming">using it to talk to AI tools</a>.
+        the week it's hard to go back — especially if you're <a
+            href="/dictation-future-programming">using it to talk to AI tools</a
+        >.
     </p>
 </BlogPost>
