@@ -3,266 +3,335 @@ import "../styles/global.css";
 ---
 
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Privacy — hyprwhspr</title>
-    <meta name="description" content="hyprwhspr is free, open source, and built by a solo developer with no corporate incentives. When using local models, nothing leaves your machine." />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
-  </head>
-  <body>
+    <head>
+        <meta charset="utf-8" />
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Privacy — hyprwhspr</title>
+        <meta
+            name="description"
+            content="hyprwhspr is free, open source, and built by a solo developer with no corporate incentives. When using local models, nothing leaves your machine."
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap"
+            rel="stylesheet"
+        />
+    </head>
+    <body>
+        <div class="page">
+            <header class="header">
+                <a href="/" class="back">← hyprwhspr</a>
+            </header>
 
-    <div class="page">
+            <main>
+                <div class="title-block">
+                    <span class="page-tag">privacy</span>
+                    <h1>Your voice stays yours.</h1>
+                    <p class="lede">
+                        hyprwhspr is built on a simple premise: a tool that
+                        listens to you should never report back about you.
+                    </p>
+                </div>
 
-      <header class="header">
-        <a href="/" class="back">← hyprwhspr</a>
-      </header>
+                <div class="pillars">
+                    <div class="pillar">
+                        <div class="pillar-header">
+                            <span class="pillar-num">01</span>
+                            <h2>Read the code.</h2>
+                        </div>
+                        <p>
+                            hyprwhspr is fully open source under the MIT
+                            license. Every line that touches your microphone,
+                            processes your audio, and injects text into your
+                            applications is public and auditable. There are no
+                            compiled blobs, no obfuscated routines, no black
+                            boxes.
+                        </p>
+                        <p>
+                            If you want to verify exactly what happens to your
+                            audio — from the moment you press the hotkey to the
+                            moment text appears — you can.
+                        </p>
+                        <a
+                            class="pillar-link"
+                            href="https://github.com/goodroot/hyprwhspr"
+                            target="_blank"
+                            rel="noopener">Browse the source on GitHub ↗</a
+                        >
+                    </div>
 
-      <main>
+                    <div class="pillar">
+                        <div class="pillar-header">
+                            <span class="pillar-num">02</span>
+                            <h2>No company. No incentives.</h2>
+                        </div>
+                        <p>
+                            hyprwhspr is built and maintained by a <a
+                                href="https://goodroot.ca">single developer</a
+                            >. There is no company behind it. No investors. No
+                            growth targets. No business model that depends on
+                            your data.
+                        </p>
+                        <p>
+                            The tool exists because it's useful and because
+                            building it was interesting. That's the whole story.
+                            There is no roadmap item that reads "monetise user
+                            data" because there is no one to write that roadmap
+                            and nothing to gain from it.
+                        </p>
+                    </div>
 
-        <div class="title-block">
-          <span class="page-tag">privacy</span>
-          <h1>Your voice stays yours.</h1>
-          <p class="lede">hyprwhspr is built on a simple premise: a tool that listens to you should never report back about you.</p>
+                    <div class="pillar">
+                        <div class="pillar-header">
+                            <span class="pillar-num">03</span>
+                            <h2>Local means local.</h2>
+                        </div>
+                        <p>
+                            When you use a local backend — Parakeet, Whisper,
+                            onnx-asr, Cohere Transcribe — your audio is
+                            processed entirely on your own hardware. It is never
+                            sent to a server. It is never stored unless you
+                            explicitly set it to save. It does not leave your
+                            machine.
+                        </p>
+                        <p>
+                            hyprwhspr has no telemetry, no analytics, no crash
+                            reporting, and no network calls of any kind during
+                            normal operation. The service runs as a local
+                            systemd process. It has no reason to phone home and
+                            no place to phone home to.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="cloud-note">
+                    <h3>A note on cloud backends</h3>
+                    <p>
+                        hyprwhspr optionally supports cloud transcription APIs —
+                        OpenAI, Groq, Cohere, ElevenLabs, and any
+                        OpenAI-compatible endpoint. When you use a cloud
+                        backend, your audio is sent to that provider's servers
+                        and subject to their privacy policies.
+                    </p>
+                    <p>
+                        Cloud backends are simple REST APIs and are strictly
+                        opt-in. They require you to manually configure an API
+                        key. The default installation uses local models only. If
+                        you choose to use a cloud backend, you are making a
+                        deliberate choice with full knowledge of what that means
+                        — not being silently enrolled in anything.
+                    </p>
+                </div>
+
+                <div class="closing">
+                    <p>
+                        That's it. No legalese, because there's nothing to
+                        obscure. No disclaimers, because there's no liability to
+                        limit. Just a tool that works, respects your privacy by
+                        design, and lets you verify every word of that claim.
+                    </p>
+                </div>
+            </main>
+
+            <footer class="footer">
+                <a href="/">hyprwhspr</a>
+                <span class="sep">·</span>
+                <a href="https://github.com/goodroot/hyprwhspr">GitHub</a>
+                <span class="sep">·</span>
+                <a
+                    href="https://github.com/goodroot/hyprwhspr/blob/main/LICENSE"
+                    >MIT License</a
+                >
+            </footer>
         </div>
-
-        <div class="pillars">
-
-          <div class="pillar">
-            <div class="pillar-header">
-              <span class="pillar-num">01</span>
-              <h2>Read the code.</h2>
-            </div>
-            <p>hyprwhspr is fully open source under the MIT license. Every line that touches your microphone, processes your audio, and injects text into your applications is public and auditable. There are no compiled blobs, no obfuscated routines, no black boxes.</p>
-            <p>If you want to verify exactly what happens to your audio — from the moment you press the hotkey to the moment text appears — you can. That's not a promise. It's a property of the code.</p>
-            <a class="pillar-link" href="https://github.com/goodroot/hyprwhspr" target="_blank" rel="noopener">Browse the source on GitHub ↗</a>
-          </div>
-
-          <div class="pillar">
-            <div class="pillar-header">
-              <span class="pillar-num">02</span>
-              <h2>No company. No incentives.</h2>
-            </div>
-            <p>hyprwhspr is built and maintained by a single developer. There is no company behind it. No investors. No growth targets. No business model that depends on your data.</p>
-            <p>The tool exists because it's useful and because building it was interesting. That's the whole story. There is no roadmap item that reads "monetise user data" because there is no one to write that roadmap and nothing to gain from it.</p>
-          </div>
-
-          <div class="pillar">
-            <div class="pillar-header">
-              <span class="pillar-num">03</span>
-              <h2>Local means local.</h2>
-            </div>
-            <p>When you use a local backend — Parakeet, Whisper, onnx-asr, Cohere Transcribe — your audio is processed entirely on your own hardware. It is never sent to a server. It is never stored. It does not leave your machine.</p>
-            <p>hyprwhspr has no telemetry, no analytics, no crash reporting, and no network calls of any kind during normal operation. The service runs as a local systemd process. It has no reason to phone home and no place to phone home to.</p>
-          </div>
-
-        </div>
-
-        <div class="cloud-note">
-          <h3>A note on cloud backends</h3>
-          <p>hyprwhspr optionally supports cloud transcription APIs — OpenAI, Groq, Cohere, ElevenLabs, and any OpenAI-compatible endpoint. When you use a cloud backend, your audio is sent to that provider's servers and subject to their privacy policies.</p>
-          <p>Cloud backends are strictly opt-in. They require you to manually configure an API key. The default installation uses local models only. If you choose to use a cloud backend, you are making a deliberate choice with full knowledge of what that means — not being silently enrolled in anything.</p>
-        </div>
-
-        <div class="closing">
-          <p>That's it. No legalese, because there's nothing to obscure. No disclaimers, because there's no liability to limit. Just a tool that works, respects your privacy by design, and lets you verify every word of that claim.</p>
-        </div>
-
-      </main>
-
-      <footer class="footer">
-        <a href="/">hyprwhspr</a>
-        <span class="sep">·</span>
-        <a href="https://github.com/goodroot/hyprwhspr">GitHub</a>
-        <span class="sep">·</span>
-        <a href="https://github.com/goodroot/hyprwhspr/blob/main/LICENSE">MIT License</a>
-      </footer>
-
-    </div>
-
-  </body>
+    </body>
 </html>
 
 <style>
-  .page {
-    max-width: 680px;
-    margin: 0 auto;
-    padding: 0 1.5rem;
-  }
+    .page {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 0 1.5rem;
+    }
 
-  /* Header */
-  .header {
-    padding: 1.5rem 0;
-    border-bottom: 1px solid var(--border);
-  }
+    /* Header */
+    .header {
+        padding: 1.5rem 0;
+        border-bottom: 1px solid var(--border);
+    }
 
-  .back {
-    font-size: 0.78rem;
-    color: var(--comment);
-    letter-spacing: 0.05em;
-    transition: color 0.15s;
-  }
+    .back {
+        font-size: 0.78rem;
+        color: var(--comment);
+        letter-spacing: 0.05em;
+        transition: color 0.15s;
+    }
 
-  .back:hover { color: var(--blue); }
+    .back:hover {
+        color: var(--blue);
+    }
 
-  /* Title block */
-  main {
-    padding: 3.5rem 0 4rem;
-    display: flex;
-    flex-direction: column;
-    gap: 3rem;
-  }
+    /* Title block */
+    main {
+        padding: 3.5rem 0 4rem;
+        display: flex;
+        flex-direction: column;
+        gap: 3rem;
+    }
 
-  .title-block {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
+    .title-block {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
 
-  .page-tag {
-    font-size: 0.68rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--green);
-    border: 1px solid var(--green);
-    border-radius: 3px;
-    padding: 0.15rem 0.5rem;
-    display: inline-block;
-    width: fit-content;
-  }
+    .page-tag {
+        font-size: 0.68rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--green);
+        border: 1px solid var(--green);
+        border-radius: 3px;
+        padding: 0.15rem 0.5rem;
+        display: inline-block;
+        width: fit-content;
+    }
 
-  h1 {
-    font-size: clamp(1.8rem, 5vw, 2.6rem);
-    font-weight: 600;
-    color: var(--fg-bright);
-    letter-spacing: -0.02em;
-    line-height: 1.15;
-  }
+    h1 {
+        font-size: clamp(1.8rem, 5vw, 2.6rem);
+        font-weight: 600;
+        color: var(--fg-bright);
+        letter-spacing: -0.02em;
+        line-height: 1.15;
+    }
 
-  .lede {
-    font-size: 1rem;
-    color: var(--fg-dim);
-    line-height: 1.7;
-    max-width: 52ch;
-  }
+    .lede {
+        font-size: 1rem;
+        color: var(--fg-dim);
+        line-height: 1.7;
+        max-width: 52ch;
+    }
 
-  /* Pillars */
-  .pillars {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-  }
+    /* Pillars */
+    .pillars {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+    }
 
-  .pillar {
-    padding: 2rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-  }
+    .pillar {
+        padding: 2rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+    }
 
-  .pillar + .pillar {
-    border-top: 1px solid var(--border);
-  }
+    .pillar + .pillar {
+        border-top: 1px solid var(--border);
+    }
 
-  .pillar:nth-child(odd) {
-    background: var(--surface);
-  }
+    .pillar:nth-child(odd) {
+        background: var(--surface);
+    }
 
-  .pillar:nth-child(even) {
-    background: var(--bg);
-  }
+    .pillar:nth-child(even) {
+        background: var(--bg);
+    }
 
-  .pillar-header {
-    display: flex;
-    align-items: baseline;
-    gap: 0.9rem;
-  }
+    .pillar-header {
+        display: flex;
+        align-items: baseline;
+        gap: 0.9rem;
+    }
 
-  .pillar-num {
-    font-size: 0.68rem;
-    font-weight: 500;
-    color: var(--comment);
-    letter-spacing: 0.1em;
-    flex-shrink: 0;
-  }
+    .pillar-num {
+        font-size: 0.68rem;
+        font-weight: 500;
+        color: var(--comment);
+        letter-spacing: 0.1em;
+        flex-shrink: 0;
+    }
 
-  .pillar h2 {
-    font-size: 1.05rem;
-    font-weight: 600;
-    color: var(--fg-bright);
-    letter-spacing: -0.01em;
-  }
+    .pillar h2 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--fg-bright);
+        letter-spacing: -0.01em;
+    }
 
-  .pillar p {
-    font-size: 0.88rem;
-    color: var(--fg-dim);
-    line-height: 1.75;
-  }
+    .pillar p {
+        font-size: 0.88rem;
+        color: var(--fg-dim);
+        line-height: 1.75;
+    }
 
-  .pillar-link {
-    font-size: 0.76rem;
-    color: var(--blue);
-    letter-spacing: 0.03em;
-    margin-top: 0.25rem;
-    transition: color 0.15s;
-  }
+    .pillar-link {
+        font-size: 0.76rem;
+        color: var(--blue);
+        letter-spacing: 0.03em;
+        margin-top: 0.25rem;
+        transition: color 0.15s;
+    }
 
-  .pillar-link:hover { color: var(--cyan); }
+    .pillar-link:hover {
+        color: var(--cyan);
+    }
 
-  /* Cloud note */
-  .cloud-note {
-    padding: 1.5rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg);
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
+    /* Cloud note */
+    .cloud-note {
+        padding: 1.5rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg);
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
 
-  .cloud-note h3 {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--fg-dim);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
+    .cloud-note h3 {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--fg-dim);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
 
-  .cloud-note p {
-    font-size: 0.84rem;
-    color: var(--fg-dim);
-    line-height: 1.7;
-  }
+    .cloud-note p {
+        font-size: 0.84rem;
+        color: var(--fg-dim);
+        line-height: 1.7;
+    }
 
-  /* Closing */
-  .closing {
-    border-top: 1px solid var(--border);
-    padding-top: 2rem;
-  }
+    /* Closing */
+    .closing {
+        border-top: 1px solid var(--border);
+        padding-top: 2rem;
+    }
 
-  .closing p {
-    font-size: 0.88rem;
-    color: var(--comment);
-    line-height: 1.75;
-    font-style: italic;
-  }
+    .closing p {
+        font-size: 0.88rem;
+        color: var(--comment);
+        line-height: 1.75;
+        font-style: italic;
+    }
 
-  /* Footer */
-  .footer {
-    border-top: 1px solid var(--border);
-    padding: 1.5rem 0;
-    font-size: 0.75rem;
-    color: var(--comment);
-    display: flex;
-    gap: 0.6rem;
-    align-items: center;
-  }
+    /* Footer */
+    .footer {
+        border-top: 1px solid var(--border);
+        padding: 1.5rem 0;
+        font-size: 0.75rem;
+        color: var(--comment);
+        display: flex;
+        gap: 0.6rem;
+        align-items: center;
+    }
 
-  .sep { color: var(--border); }
+    .sep {
+        color: var(--border);
+    }
 </style>
