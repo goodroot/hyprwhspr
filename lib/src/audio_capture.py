@@ -237,6 +237,8 @@ class AudioCapture:
         with self._keepalive_lock:
             if self._keepalive_stream is not None or self.device_id is None:
                 return
+        if self.config is None or not self.config.get_setting('keepalive_stream', False):
+            return
         if not self._is_multiplexed_audio_server():
             return
         stream = None
