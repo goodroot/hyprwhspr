@@ -6,7 +6,7 @@
 # - ml_dtypes 0.5.4+ includes float4_e2m1fn required by onnx
 # - numpy must be <2.4 for numba compatibility (numba is a nemo_toolkit dep)
 ml_dtypes>=0.5.4
-numpy>=1.22,<2.4
+numpy>=1.22,<2.5
 nemo_toolkit[asr]
 fastapi
 uvicorn[standard]
