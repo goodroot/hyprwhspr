@@ -162,6 +162,7 @@ class hyprwhsprApp:
         self._continuous_flush_lock = threading.Lock()
         self._continuous_transcription_done = threading.Event()
         self._continuous_transcription_done.set()  # no transcription in flight
+        self._continuous_cancelled = False  # set on cancel to suppress in-flight injection
 
         # Long-form recording mode state
         self._longform_state = 'IDLE'  # IDLE, RECORDING, PAUSED, PROCESSING, ERROR
@@ -684,6 +685,7 @@ class hyprwhsprApp:
 
     def _continuous_start_silence_monitor(self):
         """Start monitoring for silence to trigger auto-paste in continuous mode"""
+        self._continuous_cancelled = False
         self._continuous_stop_silence_monitor()
         self._continuous_silence_stop.clear()
 
@@ -765,6 +767,9 @@ class hyprwhsprApp:
                     if lower in _HALLUCINATION_MARKERS or text.startswith('♪'):
                         print(f"[CONTINUOUS] Hallucination ignored: {text!r}", flush=True)
                         return
+                    if self._continuous_cancelled:
+                        print("[CONTINUOUS] Cancelled — discarding transcription", flush=True)
+                        return
                     self._inject_text(text)
                     print(f"[CONTINUOUS] Pasted: {text[:80]}{'...' if len(text) > 80 else ''}", flush=True)
                 else:
@@ -786,7 +791,8 @@ class hyprwhsprApp:
                 self._cancel_longform_recording()
         else:
             if recording_mode == "continuous":
-                self._continuous_stop_and_wait()
+                self._continuous_cancelled = True
+                self._continuous_stop_silence_monitor()
             self._cancel_recording()
 
     # Long-form recording mode handlers
@@ -1953,6 +1959,9 @@ class hyprwhsprApp:
                                 print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring cancel request", flush=True)
                     elif self.is_recording:
                         print("[CONTROL] Recording cancel requested (immediate)", flush=True)
+                        if recording_mode == "continuous":
+                            self._continuous_cancelled = True
+                            self._continuous_stop_silence_monitor()
                         self._cancel_recording()
                     else:
                         print("[CONTROL] Not currently recording, ignoring cancel request", flush=True)

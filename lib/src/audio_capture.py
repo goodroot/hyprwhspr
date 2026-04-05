@@ -577,7 +577,7 @@ class AudioCapture:
                 return None
             return audio_array
         except Exception as e:
-            print(f"[ERROR] Failed to collect audio data: {e}")
+            print(f"[ERROR] Failed to collect audio data: {e}", flush=True)
             return None
 
     def get_current_audio_copy(self) -> Optional[np.ndarray]:
