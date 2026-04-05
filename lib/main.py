@@ -19,8 +19,9 @@ except ImportError:
 
 # Whisper hallucination markers for silence/noise segments
 _HALLUCINATION_MARKERS = {
-    'blank audio', 'silence', 'no speech',
-    'thanks for watching', 'thank you for watching',
+    'blank audio', 'blank', 'silence', 'no speech',
+    'thank you', 'thanks for watching', 'thank you for watching',
+    'video playback', 'music', 'music playing', 'keyboard clicking',
 }
 
 # Ensure unbuffered output for journald logging
@@ -990,8 +991,7 @@ class hyprwhsprApp:
 
                 # Filter hallucinations
                 normalized = text.lower().replace('_', ' ').strip('[]() ')
-                hallucination_markers = ('blank audio', 'blank', 'video playback', 'music', 'music playing', 'keyboard clicking')
-                if normalized in hallucination_markers:
+                if normalized in _HALLUCINATION_MARKERS or text.startswith('♪'):
                     print(f"[LONGFORM] Whisper hallucination detected: {text!r}")
                     self.audio_manager.play_error_sound()
                     self._longform_error_audio = audio_data  # Store for retry
@@ -1482,8 +1482,7 @@ class hyprwhsprApp:
 
                 # Filter out Whisper hallucination markers - don't touch clipboard
                 normalized = text.lower().replace('_', ' ').strip('[]() ')
-                hallucination_markers = ('blank audio', 'blank', 'video playback', 'music', 'music playing', 'keyboard clicking')
-                if normalized in hallucination_markers:
+                if normalized in _HALLUCINATION_MARKERS or text.startswith('♪'):
                     print(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
                     self.audio_manager.play_error_sound()
                     success = False
