@@ -702,7 +702,7 @@ class hyprwhsprApp:
                 if threshold <= 0:
                     # Wait for level history to fill (~0.6s), then sample ambient noise floor
                     self._continuous_silence_stop.wait(0.6)
-                    if self._continuous_silence_stop.is_set():
+                    if self._continuous_silence_stop.is_set() or not self.is_recording:
                         return
                     noise_floor = self.audio_capture.rolling_avg_level
                     threshold = max(noise_floor * 3, 2e-4)
@@ -1467,6 +1467,7 @@ class hyprwhsprApp:
                 self._show_result_and_hide(False)
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
+                self._continuous_stop_silence_monitor()
 
                 # Close WebSocket if using realtime-ws backend
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
