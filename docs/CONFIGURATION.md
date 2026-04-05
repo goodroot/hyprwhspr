@@ -79,12 +79,13 @@ Press again to stop:
 {
     "recording_mode": "continuous",
     "continuous_silence_seconds": 2.0,  // Optional: seconds of silence before auto-paste (default: 2.0)
-    "continuous_silence_threshold": 0.005  // Optional: RMS silence threshold (increase if mic has high noise floor)
+    "continuous_silence_threshold": 0    // Optional: 0 = auto-calibrate from noise floor (default). Set manually if needed.
 }
 ```
 
 - Recording continues after each auto-paste, so you can keep dictating
 - The final press stops recording and pastes any remaining audio
+- The silence threshold is auto-calibrated from your mic's noise floor at the start of each session. If detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value as a starting point)
 
 ### Long-form mode
 

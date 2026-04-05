@@ -28,7 +28,7 @@ class ConfigManager:
             'cancel_shortcut': None,  # Optional shortcut to cancel recording and discard audio (e.g., "SUPER+ESCAPE")
             'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
             'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
-            'continuous_silence_threshold': 5e-3,  # RMS level below which audio is considered silence
+            'continuous_silence_threshold': 0,  # RMS silence threshold; 0 = auto-calibrate from noise floor at session start
             'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
             'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
             'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')

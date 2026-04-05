@@ -691,15 +691,26 @@ class hyprwhsprApp:
         self._continuous_silence_stop.clear()
 
         silence_seconds = self.config.get_setting('continuous_silence_seconds', 2.0)
-        silence_threshold = self.config.get_setting('continuous_silence_threshold', 5e-3)
+        configured_threshold = self.config.get_setting('continuous_silence_threshold', 0)
         samples_needed = int(silence_seconds / self._POLL_INTERVAL)
 
         def monitor():
             silent_count = 0
             try:
+                # Auto-calibrate threshold from noise floor if not manually configured
+                threshold = configured_threshold
+                if threshold <= 0:
+                    # Wait for level history to fill (~0.6s), then sample ambient noise floor
+                    self._continuous_silence_stop.wait(0.6)
+                    if self._continuous_silence_stop.is_set():
+                        return
+                    noise_floor = self.audio_capture.rolling_avg_level
+                    threshold = max(noise_floor * 3, 2e-4)
+                    print(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f} (noise floor={noise_floor:.5f})", flush=True)
+
                 while self.is_recording and not self._continuous_silence_stop.is_set():
                     raw_level = self.audio_capture.rolling_avg_level
-                    if raw_level < silence_threshold:
+                    if raw_level < threshold:
                         silent_count += 1
                         if silent_count >= samples_needed:
                             self._continuous_flush_audio()
