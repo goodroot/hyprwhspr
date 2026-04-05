@@ -8,6 +8,7 @@ import sys
 import wave
 import threading
 import time
+from collections import deque
 from typing import Optional, Callable
 from io import BytesIO
 
@@ -39,6 +40,8 @@ class AudioCapture:
         self.is_monitoring = False
         self.audio_data = []
         self.current_level = 0.0
+        # Rolling window of recent RMS values (~0.5s at 16kHz/1024 chunk)
+        self._level_history = deque(maxlen=8)
         
         # Threading
         self.record_thread = None
@@ -667,6 +670,7 @@ class AudioCapture:
                         
                         # Update current audio level for monitoring
                         self.current_level = np.sqrt(np.mean(audio_chunk**2))
+                        self._level_history.append(self.current_level)
                         
                         # Store audio data
                         self.audio_data.append(audio_chunk.copy())
@@ -881,6 +885,14 @@ class AudioCapture:
     def get_audio_level(self) -> float:
         """Get the current audio level (0.0 to 1.0)"""
         return min(1.0, self.current_level * 10)  # Scale for better visualization
+
+    @property
+    def rolling_avg_level(self) -> float:
+        """Rolling average RMS level over the last ~0.5s of audio chunks.
+        More stable than current_level for silence detection."""
+        if not self._level_history:
+            return 0.0
+        return sum(self._level_history) / len(self._level_history)
     
     def _cleanup_stream(self):
         """Clean up the audio stream (idempotent - safe to call multiple times)"""

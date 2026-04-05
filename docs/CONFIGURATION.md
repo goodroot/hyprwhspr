@@ -71,7 +71,9 @@ Hybrid tap/hold - automatically detects your intent:
 
 ### Continuous mode (Experimental)
 
-Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. Press again to stop:
+Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. 
+
+Press again to stop:
 
 ```jsonc
 {

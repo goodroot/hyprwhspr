@@ -698,7 +698,7 @@ class hyprwhsprApp:
             silent_count = 0
             try:
                 while self.is_recording and not self._continuous_silence_stop.is_set():
-                    raw_level = self.audio_capture.current_level
+                    raw_level = self.audio_capture.rolling_avg_level
                     if raw_level < silence_threshold:
                         silent_count += 1
                         if silent_count >= samples_needed:
@@ -990,7 +990,7 @@ class hyprwhsprApp:
                 text = transcription.strip()
 
                 # Filter hallucinations
-                normalized = text.lower().replace('_', ' ').strip('[]() ')
+                normalized = text.lower().replace('_', ' ').strip('[]().!?, ')
                 if normalized in _HALLUCINATION_MARKERS or text.startswith('♪'):
                     print(f"[LONGFORM] Whisper hallucination detected: {text!r}")
                     self.audio_manager.play_error_sound()
@@ -1481,7 +1481,7 @@ class hyprwhsprApp:
                 text = transcription.strip()
 
                 # Filter out Whisper hallucination markers - don't touch clipboard
-                normalized = text.lower().replace('_', ' ').strip('[]() ')
+                normalized = text.lower().replace('_', ' ').strip('[]().!?, ')
                 if normalized in _HALLUCINATION_MARKERS or text.startswith('♪'):
                     print(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
                     self.audio_manager.play_error_sound()
