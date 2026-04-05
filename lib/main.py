@@ -700,12 +700,16 @@ class hyprwhsprApp:
                 # Auto-calibrate threshold from noise floor if not manually configured
                 threshold = configured_threshold
                 if threshold <= 0:
-                    # Wait for level history to fill (~0.6s), then sample ambient noise floor
-                    self._continuous_silence_stop.wait(0.6)
-                    if self._continuous_silence_stop.is_set() or not self.is_recording:
-                        return
-                    noise_floor = self.audio_capture.rolling_avg_level
-                    threshold = max(noise_floor * 3, 2e-4)
+                    # Sample level 6 times over 0.6s; use minimum to get noise floor
+                    # even if the user starts speaking immediately after pressing record
+                    samples = []
+                    for _ in range(6):
+                        self._continuous_silence_stop.wait(0.1)
+                        if self._continuous_silence_stop.is_set() or not self.is_recording:
+                            return
+                        samples.append(self.audio_capture.rolling_avg_level)
+                    noise_floor = min(samples)
+                    threshold = max(noise_floor * 2, 2e-4)
                     print(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f} (noise floor={noise_floor:.5f})", flush=True)
 
                 while self.is_recording and not self._continuous_silence_stop.is_set():

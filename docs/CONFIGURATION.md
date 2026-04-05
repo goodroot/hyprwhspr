@@ -84,6 +84,7 @@ Press again to stop:
 ```
 
 - Recording continues after each auto-paste, so you can keep dictating
+- To make it "faster", lower continous silence threshold
 - The final press stops recording and pastes any remaining audio
 - The silence threshold is auto-calibrated from your mic's noise floor at the start of each session. If detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value as a starting point)
 
