@@ -69,6 +69,21 @@ Hybrid tap/hold - automatically detects your intent:
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
+### Continuous mode
+
+Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. Press again to stop:
+
+```jsonc
+{
+    "recording_mode": "continuous",
+    "continuous_silence_seconds": 2.0,  // Optional: seconds of silence before auto-paste (default: 2.0)
+    "continuous_silence_threshold": 0.005  // Optional: RMS silence threshold (increase if mic has high noise floor)
+}
+```
+
+- Recording continues after each auto-paste, so you can keep dictating
+- The final press stops recording and pastes any remaining audio
+
 ### Long-form mode
 
 Extended recording with pause/resume support:
