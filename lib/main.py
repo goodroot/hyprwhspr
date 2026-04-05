@@ -20,7 +20,7 @@ except ImportError:
 # Whisper hallucination markers for silence/noise segments
 _HALLUCINATION_MARKERS = {
     'blank audio', 'blank', 'silence', 'no speech',
-    'thank you', 'thanks for watching', 'thank you for watching',
+    'you', 'thank you', 'thanks for watching', 'thank you for watching',
     'video playback', 'music', 'music playing', 'keyboard clicking',
 }
 
