@@ -687,46 +687,44 @@ class AudioCapture:
             # Determine device to use for recording (use validated device_id)
             device_to_use = self.device_id
 
-            # Create and own the stream handle (for recovery)
-            self.stream = sd.InputStream(
-                device=device_to_use,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=self.dtype,
-                blocksize=self.chunk_size,
-                callback=audio_callback
-            )
-
-            # Start the stream explicitly.
-            # On first use ALSA's callback thread scheduler may not be ready yet,
-            # causing PortAudio to time out (PaErrorCode -9987 / paTimedOut).
-            # Retry up to 2 times with a brief pause and fresh stream to recover.
+            # Open and start the stream, retrying on transient failures.
+            # PortAudio may time out (PaErrorCode -9987) or hit an unanticipated
+            # host error (PaErrorCode -9999, e.g. "No such entity" from PulseAudio)
+            # transiently during service startup before the audio server settles.
+            # Retry up to 2 times with a brief pause, re-creating the stream each time.
             # NOTE: keepalive is stopped only after a successful start so that on
             # multiplexed servers (PipeWire/PulseAudio) the device node stays warm
             # throughout — closing it first was the cause of the cold-start timeout.
             _max_start_attempts = 3
             for _attempt in range(_max_start_attempts):
                 try:
+                    self.stream = sd.InputStream(
+                        device=device_to_use,
+                        samplerate=self.sample_rate,
+                        channels=self.channels,
+                        dtype=self.dtype,
+                        blocksize=self.chunk_size,
+                        callback=audio_callback
+                    )
                     self.stream.start()
                     self._stop_keepalive()  # Node is warm; safe to release keepalive now
                     break  # success
                 except Exception as _start_err:
-                    if _attempt < _max_start_attempts - 1 and "timed out" in str(_start_err).lower():
-                        print(f"[WARN] Stream start timed out (attempt {_attempt + 1}), retrying…", flush=True)
-                        try:
-                            self.stream.close()
-                        except Exception:
-                            pass
+                    err_str = str(_start_err).lower()
+                    is_retriable = (
+                        "timed out" in err_str or
+                        "unanticipated host error" in err_str
+                    )
+                    if _attempt < _max_start_attempts - 1 and is_retriable:
+                        print(f"[WARN] Stream open failed (attempt {_attempt + 1}): {_start_err}", flush=True)
+                        if self.stream is not None:
+                            try:
+                                self.stream.close()
+                            except Exception:
+                                pass
+                            self.stream = None
                         retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
                         time.sleep(retry_delay)
-                        self.stream = sd.InputStream(
-                            device=device_to_use,
-                            samplerate=self.sample_rate,
-                            channels=self.channels,
-                            dtype=self.dtype,
-                            blocksize=self.chunk_size,
-                            callback=audio_callback
-                        )
                     else:
                         raise
 

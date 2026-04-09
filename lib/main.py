@@ -1155,10 +1155,6 @@ class hyprwhsprApp:
             # Write recording status to file for tray script
             self._write_recording_status(True)
 
-            # Duck system audio if enabled
-            if self.config.get_setting('audio_ducking', False):
-                self.audio_ducker.duck()
-
             # Update language in realtime client if override is provided
             if language_override is not None:
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
@@ -1286,6 +1282,10 @@ class hyprwhsprApp:
                     print("[HEALTH] Recording succeeded - canceling background recovery", flush=True)
                     self._background_recovery_needed.clear()
                 
+                # Duck system audio now that stream is confirmed working
+                if self.config.get_setting('audio_ducking', False):
+                    self.audio_ducker.duck()
+
                 # Stream is working and stable - start monitoring
                 self._start_audio_level_monitoring()
                     
