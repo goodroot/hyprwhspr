@@ -39,12 +39,26 @@ from cli_commands import (
 )
 
 
+def _get_version():
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['git', 'describe', '--tags', '--abbrev=7'],
+            cwd=Path(__file__).parent.parent,
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+    except Exception:
+        return 'unknown'
+
+
 def main():
     """Main CLI entry point"""
     parser = argparse.ArgumentParser(
         prog='hyprwhspr',
         description='hyprwhspr - ferocious speech-to-text for Linux',
     )
+    parser.add_argument('--version', action='version', version=f'%(prog)s {_get_version()}')
     
     # Global verbosity flags
     parser.add_argument('-q', '--quiet', action='store_true',
