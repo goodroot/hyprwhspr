@@ -583,9 +583,11 @@ class WhisperManager:
                     print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
                     return False
 
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=self.current_model,
                     n_threads=self.config.get_setting('threads', 4),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 
@@ -1238,7 +1240,7 @@ class WhisperManager:
             try:
                 transcribe_kwargs = {
                     'vad_filter': vad_filter,
-                    'beam_size': 5,
+                    'beam_size': self.config.get_setting('beam_size', 5),
                     'task': task,
                 }
                 if language:
@@ -1670,6 +1672,11 @@ class WhisperManager:
                         transcribe_kwargs['translate'] = True
                     if whisper_prompt:
                         transcribe_kwargs['initial_prompt'] = whisper_prompt
+                    if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search':
+                        transcribe_kwargs['beam_search'] = {
+                            'beam_size': self.config.get_setting('beam_size', 5),
+                            'patience': -1.0,
+                        }
 
                     segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
 
@@ -1754,9 +1761,11 @@ class WhisperManager:
             except ImportError:
                 from pywhispercpp import Model
             
+            strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
             self._pywhisper_model = Model(
                 model=model_name,
                 n_threads=threads,
+                params_sampling_strategy=strategy_int,
                 redirect_whispercpp_logs_to=None
             )
             
@@ -1877,9 +1886,11 @@ class WhisperManager:
                 except ImportError:
                     # Fallback for flat layout (or older versions)
                     from pywhispercpp import Model
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=self.current_model,
                     n_threads=int(num_threads),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 
@@ -1934,9 +1945,11 @@ class WhisperManager:
                 except ImportError:
                     # Fallback for flat layout (or older versions)
                     from pywhispercpp import Model
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=model_name,
                     n_threads=self.config.get_setting('threads', 4),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 

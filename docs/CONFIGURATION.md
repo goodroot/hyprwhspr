@@ -530,6 +530,23 @@ Set a per-language prompt using `whisper_prompt_{lang}`:
 - Falls back to `whisper_prompt` if no language-specific prompt is configured
 - Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
 
+#### Decoding strategy
+
+Controls how Whisper searches for the best transcription. Applies to `pywhispercpp` and `faster-whisper` backends.
+
+```jsonc
+{
+    "sampling_strategy": "beam_search",  // "beam_search" (default) or "greedy"
+    "beam_size": 5                       // number of candidates to track (beam_search only)
+}
+```
+
+- **`"beam_search"`** (default) — keeps the top N candidate sequences in parallel and picks the best overall result. Matches `whisper-cli` defaults. Better accuracy, especially for non-English audio and noisy input.
+- **`"greedy"`** — picks the single highest-probability word at each step. Faster, lower quality.
+- **`beam_size`** — higher values (e.g. `8`–`10`) can improve accuracy at the cost of speed. Default `5` is a good balance for real-time dictation.
+
+> **Note**: `sampling_strategy` is locked in at model load time for `pywhispercpp`. Changing it requires a service restart.
+
 ---
 
 ### REST API
