@@ -1645,6 +1645,19 @@ class WhisperManager:
             try:
                 # Use language_override if provided, otherwise get from config (None = auto-detect)
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
+
+                # pywhispercpp doesn't auto-detect language when no language kwarg is passed —
+                # it keeps whisper.cpp's compiled-in default of "en". Call auto_detect_language()
+                # explicitly so a null config value behaves as documented.
+                if not language:
+                    try:
+                        (detected, prob), _ = self._pywhisper_model.auto_detect_language(audio_data)
+                        language = detected
+                        print(f'[LANG] auto-detected: {detected} (p={prob:.2f})', flush=True)
+                    except Exception as e:
+                        print(f'[WARN] language auto-detect failed: {e}; falling back to en', flush=True)
+                        language = 'en'
+
                 whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
 
                 task = self.config.get_setting('task', 'transcribe')
@@ -1652,11 +1665,9 @@ class WhisperManager:
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():
                     # Build transcribe kwargs with available values
-                    transcribe_kwargs = {}
+                    transcribe_kwargs = {'language': language}
                     if task == 'translate':
                         transcribe_kwargs['translate'] = True
-                    if language:
-                        transcribe_kwargs['language'] = language
                     if whisper_prompt:
                         transcribe_kwargs['initial_prompt'] = whisper_prompt
 
