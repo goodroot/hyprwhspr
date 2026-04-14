@@ -647,9 +647,11 @@ class WhisperManager:
                     print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
                     return False
 
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=self.current_model,
                     n_threads=self.config.get_setting('threads', 4),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 
@@ -1302,7 +1304,7 @@ class WhisperManager:
             try:
                 transcribe_kwargs = {
                     'vad_filter': vad_filter,
-                    'beam_size': 5,
+                    'beam_size': self.config.get_setting('beam_size', 5),
                     'task': task,
                 }
                 if language:
@@ -1709,6 +1711,19 @@ class WhisperManager:
             try:
                 # Use language_override if provided, otherwise get from config (None = auto-detect)
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
+
+                # pywhispercpp doesn't auto-detect language when no language kwarg is passed —
+                # it keeps whisper.cpp's compiled-in default of "en". Call auto_detect_language()
+                # explicitly so a null config value behaves as documented.
+                if not language:
+                    try:
+                        (detected, prob), _ = self._pywhisper_model.auto_detect_language(audio_data)
+                        language = detected
+                        print(f'[LANG] auto-detected: {detected} (p={prob:.2f})', flush=True)
+                    except Exception as e:
+                        print(f'[WARN] language auto-detect failed: {e}; falling back to en', flush=True)
+                        language = 'en'
+
                 whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
 
                 task = self.config.get_setting('task', 'transcribe')
@@ -1716,13 +1731,16 @@ class WhisperManager:
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():
                     # Build transcribe kwargs with available values
-                    transcribe_kwargs = {}
+                    transcribe_kwargs = {'language': language}
                     if task == 'translate':
                         transcribe_kwargs['translate'] = True
-                    if language:
-                        transcribe_kwargs['language'] = language
                     if whisper_prompt:
                         transcribe_kwargs['initial_prompt'] = whisper_prompt
+                    if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search':
+                        transcribe_kwargs['beam_search'] = {
+                            'beam_size': self.config.get_setting('beam_size', 5),
+                            'patience': -1.0,
+                        }
 
                     segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
 
@@ -1807,9 +1825,11 @@ class WhisperManager:
             except ImportError:
                 from pywhispercpp import Model
             
+            strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
             self._pywhisper_model = Model(
                 model=model_name,
                 n_threads=threads,
+                params_sampling_strategy=strategy_int,
                 redirect_whispercpp_logs_to=None
             )
             
@@ -1930,9 +1950,11 @@ class WhisperManager:
                 except ImportError:
                     # Fallback for flat layout (or older versions)
                     from pywhispercpp import Model
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=self.current_model,
                     n_threads=int(num_threads),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 
@@ -1987,9 +2009,11 @@ class WhisperManager:
                 except ImportError:
                     # Fallback for flat layout (or older versions)
                     from pywhispercpp import Model
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=model_name,
                     n_threads=self.config.get_setting('threads', 4),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 

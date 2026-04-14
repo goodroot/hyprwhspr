@@ -8,6 +8,7 @@ import sys
 import wave
 import threading
 import time
+from collections import deque
 from typing import Optional, Callable
 from io import BytesIO
 
@@ -39,6 +40,8 @@ class AudioCapture:
         self.is_monitoring = False
         self.audio_data = []
         self.current_level = 0.0
+        # Rolling window of recent RMS values (~0.5s at 16kHz/1024 chunk)
+        self._level_history = deque(maxlen=8)
         
         # Threading
         self.record_thread = None
@@ -553,40 +556,32 @@ class AudioCapture:
         
         # Return recorded data
         with self.lock:
-            if self.audio_data:
-                try:
-                    # Concatenate all audio chunks
-                    audio_array = np.concatenate(self.audio_data, axis=0)
-                    
-                    # Ensure it's 1D (flatten if needed)
-                    if audio_array.ndim > 1:
-                        audio_array = audio_array.flatten()
-                    
-                    # Ensure float32 dtype
-                    if audio_array.dtype != np.float32:
-                        audio_array = audio_array.astype(np.float32)
-                    
-                    # Ensure contiguous in memory
-                    if not audio_array.flags['C_CONTIGUOUS']:
-                        audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
-                    
-                    # Validate no NaN/inf
-                    if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
-                        print(f"[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
-                        return None
-                    
-                    duration = len(audio_array) / self.sample_rate
-                    if duration < 0.5:
-                        print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
-                    
-                    return audio_array
-                except Exception as e:
-                    print(f"[ERROR] Failed to process audio data: {e}", flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return None
-            else:
+            audio_array = self._collect_audio_array()
+            if audio_array is not None:
+                duration = len(audio_array) / self.sample_rate
+                if duration < 0.5:
+                    print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
+            return audio_array
+
+    def _collect_audio_array(self) -> Optional[np.ndarray]:
+        """Concatenate audio_data into a flat float32 array. Must be called with self.lock held."""
+        if not self.audio_data:
+            return None
+        try:
+            audio_array = np.concatenate(self.audio_data, axis=0)
+            if audio_array.ndim > 1:
+                audio_array = audio_array.flatten()
+            if audio_array.dtype != np.float32:
+                audio_array = audio_array.astype(np.float32)
+            if not audio_array.flags['C_CONTIGUOUS']:
+                audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
+            if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
+                print("[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
                 return None
+            return audio_array
+        except Exception as e:
+            print(f"[ERROR] Failed to collect audio data: {e}", flush=True)
+            return None
 
     def get_current_audio_copy(self) -> Optional[np.ndarray]:
         """
@@ -596,24 +591,21 @@ class AudioCapture:
             Copy of audio data as numpy array, or None if no data
         """
         with self.lock:
-            if not self.audio_data:
-                return None
-            try:
-                audio_array = np.concatenate(self.audio_data, axis=0)
-                if audio_array.ndim > 1:
-                    audio_array = audio_array.flatten()
-                if audio_array.dtype != np.float32:
-                    audio_array = audio_array.astype(np.float32)
-                return audio_array.copy()
-            except Exception as e:
-                print(f"[ERROR] Failed to copy audio data: {e}")
-                return None
+            data = self._collect_audio_array()
+            return data.copy() if data is not None else None
 
     def clear_buffer(self):
         """Clear the audio buffer without stopping recording."""
         with self.lock:
             self.audio_data = []
             print("[AUDIO] Buffer cleared")
+
+    def flush_buffer(self) -> Optional[np.ndarray]:
+        """Atomically copy and clear the audio buffer. Returns audio data or None."""
+        with self.lock:
+            data = self._collect_audio_array()
+            self.audio_data = []
+            return data
 
     def pause_recording(self) -> Optional[np.ndarray]:
         """
@@ -636,20 +628,8 @@ class AudioCapture:
             self.record_thread.join(timeout=3.0)
 
         # Get the audio data
-        audio_array = None
         with self.lock:
-            if self.audio_data:
-                try:
-                    audio_array = np.concatenate(self.audio_data, axis=0)
-                    if audio_array.ndim > 1:
-                        audio_array = audio_array.flatten()
-                    if audio_array.dtype != np.float32:
-                        audio_array = audio_array.astype(np.float32)
-                    if not audio_array.flags['C_CONTIGUOUS']:
-                        audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
-                except Exception as e:
-                    print(f"[ERROR] Failed to process paused audio: {e}")
-                    audio_array = None
+            audio_array = self._collect_audio_array()
             # Clear buffer after extracting
             self.audio_data = []
 
@@ -690,6 +670,7 @@ class AudioCapture:
                         
                         # Update current audio level for monitoring
                         self.current_level = np.sqrt(np.mean(audio_chunk**2))
+                        self._level_history.append(self.current_level)
                         
                         # Store audio data
                         self.audio_data.append(audio_chunk.copy())
@@ -706,46 +687,44 @@ class AudioCapture:
             # Determine device to use for recording (use validated device_id)
             device_to_use = self.device_id
 
-            # Create and own the stream handle (for recovery)
-            self.stream = sd.InputStream(
-                device=device_to_use,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=self.dtype,
-                blocksize=self.chunk_size,
-                callback=audio_callback
-            )
-
-            # Start the stream explicitly.
-            # On first use ALSA's callback thread scheduler may not be ready yet,
-            # causing PortAudio to time out (PaErrorCode -9987 / paTimedOut).
-            # Retry up to 2 times with a brief pause and fresh stream to recover.
+            # Open and start the stream, retrying on transient failures.
+            # PortAudio may time out (PaErrorCode -9987) or hit an unanticipated
+            # host error (PaErrorCode -9999, e.g. "No such entity" from PulseAudio)
+            # transiently during service startup before the audio server settles.
+            # Retry up to 2 times with a brief pause, re-creating the stream each time.
             # NOTE: keepalive is stopped only after a successful start so that on
             # multiplexed servers (PipeWire/PulseAudio) the device node stays warm
             # throughout — closing it first was the cause of the cold-start timeout.
             _max_start_attempts = 3
             for _attempt in range(_max_start_attempts):
                 try:
+                    self.stream = sd.InputStream(
+                        device=device_to_use,
+                        samplerate=self.sample_rate,
+                        channels=self.channels,
+                        dtype=self.dtype,
+                        blocksize=self.chunk_size,
+                        callback=audio_callback
+                    )
                     self.stream.start()
                     self._stop_keepalive()  # Node is warm; safe to release keepalive now
                     break  # success
                 except Exception as _start_err:
-                    if _attempt < _max_start_attempts - 1 and "timed out" in str(_start_err).lower():
-                        print(f"[WARN] Stream start timed out (attempt {_attempt + 1}), retrying…", flush=True)
-                        try:
-                            self.stream.close()
-                        except Exception:
-                            pass
+                    err_str = str(_start_err).lower()
+                    is_retriable = (
+                        "timed out" in err_str or
+                        "unanticipated host error" in err_str
+                    )
+                    if _attempt < _max_start_attempts - 1 and is_retriable:
+                        print(f"[WARN] Stream open failed (attempt {_attempt + 1}): {_start_err}", flush=True)
+                        if self.stream is not None:
+                            try:
+                                self.stream.close()
+                            except Exception:
+                                pass
+                            self.stream = None
                         retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
                         time.sleep(retry_delay)
-                        self.stream = sd.InputStream(
-                            device=device_to_use,
-                            samplerate=self.sample_rate,
-                            channels=self.channels,
-                            dtype=self.dtype,
-                            blocksize=self.chunk_size,
-                            callback=audio_callback
-                        )
                     else:
                         raise
 
@@ -904,6 +883,14 @@ class AudioCapture:
     def get_audio_level(self) -> float:
         """Get the current audio level (0.0 to 1.0)"""
         return min(1.0, self.current_level * 10)  # Scale for better visualization
+
+    @property
+    def rolling_avg_level(self) -> float:
+        """Rolling average RMS level over the last ~0.5s of audio chunks.
+        More stable than current_level for silence detection."""
+        if not self._level_history:
+            return 0.0
+        return sum(self._level_history) / len(self._level_history)
     
     def _cleanup_stream(self):
         """Clean up the audio stream (idempotent - safe to call multiple times)"""

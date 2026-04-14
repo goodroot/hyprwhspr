@@ -32,9 +32,9 @@
     },
     "recording_mode": {
       "type": "string",
-      "enum": ["toggle", "push_to_talk", "auto"],
+      "enum": ["toggle", "push_to_talk", "auto", "continuous"],
       "default": "toggle",
-      "description": "Recording mode: 'toggle' (press to start/stop), 'push_to_talk' (hold to record), 'auto' (hybrid tap/hold)"
+      "description": "Recording mode: 'toggle' (press to start/stop), 'push_to_talk' (hold to record), 'auto' (hybrid tap/hold), 'continuous' (keeps transcribing, auto-pastes on speech pause)"
     },
     "grab_keys": {
       "type": "boolean",
@@ -362,6 +362,20 @@
       "minimum": 1,
       "default": 300,
       "description": "Auto-save interval in seconds for long-form recording (default: 5 minutes)"
+    },
+    "continuous_silence_seconds": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 30,
+      "default": 2.0,
+      "description": "Seconds of silence before auto-pasting transcription in continuous mode"
+    },
+    "continuous_silence_threshold": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0,
+      "description": "RMS level below which audio is considered silence in continuous mode. 0 (default) = auto-calibrate from noise floor at session start. Set manually if auto-calibration misbehaves on your mic."
     }
   }
 }

@@ -69,6 +69,25 @@ Hybrid tap/hold - automatically detects your intent:
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
+### Continuous mode (Experimental)
+
+Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. 
+
+Press again to stop:
+
+```jsonc
+{
+    "recording_mode": "continuous",
+    "continuous_silence_seconds": 2.0,  // Optional: seconds of silence before auto-paste (default: 2.0)
+    "continuous_silence_threshold": 0    // Optional: 0 = auto-calibrate from noise floor (default). Set manually if needed.
+}
+```
+
+- Recording continues after each auto-paste, so you can keep dictating
+- To make it "faster", lower continous silence threshold
+- The final press stops recording and pastes any remaining audio
+- The silence threshold is auto-calibrated from your mic's noise floor at the start of each session. If detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value as a starting point)
+
 ### Long-form mode
 
 Extended recording with pause/resume support:
@@ -510,6 +529,23 @@ Set a per-language prompt using `whisper_prompt_{lang}`:
 
 - Falls back to `whisper_prompt` if no language-specific prompt is configured
 - Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
+
+#### Decoding strategy
+
+Controls how Whisper searches for the best transcription. Applies to `pywhispercpp` and `faster-whisper` backends.
+
+```jsonc
+{
+    "sampling_strategy": "beam_search",  // "beam_search" (default) or "greedy"
+    "beam_size": 5                       // number of candidates to track (beam_search only)
+}
+```
+
+- **`"beam_search"`** (default) — keeps the top N candidate sequences in parallel and picks the best overall result. Matches `whisper-cli` defaults. Better accuracy, especially for non-English audio and noisy input.
+- **`"greedy"`** — picks the single highest-probability word at each step. Faster, lower quality.
+- **`beam_size`** — higher values (e.g. `8`–`10`) can improve accuracy at the cost of speed. Default `5` is a good balance for real-time dictation.
+
+> **Note**: `sampling_strategy` is locked in at model load time for `pywhispercpp`. Changing it requires a service restart.
 
 ---
 
