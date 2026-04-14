@@ -32,6 +32,12 @@ except (ImportError, ModuleNotFoundError) as e:
 class GeminiRealtimeClient:
     """WebSocket client for Gemini Live API realtime transcription"""
 
+    # Language is baked into the setup message at connect time.
+    # Changing it mid-session requires a full reconnect, which would
+    # drop any already-streamed audio. _transcribe_realtime checks
+    # this flag and skips update_language() after audio has been sent.
+    supports_mid_session_language_update = False
+
     def __init__(self, mode: str = 'transcribe'):
         """
         Gemini Live API client for transcription or conversation.
@@ -78,7 +84,6 @@ class GeminiRealtimeClient:
         self.input_sample_rate = 16000
         self.sample_rate = 16000  # Gemini accepts 16kHz natively
 
-        self._queue_cond = None
         self._sender_thread = None
         self._sender_running = False
         self._dropped_chunks = 0
@@ -464,6 +469,9 @@ class GeminiRealtimeClient:
 
         print(f'[GEMINI] Reconnecting (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts}) in {delay}s...', flush=True)
         time.sleep(delay)
+
+        if not self.receiver_running:
+            return False
 
         if self._connect_internal():
             return True

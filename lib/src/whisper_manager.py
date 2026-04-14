@@ -1203,9 +1203,19 @@ class WhisperManager:
             return ""
         
         try:
-            # Update language if override provided
+            # Update language if override provided.
+            # Some clients (e.g. Gemini) bake language into the setup message at
+            # connect time and cannot update it after audio has been streamed —
+            # doing so would trigger a reconnect and silently drop the audio.
             if language_override is not None:
-                self._realtime_client.update_language(language_override)
+                if getattr(self._realtime_client, 'supports_mid_session_language_update', True):
+                    self._realtime_client.update_language(language_override)
+                else:
+                    print(
+                        f'[REALTIME] Provider does not support mid-session language override '
+                        f'(requested: {language_override}); change will take effect on next session',
+                        flush=True,
+                    )
             
             # Get timeout from config
             timeout = self.config.get_setting('realtime_timeout', 30)
