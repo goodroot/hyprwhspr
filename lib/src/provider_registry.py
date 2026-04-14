@@ -93,6 +93,29 @@ PROVIDERS: Dict[str, Dict] = {
             },
         },
     },
+    'google': {
+        'name': 'Google (Gemini)',
+        'endpoint': 'https://generativelanguage.googleapis.com/v1beta/audio/transcriptions',
+        'websocket_endpoint': 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',
+        'api_key_prefix': None,
+        'api_key_description': 'Google AI API key (from aistudio.google.com)',
+        'models': {
+            'gemini-3.1-flash-live-preview': {
+                'name': 'Gemini 3.1 Flash Live (Preview)',
+                'description': 'Fast, low-latency realtime streaming',
+                'body': {'model': 'gemini-3.1-flash-live-preview'},
+                'realtime_model': True,
+                'hidden': True
+            },
+            'gemini-2.5-flash-native-audio-latest': {
+                'name': 'Gemini 2.5 Flash Native Audio',
+                'description': 'Native audio understanding, stable release',
+                'body': {'model': 'gemini-2.5-flash-native-audio-latest'},
+                'realtime_model': True,
+                'hidden': True
+            },
+        }
+    },
     'elevenlabs': {
         'name': 'ElevenLabs',
         'endpoint': 'https://api.elevenlabs.io/v1/speech-to-text',
