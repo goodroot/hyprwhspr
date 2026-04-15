@@ -203,12 +203,12 @@
     "websocket_provider": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai')"
+      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai', 'google', 'elevenlabs')"
     },
     "websocket_model": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-mini-2025-12-15')"
+      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-mini-2025-12-15', 'gemini-3.1-flash-live-preview')"
     },
     "websocket_url": {
       "type": ["string", "null"],

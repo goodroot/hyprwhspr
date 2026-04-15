@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | Cohere / Parakeet / Whisper / ElevenLabs / REST API | stylish visuals
+    instant performance | Cohere / Parakeet / Whisper / Gemini / ElevenLabs / REST API | stylish visuals
 </p>
 
  <p align="center">
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **GPU memory efficient** - Limit or zero memory usage easily, more for other local models
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **Translation** - Translate non-English to English with a single config
-- **REST API or websockets** - Secure, fast wires to top clouds like ElevenLabs
+- **REST API or websockets** - Secure, fast wires to top clouds like Gemini, ElevenLabs
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages

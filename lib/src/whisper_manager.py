@@ -361,7 +361,71 @@ class WhisperManager:
                     return False
                 
                 # Select appropriate client based on provider
-                if provider_id == 'elevenlabs':
+                if provider_id == 'google':
+                    # Use Gemini Live API client
+                    try:
+                        from .gemini_realtime_client import GeminiRealtimeClient
+                    except ImportError:
+                        from gemini_realtime_client import GeminiRealtimeClient
+
+                    realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+                    self._realtime_client = GeminiRealtimeClient(mode=realtime_mode)
+
+                    # Get WebSocket URL
+                    websocket_url = self.config.get_setting('websocket_url')
+                    if not websocket_url:
+                        provider = get_provider(provider_id)
+                        if provider and 'websocket_endpoint' in provider:
+                            websocket_url = provider['websocket_endpoint']
+                        else:
+                            websocket_url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
+
+                    # Build instructions
+                    instructions_parts = []
+                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                    if whisper_prompt:
+                        instructions_parts.append(whisper_prompt)
+
+                    language = self.config.get_setting('language', None)
+                    if language:
+                        instructions_parts.append(f"Transcribe in {language} language.")
+
+                    instructions = ' '.join(instructions_parts) if instructions_parts else None
+
+                    # Set language
+                    self._realtime_client.language = language
+
+                    # Set buffer max seconds
+                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+                    self._realtime_client.set_max_buffer_seconds(buffer_max)
+
+                    # Connect (API key goes in URL query param, handled by client)
+                    self._realtime_connect_params = {
+                        'websocket_url': websocket_url,
+                        'api_key': api_key,
+                        'model_id': model_id,
+                        'instructions': instructions,
+                    }
+                    if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
+                        print('ERROR: Failed to connect to Gemini Live API')
+                        try:
+                            self._realtime_client.close()
+                        except Exception:
+                            pass
+                        self._realtime_client = None
+                        return False
+
+                    # Gemini accepts 16kHz audio natively - no resampling needed
+                    def _send_direct(audio_chunk: np.ndarray):
+                        """Send audio directly to Gemini (16kHz, no resampling)"""
+                        try:
+                            self._realtime_client.append_audio(audio_chunk)
+                        except Exception as e:
+                            print(f'[GEMINI] Streaming error: {e}', flush=True)
+
+                    self._realtime_streaming_callback = _send_direct
+
+                elif provider_id == 'elevenlabs':
                     # Use ElevenLabs-specific client (Scribe v2 Realtime)
                     try:
                         from .elevenlabs_realtime_client import ElevenLabsRealtimeClient
@@ -1139,9 +1203,19 @@ class WhisperManager:
             return ""
         
         try:
-            # Update language if override provided
+            # Update language if override provided.
+            # Some clients (e.g. Gemini) bake language into the setup message at
+            # connect time and cannot update it after audio has been streamed —
+            # doing so would trigger a reconnect and silently drop the audio.
             if language_override is not None:
-                self._realtime_client.update_language(language_override)
+                if getattr(self._realtime_client, 'supports_mid_session_language_update', True):
+                    self._realtime_client.update_language(language_override)
+                else:
+                    print(
+                        f'[REALTIME] Provider does not support mid-session language override '
+                        f'(requested: {language_override}); change will take effect on next session',
+                        flush=True,
+                    )
             
             # Get timeout from config
             timeout = self.config.get_setting('realtime_timeout', 30)

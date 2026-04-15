@@ -1496,11 +1496,14 @@ def setup_command(python_path: Optional[str] = None):
             return
         
         # Prompt for realtime mode
-        # NOTE: Only OpenAI (and custom OpenAI-compatible endpoints) support "converse".
-        if provider_id in ('openai', 'custom'):
+        # NOTE: OpenAI, Google Gemini, and custom endpoints support "converse".
+        if provider_id in ('openai', 'google', 'custom'):
             print("\nRealtime Mode:")
             print("  1. Transcribe - Convert speech to text (default)")
-            print("  2. Converse - Voice-to-AI: speak and get AI responses")
+            if provider_id == 'google':
+                print("  2. Converse - Gemini speaks back; its response is transcribed and typed into your active window")
+            else:
+                print("  2. Converse - Voice-to-AI: speak and get AI responses")
             mode_choice = Prompt.ask("Select mode", choices=['1', '2'], default='1')
             realtime_mode = 'transcribe' if mode_choice == '1' else 'converse'
         else:

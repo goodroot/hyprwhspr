@@ -275,7 +275,7 @@ For up-to-date accuracy rankings across open-source models, see the [Open ASR Le
 | faster-whisper | Local | NVIDIA or CPU | Fast | 99 | Very good | — |
 | whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Very fast | 99 | Very good | — |
 | REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
-| Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | OpenAI, ElevenLabs |
+| Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs |
 
 ---
 
@@ -626,6 +626,28 @@ Two modes available:
     "realtime_mode": "transcribe",       // "transcribe" or "converse"
     "realtime_timeout": 30,              // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
+}
+```
+
+#### Google Gemini
+
+Realtime streaming transcription via Google's Gemini Live API.
+
+Bring an API key from [Google AI Studio](https://aistudio.google.com/).
+
+Uses native 16kHz audio (no resampling) and server-side VAD.
+
+- **transcribe** (default) - speech-to-text via gemini's live transcript events
+- **converse** - voice-to-AI: speak and get AI responses
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "google",
+    "websocket_model": "gemini-3.1-flash-live-preview",
+    "realtime_mode": "transcribe",           // "transcribe" or "converse"
+    "realtime_timeout": 30,                  // Advanced: seconds to wait after stop for final transcript
+    "realtime_buffer_max_seconds": 5         // Advanced: max unsent audio backlog (seconds) before dropping old chunks
 }
 ```
 
