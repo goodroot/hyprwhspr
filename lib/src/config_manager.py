@@ -5,8 +5,30 @@ Handles loading, saving, and managing application settings
 
 import copy
 import json
+import os
+import re
 from pathlib import Path
 from typing import Any, Dict
+
+
+# Environment variable substitution: ${VAR} -> value of $VAR, or literal token if unset.
+# Applied lazily in get_setting() so save_config preserves the original tokens.
+_ENV_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
+
+
+def _expand_env(value: Any) -> Any:
+    """Recursively expand ${VAR} in strings. Non-strings pass through."""
+    if isinstance(value, str):
+        def repl(m: 're.Match[str]') -> str:
+            env_val = os.environ.get(m.group(1))
+            return env_val if env_val is not None else m.group(0)
+
+        return _ENV_PATTERN.sub(repl, value)
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
 
 try:
     from .paths import CONFIG_DIR, CONFIG_FILE, TEMP_DIR
@@ -228,8 +250,8 @@ class ConfigManager:
             return False
     
     def get_setting(self, key: str, default: Any = None) -> Any:
-        """Get a configuration setting"""
-        return self.config.get(key, default)
+        """Get a configuration setting with environment variable expansion applied."""
+        return _expand_env(self.config.get(key, default))
     
     def set_setting(self, key: str, value: Any):
         """Set a configuration setting"""
