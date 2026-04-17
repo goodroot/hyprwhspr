@@ -9,6 +9,7 @@ import paths
 import subprocess
 import getpass
 import shutil
+import socket
 from pathlib import Path
 from typing import Optional
 
@@ -37,9 +38,9 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
-    from .paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
+    from .paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, SOCKET_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 except ImportError:
-    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
+    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, SOCKET_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 
 try:
     from .backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
@@ -5033,3 +5034,51 @@ def record_command(action: str, language: str = None):
         log_error(f"Unknown action: {action}")
         log_info("Available actions: start, stop, cancel, toggle, status")
 
+
+def record_capture_command(language: str = None):
+    """
+    Connect to the capture socket, trigger a recording, stream the transcription to stdout.
+
+    Blocks until the daemon closes the connection. If daemon is idle, this self-triggers a recording via the socket.
+    If daemon is already recording, this attaches to the in-flight transcription.
+
+    Args:
+      language: Language code (e.g., 'en', 'it', 'fr') or None for auto-detect
+    """
+
+    if not SOCKET_FILE.exists():
+        log_error("Capture socket not found.")
+        log_error("Is the hyprwhspr service running?")
+        log_error("Start it with: systemctl --user start hyprwhspr")
+        sys.exit(1)
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.connect(str(SOCKET_FILE))
+            request = "capture"
+            if language:
+                request += f":{language}"
+            request += "\n"
+            s.sendall(request.encode())
+
+            first = True
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                if first:
+                    first = False
+                    if chunk.startswith(b"ERROR:"):
+                        msg = chunk.decode().strip().removeprefix("ERROR:")
+                        log_error(f"Capture rejected: {msg}")
+                        sys.exit(1)
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except ConnectionRefusedError:
+        log_error("Capture socket refused connection. Daemon may be shutting down.")
+        sys.exit(1)
+    except OSError as e:
+        log_error(f"Capture socket error: {e}")
+        sys.exit(1)

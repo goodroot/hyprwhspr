@@ -973,6 +973,12 @@ hyprwhspr record toggle --lang it   # Toggle with language override
 
 # Check current status
 hyprwhspr record status
+
+# Capture: trigger a recording and stream the transcription to stdout
+# Blocks until transcription is complete. Suppresses text injection — use for scripting/piping.
+# Self-triggers a recording if none is in progress; attaches to an in-flight recording if one is.
+hyprwhspr record capture
+hyprwhspr record capture --lang it   # Capture with language override
 ```
 
 The `--lang` parameter overrides the default language for that recording session. 

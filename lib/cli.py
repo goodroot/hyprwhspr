@@ -36,6 +36,7 @@ from cli_commands import (
     uninstall_command,
     keyboard_command,
     record_command,
+    record_capture_command,
 )
 
 
@@ -166,6 +167,12 @@ def main():
     record_toggle_parser = record_subparsers.add_parser('toggle', help='Toggle recording on/off')
     record_toggle_parser.add_argument('--lang', dest='language', metavar='CODE',
                                       help='Language code for transcription (e.g., en, it, de)')
+    record_capture_parser = record_subparsers.add_parser(
+        'capture',
+        help='Trigger recording and stream the transcription to stdout (suppresses text injection)'
+    )
+    record_capture_parser.add_argument('--lang', dest='language', metavar='CODE',
+                                       help='Language code for transcription (e.g., en, it, de)')
     record_subparsers.add_parser('status', help='Show current recording status')
     
     # backend command
@@ -298,7 +305,10 @@ def main():
             if not args.record_action:
                 record_parser.print_help()
                 sys.exit(1)
-            record_command(args.record_action, language=getattr(args, 'language', None))
+            if args.record_action == 'capture':
+                record_capture_command(language=getattr(args, 'language', None))
+            else:
+                record_command(args.record_action, language=getattr(args, 'language', None))
         elif args.command == 'uninstall':
             uninstall_command(
                 keep_models=getattr(args, 'keep_models', False),
