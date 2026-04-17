@@ -19,9 +19,9 @@ except ImportError:
     from paths import CREDENTIALS_DIR, CREDENTIALS_FILE
 
 try:
-    from .config_manager import _expand_env
+    from .config_manager import expand_env
 except ImportError:
-    from config_manager import _expand_env
+    from config_manager import expand_env
 
 
 def _ensure_credentials_dir():
@@ -104,7 +104,7 @@ def get_credential(provider: str) -> Optional[str]:
     """
     credentials = _load_credentials()
     value = credentials.get(provider)
-    return _expand_env(value) if isinstance(value, str) else value
+    return expand_env(value) if isinstance(value, str) else value
 
 
 def list_credentials() -> Dict[str, str]:
@@ -115,6 +115,7 @@ def list_credentials() -> Dict[str, str]:
         Dictionary mapping provider to masked key (e.g., 'sk-...****')
     """
     credentials = _load_credentials()
+    # ${VAR} tokens are not expanded here — they appear as literals in masked output.
     masked = {}
     
     for provider, key in credentials.items():

@@ -34,6 +34,20 @@ Only 2 essential options:
 }
 ```
 
+## Environment variable substitution
+
+Both `config.json` and `credentials.json` support `${VAR}` tokens. 
+
+Tokens are stored as-is on disk and expanded at read time
+
+```json
+{
+  "rest_api_key": "${OPENAI_API_KEY}"
+}
+```
+
+---
+
 ## Recording modes
 
 ### Toggle mode
@@ -69,7 +83,7 @@ Hybrid tap/hold - automatically detects your intent:
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
-### Continuous mode (Experimental)
+### Continuous mode
 
 Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. 
 
@@ -86,7 +100,9 @@ Press again to stop:
 - Recording continues after each auto-paste, so you can keep dictating
 - To make it "faster", lower continous silence threshold
 - The final press stops recording and pastes any remaining audio
-- The silence threshold is auto-calibrated from your mic's noise floor at the start of each session. If detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value as a starting point)
+- The silence threshold is auto-calibrated from your mic's noise floor at the start of each session. 
+- If detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value)
+- Please report any issues you might experience with this functionality so it can be polished. 
 
 ### Long-form mode
 

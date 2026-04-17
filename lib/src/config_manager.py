@@ -16,7 +16,7 @@ from typing import Any, Dict
 _ENV_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
 
-def _expand_env(value: Any) -> Any:
+def expand_env(value: Any) -> Any:
     """Recursively expand ${VAR} in strings. Non-strings pass through."""
     if isinstance(value, str):
         def repl(m: 're.Match[str]') -> str:
@@ -25,9 +25,9 @@ def _expand_env(value: Any) -> Any:
 
         return _ENV_PATTERN.sub(repl, value)
     if isinstance(value, dict):
-        return {k: _expand_env(v) for k, v in value.items()}
+        return {k: expand_env(v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_expand_env(v) for v in value]
+        return [expand_env(v) for v in value]
     return value
 
 try:
@@ -250,8 +250,14 @@ class ConfigManager:
             return False
     
     def get_setting(self, key: str, default: Any = None) -> Any:
-        """Get a configuration setting with environment variable expansion applied."""
-        return _expand_env(self.config.get(key, default))
+        """Get a configuration setting with environment variable expansion applied.
+
+        ${VAR} tokens in string values are replaced with the corresponding
+        environment variable. Unset variables are left as the literal token
+        (e.g. "${MY_KEY}" stays if MY_KEY is unset). Expansion always returns
+        strings — callers expecting int/float/bool must cast the result themselves.
+        """
+        return expand_env(self.config.get(key, default))
     
     def set_setting(self, key: str, value: Any):
         """Set a configuration setting"""
