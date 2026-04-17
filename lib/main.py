@@ -1544,6 +1544,7 @@ class hyprwhsprApp:
     def _inject_text(self, text):
         """Inject transcribed text into active application"""
 
+        # Capture mode: route text to client instead of injecting into active app
         if self._capture_subscriber is not None:
             self._notify_capture_subscriber(text, final=True)
             return
@@ -2060,19 +2061,22 @@ class hyprwhsprApp:
         Handler thread owns the connection fd and is the only closer.
         This method only writes; on final=True it signals the handler to close.
         """
-        subscriber = self._capture_subscriber
-        if subscriber is None:
-            return
+        with self._capture_subscriber_lock:
+            subscriber = self._capture_subscriber
+            if subscriber is None:
+                if final:
+                    self._capture_subscriber_done.set()
+                return
 
-        if text:
-            try:
-                subscriber.sendall(text.encode('utf-8'))
-            except (BrokenPipeError, ConnectionError, OSError) as e:
-                # handler select loop will detect disconnect and clean up.
-                print(f"[CAPTURE] Subscriber write failed: {e}", flush=True)
+            if text:
+                try:
+                    subscriber.sendall(text.encode('utf-8'))
+                except (BrokenPipeError, ConnectionError, OSError) as e:
+                    # handler select loop will detect disconnect and clean up.
+                    print(f"[CAPTURE] Subscriber write failed: {e}", flush=True)
 
-        if final:
-            self._capture_subscriber_done.set()
+            if final:
+                self._capture_subscriber_done.set()
 
     def _setup_capture_socket(self):
         """
@@ -2167,6 +2171,10 @@ class hyprwhsprApp:
             with self._capture_subscriber_lock:
                 if self._capture_subscriber is not None:
                     print("[CAPTURE] Rejecting — slot occupied", flush=True)
+                    try:
+                        conn.sendall(b"ERROR:slot_occupied\n")
+                    except OSError:
+                        pass
                     return
                 self._capture_subscriber = conn
                 self._capture_subscriber_done.clear()

@@ -40,7 +40,7 @@ except ImportError:
 try:
     from .paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, SOCKET_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 except ImportError:
-    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, SOCKET_FILE,RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
+    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, SOCKET_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 
 try:
     from .backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
@@ -5061,10 +5061,17 @@ def record_capture_command(language: str = None):
             request += "\n"
             s.sendall(request.encode())
 
+            first = True
             while True:
                 chunk = s.recv(4096)
                 if not chunk:
                     break
+                if first:
+                    first = False
+                    if chunk.startswith(b"ERROR:"):
+                        msg = chunk.decode().strip().removeprefix("ERROR:")
+                        log_error(f"Capture rejected: {msg}")
+                        sys.exit(1)
                 sys.stdout.buffer.write(chunk)
                 sys.stdout.flush()
     except KeyboardInterrupt:

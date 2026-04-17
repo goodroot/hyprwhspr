@@ -169,7 +169,7 @@ def main():
                                       help='Language code for transcription (e.g., en, it, de)')
     record_capture_parser = record_subparsers.add_parser(
         'capture',
-        help='Trigger recording and stream the transcription to stdout'
+        help='Trigger recording and stream the transcription to stdout (suppresses text injection)'
     )
     record_capture_parser.add_argument('--lang', dest='language', metavar='CODE',
                                        help='Language code for transcription (e.g., en, it, de)')
