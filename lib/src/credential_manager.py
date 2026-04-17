@@ -18,6 +18,11 @@ try:
 except ImportError:
     from paths import CREDENTIALS_DIR, CREDENTIALS_FILE
 
+try:
+    from .config_manager import expand_env
+except ImportError:
+    from config_manager import expand_env
+
 
 def _ensure_credentials_dir():
     """Ensure credentials directory exists"""
@@ -89,16 +94,17 @@ def save_credential(provider: str, key: str) -> bool:
 
 def get_credential(provider: str) -> Optional[str]:
     """
-    Retrieve API key for a provider.
-    
+    Retrieve API key for a provider. Supports ${VAR} expansion against env vars.
+
     Args:
         provider: Provider identifier
-    
+
     Returns:
         API key if found, None otherwise
     """
     credentials = _load_credentials()
-    return credentials.get(provider)
+    value = credentials.get(provider)
+    return expand_env(value) if isinstance(value, str) else value
 
 
 def list_credentials() -> Dict[str, str]:
@@ -109,6 +115,7 @@ def list_credentials() -> Dict[str, str]:
         Dictionary mapping provider to masked key (e.g., 'sk-...****')
     """
     credentials = _load_credentials()
+    # ${VAR} tokens are not expanded here — they appear as literals in masked output.
     masked = {}
     
     for provider, key in credentials.items():
