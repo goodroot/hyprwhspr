@@ -1257,21 +1257,17 @@ def get_available_keyboards(shortcut: Optional[str] = None) -> List[Dict[str, st
                 device.close()
                 continue
             
-            try:
-                # Test if we can access the device
-                device.grab()
-                device.ungrab()
-                
-                keyboards.append({
-                    'name': device.name,
-                    'path': device.path,
-                    'display_name': f"{device.name} ({device.path})"
-                })
-            except (OSError, IOError):
-                # Device not accessible, skip it
-                pass
-            finally:
-                device.close()
+            # If we got this far, we can read the device (opened successfully
+            # above). Don't test grab() here: when the service is running it
+            # already holds the grab exclusively and the test would fail, so
+            # `hyprwhspr keyboard list` would hide the very device the user
+            # is trying to look up. Read access is sufficient to list it.
+            keyboards.append({
+                'name': device.name,
+                'path': device.path,
+                'display_name': f"{device.name} ({device.path})"
+            })
+            device.close()
                 
     except Exception as e:
         print(f"Error getting available keyboards: {e}")
