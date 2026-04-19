@@ -4507,6 +4507,8 @@ def list_keyboards():
         shortcut = config.get_setting("primary_shortcut", "Super+Alt+D")
         selected_device_name = config.get_setting("selected_device_name", None)
         selected_device_path = config.get_setting("selected_device_path", None)
+        keyboard_device_names = config.get_setting("keyboard_device_names", None) or []
+        allowlist_lower = [n.lower() for n in keyboard_device_names]
         
         # Get available keyboards
         keyboards = get_available_keyboards(shortcut)
@@ -4525,8 +4527,7 @@ def list_keyboards():
             search_name_lower = selected_device_name.lower()
             for i, kb in enumerate(keyboards):
                 kb_name_lower = kb['name'].lower()
-                # Match GlobalShortcuts logic: exact match OR partial match
-                if kb_name_lower == search_name_lower or search_name_lower in kb_name_lower:
+                if kb_name_lower == search_name_lower:
                     selected_device_index = i
                     break  # Use first match, same as GlobalShortcuts
         elif selected_device_path:
@@ -4536,10 +4537,21 @@ def list_keyboards():
                     break
         
         for i, kb in enumerate(keyboards, 1):
-            # Mark only the device that would actually be selected
-            marker = " [SELECTED]" if (i - 1) == selected_device_index else ""
+            name_lower = kb['name'].lower()
+            markers = []
+            if (i - 1) == selected_device_index:
+                markers.append("SELECTED")
+            if allowlist_lower and name_lower in allowlist_lower:
+                markers.append("ALLOWED")
+            # Virtual devices aren't real hardware — they're created by
+            # hyprwhspr itself or by ydotool. Don't put them in your allowlist.
+            if ('hyprwhspr' in name_lower
+                    or 'ydotoold' in name_lower
+                    or 'uinput' in name_lower):
+                markers.append("VIRTUAL")
+            marker_str = f" [{' '.join(markers)}]" if markers else ""
             print(f"  {i}. {kb['name']}")
-            print(f"     Path: {kb['path']}{marker}")
+            print(f"     Path: {kb['path']}{marker_str}")
         
         print("-" * 70)
         print(f"\nTotal: {len(keyboards)} accessible device(s)")
@@ -4548,12 +4560,40 @@ def list_keyboards():
             print(f"\nCurrently selected by name: '{selected_device_name}'")
         elif selected_device_path:
             print(f"\nCurrently selected by path: {selected_device_path}")
+        elif keyboard_device_names:
+            print(f"\nAllowlist active (keyboard_device_names), {len(keyboard_device_names)} device(s):")
+            for name in keyboard_device_names:
+                print(f"  - {name}")
+            print("Hotplug detection enabled for listed devices.")
+            # Surface allowlist entries that don't match any present device —
+            # helps the user catch typos vs. just-unplugged devices.
+            present_names = {kb['name'].lower() for kb in keyboards}
+            missing = [n for n in keyboard_device_names if n.lower() not in present_names]
+            if missing:
+                print("\nAllowlist entries not currently present on this system:")
+                for name in missing:
+                    print(f"  - {name}")
+                print("  (These may just be unplugged; if so, they'll be grabbed when plugged in.)")
         else:
-            print("\nNo specific device selected - using auto-detection")
+            print("\nNo specific device selected — using auto-detection.")
+            # Point the user at the allowlist in case auto-detection grabs a
+            # mouse or media controller. Use a real device name from this
+            # system as the example so it's obvious how to populate the list.
+            real_candidates = [kb for kb in keyboards
+                               if 'hyprwhspr' not in kb['name'].lower()
+                               and 'ydotoold' not in kb['name'].lower()
+                               and 'uinput' not in kb['name'].lower()]
+            example_name = real_candidates[0]['name'] if real_candidates else "My Keyboard"
+            print("\nTo enable keyboard hotplug detection (useful for laptops that dock)")
+            print("or to restrict grabbing when auto-detection grabs a mouse-like device,")
+            print("set an allowlist in ~/.config/hyprwhspr/config.json:")
+            print('  "keyboard_device_names": [')
+            print(f'    "{example_name}"')
+            print('  ]')
+            print("(Also enables hotplug for listed devices plugged in after startup.)")
         
-        print("\nTo select a device, add to your config (~/.config/hyprwhspr/config.json):")
+        print("\nOther single-device overrides (take priority over the allowlist):")
         print('  "selected_device_name": "Device Name"')
-        print('  or')
         print('  "selected_device_path": "/dev/input/eventX"')
         
     except Exception as e:

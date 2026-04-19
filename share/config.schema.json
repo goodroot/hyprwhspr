@@ -56,6 +56,12 @@
       "default": null,
       "description": "Specific keyboard device name (e.g., 'USB Keyboard'). Takes priority over path if both set."
     },
+    "keyboard_device_names": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "default": null,
+      "description": "Optional allowlist of keyboard device names. When set: (1) only listed devices are grabbed at startup; (2) pyudev-based hotplug detection is enabled so listed devices plugged in later (e.g. docking a laptop) are attached without restarting the service. Ignored if selected_device_name or selected_device_path is set. Null (default) = legacy startup-only discovery."
+    },
     "audio_device_id": {
       "type": ["integer", "null"],
       "default": null,
