@@ -5,6 +5,7 @@ so newly attached keyboards (e.g. a USB keyboard via a dock) can be grabbed
 without restarting the service.
 """
 
+import queue
 import threading
 
 try:
@@ -24,9 +25,25 @@ class KeyboardMonitor:
         self.monitor = None
         self.context = None
         self.is_running = False
+        self._event_queue: queue.Queue = queue.Queue()
+        self._worker: threading.Thread | None = None
 
         if not PYUDEV_AVAILABLE:
             print("[KEYBOARD_MONITOR] pyudev not available, keyboard hotplug disabled")
+
+    def _dispatch_loop(self):
+        while True:
+            item = self._event_queue.get()
+            if item is None:
+                break
+            action, devnode = item
+            try:
+                if action == 'add' and self.on_add:
+                    self.on_add(devnode)
+                elif action == 'remove' and self.on_remove:
+                    self.on_remove(devnode)
+            except Exception as e:
+                print(f"[KEYBOARD_MONITOR] Error handling event: {e}")
 
     def start(self) -> bool:
         """Start monitoring. Returns True on success."""
@@ -43,35 +60,38 @@ class KeyboardMonitor:
             def handle_event(action, device):
                 try:
                     devnode = device.device_node
-                    # Only care about the /dev/input/eventN nodes.
-                    # Parent input class devices without a device node also
-                    # fire events; they're not useful here.
+                    # Only /dev/input/eventN nodes are actionable; parent
+                    # input class devices without a node also fire events.
                     if not devnode or not devnode.startswith('/dev/input/event'):
                         return
-
-                    if action == 'add' and self.on_add:
-                        threading.Thread(
-                            target=self.on_add,
-                            args=(devnode,),
-                            daemon=True,
-                        ).start()
-                    elif action == 'remove' and self.on_remove:
-                        threading.Thread(
-                            target=self.on_remove,
-                            args=(devnode,),
-                            daemon=True,
-                        ).start()
+                    if action in ('add', 'remove'):
+                        self._event_queue.put((action, devnode))
                 except Exception as e:
                     print(f"[KEYBOARD_MONITOR] Error handling event: {e}")
 
             self.observer = pyudev.MonitorObserver(self.monitor, handle_event)
             self.observer.start()
+            # Start worker after observer so a failed observer leaves no stranded thread.
+            self._worker = threading.Thread(target=self._dispatch_loop, daemon=True)
+            self._worker.start()
             self.is_running = True
             print("[KEYBOARD_MONITOR] Started monitoring for keyboard hotplug events")
             return True
 
         except Exception as e:
             print(f"[KEYBOARD_MONITOR] Failed to start: {e}")
+            if self.observer:
+                try:
+                    self.observer.stop()
+                except Exception:
+                    pass
+                self.observer = None
+            if self._worker is not None:
+                self._event_queue.put(None)
+                self._worker.join(timeout=2.0)
+                self._worker = None
+            self.monitor = None
+            self.context = None
             self.is_running = False
             return False
 
@@ -90,3 +110,7 @@ class KeyboardMonitor:
                 self.context = None
                 self.is_running = False
                 print("[KEYBOARD_MONITOR] Stopped monitoring")
+        self._event_queue.put(None)
+        if self._worker:
+            self._worker.join(timeout=2.0)
+            self._worker = None

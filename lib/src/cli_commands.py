@@ -4527,8 +4527,7 @@ def list_keyboards():
             search_name_lower = selected_device_name.lower()
             for i, kb in enumerate(keyboards):
                 kb_name_lower = kb['name'].lower()
-                # Match GlobalShortcuts logic: exact match OR partial match
-                if kb_name_lower == search_name_lower or search_name_lower in kb_name_lower:
+                if kb_name_lower == search_name_lower:
                     selected_device_index = i
                     break  # Use first match, same as GlobalShortcuts
         elif selected_device_path:

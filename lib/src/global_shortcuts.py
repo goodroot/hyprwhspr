@@ -288,19 +288,18 @@ class GlobalShortcuts:
 
                 # Device selection: prefer name over path if both are provided
                 if self.selected_device_name:
-                    # Match by device name (case-insensitive partial match)
+                    # Match by device name (case-insensitive exact match)
                     selected_device = None
                     matching_devices = []
                     search_name_lower = self.selected_device_name.lower()
-                    processed_paths = set()  # Track which device paths we've processed
+                    processed_paths = set()
 
                     try:
                         for device in devices:
                             try:
                                 device_name_lower = device.name.lower()
                                 processed_paths.add(device.path)
-                                # Check for exact match or partial match
-                                if device_name_lower == search_name_lower or search_name_lower == device_name_lower:
+                                if device_name_lower == search_name_lower:
                                     matching_devices.append(device)
                                 else:
                                     device.close()
@@ -665,8 +664,6 @@ class GlobalShortcuts:
             return
 
         try:
-            # Skip our own UInput virtual keyboard to avoid a grab feedback loop.
-            # This is the mitigation for the keyboard-lockout failure mode.
             try:
                 name_lower = device.name.lower()
             except Exception:
@@ -676,7 +673,6 @@ class GlobalShortcuts:
                 device.close()
                 return
 
-            # Honor explicit device selection if configured.
             if self.selected_device_name:
                 if name_lower != self.selected_device_name.lower():
                     device.close()
@@ -686,12 +682,10 @@ class GlobalShortcuts:
                     device.close()
                     return
             elif self.keyboard_device_names:
-                # Allowlist mode: skip anything not on the list.
                 if name_lower not in self.keyboard_device_names:
                     device.close()
                     return
 
-            # Must support EV_KEY and all keys in the configured shortcut.
             try:
                 capabilities = device.capabilities()
             except (OSError, IOError):
@@ -910,6 +904,7 @@ class GlobalShortcuts:
             self.listener_thread = threading.Thread(target=self._event_loop, daemon=True)
             self.listener_thread.start()
             self.is_running = True
+            self._start_hotplug_monitor()
             return True
 
         try:
@@ -947,8 +942,6 @@ class GlobalShortcuts:
         Non-fatal if pyudev is unavailable or the monitor fails to start.
         """
         if not self.keyboard_device_names:
-            # Opt-in: only enable hotplug when the user has listed real
-            # keyboards. See docstring above for rationale.
             return
         if not PYUDEV_AVAILABLE:
             print("[HOTPLUG] pyudev not available; keyboards plugged in after "
