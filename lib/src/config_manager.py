@@ -55,6 +55,14 @@ class ConfigManager:
             'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
             'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
             'selected_device_name': None,  # Specific keyboard device name (e.g., 'USB Keyboard') - takes priority over path if both set
+            # Optional allowlist of keyboard device names. Two effects:
+            # (1) restricts which devices are grabbed at startup — mice/media
+            #     controllers that advertise keyboard-shaped capabilities are
+            #     skipped; (2) enables pyudev-based hotplug detection for the
+            #     listed devices (docked keyboards work without service restart).
+            # Ignored when selected_device_name / selected_device_path is set.
+            # Null (default) = legacy behavior: startup-only discovery, no filter.
+            'keyboard_device_names': None,
             # Audio device persistence (for reliable device matching across reboots)
             'audio_device_id': None,        # PortAudio device index (can change on reboot)
             'audio_device_name': None,      # Human-readable device name (more stable)
