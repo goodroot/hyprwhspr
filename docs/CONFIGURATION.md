@@ -964,6 +964,25 @@ Or by device path:
 
 Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see available devices.
 
+### Keyboard hotplug (docks, Bluetooth)
+
+By default, hyprwhspr only discovers keyboards at startup. If you dock a laptop or reconnect a Bluetooth keyboard, the service won't see it until restarted.
+
+Set `keyboard_device_names` to enable hotplug detection for specific devices:
+
+```json
+{
+  "keyboard_device_names": [
+    "AT Translated Set 2 keyboard",
+    "SONiX USB Keyboard"
+  ]
+}
+```
+
+Use `hyprwhspr keyboard list` to find exact device names. Listed devices are grabbed at startup and automatically attached when plugged in later. Devices not on the list (mice, media controllers) are ignored even if they advertise keyboard-like capabilities.
+
+`selected_device_name` and `selected_device_path` take priority over this list if set.
+
 ### External hotkey systems
 
 Control recording via CLI (Espanso, KDE, GNOME, etc.) - set these terminal commands however is appropriate:
