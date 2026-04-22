@@ -1426,6 +1426,22 @@ class WhisperManager:
             print(f'[ERROR] faster-whisper reinitialization failed: {e}', flush=True)
             return False
 
+    def _apply_noise_gate(self, audio_data: np.ndarray, sample_rate: int, threshold: float) -> np.ndarray:
+        """Zero out audio frames whose RMS falls below threshold.
+
+        Prevents the model from treating silence/background noise as speech,
+        which causes hallucinations and erroneous sentence boundaries at pause points.
+        """
+        frame_size = int(sample_rate * 0.03)  # 30 ms frames
+        if frame_size == 0 or len(audio_data) == 0:
+            return audio_data
+        pad_len = (frame_size - len(audio_data) % frame_size) % frame_size
+        padded = np.pad(audio_data, (0, pad_len))
+        frames = padded.reshape(-1, frame_size)
+        rms = np.sqrt(np.mean(frames ** 2, axis=1))
+        frames = frames * (rms >= threshold)[:, np.newaxis]
+        return frames.flatten()[:len(audio_data)]
+
     def _transcribe_cohere_transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000,
                                       language_override: Optional[str] = None) -> str:
         """Transcribe using Cohere Transcribe (transformers)."""
@@ -1438,6 +1454,10 @@ class WhisperManager:
             language = 'en'
 
         use_compile = self.config.get_setting('cohere_transcribe_compile', False)
+        noise_gate_threshold = self.config.get_setting('cohere_transcribe_noise_gate_threshold', 0.005)
+
+        if noise_gate_threshold:
+            audio_data = self._apply_noise_gate(audio_data, sample_rate, noise_gate_threshold)
 
         with self._model_lock:
             current_time = time.monotonic()
@@ -1527,6 +1547,7 @@ class WhisperManager:
                     local_files_only=True,
                 ).to(device)
             self._cohere_model.eval()
+            self._cohere_compile_done = False
             self._last_use_time = time.monotonic()
             return True
         except Exception as e:
@@ -1893,6 +1914,7 @@ class WhisperManager:
                 self._onnx_asr_model = None
                 self._cohere_model = None
                 self._cohere_processor = None
+                self._cohere_compile_done = False
 
                 # Trigger Python GC so C++ destructors and ONNX sessions release immediately
                 import gc
