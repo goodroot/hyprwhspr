@@ -420,7 +420,8 @@ class TextInjector:
             return True
 
         # Preprocess; also trim trailing newlines (avoid unwanted Enter)
-        processed_text = self._preprocess_text(text).rstrip("\r\n") + ' '
+        processed_text = self._preprocess_text(text).rstrip("\r\n")
+        processed_text = self._run_post_transcription_hook(processed_text) + ' '
 
         try:
             inject_mode = None
@@ -508,6 +509,40 @@ class TextInjector:
         processed = processed.strip()
 
         return processed
+
+    def _run_post_transcription_hook(self, text: str) -> str:
+        """Pipe text through the user's post_transcription_hook shell command.
+
+        Stdin = text; non-empty stdout replaces it (empty stdout = observer-only).
+        Env: HYPRWHSPR_MODEL, HYPRWHSPR_BACKEND. 5s timeout. Any error
+        preserves the original text — a broken hook must never eat a dictation.
+        """
+        if not (self.config_manager and text):
+            return text
+        cmd = self.config_manager.get_setting('post_transcription_hook', None)
+        if not (isinstance(cmd, str) and cmd.strip()):
+            return text
+
+        env = os.environ.copy()
+        env['HYPRWHSPR_MODEL'] = str(self.config_manager.get_setting('model', '') or '')
+        env['HYPRWHSPR_BACKEND'] = str(self.config_manager.get_setting('transcription_backend', '') or '')
+
+        # shell=True is deliberate: the command is user-authored config, same trust
+        # level as the rest of config.json, and users rely on pipes/redirects/chains.
+        try:
+            result = subprocess.run(
+                cmd, shell=True, input=text, capture_output=True,
+                text=True, timeout=5.0, env=env,
+            )
+        except Exception as e:
+            print(f"post_transcription_hook failed: {e}")
+            return text
+        if result.returncode != 0:
+            stderr = (result.stderr or '').strip()
+            print(f"post_transcription_hook exited {result.returncode}: {stderr}")
+            return text
+        out = result.stdout.rstrip('\n')
+        return out if out else text
 
     def _apply_word_overrides(self, text: str) -> str:
         """Apply user-defined word overrides to the text"""

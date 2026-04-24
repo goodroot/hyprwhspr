@@ -912,6 +912,37 @@ hyprwhspr saves your clipboard before injection and restores it automatically af
 
 The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool` is used as a fallback when `wtype` is not installed.
 
+### Post-transcription hook
+
+Pipe each transcription through a shell command before it's pasted. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and fire-and-forget observers.
+
+```json
+{
+    "post_transcription_hook": "sed 's|.*|<dictation>&</dictation>|'"
+}
+```
+
+The example above wraps every injected transcription in `<dictation>...</dictation>` — a useful signal to downstream LLMs that the text came from ASR and may contain transcription artifacts (homophones, proper-noun misspellings).
+
+Other patterns:
+
+```json
+// Archive transcriptions to a log, leave text unchanged (observer-only):
+{ "post_transcription_hook": "tee -a ~/.local/share/hyprwhspr/log.txt >/dev/null" }
+
+// User-provided transform script on $PATH:
+{ "post_transcription_hook": "~/.local/bin/filler-word-coach" }
+```
+
+Two environment variables are exported to the hook:
+
+- `HYPRWHSPR_MODEL` — the active whisper model
+- `HYPRWHSPR_BACKEND` — the active transcription backend
+
+The hook runs under a 5-second timeout. On timeout, non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
+
+Note: the command runs under `shell=True`, so pipes, redirects, and command chaining work as expected. Treat `post_transcription_hook` as trusted config (same threat model as the rest of `config.json`).
+
 ## Integrations
 
 ### Waybar
