@@ -926,11 +926,15 @@ The example above wraps every injected transcription in `<dictation>...</dictati
 
 Other patterns:
 
-```json
-// Archive transcriptions to a log, leave text unchanged (observer-only):
-{ "post_transcription_hook": "tee -a ~/.local/share/hyprwhspr/log.txt >/dev/null" }
+Archive transcriptions to a log, leave text unchanged (observer-only):
 
-// User-provided transform script on $PATH:
+```json
+{ "post_transcription_hook": "tee -a ~/.local/share/hyprwhspr/log.txt >/dev/null" }
+```
+
+User-provided transform script on `$PATH`:
+
+```json
 { "post_transcription_hook": "~/.local/bin/filler-word-coach" }
 ```
 

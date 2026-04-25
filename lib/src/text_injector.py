@@ -535,13 +535,13 @@ class TextInjector:
                 text=True, timeout=5.0, env=env,
             )
         except Exception as e:
-            print(f"post_transcription_hook failed: {e}")
+            print(f"post_transcription_hook failed: {e}", flush=True)
             return text
         if result.returncode != 0:
             stderr = (result.stderr or '').strip()
-            print(f"post_transcription_hook exited {result.returncode}: {stderr}")
+            print(f"post_transcription_hook exited {result.returncode}: {stderr}", flush=True)
             return text
-        out = result.stdout.rstrip('\n')
+        out = result.stdout.rstrip("\r\n")
         return out if out else text
 
     def _apply_word_overrides(self, text: str) -> str:
