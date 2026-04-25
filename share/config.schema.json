@@ -129,6 +129,11 @@
       "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
       "description": "Prompt passed to Whisper to guide transcription style"
     },
+    "post_transcription_hook": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Shell command run after preprocessing, before paste. Stdin receives the transcription; non-empty stdout replaces it. Empty stdout = observer-only (original text is kept). Env vars HYPRWHSPR_MODEL and HYPRWHSPR_BACKEND are set. Subject to a 5s timeout; errors pass through the original text."
+    },
     "clipboard_behavior": {
       "type": "boolean",
       "default": false,

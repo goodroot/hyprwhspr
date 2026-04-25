@@ -75,6 +75,11 @@ class ConfigManager:
             'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
             'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
+            # Shell command run after preprocessing, before paste. Stdin
+            # receives the transcription; non-empty stdout replaces it.
+            # Empty stdout leaves text unchanged (observer-only hooks).
+            # Null disables the hook.
+            'post_transcription_hook': None,
             'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
             'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
             # Values: "super" | "ctrl_shift" | "ctrl" | null (auto-detect)
