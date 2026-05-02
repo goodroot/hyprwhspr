@@ -286,6 +286,22 @@ def _check_ydotool_version() -> tuple[bool, str, str]:
         except Exception:
             pass
 
+    # Try rpm (openSUSE/Fedora/RHEL)
+    if not version:
+        try:
+            result = subprocess.run(
+                ['rpm', '-q', 'ydotool'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            # Output format: "ydotool-1.0.4-2.2.x86_64"
+            match = re.search(r'ydotool-(\d+\.\d+\.?\d*)', result.stdout)
+            if match:
+                version = match.group(1)
+        except Exception:
+            pass
+
     # Fallback: try --version (old ydotool 0.1.x supports this)
     if not version:
         try:
