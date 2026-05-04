@@ -146,6 +146,15 @@ PY
         return 1
     fi
 
+    # faster-whisper uses the HuggingFace cache, not the pywhispercpp models dir
+    if [[ "$backend" == "faster-whisper" ]]; then
+        local venv_python="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
+        if [[ -f "$venv_python" ]] && timeout 0.5s "$venv_python" -c 'import faster_whisper' >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
+    fi
+
     # Only read model setting for pywhispercpp backends
     local model_path
     model_path=$("$SYSTEM_PYTHON" - <<'PY' "$cfg" 2>/dev/null
