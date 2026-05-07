@@ -2777,6 +2777,7 @@ def setup_waybar(mode: str = 'install'):
                 "return-type": "json",
                 "exec-on-event": True,
                 "on-click": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh record",
+                "on-click-middle": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh mic-select",
                 "on-click-right": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh restart",
                 "tooltip": True
             }
