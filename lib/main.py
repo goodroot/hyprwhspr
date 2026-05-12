@@ -1215,7 +1215,7 @@ class hyprwhsprApp:
                         # At least one callback received - stream is working
                         self.audio_manager.play_start_sound()
                         return True
-                    time.sleep(0.05)
+                time.sleep(0.0)
                 # No callbacks received - stream likely broken (will be handled by caller)
                 return False
             
@@ -1535,9 +1535,6 @@ class hyprwhsprApp:
                     return
 
                 self.current_transcription = text
-
-                # Inject text
-                self._inject_text(self.current_transcription)
                 success = True
             else:
                 print("[WARN] No transcription generated")
@@ -1548,8 +1545,12 @@ class hyprwhsprApp:
         finally:
             self._notify_capture_subscriber("", final=True)
             self.is_processing = False
-            # Show success/error state and hide OSD after delay
-            self._show_result_and_hide(success)
+            # Show success/error state and hide OSD; inject text after OSD hides
+            if success and self.current_transcription:
+                text = self.current_transcription
+                self._show_result_and_hide(success, post_hide_callback=lambda: self._inject_text(text))
+            else:
+                self._show_result_and_hide(success)
 
     def _inject_text(self, text):
         """Inject transcribed text into active application"""
@@ -1730,7 +1731,7 @@ class hyprwhsprApp:
             except Exception:
                 pass
 
-    def _show_result_and_hide(self, success: bool):
+    def _show_result_and_hide(self, success: bool, post_hide_callback=None):
         """Show success/error state then hide the OSD after a delay."""
         state = 'success' if success else 'error'
         self._set_visualizer_state(state)
@@ -1748,6 +1749,8 @@ class hyprwhsprApp:
             if not should_hide:
                 return  # New recording started; don't hide
             self._hide_mic_osd()
+            if post_hide_callback:
+                post_hide_callback()
 
         hide_thread = threading.Thread(target=delayed_hide, daemon=True)
         hide_thread.start()
