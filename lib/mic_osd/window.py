@@ -83,7 +83,6 @@ class OSDWindow(Gtk.Window):
         """Configure basic window properties."""
         self.set_decorated(False)
         self.set_resizable(False)
-        self.set_focusable(False)
         self.set_default_size(self._width, self._height)
         
         # Make window transparent
