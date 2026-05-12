@@ -1215,7 +1215,7 @@ class hyprwhsprApp:
                         # At least one callback received - stream is working
                         self.audio_manager.play_start_sound()
                         return True
-                time.sleep(0.0)
+                time.sleep(0.05)
                 # No callbacks received - stream likely broken (will be handled by caller)
                 return False
             
