@@ -171,6 +171,8 @@ Create an issue, happy to help!
 
 For pull requests, also best to start with an issue.
 
+If you want, compute credits from [opub.dev](https://opub.dev/github/goodroot/hyprwhspr) are always welcome!
+
 ---
 
 **Built with ❤️ in 🇨🇦**
