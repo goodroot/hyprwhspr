@@ -20,6 +20,9 @@ env:
   OPUB_PROJECT_ID: ${{ vars.OPUB_PROJECT_ID || '5' }}
   OPUB_COMPUTE_KEY_ID: ${{ vars.OPUB_COMPUTE_KEY_ID || '5' }}
   OPUB_API_KEY_HASH: ${{ vars.OPUB_API_KEY_HASH || '98379058...22e1198b' }}
+  OPUB_VERSION: "v0.1.0"
+  OPUB_LINUX_AMD64_SHA256: "b910999d8cc91d69df52014c8f62665d51c877cc8e49daa53026592d63a1a770"
+  DIFF_LIMIT_BYTES: "120000"
   PR_NUMBER: ${{ github.event.pull_request.number }}
 
 jobs:
@@ -47,7 +50,13 @@ jobs:
         run: echo "OPUB_HOME=$RUNNER_TEMP/opub" >> "$GITHUB_ENV"
 
       - name: Install opub
-        run: curl -fsSL https://opub.dev/install.sh | sh
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/opubdev/opub-cli/releases/download/${OPUB_VERSION}/opub-linux-amd64.tar.gz" \
+            -o "$RUNNER_TEMP/opub-linux-amd64.tar.gz"
+          printf '%s  %s\n' "$OPUB_LINUX_AMD64_SHA256" "$RUNNER_TEMP/opub-linux-amd64.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/opub-linux-amd64.tar.gz" -C "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/opub"
 
       - name: Add installed tools to PATH
         run: |
@@ -85,11 +94,23 @@ jobs:
           prompt_file="$RUNNER_TEMP/review-prompt.md"
 
           git diff --find-renames --find-copies --unified=80 "$BASE_SHA...$HEAD_SHA" > "$diff_file"
+          diff_bytes="$(wc -c < "$diff_file")"
+
+          if [ "$diff_bytes" -gt "$DIFF_LIMIT_BYTES" ]; then
+            diff_status="Only the first ${DIFF_LIMIT_BYTES} bytes of this ${diff_bytes}-byte diff are included. The review is partial; call this out in the summary and suggested follow-ups."
+            echo "DIFF_TRUNCATED=true" >> "$GITHUB_ENV"
+            echo "DIFF_BYTES=$diff_bytes" >> "$GITHUB_ENV"
+          else
+            diff_status="The full ${diff_bytes}-byte diff is included."
+            echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+            echo "DIFF_BYTES=$diff_bytes" >> "$GITHUB_ENV"
+          fi
 
           {
             printf '%s\n' 'Review this pull request diff for bugs, regressions, security issues, and missing tests.'
             printf '%s\n' 'Focus on actionable findings that a maintainer should address before merge.'
             printf '%s\n' 'Keep the review concise and practical.'
+            printf '%s\n\n' "$diff_status"
             printf '%s\n\n' 'Output markdown with these sections exactly:'
             printf '%s\n\n' '## Summary'
             printf '%s\n' '## Findings'
@@ -98,7 +119,7 @@ jobs:
             printf '%s\n\n' '- Use bullets. If none, write `- None.`'
             printf 'Pull request: %s\n\n' "$PR_TITLE"
             printf 'Diff:\n\n```diff\n'
-            head -c 120000 "$diff_file"
+            head -c "$DIFF_LIMIT_BYTES" "$diff_file"
             printf '\n```\n'
           } > "$prompt_file"
 
@@ -119,13 +140,16 @@ jobs:
             printf '%s\n' "$COMMENT_MARKER"
             printf '## Continue PR Review\n\n'
             printf '_Automated review via Continue CLI run through opub._\n\n'
+            if [ "$DIFF_TRUNCATED" = "true" ]; then
+              printf '> Note: this review is partial because the PR diff was truncated to %s bytes from %s bytes.\n\n' "$DIFF_LIMIT_BYTES" "$DIFF_BYTES"
+            fi
             cat "$REVIEW_FILE"
           } > "$comment_file"
 
           jq -Rs '{body: .}' "$comment_file" > "$json_file"
 
           comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
-            --jq ".[] | select(.body | startswith(\"$COMMENT_MARKER\")) | .id" | head -n 1)"
+            | jq -rsr --arg marker "$COMMENT_MARKER" 'add | map(select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))) | sort_by(.updated_at) | last | .id // ""')"
 
           if [ -n "$comment_id" ]; then
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input "$json_file" >/dev/null
@@ -158,7 +182,7 @@ jobs:
           jq -Rs '{body: .}' "$comment_file" > "$json_file"
 
           comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
-            --jq ".[] | select(.body | startswith(\"$COMMENT_MARKER\")) | .id" | head -n 1)"
+            | jq -rsr --arg marker "$COMMENT_MARKER" 'add | map(select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))) | sort_by(.updated_at) | last | .id // ""')"
 
           if [ -n "$comment_id" ]; then
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input "$json_file" >/dev/null
