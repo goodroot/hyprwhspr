@@ -149,7 +149,7 @@ jobs:
           jq -Rs '{body: .}' "$comment_file" > "$json_file"
 
           comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
-            | jq -rsr --arg marker "$COMMENT_MARKER" 'add | map(select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))) | sort_by(.updated_at) | last | .id // ""')"
+            | jq -s -r --arg marker "$COMMENT_MARKER" 'add | map(select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))) | sort_by(.updated_at) | last | .id // ""')"
 
           if [ -n "$comment_id" ]; then
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input "$json_file" >/dev/null
@@ -182,7 +182,7 @@ jobs:
           jq -Rs '{body: .}' "$comment_file" > "$json_file"
 
           comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
-            | jq -rsr --arg marker "$COMMENT_MARKER" 'add | map(select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))) | sort_by(.updated_at) | last | .id // ""')"
+            | jq -s -r --arg marker "$COMMENT_MARKER" 'add | map(select(.user.login == "github-actions[bot]" and (.body | startswith($marker)))) | sort_by(.updated_at) | last | .id // ""')"
 
           if [ -n "$comment_id" ]; then
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input "$json_file" >/dev/null
