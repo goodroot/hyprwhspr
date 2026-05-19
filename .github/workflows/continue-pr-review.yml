@@ -1,0 +1,165 @@
+name: Continue PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: continue-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  COMMENT_MARKER: "<!-- continue-pr-review -->"
+  CONTINUE_CLI_VERSION: ${{ vars.CONTINUE_CLI_VERSION || '1.5.45' }}
+  OPUB_PROJECT: ${{ vars.OPUB_PROJECT || github.repository }}
+  OPUB_PROJECT_ID: ${{ vars.OPUB_PROJECT_ID }}
+  OPUB_COMPUTE_KEY_ID: ${{ vars.OPUB_COMPUTE_KEY_ID }}
+  OPUB_API_KEY_HASH: ${{ vars.OPUB_API_KEY_HASH }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+
+jobs:
+  continue-review:
+    name: Review PR with Continue through opub
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OPUB_HOME: ${{ runner.temp }}/opub
+      OPUB_PROVIDER_KEY: ${{ secrets.CONTINUE_CI_OPUB || secrets.OPUB_PROVIDER_KEY || secrets.OPUB_KEY || vars.CONTINUE_CI_OPUB || vars.OPUB_PROVIDER_KEY || vars.OPUB_KEY }}
+
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install opub
+        run: curl -fsSL https://opub.dev/install.sh | sh
+
+      - name: Add installed tools to PATH
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Install Continue CLI
+        run: npm install -g "@continuedev/cli@${CONTINUE_CLI_VERSION}"
+
+      - name: Validate opub configuration
+        run: |
+          : "${OPUB_PROVIDER_KEY:?Set CONTINUE_CI_OPUB, OPUB_PROVIDER_KEY, or OPUB_KEY as a repository secret.}"
+          : "${OPUB_PROJECT:?Set OPUB_PROJECT as a repository variable, or rely on github.repository.}"
+          : "${OPUB_PROJECT_ID:?Set OPUB_PROJECT_ID as a repository variable.}"
+          : "${OPUB_COMPUTE_KEY_ID:?Set OPUB_COMPUTE_KEY_ID as a repository variable.}"
+          : "${OPUB_API_KEY_HASH:?Set OPUB_API_KEY_HASH as a repository variable.}"
+
+      - name: Configure opub for Continue
+        run: |
+          printf '%s\n' "$OPUB_PROVIDER_KEY" | opub setup continue \
+            --project "$OPUB_PROJECT" \
+            --project-id "$OPUB_PROJECT_ID" \
+            --compute-key-id "$OPUB_COMPUTE_KEY_ID" \
+            --api-key-hash "$OPUB_API_KEY_HASH" \
+            --insecure-storage \
+            --provider-key-stdin
+
+      - name: Build review prompt
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          diff_file="$RUNNER_TEMP/pr.diff"
+          prompt_file="$RUNNER_TEMP/review-prompt.md"
+
+          git diff --find-renames --find-copies --unified=80 "$BASE_SHA...$HEAD_SHA" > "$diff_file"
+
+          {
+            printf '%s\n' 'Review this pull request diff for bugs, regressions, security issues, and missing tests.'
+            printf '%s\n' 'Focus on actionable findings that a maintainer should address before merge.'
+            printf '%s\n' 'Keep the review concise and practical.'
+            printf '%s\n\n' 'Output markdown with these sections exactly:'
+            printf '%s\n\n' '## Summary'
+            printf '%s\n' '## Findings'
+            printf '%s\n\n' '- Use bullets. If there are no issues, write `- No actionable issues found.`'
+            printf '%s\n' '## Suggested follow-ups'
+            printf '%s\n\n' '- Use bullets. If none, write `- None.`'
+            printf 'Pull request: %s\n\n' "$PR_TITLE"
+            printf 'Diff:\n\n```diff\n'
+            head -c 120000 "$diff_file"
+            printf '\n```\n'
+          } > "$prompt_file"
+
+          echo "REVIEW_PROMPT=$prompt_file" >> "$GITHUB_ENV"
+          echo "REVIEW_FILE=$RUNNER_TEMP/continue-review.md" >> "$GITHUB_ENV"
+
+      - name: Run Continue review through opub
+        run: |
+          opub run continue -- -p "$(cat "$REVIEW_PROMPT")" --silent > "$REVIEW_FILE"
+          test -s "$REVIEW_FILE"
+
+      - name: Post or update PR comment
+        run: |
+          comment_file="$RUNNER_TEMP/review-comment.md"
+          json_file="$RUNNER_TEMP/review-comment.json"
+
+          {
+            printf '%s\n' "$COMMENT_MARKER"
+            printf '## Continue PR Review\n\n'
+            printf '_Automated review via Continue CLI run through opub._\n\n'
+            cat "$REVIEW_FILE"
+          } > "$comment_file"
+
+          jq -Rs '{body: .}' "$comment_file" > "$json_file"
+
+          comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$COMMENT_MARKER\")) | .id" | head -n 1)"
+
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input "$json_file" >/dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --input "$json_file" >/dev/null
+          fi
+
+  fork-notice:
+    name: Note skipped fork review
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Post or update skip notice
+        continue-on-error: true
+        run: |
+          comment_file="$RUNNER_TEMP/review-comment.md"
+          json_file="$RUNNER_TEMP/review-comment.json"
+
+          {
+            printf '%s\n' "$COMMENT_MARKER"
+            printf '## Continue PR Review\n\n'
+            printf '_Continue review is only run automatically for trusted non-fork pull requests because this workflow requires repository secrets._\n\n'
+            printf -- '- This PR comes from a fork, so the secret-backed review job was skipped by design.\n'
+            printf -- '- Maintainers can run an internal review workflow or review locally through opub if needed.\n'
+          } > "$comment_file"
+
+          jq -Rs '{body: .}' "$comment_file" > "$json_file"
+
+          comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$COMMENT_MARKER\")) | .id" | head -n 1)"
+
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input "$json_file" >/dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --input "$json_file" >/dev/null
+          fi
