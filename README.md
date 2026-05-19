@@ -7,11 +7,15 @@
 </p>
 
 <p align="center">
-    instant performance | Parakeet / Whisper / ElevenLabs / REST API | stylish visuals
+    instant performance | Cohere / Parakeet / Whisper / Gemini / ElevenLabs / REST API | stylish visuals
 </p>
 
  <p align="center">
     <i>Supports Arch, Debian, Ubuntu, Fedora, openSUSE and more</i>
+ </p>
+
+ <p align="center">
+    <i> <a href="https://hyprwhspr.com">hyprwhspr.com</a></i>
  </p>
 
 https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
@@ -20,11 +24,11 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **Built for Linux** - Native AUR package for Arch, or use Debian/Ubuntu/Fedora/openSUSE
 - **Local, very fast defaults** - Instant, private and accurate performance via in-memory models
-- **Latest models** - Turbo-v3? Parakeet TDT V3? Latest and greatest
+- **Latest models** - Cohere Transcribe? Turbo-v3? Parakeet TDT V3? Latest and greatest
 - **GPU memory efficient** - Limit or zero memory usage easily, more for other local models
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **Translation** - Translate non-English to English with a single config
-- **REST API or websockets** - Secure, fast wires to top clouds like ElevenLabs
+- **REST API or websockets** - Secure, fast wires to top clouds like Gemini, ElevenLabs
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
@@ -65,7 +69,7 @@ hyprwhspr setup
 
 **The setup will walk you through the process:**
 
-1. ✅ Configure transcription backend (Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
+1. ✅ Configure transcription backend (Cohere Transcribe, Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
 2. ✅ Download models
 3. ✅ Configure themed visualizer for maximum coolness (optional)
 4. ✅ Configure Waybar integration (optional)
@@ -99,134 +103,41 @@ hyprwhspr setup
 
 hyprwhspr can run on any Linux distribution with systemd.
 
-**Quick install (recommended):**
-
-Use the install script to automatically install dependencies for your distro:
-
 ```bash
-# Download and run the install script
-curl -fsSL https://raw.githubusercontent.com/goodroot/hyprwhspr/main/scripts/install-deps.sh | bash
+# Clone the repo
+git clone https://github.com/goodroot/hyprwhspr.git
+cd hyprwhspr
 
-# Clone and run setup
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr
+# Install dependencies for your distro (Ubuntu, Debian, Fedora, openSUSE)
+./scripts/install-deps.sh
+
+# Run interactive setup
 ./bin/hyprwhspr setup
 ```
 
-The script supports Ubuntu, Debian, Fedora, and openSUSE.
-
-> Non-Arch distro support is new - please report any snags!
-
-<details>
-<summary><b>Manual installation instructions</b></summary>
-
-**Debian / Ubuntu:**
+After setup, log out and back in for group permissions, then:
 
 ```bash
-# Install system dependencies (NOTE: do NOT install ydotool from apt)
-sudo apt install python3 python3-pip python3-venv git cmake make build-essential \
-    python3-dev libportaudio2 python3-numpy python3-scipy python3-evdev \
-    python3-requests python3-psutil python3-rich \
-    python3-gi gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0 \
-    pipewire pipewire-pulse wl-clipboard wget
-
-# Install ydotool 1.0+ from Debian backports (required!)
-wget http://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb
-sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb
-sudo apt install -f  # Fix any dependency issues
-
-# Install Python packages not in Debian repos
-pip install --user --break-system-packages sounddevice pyperclip
-
-# Clone and run setup
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr
-./bin/hyprwhspr setup
-```
-
-> **Note:** On Ubuntu 22.04 LTS, `gir1.2-gtk4layershell-1.0` may not be available. The mic-osd visualizer will be disabled, but dictation works fine without it.
-
-**Fedora:**
-
-```bash
-# Install system dependencies
-sudo dnf install python3 python3-pip python3-devel git cmake make gcc-c++ \
-    python3-sounddevice python3-numpy python3-scipy python3-evdev \
-    python3-pyperclip python3-requests python3-psutil python3-rich \
-    python3-gobject gtk4 gtk4-layer-shell \
-    pipewire pipewire-pulseaudio ydotool wl-clipboard
-
-# Clone and run setup
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr
-./bin/hyprwhspr setup
-```
-
-**openSUSE:**
-
-```bash
-# Install system dependencies
-sudo zypper install python3 python3-pip python3-devel git cmake make gcc-c++ \
-    python3-sounddevice python3-numpy python3-scipy python3-evdev \
-    python3-pyperclip python3-requests python3-psutil python3-rich \
-    python3-gobject typelib-1_0-Gtk-4_0 \
-    pipewire pipewire-pulseaudio ydotool wl-clipboard
-
-# Optional: For mic-osd visualizer (Tumbleweed only, from community repo)
-# sudo zypper addrepo https://download.opensuse.org/repositories/devel:languages:zig/openSUSE_Tumbleweed/devel:languages:zig.repo
-# sudo zypper refresh && sudo zypper install gtk4-layer-shell
-
-# Clone and run setup
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr
-./bin/hyprwhspr setup
-```
-
-</details>
-
-**Post-installation (non-Arch distros):**
-
-The setup wizard handles most configuration automatically:
-
-- Creates `~/.local/bin/hyprwhspr` symlink (so the command works from anywhere)
-- Configures systemd services
-- Sets up permissions (groups, udev rules)
-
-After setup completes:
-
-```bash
-# Log out and back in for group permissions to take effect
-# Then verify everything is running:
 hyprwhspr status
 ```
+
+> Non-Arch distro support is new - please report any snags!
 
 ### CLI commands
 
 After installation, use the `hyprwhspr` CLI to manage your installation:
 
 - `hyprwhspr setup` - Interactive initial setup
-  - `hyprwhspr setup auto` - Automated setup with optional parameters:
-    - `--backend {nvidia,vulkan,cpu,onnx-asr}` - Specify backend (default: auto-detect GPU)
-    - `--model MODEL` - Model to download (default: base for whisper, auto for onnx-asr)
-    - `--no-waybar` - Skip waybar integration
-    - `--no-mic-osd` - Disable mic-osd visualization
-    - `--no-systemd` - Skip systemd service setup
-    - `--hypr-bindings` - Enable Hyprland compositor bindings
-- `hyprwhspr config` - Manage configuration (init/show/edit)
-  - `hyprwhspr config show --all` - Show all settings including defaults
-- `hyprwhspr waybar` - Manage Waybar integration (install/remove/status)
-- `hyprwhspr mic-osd` - Manage microphone visualization overlay (enable/disable/status)
-- `hyprwhspr systemd` - Manage systemd services (install/enable/disable/status/restart)
-- `hyprwhspr model` - Manage models (download/list/status/unload/reload)
+- `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit`)
+- `hyprwhspr model` - Manage models (`download` / `list` / `unload` / `reload`)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation
-- `hyprwhspr test` - Test microphone and backend connectivity end-to-end
-  - `--live` - Record live audio (3s) instead of using test.wav
-  - `--mic-only` - Only test microphone, skip transcription
-- `hyprwhspr keyboard` - Keyboard device management (list/test)
-- `hyprwhspr backend` - Backend management (repair/reset)
-- `hyprwhspr state` - State management (show/validate/reset)
-- `hyprwhspr uninstall` - Completely remove hyprwhspr and all data
+- `hyprwhspr test` - Test microphone and transcription end-to-end
+- `hyprwhspr waybar` - Manage Waybar integration
+- `hyprwhspr systemd` - Manage systemd services
+- `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle`)
+
+For the full command reference, see the **[Configuration guide](docs/CONFIGURATION.md)**.
 
 ## Documentation
 
@@ -235,8 +146,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 - [Minimal configuration](docs/CONFIGURATION.md#minimal-configuration)
 - [Recording modes](docs/CONFIGURATION.md#recording-modes) -- toggle, push-to-talk, auto, long-form
 - [Custom hotkeys](docs/CONFIGURATION.md#custom-hotkeys) -- key support, secondary shortcuts, Hyprland bindings
-- [Transcription backends](docs/CONFIGURATION.md#transcription-backends) -- REST API, Realtime WebSocket
-- [Models](docs/CONFIGURATION.md#models) -- Parakeet, Whisper
+- [Backends](docs/CONFIGURATION.md#backends) -- Cohere Transcribe, Parakeet, Whisper, REST API, Realtime WebSocket
 - [GPU resource management](docs/CONFIGURATION.md#gpu-resource-management) -- unload/reload model to free VRAM
 - [Audio and visual feedback](docs/CONFIGURATION.md#audio-and-visual-feedback) -- visualizer, audio feedback, ducking
 - [Text processing](docs/CONFIGURATION.md#text-processing) -- word overrides, filler words, symbol replacements
@@ -260,6 +170,8 @@ MIT License - see [LICENSE](LICENSE) file.
 Create an issue, happy to help!  
 
 For pull requests, also best to start with an issue.
+
+If you want, compute credits from [opub.dev](https://opub.dev/github/goodroot/hyprwhspr) are always welcome!
 
 ---
 

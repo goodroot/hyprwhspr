@@ -124,16 +124,10 @@ except Exception:
 PY
     )
 
-    # Backward compatibility: map old values
-    if [[ "$backend" == "local" ]]; then
-        backend="pywhispercpp"
-    elif [[ "$backend" == "remote" ]]; then
-        backend="rest-api"
-    fi
     backend="${backend:-pywhispercpp}"
 
     # Remote backends don't require a local model file
-    if [[ "$backend" == "rest-api" ]] || [[ "$backend" == "remote" ]] || [[ "$backend" == "realtime-ws" ]]; then
+    if [[ "$backend" == "rest-api" ]] || [[ "$backend" == "realtime-ws" ]]; then
         return 0
     fi
 
@@ -149,6 +143,15 @@ PY
             fi
         fi
         # If venv doesn't exist or import fails, return failure
+        return 1
+    fi
+
+    # faster-whisper uses the HuggingFace cache, not the pywhispercpp models dir
+    if [[ "$backend" == "faster-whisper" ]]; then
+        local venv_python="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
+        if [[ -f "$venv_python" ]] && timeout 0.5s "$venv_python" -c 'import faster_whisper' >/dev/null 2>&1; then
+            return 0
+        fi
         return 1
     fi
 

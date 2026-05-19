@@ -5,8 +5,30 @@ Handles loading, saving, and managing application settings
 
 import copy
 import json
+import os
+import re
 from pathlib import Path
 from typing import Any, Dict
+
+
+# Environment variable substitution: ${VAR} -> value of $VAR, or literal token if unset.
+# Applied lazily in get_setting() so save_config preserves the original tokens.
+_ENV_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
+
+
+def expand_env(value: Any) -> Any:
+    """Recursively expand ${VAR} in strings. Non-strings pass through."""
+    if isinstance(value, str):
+        def repl(m: 're.Match[str]') -> str:
+            env_val = os.environ.get(m.group(1))
+            return env_val if env_val is not None else m.group(0)
+
+        return _ENV_PATTERN.sub(repl, value)
+    if isinstance(value, dict):
+        return {k: expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [expand_env(v) for v in value]
+    return value
 
 try:
     from .paths import CONFIG_DIR, CONFIG_FILE, TEMP_DIR
@@ -26,11 +48,21 @@ class ConfigManager:
             'secondary_shortcut': None,  # Optional secondary hotkey for language-specific recording (e.g., "SUPER+ALT+I")
             'secondary_language': None,  # Language code for secondary shortcut (e.g., "it", "en", "fr", etc.)
             'cancel_shortcut': None,  # Optional shortcut to cancel recording and discard audio (e.g., "SUPER+ESCAPE")
-            'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' (hybrid tap/hold)
+            'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
+            'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
+            'continuous_silence_threshold': 0,  # RMS silence threshold; 0 = auto-calibrate from noise floor at session start
             'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
             'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
             'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
             'selected_device_name': None,  # Specific keyboard device name (e.g., 'USB Keyboard') - takes priority over path if both set
+            # Optional allowlist of keyboard device names. Two effects:
+            # (1) restricts which devices are grabbed at startup — mice/media
+            #     controllers that advertise keyboard-shaped capabilities are
+            #     skipped; (2) enables pyudev-based hotplug detection for the
+            #     listed devices (docked keyboards work without service restart).
+            # Ignored when selected_device_name / selected_device_path is set.
+            # Null (default) = legacy behavior: startup-only discovery, no filter.
+            'keyboard_device_names': None,
             # Audio device persistence (for reliable device matching across reboots)
             'audio_device_id': None,        # PortAudio device index (can change on reboot)
             'audio_device_name': None,      # Human-readable device name (more stable)
@@ -43,11 +75,16 @@ class ConfigManager:
             'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
             'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
+            # Shell command run after preprocessing, before paste. Stdin
+            # receives the transcription; non-empty stdout replaces it.
+            # Empty stdout leaves text unchanged (observer-only hooks).
+            # Null disables the hook.
+            'post_transcription_hook': None,
             'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
             'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
-            # Values: "super" | "ctrl_shift" | "ctrl"
-            # Default "ctrl_shift" for flexible unix-y primitive
-            'paste_mode': 'ctrl_shift',
+            # Values: "super" | "ctrl_shift" | "ctrl" | null (auto-detect)
+            # null = auto-detect: terminals get Ctrl+Shift+V, other apps get Ctrl+V
+            'paste_mode': None,
             # Wayland/XKB keycode as printed by `wev` for the key that types 'v'.
             # If set, hyprwhspr will convert it to Linux evdev by subtracting 8.
             # This avoids users having to do the math themselves.
@@ -57,7 +94,7 @@ class ConfigManager:
             # for the physical key that produces 'v' on your layout).
             'paste_keycode': 47,
             # Back-compat for older configs (used only if paste_mode is absent):
-            'shift_paste': True,  # true = Ctrl+Shift+V, false = Ctrl+V
+            'shift_paste': None,  # true = Ctrl+Shift+V, false = Ctrl+V; None = use auto-detect
             # Direct-type injection mode (bypasses clipboard entirely)
             # null (default) = clipboard + paste keystroke (existing behavior)
             # "wtype"         = wtype -- <text>  (native Wayland, works in Kitty-protocol terminals)
@@ -73,7 +110,7 @@ class ConfigManager:
             'rest_timeout': 30,                # Request timeout in seconds
             'rest_audio_format': 'wav',        # Audio format for remote transcription
             # WebSocket realtime backend settings
-            'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai')
+            'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai', 'google', 'elevenlabs')
             'websocket_model': None,           # Model identifier (e.g., 'gpt-realtime-mini-2025-12-15')
             'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
             'realtime_timeout': 30,            # Completion timeout (seconds)
@@ -88,6 +125,10 @@ class ConfigManager:
             'faster_whisper_device': 'auto',         # 'auto' | 'cuda' | 'cpu'
             'faster_whisper_compute_type': 'auto',   # 'auto' → int8 on cuda, float32 on cpu
             'faster_whisper_vad_filter': True,       # Enable Silero VAD (strips silence, reduces hallucinations)
+            # Cohere Transcribe backend settings (transformers, CUDA/CPU)
+            'cohere_transcribe_device': 'auto',      # 'auto' | 'cuda' | 'cpu'
+            'cohere_transcribe_dtype': 'bfloat16',   # 'bfloat16' | 'float32' — bfloat16 halves VRAM without float16 overflow in attention masking
+            'cohere_transcribe_compile': False,      # torch.compile encoder for faster throughput (adds warmup on first call)
             # Audio feedback settings
             'audio_feedback': False,             # Play sounds on recording start/stop/error
             'audio_volume': 1.0,                 # Master audio feedback volume (0.0-1.0)
@@ -108,7 +149,16 @@ class ConfigManager:
             # Long-form recording mode settings
             'long_form_submit_shortcut': None,   # Shortcut to submit long-form recording (e.g., "Super+Return")
             'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
-            'long_form_auto_save_interval': 300  # Auto-save interval in seconds (default: 5 minutes)
+            'long_form_auto_save_interval': 300, # Auto-save interval in seconds (default: 5 minutes)
+            # Audio stream cold-start recovery
+            # How long (seconds) to wait between stream.start() retries when PortAudio times out.
+            # Increase this if your USB mic frequently fails on the first recording after idle.
+            'stream_start_retry_delay': 1.5,
+            # Keep a silent audio stream open between recordings to prevent ALSA cold-start
+            # timeouts on some hardware. Disabled by default because active input streams
+            # trigger the microphone-in-use indicator on many desktops (GNOME, Ubuntu, etc.).
+            # Enable only if you see paTimedOut errors on your first recording after idle.
+            'keepalive_stream': False
         }
         
         # Set up config directory and file path
@@ -213,8 +263,14 @@ class ConfigManager:
             return False
     
     def get_setting(self, key: str, default: Any = None) -> Any:
-        """Get a configuration setting"""
-        return self.config.get(key, default)
+        """Get a configuration setting with environment variable expansion applied.
+
+        ${VAR} tokens in string values are replaced with the corresponding
+        environment variable. Unset variables are left as the literal token
+        (e.g. "${MY_KEY}" stays if MY_KEY is unset). Expansion always returns
+        strings — callers expecting int/float/bool must cast the result themselves.
+        """
+        return expand_env(self.config.get(key, default))
     
     def set_setting(self, key: str, value: Any):
         """Set a configuration setting"""

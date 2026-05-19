@@ -150,8 +150,9 @@ sys.exit(main())
             env['LD_PRELOAD'] = lib_path
 
         try:
+            python_cmd = sys.executable or 'python3'
             self._process = subprocess.Popen(
-                ['/usr/bin/python3', '-c', code],
+                [python_cmd, '-c', code],
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,

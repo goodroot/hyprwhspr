@@ -1,0 +1,306 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description: string;
+  tag: string;
+  date: string;
+  readTime: string;
+}
+
+const { title, description, tag, date, readTime } = Astro.props;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} — hyprwhspr</title>
+    <meta name="description" content={description} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+
+    <div class="page">
+
+      <header class="post-header">
+        <a href="/" class="back">← hyprwhspr</a>
+      </header>
+
+      <main class="post-main">
+
+        <div class="post-meta">
+          <span class="post-tag">{tag}</span>
+          <span class="post-date">{date}</span>
+          <span class="post-sep">·</span>
+          <span class="post-read">{readTime}</span>
+        </div>
+
+        <h1 class="post-title">{title}</h1>
+
+        <p class="post-lede">{description}</p>
+
+        <div class="post-rule"></div>
+
+        <div class="post-body">
+          <slot />
+        </div>
+
+        <div class="post-cta">
+          <div class="cta-inner">
+            <div class="cta-text">
+              <span class="cta-label">Ready to try it?</span>
+              <span class="cta-sub">Free, open source, runs on any Linux with Wayland.</span>
+            </div>
+            <a class="cta-btn" href="/#install">Install hyprwhspr →</a>
+          </div>
+        </div>
+
+      </main>
+
+      <footer class="post-footer">
+        <a href="/">hyprwhspr</a>
+        <span class="sep">·</span>
+        <a href="https://github.com/goodroot/hyprwhspr">GitHub</a>
+        <span class="sep">·</span>
+        <a href="https://github.com/goodroot/hyprwhspr/blob/main/LICENSE">MIT</a>
+        <span class="sep">·</span>
+        <a href="/privacy">Privacy</a>
+      </footer>
+
+    </div>
+
+  </body>
+</html>
+
+<style>
+  .page {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  /* Header */
+  .post-header {
+    padding: 1.5rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .back {
+    font-size: 0.78rem;
+    color: var(--comment);
+    letter-spacing: 0.05em;
+    transition: color 0.15s;
+  }
+
+  .back:hover { color: var(--blue); }
+
+  /* Meta */
+  .post-main {
+    padding: 3rem 0 4rem;
+  }
+
+  .post-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--comment);
+    letter-spacing: 0.06em;
+    margin-bottom: 1.25rem;
+  }
+
+  .post-tag {
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--blue);
+    border-color: var(--blue);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .post-sep { color: var(--border); }
+
+  /* Title */
+  .post-title {
+    font-size: clamp(1.5rem, 4vw, 2.2rem);
+    font-weight: 600;
+    color: var(--fg-bright);
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    margin-bottom: 1rem;
+  }
+
+  .post-lede {
+    font-size: 1rem;
+    color: var(--fg-dim);
+    line-height: 1.7;
+    margin-bottom: 2rem;
+  }
+
+  .post-rule {
+    height: 1px;
+    background: var(--border);
+    margin-bottom: 2rem;
+  }
+
+  /* Body prose */
+  .post-body {
+    font-size: 0.9rem;
+    line-height: 1.8;
+    color: var(--fg);
+  }
+
+  .post-body :global(h2) {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--fg-bright);
+    letter-spacing: 0.02em;
+    margin: 2rem 0 0.75rem;
+  }
+
+  .post-body :global(h2::before) {
+    content: "## ";
+    color: var(--comment);
+    font-weight: 300;
+  }
+
+  .post-body :global(p) {
+    margin-bottom: 1.2rem;
+    color: var(--fg-dim);
+  }
+
+  .post-body :global(strong) {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .post-body :global(ul), .post-body :global(ol) {
+    padding-left: 0;
+    margin-bottom: 1.2rem;
+    list-style: none;
+  }
+
+  .post-body :global(li) {
+    color: var(--fg-dim);
+    padding-left: 1.2rem;
+    margin-bottom: 0.4rem;
+    position: relative;
+  }
+
+  .post-body :global(li::before) {
+    content: "·";
+    position: absolute;
+    left: 0;
+    color: var(--comment);
+  }
+
+  .post-body :global(code) {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--cyan);
+    background: var(--surface);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+
+  .post-body :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .post-body :global(th) {
+    text-align: left;
+    color: var(--comment);
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .post-body :global(td) {
+    padding: 0.5rem 0.75rem;
+    color: var(--fg-dim);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .post-body :global(td:first-child) {
+    color: var(--fg);
+  }
+
+  .post-body :global(tr:last-child td) {
+    border-bottom: none;
+  }
+
+  /* CTA */
+  .post-cta {
+    margin-top: 3rem;
+    padding: 1.25rem 1.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .cta-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .cta-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .cta-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--fg-bright);
+  }
+
+  .cta-sub {
+    font-size: 0.75rem;
+    color: var(--comment);
+  }
+
+  .cta-btn {
+    display: inline-block;
+    padding: 0.5rem 1.1rem;
+    background: var(--blue);
+    color: var(--bg);
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+
+  .cta-btn:hover { opacity: 0.85; color: var(--bg); }
+
+  /* Footer */
+  .post-footer {
+    border-top: 1px solid var(--border);
+    padding: 1.5rem 0;
+    font-size: 0.75rem;
+    color: var(--comment);
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+  }
+
+  .sep { color: var(--border); }
+</style>

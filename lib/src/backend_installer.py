@@ -2034,6 +2034,36 @@ def install_faster_whisper(pip_bin: Path, enable_gpu: bool = False) -> bool:
         return False
 
 
+def install_cohere_transcribe(pip_bin: Path) -> bool:
+    """Install Cohere Transcribe dependencies into the main venv.
+
+    Installs torch, transformers (with version pin per Cohere's requirements),
+    and supporting packages needed for model loading and audio preprocessing.
+
+    Args:
+        pip_bin: Path to pip executable in the target venv
+    """
+    log_info("Installing Cohere Transcribe dependencies...")
+    try:
+        # torch is required for model loading and GPU inference
+        # transformers version constraint is critical: 5.0 and 5.1 break weight loading
+        run_command([
+            str(pip_bin), 'install',
+            'torch',
+            'transformers>=4.56,<5.3,!=5.0.*,!=5.1.*',
+            'huggingface_hub',
+            'sentencepiece',
+            'protobuf',
+            'librosa',
+            'soundfile',
+        ], check=True)
+        log_success("Cohere Transcribe dependencies installed")
+        return True
+    except subprocess.CalledProcessError as e:
+        log_error(f"Failed to install Cohere Transcribe dependencies: {e}")
+        return False
+
+
 # ==================== Parallel Installation Helpers ====================
 
 def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False,
@@ -2185,7 +2215,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         log_warning("To fix: mise deactivate (or: mise unuse -g python)")
 
     # Validate backend type
-    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr', 'faster-whisper']:
+    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
         error_msg = f"Invalid backend type: {backend_type}"
         log_error(error_msg)
         set_install_state('failed', error_msg)
@@ -2312,6 +2342,98 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
 
             set_install_state('completed')
             log_success("faster-whisper backend installation completed!")
+            return True
+
+        elif backend_type == 'cohere-transcribe':
+            # Cohere Transcribe uses main venv with transformers + supporting packages
+            venv_existed = VENV_DIR.exists()
+            pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
+            if (force_rebuild or not venv_existed) and VENV_DIR.exists():
+                created_items['venv_created'] = True
+                created_items['venv_path'] = str(VENV_DIR)
+
+            # Install base requirements first
+            requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
+            log_info("Installing base dependencies...")
+            try:
+                run_command([str(pip_bin), 'install', '-r', str(requirements_file)], check=True)
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Failed to install base dependencies: {e}"
+                log_error(error_msg)
+                if cleanup_on_failure:
+                    log_info("Cleaning up partial installation...")
+                    _cleanup_partial_installation(created_items, pip_bin)
+                set_install_state('failed', error_msg)
+                return False
+
+            if not install_cohere_transcribe(pip_bin):
+                error_msg = "Failed to install Cohere Transcribe dependencies"
+                log_error(error_msg)
+                if cleanup_on_failure:
+                    log_info("Cleaning up partial installation...")
+                    _cleanup_partial_installation(created_items, pip_bin)
+                set_install_state('failed', error_msg)
+                return False
+
+            # Pre-download model weights so the service starts immediately without a
+            # multi-gigabyte fetch on first transcription. low_cpu_mem_usage=True avoids
+            # loading the full ~8 GB fp32 weights into RAM during the cache-only download.
+            log_info("Downloading Cohere Transcribe model from HuggingFace (~4 GB)...")
+            log_info("This may take several minutes depending on your connection speed.")
+            venv_python = VENV_DIR / 'bin' / 'python'
+            download_script = '''
+try:
+    from huggingface_hub import enable_progress_bars
+    enable_progress_bars()
+except ImportError:
+    pass
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+import torch, os, sys
+model_id = "CohereLabs/cohere-transcribe-03-2026"
+token = os.environ.get("HF_TOKEN") or None
+print("Downloading processor...", flush=True)
+processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True, token=token)
+print("Downloading model weights (~4 GB)...", flush=True)
+sys.stdout.flush()
+model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    model_id,
+    trust_remote_code=True,
+    dtype=torch.bfloat16,
+    low_cpu_mem_usage=True,
+    token=token,
+)
+del model
+print("Model downloaded and cached successfully", flush=True)
+'''
+            # Inject the HuggingFace token so the gated repo download succeeds
+            download_env = None
+            try:
+                from credential_manager import get_credential
+                hf_token = get_credential('huggingface')
+                if hf_token:
+                    import os as _os
+                    download_env = {**_os.environ, 'HF_TOKEN': hf_token, 'PYTHONUNBUFFERED': '1'}
+                else:
+                    import os as _os
+                    download_env = {**_os.environ, 'PYTHONUNBUFFERED': '1'}
+            except Exception:
+                import os as _os
+                download_env = {**_os.environ, 'PYTHONUNBUFFERED': '1'}
+
+            try:
+                run_command([str(venv_python), '-c', download_script], check=True, timeout=900,
+                            env=download_env, verbose=True)
+                log_success("Cohere Transcribe model downloaded and cached")
+            except subprocess.CalledProcessError as e:
+                log_warning(f"Model pre-download failed: {e}")
+                log_warning("Model will be downloaded automatically on first use instead.")
+                # Don't fail the installation — the service can still download on first start
+
+            cur_req_hash = compute_file_hash(requirements_file)
+            set_state("requirements_hash", cur_req_hash)
+
+            set_install_state('completed')
+            log_success("Cohere Transcribe backend installation completed!")
             return True
 
         elif backend_type == 'onnx-asr':

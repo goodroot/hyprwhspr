@@ -62,10 +62,13 @@ else
     PYTHON_CMD="$CLI_PYTHON"
 fi
 
-# Help handling: route any -h/--help or leading "help" to CLI help
+# Help/version handling: route -h/--help/--version to CLI
 for arg in "$@"; do
   if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
     exec "$CLI_PYTHON" "$LIB_DIR/cli.py" --help
+  fi
+  if [[ "$arg" == "--version" ]]; then
+    exec "$CLI_PYTHON" "$LIB_DIR/cli.py" --version
   fi
 done
 

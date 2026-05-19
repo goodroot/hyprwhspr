@@ -229,13 +229,18 @@ class RealtimeClient:
             if self.connected:
                 print(f'[REALTIME] Connected successfully', flush=True)
                 self.reconnect_attempts = 0
-                
+
                 # Always send session.update with audio format configuration
                 self._send_session_update()
-                
+
                 return True
             else:
                 print(f'[REALTIME] Connection timeout', flush=True)
+                # Stop the ws thread that is still running in the background
+                try:
+                    self.ws.close()
+                except Exception:
+                    pass
                 return False
                 
         except Exception as e:

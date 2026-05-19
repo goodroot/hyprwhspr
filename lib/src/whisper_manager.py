@@ -69,6 +69,11 @@ class WhisperManager:
         # faster-whisper model (CTranslate2)
         self._faster_whisper_model = None
 
+        # Cohere Transcribe model (transformers)
+        self._cohere_model = None
+        self._cohere_processor = None
+        self._cohere_compile_done = False  # True after first torch.compile run; suppression no longer needed
+
         # Thread safety for model operations
         self._model_lock = threading.Lock()
 
@@ -270,6 +275,71 @@ class WhisperManager:
                 self._last_use_time = time.monotonic()
                 return True
 
+            # Configure Cohere Transcribe backend (transformers, CUDA/CPU)
+            if backend == 'cohere-transcribe':
+                try:
+                    import torch
+                    from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+                except ImportError:
+                    print('ERROR: cohere-transcribe dependencies not installed. Run: hyprwhspr setup and select cohere-transcribe', flush=True)
+                    return False
+
+                model_id = 'CohereLabs/cohere-transcribe-03-2026'
+                device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
+                dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
+
+                # Resolve device
+                if device_setting == 'auto':
+                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                else:
+                    device = device_setting
+
+                # Resolve dtype — bfloat16 is required for GPU: float16 overflows at the
+                # -1e9 attention mask fill value (float16 max ~65504). bfloat16 shares
+                # float32's exponent range so handles it correctly at ~4-5 GB VRAM.
+                if device == 'cuda' and dtype_setting in ('float16', 'bfloat16'):
+                    torch_dtype = torch.bfloat16
+                else:
+                    torch_dtype = torch.float32
+
+                # Get HuggingFace token for gated model access
+                hf_token = None
+                try:
+                    hf_token = get_credential('huggingface') or None
+                except Exception:
+                    pass
+
+                try:
+                    import contextlib, os as _os
+                    print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
+                    # Cohere's trust_remote_code path prints large ANSI-laden blobs that
+                    # journald records as "[NNK blob data]". Redirect during from_pretrained.
+                    with open(_os.devnull, 'w') as _devnull, \
+                            contextlib.redirect_stdout(_devnull), \
+                            contextlib.redirect_stderr(_devnull):
+                        self._cohere_processor = AutoProcessor.from_pretrained(
+                            model_id, trust_remote_code=True, token=hf_token,
+                            local_files_only=True)
+                        self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                            model_id,
+                            trust_remote_code=True,
+                            dtype=torch_dtype,
+                            token=hf_token,
+                            local_files_only=True,
+                        ).to(device)
+                    self._cohere_model.eval()
+                    print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
+                except Exception as e:
+                    print(f'ERROR: Failed to load Cohere Transcribe model: {e}', flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    return False
+
+                self.current_model = model_id
+                self.ready = True
+                self._last_use_time = time.monotonic()
+                return True
+
             # Configure Realtime WebSocket backend
             if backend == 'realtime-ws':
                 # Validate WebSocket configuration
@@ -291,7 +361,71 @@ class WhisperManager:
                     return False
                 
                 # Select appropriate client based on provider
-                if provider_id == 'elevenlabs':
+                if provider_id == 'google':
+                    # Use Gemini Live API client
+                    try:
+                        from .gemini_realtime_client import GeminiRealtimeClient
+                    except ImportError:
+                        from gemini_realtime_client import GeminiRealtimeClient
+
+                    realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+                    self._realtime_client = GeminiRealtimeClient(mode=realtime_mode)
+
+                    # Get WebSocket URL
+                    websocket_url = self.config.get_setting('websocket_url')
+                    if not websocket_url:
+                        provider = get_provider(provider_id)
+                        if provider and 'websocket_endpoint' in provider:
+                            websocket_url = provider['websocket_endpoint']
+                        else:
+                            websocket_url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
+
+                    # Build instructions
+                    instructions_parts = []
+                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                    if whisper_prompt:
+                        instructions_parts.append(whisper_prompt)
+
+                    language = self.config.get_setting('language', None)
+                    if language:
+                        instructions_parts.append(f"Transcribe in {language} language.")
+
+                    instructions = ' '.join(instructions_parts) if instructions_parts else None
+
+                    # Set language
+                    self._realtime_client.language = language
+
+                    # Set buffer max seconds
+                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+                    self._realtime_client.set_max_buffer_seconds(buffer_max)
+
+                    # Connect (API key goes in URL query param, handled by client)
+                    self._realtime_connect_params = {
+                        'websocket_url': websocket_url,
+                        'api_key': api_key,
+                        'model_id': model_id,
+                        'instructions': instructions,
+                    }
+                    if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
+                        print('ERROR: Failed to connect to Gemini Live API')
+                        try:
+                            self._realtime_client.close()
+                        except Exception:
+                            pass
+                        self._realtime_client = None
+                        return False
+
+                    # Gemini accepts 16kHz audio natively - no resampling needed
+                    def _send_direct(audio_chunk: np.ndarray):
+                        """Send audio directly to Gemini (16kHz, no resampling)"""
+                        try:
+                            self._realtime_client.append_audio(audio_chunk)
+                        except Exception as e:
+                            print(f'[GEMINI] Streaming error: {e}', flush=True)
+
+                    self._realtime_streaming_callback = _send_direct
+
+                elif provider_id == 'elevenlabs':
                     # Use ElevenLabs-specific client (Scribe v2 Realtime)
                     try:
                         from .elevenlabs_realtime_client import ElevenLabsRealtimeClient
@@ -513,9 +647,11 @@ class WhisperManager:
                     print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
                     return False
 
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=self.current_model,
                     n_threads=self.config.get_setting('threads', 4),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 
@@ -1067,9 +1203,19 @@ class WhisperManager:
             return ""
         
         try:
-            # Update language if override provided
+            # Update language if override provided.
+            # Some clients (e.g. Gemini) bake language into the setup message at
+            # connect time and cannot update it after audio has been streamed —
+            # doing so would trigger a reconnect and silently drop the audio.
             if language_override is not None:
-                self._realtime_client.update_language(language_override)
+                if getattr(self._realtime_client, 'supports_mid_session_language_update', True):
+                    self._realtime_client.update_language(language_override)
+                else:
+                    print(
+                        f'[REALTIME] Provider does not support mid-session language override '
+                        f'(requested: {language_override}); change will take effect on next session',
+                        flush=True,
+                    )
             
             # Get timeout from config
             timeout = self.config.get_setting('realtime_timeout', 30)
@@ -1168,7 +1314,7 @@ class WhisperManager:
             try:
                 transcribe_kwargs = {
                     'vad_filter': vad_filter,
-                    'beam_size': 5,
+                    'beam_size': self.config.get_setting('beam_size', 5),
                     'task': task,
                 }
                 if language:
@@ -1278,6 +1424,113 @@ class WhisperManager:
             return True
         except Exception as e:
             print(f'[ERROR] faster-whisper reinitialization failed: {e}', flush=True)
+            return False
+
+    def _transcribe_cohere_transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000,
+                                      language_override: Optional[str] = None) -> str:
+        """Transcribe using Cohere Transcribe (transformers)."""
+        if self._cohere_model is None or self._cohere_processor is None:
+            print('[ERROR] Cohere Transcribe model not initialized', flush=True)
+            return ''
+
+        language = language_override if language_override is not None else self.config.get_setting('language', None)
+        if not language:
+            language = 'en'
+
+        use_compile = self.config.get_setting('cohere_transcribe_compile', False)
+
+        with self._model_lock:
+            current_time = time.monotonic()
+            time_since_last_use = current_time - self._last_use_time
+            if time_since_last_use > 1800 and self._last_use_time > 0:
+                print('[MODEL] Long idle detected - reinitializing Cohere Transcribe model', flush=True)
+                if not self._reinitialize_cohere_transcribe():
+                    return ''
+
+            try:
+                # On the first torch.compile call, triton spawns a C compiler subprocess
+                # whose output (warnings, notes) leaks to journald. Suppress at fd level
+                # for that one call; afterwards the kernel is cached and nothing is emitted.
+                needs_suppress = use_compile and not self._cohere_compile_done
+                if needs_suppress:
+                    import os as _os, warnings as _warnings
+                    _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
+                    _old_stderr = _os.dup(2)
+                    _os.dup2(_devnull_fd, 2)
+                try:
+                    if needs_suppress:
+                        import warnings as _warnings
+                        with _warnings.catch_warnings():
+                            _warnings.simplefilter('ignore')
+                            texts = self._cohere_model.transcribe(
+                                processor=self._cohere_processor,
+                                audio_arrays=[audio_data],
+                                sample_rates=[sample_rate],
+                                language=language,
+                                compile=use_compile,
+                            )
+                    else:
+                        texts = self._cohere_model.transcribe(
+                            processor=self._cohere_processor,
+                            audio_arrays=[audio_data],
+                            sample_rates=[sample_rate],
+                            language=language,
+                            compile=use_compile,
+                        )
+                finally:
+                    if needs_suppress:
+                        _os.dup2(_old_stderr, 2)
+                        _os.close(_old_stderr)
+                        _os.close(_devnull_fd)
+                        self._cohere_compile_done = True
+                result = texts[0].strip() if texts else ''
+                self._last_use_time = time.monotonic()
+                return result
+            except Exception as e:
+                print(f'[ERROR] Cohere Transcribe transcription failed: {e}', flush=True)
+                import traceback
+                traceback.print_exc()
+                return ''
+
+    def _reinitialize_cohere_transcribe(self) -> bool:
+        """Reinitialize Cohere Transcribe model after suspend/resume."""
+        try:
+            import torch
+            from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+
+            model_id = 'CohereLabs/cohere-transcribe-03-2026'
+            device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
+            dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
+
+            device = 'cuda' if (device_setting == 'auto' and torch.cuda.is_available()) else device_setting if device_setting != 'auto' else 'cpu'
+            torch_dtype = torch.bfloat16 if (device == 'cuda' and dtype_setting in ('float16', 'bfloat16')) else torch.float32
+
+            hf_token = None
+            try:
+                hf_token = get_credential('huggingface') or None
+            except Exception:
+                pass
+
+            print(f'[MODEL] Reinitializing Cohere Transcribe (device={device})', flush=True)
+            import contextlib, os as _os
+            with open(_os.devnull, 'w') as _devnull, \
+                    contextlib.redirect_stdout(_devnull), \
+                    contextlib.redirect_stderr(_devnull):
+                self._cohere_processor = AutoProcessor.from_pretrained(
+                    model_id, trust_remote_code=True, token=hf_token,
+                    local_files_only=True)
+                self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
+                    dtype=torch_dtype,
+                    token=hf_token,
+                    local_files_only=True,
+                ).to(device)
+            self._cohere_model.eval()
+            self._last_use_time = time.monotonic()
+            return True
+        except Exception as e:
+            print(f'[ERROR] Cohere Transcribe reinitialization failed: {e}', flush=True)
             return False
 
     def get_realtime_streaming_callback(self) -> Optional[Callable]:
@@ -1445,6 +1698,9 @@ class WhisperManager:
         if backend == 'faster-whisper':
             return self._transcribe_faster_whisper(audio_data, sample_rate, language_override=language_override)
 
+        if backend == 'cohere-transcribe':
+            return self._transcribe_cohere_transcribe(audio_data, sample_rate, language_override=language_override)
+
         # Use model lock to prevent concurrent transcription calls
         # This prevents crashes from concurrent access to the whisper model
         with self._model_lock:
@@ -1465,6 +1721,19 @@ class WhisperManager:
             try:
                 # Use language_override if provided, otherwise get from config (None = auto-detect)
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
+
+                # pywhispercpp doesn't auto-detect language when no language kwarg is passed —
+                # it keeps whisper.cpp's compiled-in default of "en". Call auto_detect_language()
+                # explicitly so a null config value behaves as documented.
+                if not language:
+                    try:
+                        (detected, prob), _ = self._pywhisper_model.auto_detect_language(audio_data)
+                        language = detected
+                        print(f'[LANG] auto-detected: {detected} (p={prob:.2f})', flush=True)
+                    except Exception as e:
+                        print(f'[WARN] language auto-detect failed: {e}; falling back to en', flush=True)
+                        language = 'en'
+
                 whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
 
                 task = self.config.get_setting('task', 'transcribe')
@@ -1472,13 +1741,16 @@ class WhisperManager:
                 # Intercept progress logs and enhance them
                 with self._intercept_progress_logs():
                     # Build transcribe kwargs with available values
-                    transcribe_kwargs = {}
+                    transcribe_kwargs = {'language': language}
                     if task == 'translate':
                         transcribe_kwargs['translate'] = True
-                    if language:
-                        transcribe_kwargs['language'] = language
                     if whisper_prompt:
                         transcribe_kwargs['initial_prompt'] = whisper_prompt
+                    if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search':
+                        transcribe_kwargs['beam_search'] = {
+                            'beam_size': self.config.get_setting('beam_size', 5),
+                            'patience': -1.0,
+                        }
 
                     segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
 
@@ -1563,9 +1835,11 @@ class WhisperManager:
             except ImportError:
                 from pywhispercpp import Model
             
+            strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
             self._pywhisper_model = Model(
                 model=model_name,
                 n_threads=threads,
+                params_sampling_strategy=strategy_int,
                 redirect_whispercpp_logs_to=None
             )
             
@@ -1617,6 +1891,8 @@ class WhisperManager:
                 self._cleanup_model()
                 self._faster_whisper_model = None
                 self._onnx_asr_model = None
+                self._cohere_model = None
+                self._cohere_processor = None
 
                 # Trigger Python GC so C++ destructors and ONNX sessions release immediately
                 import gc
@@ -1684,9 +1960,11 @@ class WhisperManager:
                 except ImportError:
                     # Fallback for flat layout (or older versions)
                     from pywhispercpp import Model
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=self.current_model,
                     n_threads=int(num_threads),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 
@@ -1741,9 +2019,11 @@ class WhisperManager:
                 except ImportError:
                     # Fallback for flat layout (or older versions)
                     from pywhispercpp import Model
+                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
                 self._pywhisper_model = Model(
                     model=model_name,
                     n_threads=self.config.get_setting('threads', 4),
+                    params_sampling_strategy=strategy_int,
                     redirect_whispercpp_logs_to=None
                 )
 

@@ -13,8 +13,6 @@ There is also a `$schema` reference for IDE autocompletion and validation:
 ```jsonc
 {
     "$schema": "https://raw.githubusercontent.com/goodroot/hyprwhspr/main/share/config.schema.json",
-    "transcription_backend": "rest-api",
-    "language": "en"
 }
 ```
 
@@ -35,6 +33,20 @@ Only 2 essential options:
     "model": "base"
 }
 ```
+
+## Environment variable substitution
+
+Both `config.json` and `credentials.json` support `${VAR}` tokens. 
+
+Tokens are stored as-is on disk and expanded at read time
+
+```json
+{
+  "rest_api_key": "${OPENAI_API_KEY}"
+}
+```
+
+---
 
 ## Recording modes
 
@@ -70,6 +82,27 @@ Hybrid tap/hold - automatically detects your intent:
 
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
+
+### Continuous mode
+
+Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. 
+
+Press again to stop:
+
+```jsonc
+{
+    "recording_mode": "continuous",
+    "continuous_silence_seconds": 2.0,  // Optional: seconds of silence before auto-paste (default: 2.0)
+    "continuous_silence_threshold": 0    // Optional: 0 = auto-calibrate from noise floor (default). Set manually if needed.
+}
+```
+
+- Recording continues after each auto-paste, so you can keep dictating
+- To make it "faster", lower continous silence threshold
+- The final press stops recording and pastes any remaining audio
+- The silence threshold is auto-calibrated from your mic's noise floor at the start of each session. 
+- If detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value)
+- Please report any issues you might experience with this functionality so it can be polished. 
 
 ### Long-form mode
 
@@ -240,14 +273,309 @@ Control recording via:
 * CLI (`hyprwhspr record toggle`, `hyprwhspr record start`, etc.) 
 & the `recording_control` file (e.g. bind in Hyprland to `echo start > ~/.config/hyprwhspr/recording_control`)
 
-## Transcription backends
+## Backends
 
-Local backends (Parakeet + Whisper) are documented in the **Models** section below.
-Cloud / network backends are documented here.
+**Quick pick by hardware:**
+
+- **NVIDIA GPU** → Cohere Transcribe is the leading edge · whisper.cpp (`large-v3-turbo`) for speed
+- **AMD / Intel GPU** → whisper.cpp (Vulkan)
+- **CPU only** → Parakeet or faster-whisper
+- **No local setup** → REST API
+
+For up-to-date accuracy rankings across open-source models, see the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard).
+
+| Backend | Privacy | GPU | Speed | Languages | Accuracy | Notes |
+|---------|---------|-----|-------|-----------|----------|-------|
+| Cohere Transcribe | Local | NVIDIA or CPU | Fast | 14 | Best | Gated model, HF token required |
+| Parakeet | Local | NVIDIA or CPU | Fast | Multi | Excellent | — |
+| faster-whisper | Local | NVIDIA or CPU | Fast | 99 | Very good | — |
+| whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Very fast | 99 | Very good | — |
+| REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
+| Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs |
+
+---
+
+### Model commands
+
+`hyprwhspr model` commands route automatically to the configured backend:
+
+```bash
+hyprwhspr model status            # Check if model is downloaded/cached
+hyprwhspr model list              # Show model info for active backend
+hyprwhspr model download [model]  # Download or re-download model
+```
+
+Models are downloaded automatically during `hyprwhspr setup`. 
+
+Use `model download` to re-download if needed.
+
+---
+
+### Cohere Transcribe
+
+**#1 on the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)**
+
+_5.42 average WER across 9 benchmarks, outperforms Whisper large-v3 (7.44 WER) at 3× the throughput._
+
+[![Cohere Transcribe benchmark results](https://cdn-uploads.huggingface.co/production/uploads/6867ac274d8d690302fd0378/VtvUqMr9ibvv47Wj3gvI3.png)](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release)
+
+| Benchmark | Cohere Transcribe | Whisper large-v3 |
+|-----------|:-----------------:|:----------------:|
+| LibriSpeech clean | **1.25** | 2.7 |
+| LibriSpeech other | **2.37** | 5.2 |
+| TedLium | **2.49** | 4.2 |
+| SPGISpeech | **3.08** | 4.7 |
+| VoxPopuli | **5.87** | 9.1 |
+| Gigaspeech | **9.33** | 10.3 |
+| Earnings22 | **10.84** | 12.7 |
+| **Average WER** | **5.42** | 7.44 |
+
+Lower is better. 
+
+Full benchmark details: [Cohere Transcribe release blog](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release).
+
+**Supported languages:** English, German, French, Italian, Spanish, Portuguese, Greek, Dutch, Polish, Arabic, Vietnamese, Chinese, Japanese, Korean
+
+**Requirements:** ~4 GB VRAM (bfloat16), or CPU with ~8 GB RAM (float32) — slower on CPU
+
+#### Setup
+
+Cohere Transcribe is a **gated model** on HuggingFace — you must accept the license before downloading.
+
+1. Accept the license agreement at: [huggingface.co/CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
+2. Generate a read token at: [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+3. Run `hyprwhspr setup` and select **[8] Cohere Transcribe** — you will be prompted for your token
+
+The model (~4 GB) is downloaded during setup. Your token is securely stored locally in `~/.config/hyprwhspr/credentials.json` and never shared.
+
+#### Configuration
+
+```jsonc
+{
+    "transcription_backend": "cohere-transcribe",
+    "cohere_transcribe_device": "auto",      // auto | cuda | cpu
+    "cohere_transcribe_dtype": "bfloat16",   // bfloat16 (GPU default) | float32 (CPU)
+    "cohere_transcribe_compile": false       // torch.compile for faster throughput (adds warmup on first call)
+}
+```
+
+Model stored in: `~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe-03-2026/`
+
+---
+
+### Parakeet
+
+Parakeet TDT V3 via [onnx-asr](https://github.com/istupakov/onnx-asr). 
+
+Typically this model requires a large GPU — 
+
+onnx-asr makes it run well on CPU with a very small accuracy trade-off.
+
+**Requirements:** ~1 GB RAM (CPU) or VRAM (GPU)
+
+#### Setup
+
+Run `hyprwhspr setup` and select **[1] Parakeet**. The model (~1 GB) is downloaded during setup.
+
+#### Configuration
+
+```jsonc
+{
+    "transcription_backend": "onnx-asr",
+    "onnx_asr_model": "nemo-parakeet-tdt-0.6b-v3",  // default
+    "onnx_asr_quantization": "int8",                  // int8 (default) | fp32
+    "onnx_asr_use_vad": true                          // Silero VAD (default: true)
+}
+```
+
+Model stored in: `~/.cache/huggingface/hub/`
+
+---
+
+### faster-whisper
+
+Local Whisper via [faster-whisper](https://github.com/SYSTRAN/faster-whisper). 
+
+Run `hyprwhspr setup` and select **[4] faster-whisper** to install.
+
+**Best for:**
+
+CPU users wanting faster inference than whisper.cpp, or NVIDIA GPU users where VRAM is constrained. 
+
+INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for float16.
+
+AMD/Intel GPU users should use Parakeet or whisper.cpp instead — CTranslate2 does not support Vulkan or ROCm.
+
+Built-in Silero VAD strips silence before inference — the most effective mitigation for Whisper's hallucination loops on longer recordings.
+
+```jsonc
+{
+    "transcription_backend": "faster-whisper",
+    "faster_whisper_model": "large-v3-turbo",   // CUDA; use "base" or "small" for CPU
+    "faster_whisper_device": "auto",             // auto | cuda | cpu
+    "faster_whisper_compute_type": "auto",       // auto → int8 on cuda, float32 on cpu; set "int8" on cpu for speed
+    "faster_whisper_vad_filter": true            // Silero VAD (default: true)
+}
+```
+
+#### Available models
+
+| Model | Size (INT8) | Notes |
+|-------|-------------|-------|
+| `tiny` | ~75 MB | Fastest |
+| `base` | ~145 MB | Recommended for CPU |
+| `small` | ~484 MB | Better accuracy |
+| `medium` | ~1.5 GB | High accuracy |
+| `large-v3` | ~3.1 GB | Best accuracy (needs GPU) |
+| `large-v3-turbo` | ~1.6 GB | **Recommended for CUDA** |
+| `distil-large-v3` | ~1.5 GB | Distilled, CPU/GPU balance |
+
+Models stored in: `~/.cache/huggingface/hub/`
+
+---
+
+### whisper.cpp
+
+Local Whisper via [pywhispercpp](https://github.com/abdeladim-s/pywhispercpp). 
+
+Run `hyprwhspr setup` and select **[2] Whisper CPU**, **[3] Whisper NVIDIA**, or **[5] Whisper AMD/Intel (Vulkan)**.
+
+**Best for:**
+
+Modern NVIDIA cards or discrete AMD/Intel use (via Vulkan). 
+
+Extremely fast on GPU with `large-v3` or `large-v3-turbo`.
+
+#### Available models
+
+Models stored in: `~/.local/share/pywhispercpp/models/`
+
+| Model | Size | Notes |
+|-------|------|-------|
+| `tiny` / `tiny.en` | ~75 MB | Fastest |
+| `base` / `base.en` | ~148 MB | Recommended (default) |
+| `small` / `small.en` | ~488 MB | Better accuracy |
+| `medium` / `medium.en` | ~1.5 GB | High accuracy |
+| `large-v3` | ~2.9 GB | Best accuracy, **requires GPU** |
+| `large-v3-turbo` | ~1.6 GB | Fast + accurate, **requires GPU** |
+
+> **GPU required:** `large-v3` and `large-v3-turbo` require GPU acceleration for reasonable speed.
+
+Download a specific model by name:
+
+```bash
+hyprwhspr model download base
+hyprwhspr model download small.en
+```
+
+Set model in config (pywhispercpp only — faster-whisper uses `faster_whisper_model`):
+
+```jsonc
+{
+    "model": "small.en"  // .en = English-only; omit suffix for multilingual
+}
+```
+
+#### Language detection
+
+English only speakers use `.en` models which are smaller.
+
+For multi-language detection, ensure you select a model which does not say `.en`:
+
+```jsonc
+{
+    "language": null // null = auto-detect (default), or specify language code
+}
+```
+
+Language options:
+
+- **`null`** (default) - Auto-detect language from audio
+- **`"en"`** - English transcription
+- **`"nl"`** - Dutch transcription
+- **`"fr"`** - French transcription
+- **`"de"`** - German transcription
+- **`"es"`** - Spanish transcription
+- **`etc.`** - Any supported language code
+
+#### Whisper prompt
+
+Customize transcription behavior:
+
+```jsonc
+{
+    "whisper_prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+}
+```
+
+The prompt influences how Whisper interprets and transcribes your audio, eg:
+
+- `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
+
+- `"Transcribe as casual conversation with natural speech patterns."`
+
+- `"Transcribe as an ornery pirate on the cusp of scurvy."`
+
+#### Translation
+
+Translate non-English speech into English:
+
+```jsonc
+{
+    "task": "translate",
+    "language": "it"  // optional: set source language, or null to auto-detect
+}
+```
+
+- **`"transcribe"`** (default) - Output in the source language
+- **`"translate"`** - Translate speech into English
+
+> **Note**: Supported by `faster-whisper` and `pywhispercpp` backends. `language` and `task` are independent — setting a non-English language does not imply translation.
+
+#### Language-specific prompts
+
+Set a per-language prompt using `whisper_prompt_{lang}`:
+
+```jsonc
+{
+    "whisper_prompt": "Transcribe with proper capitalization.",
+    "whisper_prompt_de": "Transkribiere auf Deutsch. Verwende Schweizer Rechtschreibung: kein ß, immer ss."
+}
+```
+
+- Falls back to `whisper_prompt` if no language-specific prompt is configured
+- Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
+
+#### Decoding strategy
+
+Controls how Whisper searches for the best transcription. Applies to `pywhispercpp` and `faster-whisper` backends.
+
+```jsonc
+{
+    "sampling_strategy": "beam_search",  // "beam_search" (default) or "greedy"
+    "beam_size": 5                       // number of candidates to track (beam_search only)
+}
+```
+
+- **`"beam_search"`** (default) — keeps the top N candidate sequences in parallel and picks the best overall result. Matches `whisper-cli` defaults. Better accuracy, especially for non-English audio and noisy input.
+- **`"greedy"`** — picks the single highest-probability word at each step. Faster, lower quality.
+- **`beam_size`** — higher values (e.g. `8`–`10`) can improve accuracy at the cost of speed. Default `5` is a good balance for real-time dictation.
+
+> **Note**: `sampling_strategy` is locked in at model load time for `pywhispercpp`. Changing it requires a service restart.
+
+---
 
 ### REST API
 
 Use any ASR backend via HTTP API (local or cloud).
+
+#### Cohere 🇨🇦
+
+[Sign up at dashboard.cohere.com](https://dashboard.cohere.com/welcome/register) — Canadian-hosted, same as local Apache 2.0 model.
+
+- **Cohere Transcribe** — #1 Open ASR Leaderboard, 5.42 avg WER, 14 languages
+
+> **Note:** Cohere's API requires a `language` parameter. Set `"language": "en"` (or your language code) in your config alongside the backend selection.
 
 #### OpenAI
 
@@ -291,11 +619,13 @@ Connect to any backend, local or cloud, via your own custom configuration:
 }
 ```
 
+---
+
 ### Realtime WebSocket
 
 Low-latency streaming transcription.
 
-> Experimental! 
+> Experimental!
 
 #### OpenAI Realtime
 
@@ -315,21 +645,37 @@ Two modes available:
 }
 ```
 
+#### Google Gemini
+
+Realtime streaming transcription via Google's Gemini Live API.
+
+Bring an API key from [Google AI Studio](https://aistudio.google.com/).
+
+Uses native 16kHz audio (no resampling) and server-side VAD.
+
+- **transcribe** (default) - speech-to-text via gemini's live transcript events
+- **converse** - voice-to-AI: speak and get AI responses
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "google",
+    "websocket_model": "gemini-3.1-flash-live-preview",
+    "realtime_mode": "transcribe",           // "transcribe" or "converse"
+    "realtime_timeout": 30,                  // Advanced: seconds to wait after stop for final transcript
+    "realtime_buffer_max_seconds": 5         // Advanced: max unsent audio backlog (seconds) before dropping old chunks
+}
+```
+
 #### ElevenLabs Scribe v2
 
-Ultra-low latency (~150ms) streaming transcription with 90+ languages. 
+Ultra-low latency (~150ms) streaming transcription. 
 
-Uses native 16kHz audio (no resampling), and auto-reconnects on connection drops.
+Bring an API key from [ElevenLabs](https://elevenlabs.io/) with speech-to-text capabilities enabled.
 
-Bring an API key from [ElevenLabs](https://elevenlabs.io/).
-
-Ensure the key has speech-to-text capabilities.
-
-Modes available:
+Uses native 16kHz audio (no resampling) and auto-reconnects on connection drops.
 
 - **transcribe** (default) - speech-to-text
-
-Or configure manually:
 
 ```jsonc
 {
@@ -340,225 +686,6 @@ Or configure manually:
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
 }
 ```
-
-## Models
-
-### Parakeet (NVIDIA)
-
-Parakeet V3 via [onnx-asr](https://github.com/istupakov/onnx-asr) is a fantastic project.
-
-It provides very strong accuracy and nigh unbelievable speed on modest CPUs.
-
-Also great for GPUs.
-
-Select Parakeet V3 within `hyprwhspr setup`.
-
-Model storage: `~/.cache/huggingface/hub/`. 
-
-The Parakeet model is downloaded automatically when the backend starts. 
-
-With Parakeet selected, `hyprwhspr model list` and `hyprwhspr model status` show Parakeet info.
-
-### Whisper (local)
-
-Two local Whisper backends are available:
-
-- **`faster-whisper`**: CTranslate2 + Silero VAD (CPU or NVIDIA CUDA)
-- **`pywhispercpp`**: whisper.cpp models (`cpu` / `nvidia` / `vulkan` builds)
-
-#### faster-whisper (CTranslate2)
-
-Local Whisper via [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
-
-**Best for:** 
-
-CPU users who want faster inference than whisper.cpp, or NVIDIA GPU users
-where VRAM is constrained. 
-
-INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for
-float16. 
-
-AMD/Intel GPU users should use Parakeet or Whisper (Vulkan) instead — CTranslate2
-does not support Vulkan or ROCm.
-
-Built-in Silero VAD strips silence before inference — the most effective
-mitigation for Whisper's hallucination loops on longer recordings.
-
-```jsonc
-{
-    "transcription_backend": "faster-whisper",
-    "faster_whisper_model": "large-v3-turbo",   // CUDA; use "base" or "small" for CPU
-    "faster_whisper_device": "auto",             // auto | cuda | cpu
-    "faster_whisper_compute_type": "auto",       // auto → int8 on cuda, float32 on cpu; set "int8" on cpu for speed
-    "faster_whisper_vad_filter": true            // Silero VAD (default: true)
-}
-```
-
-##### Installation
-
-Run `hyprwhspr setup` and select **[4] faster-whisper** to install.
-
-##### Available models
-
-| Model | Size (INT8) | Notes |
-|-------|-------------|-------|
-| `tiny` | ~75 MB | Fastest |
-| `base` | ~145 MB | Recommended for CPU |
-| `small` | ~484 MB | Better accuracy |
-| `medium` | ~1.5 GB | High accuracy |
-| `large-v3` | ~3.1 GB | Best accuracy (needs GPU) |
-| `large-v3-turbo` | ~1.6 GB | **Recommended for CUDA** |
-| `distil-large-v3` | ~1.5 GB | Distilled, CPU/GPU balance |
-
-Models are downloaded during setup or via:
-
-```bash
-hyprwhspr model download large-v3-turbo
-```
-
-Models stored in: `~/.cache/huggingface/hub/`
-
-#### whisper.cpp via pywhispercpp
-
-**Best for:**
-
-Fastest, the top choice for modern Nvidia cards or discrete AMD use (via Vulkan).
-
-#### Available models (GGML format)
-
-Models stored in: `~/.local/share/pywhispercpp/models/`
-
-| Model | Size | Notes |
-|-------|------|-------|
-| `tiny` / `tiny.en` | ~75 MB | Fastest |
-| `base` / `base.en` | ~148 MB | Recommended (default) |
-| `small` / `small.en` | ~488 MB | Better accuracy |
-| `medium` / `medium.en` | ~1.5 GB | High accuracy |
-| `large-v3` | ~2.9 GB | Best accuracy, **requires GPU** |
-| `large-v3-turbo` | ~1.6 GB | Fast + accurate, **requires GPU** |
-
-`.en` variants are English-only — smaller and faster for English-only speakers.
-
-> **GPU required:** `large-v3` and `large-v3-turbo` require GPU acceleration for reasonable speed.
-
-`hyprwhspr model` commands route to the active backend automatically:
-
-```bash
-hyprwhspr model list
-hyprwhspr model download base
-hyprwhspr model download small.en
-hyprwhspr model status
-```
-
-Set model in config (pywhispercpp only — faster-whisper uses `faster_whisper_model`):
-
-```jsonc
-{
-    "model": "small.en"  // .en = English-only; omit suffix for multilingual
-}
-```
-
-#### Language detection
-
-English only speakers use `.en` models which are smaller.
-
-For multi-language detection, ensure you select a model which does not say `.en`:
-
-```jsonc
-{
-    "language": null // null = auto-detect (default), or specify language code
-}
-```
-
-Language options:
-
-- **`null`** (default) - Auto-detect language from audio
-- **`"en"`** - English transcription
-- **`"nl"`** - Dutch transcription  
-- **`"fr"`** - French transcription
-- **`"de"`** - German transcription
-- **`"es"`** - Spanish transcription
-- **`etc.`** - Any supported language code
-
-#### Whisper prompt
-
-Customize transcription behavior:
-
-```jsonc
-{
-    "whisper_prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
-}
-```
-
-The prompt influences how Whisper interprets and transcribes your audio, eg:
-
-- `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
-
-- `"Transcribe as casual conversation with natural speech patterns."`
-
-- `"Transcribe as an ornery pirate on the cusp of scurvy."`
-
-### Translation
-
-Translate non-English speech into English:
-
-```jsonc
-{
-    "task": "translate",
-    "language": "it"  // optional: set source language, or null to auto-detect
-}
-```
-
-- **`"transcribe"`** (default) - Output in the source language
-- **`"translate"`** - Translate speech into English
-
-> **Note**: Supported by `faster-whisper` and `pywhispercpp` backends. `language` and `task` are independent — setting a non-English language does not imply translation.
-
-### Language-specific prompts
-
-Set a per-language prompt using `whisper_prompt_{lang}`:
-
-```jsonc
-{
-    "whisper_prompt": "Transcribe with proper capitalization.",
-    "whisper_prompt_de": "Transkribiere auf Deutsch. Verwende Schweizer Rechtschreibung: kein ß, immer ss."
-}
-```
-
-- Falls back to `whisper_prompt` if no language-specific prompt is configured
-- Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
-
-## GPU resource management
-
-Free GPU VRAM without stopping the service - useful before running a local LLM, game, or other GPU-intensive workload.
-
-The service keeps running with all keyboard shortcuts active. Recording is blocked while the model is unloaded, with a desktop notification on attempt.
-
-```bash
-# Unload model from GPU memory (service stays alive, shortcuts still active)
-hyprwhspr model unload
-
-# Reload model back into memory when ready to dictate again
-hyprwhspr model reload
-```
-
-Only applies to local-model backends (`pywhispercpp`, `faster-whisper`, `onnx-asr`). No-op for `rest-api` and `realtime-ws` (those hold no local GPU memory).
-
-The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
-
-### Hyprland keybindings
-
-For quick access, bind unload and reload to keys in `~/.config/hypr/hyprland.conf`:
-
-```bash
-# Free GPU before starting a local LLM
-bindd = SUPER ALT, U, Unload Whisper model, exec, hyprwhspr model unload
-
-# Reclaim dictation when done
-bindd = SUPER ALT, L, Reload Whisper model, exec, hyprwhspr model reload
-```
-
-`Super+Alt+U` / `Super+Alt+L` (unload/load) keeps the pattern consistent with `Super+Alt+D` for dictation.
 
 ## Audio and visual feedback
 
@@ -601,6 +728,24 @@ Custom sounds:
 
 - **Supported formats**: `.ogg`, `.wav`, `.mp3`
 - **Fallback**: Uses defaults if custom files don't exist
+
+### Audio stream keepalive
+
+By default hyprwhspr opens the microphone only while recording. 
+
+On some hardware (certain USB mics on raw ALSA), the first recording after an idle period fails with a `paTimedOut` error because the audio device suspends between uses.
+
+If you see this, enable the keepalive stream:
+
+```json
+{
+  "keepalive_stream": true
+}
+```
+
+This holds a silent input stream open in the background so the device stays warm. 
+
+**Leave this off unless you need it** — an open input stream triggers the microphone-in-use indicator on most desktops (GNOME, KDE, Ubuntu, etc.), making it appear as though hyprwhspr is always listening. It's not!
 
 ### Audio ducking
 
@@ -707,21 +852,25 @@ Toggle this behavior in `~/.config/hyprwhspr/config.json`:
 
 ### Paste mode
 
-Control how text is pasted into applications:
+hyprwhspr auto-detects the correct paste shortcut based on the focused window:
+
+- **Terminals** (Ghostty, Kitty, WezTerm, Alacritty, foot, etc.) → Ctrl+Shift+V
+- **Everything else** (editors, browsers, chat apps) → Ctrl+V
+
+No configuration needed for most setups. Override with `paste_mode` if your app needs something different:
 
 ```jsonc
 {
-    "paste_mode": "ctrl_shift",  // "ctrl_shift" | "ctrl" | "super" (default: "ctrl_shift")
+    "paste_mode": "ctrl_shift",  // "ctrl_shift" | "ctrl" | "super" | "alt"
 }
 ```
 
 Options:
 
-- **`"ctrl_shift"`** (default) — Sends Ctrl+Shift+V. Works in most terminals.
-
+- **`"ctrl_shift"`** — Sends Ctrl+Shift+V. Standard terminal paste.
 - **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
-
-- **`"super"`** — Sends Super+V. Maybe finicky.
+- **`"super"`** — Sends Super+V.
+- **`"alt"`** — Sends Alt+V.
 
 ### Non-QWERTY layouts
 
@@ -757,39 +906,46 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 ... Be careful!
 
-### Inject mode
-
-By default, hyprwhspr copies text to the clipboard and sends a paste keystroke. 
-
-This fails in terminals that use the **Kitty keyboard protocol** (Ghostty, Kitty, WezTerm), where synthetic Ctrl+V from ydotool is misinterpreted.
-
-Use `inject_mode` for direct character injection that bypasses the clipboard entirely:
-
-```jsonc
-{
-    "inject_mode": "wtype"  // null (default) | "wtype" | "ydotool_type"
-}
-```
-
-- **`null`** (default) — clipboard + paste keystroke. Works everywhere except Kitty-protocol terminals.
-- **`"wtype"`** — types text directly via `wtype`. Requires `wtype`. Works in all Wayland windows including Kitty-protocol terminals.
-- **`"ydotool_type"`** — types text directly via `ydotool type`. Works in Kitty-protocol terminals.
-
-If the configured tool is not installed, hyprwhspr falls back to clipboard+paste (or clipboard-only if ydotool is also absent).
-
 ### Clipboard behavior
 
-Control what happens to clipboard after text injection:
+hyprwhspr saves your clipboard before injection and restores it automatically afterward — your clipboard contents are never permanently overwritten by dictated text.
 
-```jsonc
+The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool` is used as a fallback when `wtype` is not installed.
+
+### Post-transcription hook
+
+Pipe each transcription through a shell command before it's pasted. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and fire-and-forget observers.
+
+```json
 {
-    "clipboard_behavior": false,       // Boolean: true = clear after delay, false = keep (default: false)
-    "clipboard_clear_delay": 5.0      // Float: seconds to wait before clearing (default: 5.0, only used if clipboard_behavior is true)
+    "post_transcription_hook": "sed 's|.*|<dictation>&</dictation>|'"
 }
 ```
 
-- **`clipboard_behavior: true`** - Clipboard is automatically cleared after the specified delay
-- **`clipboard_clear_delay`** - How long to wait before clearing (only matters when `clipboard_behavior` is `true`)
+The example above wraps every injected transcription in `<dictation>...</dictation>` — a useful signal to downstream LLMs that the text came from ASR and may contain transcription artifacts (homophones, proper-noun misspellings).
+
+Other patterns:
+
+Archive transcriptions to a log, leave text unchanged (observer-only):
+
+```json
+{ "post_transcription_hook": "tee -a ~/.local/share/hyprwhspr/log.txt >/dev/null" }
+```
+
+User-provided transform script on `$PATH`:
+
+```json
+{ "post_transcription_hook": "~/.local/bin/filler-word-coach" }
+```
+
+Two environment variables are exported to the hook:
+
+- `HYPRWHSPR_MODEL` — the active whisper model
+- `HYPRWHSPR_BACKEND` — the active transcription backend
+
+The hook runs under a 5-second timeout. On timeout, non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
+
+Note: the command runs under `shell=True`, so pipes, redirects, and command chaining work as expected. Treat `post_transcription_hook` as trusted config (same threat model as the rest of `config.json`).
 
 ## Integrations
 
@@ -843,6 +999,25 @@ Or by device path:
 
 Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see available devices.
 
+### Keyboard hotplug (docks, Bluetooth)
+
+By default, hyprwhspr only discovers keyboards at startup. If you dock a laptop or reconnect a Bluetooth keyboard, the service won't see it until restarted.
+
+Set `keyboard_device_names` to enable hotplug detection for specific devices:
+
+```json
+{
+  "keyboard_device_names": [
+    "AT Translated Set 2 keyboard",
+    "SONiX USB Keyboard"
+  ]
+}
+```
+
+Use `hyprwhspr keyboard list` to find exact device names. Listed devices are grabbed at startup and automatically attached when plugged in later. Devices not on the list (mice, media controllers) are ignored even if they advertise keyboard-like capabilities.
+
+`selected_device_name` and `selected_device_path` take priority over this list if set.
+
 ### External hotkey systems
 
 Control recording via CLI (Espanso, KDE, GNOME, etc.) - set these terminal commands however is appropriate:
@@ -868,6 +1043,12 @@ hyprwhspr record toggle --lang it   # Toggle with language override
 
 # Check current status
 hyprwhspr record status
+
+# Capture: trigger a recording and stream the transcription to stdout
+# Blocks until transcription is complete. Suppresses text injection — use for scripting/piping.
+# Self-triggers a recording if none is in progress; attaches to an in-flight recording if one is.
+hyprwhspr record capture
+hyprwhspr record capture --lang it   # Capture with language override
 ```
 
 The `--lang` parameter overrides the default language for that recording session. 
@@ -900,6 +1081,40 @@ To disable it, add the following to your `~/.config/hyprwhspr/config.json`:
 {
   "mute_detection": false
 }
+```
+
+## GPU resource management
+
+Free GPU VRAM without stopping the service - useful before running a game, or other GPU-intensive workload.
+
+The service keeps running with all keyboard shortcuts active. 
+
+Recording is blocked while the model is unloaded, with a desktop notification on attempt.
+
+```bash
+# Unload model from GPU memory (service stays alive, shortcuts still active)
+hyprwhspr model unload
+
+# Reload model back into memory when ready to dictate again
+hyprwhspr model reload
+```
+
+Only applies to local-model backends (Cohere Transcribe, `pywhispercpp`, `faster-whisper`, `onnx-asr`). 
+
+No-op for `rest-api` and `realtime-ws` (those hold no local GPU memory).
+
+The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
+
+### Hyprland keybindings
+
+For quick access, bind unload and reload to keys in `~/.config/hypr/hyprland.conf`:
+
+```bash
+# Free GPU before starting a local LLM
+bindd = SUPER ALT, U, Unload Whisper model, exec, hyprwhspr model unload
+
+# Reclaim dictation when done
+bindd = SUPER ALT, L, Reload Whisper model, exec, hyprwhspr model reload
 ```
 
 ## Troubleshooting
@@ -968,7 +1183,7 @@ Check your session:
 systemctl --user is-active graphical-session.target
 
 # Verify Wayland env is available to systemd services
-systemctl --user show-environment | grep WAYLAND_DISPLAY
+systemctl --user show-environment | grep -E 'WAYLAND_DISPLAY|NIRI_SOCKET'
 ```
 
 If `WAYLAND_DISPLAY` is missing, add to `~/.config/hypr/hyprland.conf`:
@@ -976,6 +1191,16 @@ If `WAYLAND_DISPLAY` is missing, add to `~/.config/hypr/hyprland.conf`:
 ```bash
 # Export session environment to systemd user services
 exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE
+```
+
+**Niri:**
+
+hyprwhspr uses `niri msg --json focused-window` to detect the focused app and choose the correct paste shortcut. That requires `NIRI_SOCKET` to be available in the systemd user environment used by `hyprwhspr.service`.
+
+If `NIRI_SOCKET` is missing, add an environment export to your Niri startup config:
+
+```kdl
+spawn-at-startup "dbus-update-activation-environment" "--systemd" "WAYLAND_DISPLAY" "XDG_CURRENT_DESKTOP" "NIRI_SOCKET"
 ```
 
 **Hyprland:**
@@ -1016,6 +1241,18 @@ pactl list short sources
 # Restart PipeWire
 systemctl --user restart pipewire
 ```
+
+#### Microphone indicator shows on while idle
+
+If your desktop (GNOME, Ubuntu, etc.) shows the microphone as active whenever the hyprwhspr service is running, you likely have `keepalive_stream` enabled. Disable it:
+
+```json
+{
+  "keepalive_stream": false
+}
+```
+
+This is the default. If you previously enabled it to fix `paTimedOut` errors, see [Audio stream keepalive](#audio-stream-keepalive) for the trade-off.
 
 #### Audio feedback not working
 

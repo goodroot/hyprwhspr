@@ -3,10 +3,12 @@ Audio capture module for hyprwhspr
 Handles real-time audio capture for speech recognition
 """
 
+import os
 import sys
 import wave
 import threading
 import time
+from collections import deque
 from typing import Optional, Callable
 from io import BytesIO
 
@@ -38,6 +40,8 @@ class AudioCapture:
         self.is_monitoring = False
         self.audio_data = []
         self.current_level = 0.0
+        # Rolling window of recent RMS values (~0.5s at 16kHz/1024 chunk)
+        self._level_history = deque(maxlen=8)
         
         # Threading
         self.record_thread = None
@@ -64,7 +68,13 @@ class AudioCapture:
         self._cleanup_complete.set()  # Initialize as set (no cleanup in progress on startup)
         self._abort_cleanup = False  # Flag to signal stuck threads to abort cleanup
         self._abort_recovery = threading.Event()  # Flag to abort recovery mid-flight
-        
+
+        # Keepalive stream — holds the ALSA device open between recordings so the
+        # kernel never suspends it.  Without this, USB mics power-down after ~30 s
+        # of silence and PortAudio's PaUnixThread_New times out on the next open.
+        self._keepalive_stream = None
+        self._keepalive_lock = threading.Lock()  # Protects _keepalive_stream across threads
+
         # Initialize sounddevice
         self._initialize_sounddevice()
     
@@ -181,7 +191,106 @@ class AudioCapture:
             print(f"ERROR: Failed to initialize sounddevice: {e}")
             self.device_info = None
             self.device_id = None
-    
+
+        self._start_keepalive()
+
+    def _is_multiplexed_audio_server(self) -> bool:
+        """Return True if the device is routed through PipeWire or PulseAudio.
+
+        Multiplexed servers allow multiple simultaneous readers, so holding a
+        keepalive stream open won't block other apps.  Raw ALSA is exclusive —
+        a keepalive would monopolise the device.
+
+        The ALSA 'default' device routes through PipeWire/PulseAudio when either
+        server is active, but its name gives no indication of that.  Check for
+        their runtime sockets as the authoritative signal.
+        """
+        try:
+            if self.device_id is None:
+                return False
+            device_info = sd.query_devices(self.device_id)
+            host_api = sd.query_hostapis(device_info['hostapi'])
+            api_name = host_api.get('name', '').lower()
+            device_name = device_info.get('name', '').lower()
+            if ('pulse' in api_name or 'pipewire' in api_name or
+                    'pulse' in device_name or 'pipewire' in device_name):
+                return True
+            # 'default' (and other ALSA virtual devices) silently route through
+            # PipeWire or PulseAudio when running — check their runtime sockets.
+            uid = os.getuid()
+            return (
+                os.path.exists(f"/run/user/{uid}/pipewire-0") or
+                os.path.exists(f"/run/user/{uid}/pulse/native")
+            )
+        except Exception:
+            return False
+
+    def _start_keepalive(self, _attempt: int = 0):
+        """Open a silent stream to prevent ALSA from suspending the device between recordings.
+
+        Only started when a multiplexed audio server (PipeWire/PulseAudio) is in
+        use.  On raw ALSA the stream would hold an exclusive lock and block other
+        apps (browsers, video calls) from accessing the microphone.
+
+        On service startup the audio node may be cold and stream.start() can hit
+        the same paTimedOut as recordings do.  When that happens we retry in a
+        background thread rather than giving up, so the keepalive eventually lands
+        once the node has warmed up.
+        """
+        with self._keepalive_lock:
+            if self._keepalive_stream is not None or self.device_id is None:
+                return
+        if self.config is None or not self.config.get_setting('keepalive_stream', False):
+            return
+        if not self._is_multiplexed_audio_server():
+            return
+        stream = None
+        try:
+            def _noop(indata, frames, time_info, status):
+                pass
+            stream = sd.InputStream(
+                device=self.device_id,
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype=self.dtype,
+                blocksize=self.chunk_size,
+                callback=_noop,
+            )
+            stream.start()
+            with self._keepalive_lock:
+                if self._keepalive_stream is None:
+                    self._keepalive_stream = stream
+                else:
+                    # Another thread started one while we were creating ours; discard ours
+                    stream.stop()
+                    stream.close()
+        except Exception as e:
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            if "timed out" in str(e).lower() and _attempt < 3:
+                # Node is cold at startup; retry in background once it has warmed up
+                def _retry():
+                    time.sleep(2.0)
+                    self._start_keepalive(_attempt + 1)
+                threading.Thread(target=_retry, daemon=True).start()
+            else:
+                print(f"[WARN] Keepalive stream failed to start: {e}", flush=True)
+
+    def _stop_keepalive(self):
+        """Close the keepalive stream before opening a real recording stream."""
+        with self._keepalive_lock:
+            stream = self._keepalive_stream
+            self._keepalive_stream = None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+
     def _set_system_default_device(self):
         """Set system default device when no specific device is configured"""
         try:
@@ -447,40 +556,32 @@ class AudioCapture:
         
         # Return recorded data
         with self.lock:
-            if self.audio_data:
-                try:
-                    # Concatenate all audio chunks
-                    audio_array = np.concatenate(self.audio_data, axis=0)
-                    
-                    # Ensure it's 1D (flatten if needed)
-                    if audio_array.ndim > 1:
-                        audio_array = audio_array.flatten()
-                    
-                    # Ensure float32 dtype
-                    if audio_array.dtype != np.float32:
-                        audio_array = audio_array.astype(np.float32)
-                    
-                    # Ensure contiguous in memory
-                    if not audio_array.flags['C_CONTIGUOUS']:
-                        audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
-                    
-                    # Validate no NaN/inf
-                    if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
-                        print(f"[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
-                        return None
-                    
-                    duration = len(audio_array) / self.sample_rate
-                    if duration < 0.5:
-                        print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
-                    
-                    return audio_array
-                except Exception as e:
-                    print(f"[ERROR] Failed to process audio data: {e}", flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return None
-            else:
+            audio_array = self._collect_audio_array()
+            if audio_array is not None:
+                duration = len(audio_array) / self.sample_rate
+                if duration < 0.5:
+                    print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
+            return audio_array
+
+    def _collect_audio_array(self) -> Optional[np.ndarray]:
+        """Concatenate audio_data into a flat float32 array. Must be called with self.lock held."""
+        if not self.audio_data:
+            return None
+        try:
+            audio_array = np.concatenate(self.audio_data, axis=0)
+            if audio_array.ndim > 1:
+                audio_array = audio_array.flatten()
+            if audio_array.dtype != np.float32:
+                audio_array = audio_array.astype(np.float32)
+            if not audio_array.flags['C_CONTIGUOUS']:
+                audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
+            if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
+                print("[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
                 return None
+            return audio_array
+        except Exception as e:
+            print(f"[ERROR] Failed to collect audio data: {e}", flush=True)
+            return None
 
     def get_current_audio_copy(self) -> Optional[np.ndarray]:
         """
@@ -490,24 +591,21 @@ class AudioCapture:
             Copy of audio data as numpy array, or None if no data
         """
         with self.lock:
-            if not self.audio_data:
-                return None
-            try:
-                audio_array = np.concatenate(self.audio_data, axis=0)
-                if audio_array.ndim > 1:
-                    audio_array = audio_array.flatten()
-                if audio_array.dtype != np.float32:
-                    audio_array = audio_array.astype(np.float32)
-                return audio_array.copy()
-            except Exception as e:
-                print(f"[ERROR] Failed to copy audio data: {e}")
-                return None
+            data = self._collect_audio_array()
+            return data.copy() if data is not None else None
 
     def clear_buffer(self):
         """Clear the audio buffer without stopping recording."""
         with self.lock:
             self.audio_data = []
             print("[AUDIO] Buffer cleared")
+
+    def flush_buffer(self) -> Optional[np.ndarray]:
+        """Atomically copy and clear the audio buffer. Returns audio data or None."""
+        with self.lock:
+            data = self._collect_audio_array()
+            self.audio_data = []
+            return data
 
     def pause_recording(self) -> Optional[np.ndarray]:
         """
@@ -530,20 +628,8 @@ class AudioCapture:
             self.record_thread.join(timeout=3.0)
 
         # Get the audio data
-        audio_array = None
         with self.lock:
-            if self.audio_data:
-                try:
-                    audio_array = np.concatenate(self.audio_data, axis=0)
-                    if audio_array.ndim > 1:
-                        audio_array = audio_array.flatten()
-                    if audio_array.dtype != np.float32:
-                        audio_array = audio_array.astype(np.float32)
-                    if not audio_array.flags['C_CONTIGUOUS']:
-                        audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
-                except Exception as e:
-                    print(f"[ERROR] Failed to process paused audio: {e}")
-                    audio_array = None
+            audio_array = self._collect_audio_array()
             # Clear buffer after extracting
             self.audio_data = []
 
@@ -584,6 +670,7 @@ class AudioCapture:
                         
                         # Update current audio level for monitoring
                         self.current_level = np.sqrt(np.mean(audio_chunk**2))
+                        self._level_history.append(self.current_level)
                         
                         # Store audio data
                         self.audio_data.append(audio_chunk.copy())
@@ -599,21 +686,49 @@ class AudioCapture:
             
             # Determine device to use for recording (use validated device_id)
             device_to_use = self.device_id
-            
-            # Create and own the stream handle (for recovery)
-            self.stream = sd.InputStream(
-                device=device_to_use,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=self.dtype,
-                blocksize=self.chunk_size,
-                callback=audio_callback
-            )
-            
-            # Start the stream explicitly
-            self.stream.start()
-            
-                # Keep recording while is_recording is True
+
+            # Open and start the stream, retrying on transient failures.
+            # PortAudio may time out (PaErrorCode -9987) or hit an unanticipated
+            # host error (PaErrorCode -9999, e.g. "No such entity" from PulseAudio)
+            # transiently during service startup before the audio server settles.
+            # Retry up to 2 times with a brief pause, re-creating the stream each time.
+            # NOTE: keepalive is stopped only after a successful start so that on
+            # multiplexed servers (PipeWire/PulseAudio) the device node stays warm
+            # throughout — closing it first was the cause of the cold-start timeout.
+            _max_start_attempts = 3
+            for _attempt in range(_max_start_attempts):
+                try:
+                    self.stream = sd.InputStream(
+                        device=device_to_use,
+                        samplerate=self.sample_rate,
+                        channels=self.channels,
+                        dtype=self.dtype,
+                        blocksize=self.chunk_size,
+                        callback=audio_callback
+                    )
+                    self.stream.start()
+                    self._stop_keepalive()  # Node is warm; safe to release keepalive now
+                    break  # success
+                except Exception as _start_err:
+                    err_str = str(_start_err).lower()
+                    is_retriable = (
+                        "timed out" in err_str or
+                        "unanticipated host error" in err_str
+                    )
+                    if _attempt < _max_start_attempts - 1 and is_retriable:
+                        print(f"[WARN] Stream open failed (attempt {_attempt + 1}): {_start_err}", flush=True)
+                        if self.stream is not None:
+                            try:
+                                self.stream.close()
+                            except Exception:
+                                pass
+                            self.stream = None
+                        retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
+                        time.sleep(retry_delay)
+                    else:
+                        raise
+
+            # Keep recording while is_recording is True
             try:
                 while self.is_recording:
                     time.sleep(0.1)
@@ -665,7 +780,10 @@ class AudioCapture:
                     
                     # Signal cleanup is complete
                     self._cleanup_complete.set()
-                    
+
+                    # Keep the device awake for the next recording
+                    self._start_keepalive()
+
         except Exception as e:
             # Always log the error message
             print(f"[ERROR] Error in recording thread: {e}", flush=True)
@@ -689,7 +807,11 @@ class AudioCapture:
                     self.stream = None
             # Signal cleanup is complete (even if exception occurred)
             self._cleanup_complete.set()
-    
+
+            # Cycle the keepalive so it's always on the current device state
+            self._stop_keepalive()
+            self._start_keepalive()
+
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
         """Start monitoring audio levels without recording"""
         if self.is_monitoring:
@@ -761,6 +883,14 @@ class AudioCapture:
     def get_audio_level(self) -> float:
         """Get the current audio level (0.0 to 1.0)"""
         return min(1.0, self.current_level * 10)  # Scale for better visualization
+
+    @property
+    def rolling_avg_level(self) -> float:
+        """Rolling average RMS level over the last ~0.5s of audio chunks.
+        More stable than current_level for silence detection."""
+        if not self._level_history:
+            return 0.0
+        return sum(self._level_history) / len(self._level_history)
     
     def _cleanup_stream(self):
         """Clean up the audio stream (idempotent - safe to call multiple times)"""
@@ -950,6 +1080,7 @@ class AudioCapture:
             try:
                 sd.query_devices()  # Force PortAudio refresh
                 with self.recovery_lock:
+                    self._stop_keepalive()  # Close before re-init; _initialize_sounddevice restarts it on the new device
                     self._initialize_sounddevice()
             except Exception as e:
                 print(f"[RECOVERY] Failed to re-enumerate devices: {e}", flush=True)
@@ -1037,5 +1168,6 @@ class AudioCapture:
                 self.stop_recording()
             if self.is_monitoring:
                 self.stop_monitoring()
+            self._stop_keepalive()
         except Exception:
             pass  # Ignore errors during cleanup

@@ -9,6 +9,7 @@ import paths
 import subprocess
 import getpass
 import shutil
+import socket
 from pathlib import Path
 from typing import Optional
 
@@ -37,9 +38,9 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
-    from .paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
+    from .paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, SOCKET_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 except ImportError:
-    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
+    from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, SOCKET_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 
 try:
     from .backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
@@ -110,6 +111,24 @@ USER_HOME = Path.home()
 USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
 USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
 PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', USER_HOME / '.local' / 'share')) / 'pywhispercpp' / 'models'
+
+
+def _is_niri_session() -> bool:
+    """Return true when the current process appears to be running inside Niri."""
+    if os.environ.get('NIRI_SOCKET'):
+        return True
+
+    desktop_values = (
+        os.environ.get('XDG_CURRENT_DESKTOP', ''),
+        os.environ.get('XDG_SESSION_DESKTOP', ''),
+        os.environ.get('DESKTOP_SESSION', ''),
+    )
+    for desktop_value in desktop_values:
+        desktop_names = desktop_value.replace(';', ':').split(':')
+        if 'niri' in [name.strip().lower() for name in desktop_names]:
+            return True
+
+    return False
 
 
 def _check_mise_active() -> tuple[bool, str]:
@@ -280,6 +299,22 @@ def _check_ydotool_version() -> tuple[bool, str, str]:
             )
             # Output format: "ydotool 1.0.4-2.1"
             match = re.search(r'ydotool\s+(\d+\.\d+\.?\d*)', result.stdout)
+            if match:
+                version = match.group(1)
+        except Exception:
+            pass
+
+    # Try rpm (openSUSE/Fedora/RHEL)
+    if not version:
+        try:
+            result = subprocess.run(
+                ['rpm', '-q', 'ydotool'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            # Output format: "ydotool-1.0.4-2.2.x86_64"
+            match = re.search(r'ydotool-(\d+\.\d+\.?\d*)', result.stdout)
             if match:
                 version = match.group(1)
         except Exception:
@@ -502,6 +537,22 @@ def _detect_current_backend() -> Optional[str]:
                 except Exception:
                     pass
             # faster-whisper configured but not installed - fall through to return None
+        if backend == 'cohere-transcribe':
+            # Verify transformers is installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'from transformers import AutoModelForSpeechSeq2Seq; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'cohere-transcribe'
+                except Exception:
+                    pass
+            # cohere-transcribe configured but not installed - fall through to return None
         if backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']:
             # Verify it's actually installed in venv
             venv_python = VENV_DIR / 'bin' / 'python'
@@ -617,6 +668,21 @@ def _cleanup_backend(backend_type: str) -> bool:
                 log_warning(f"Cleanup warning: {e}")
         return True
 
+    if backend_type == 'cohere-transcribe':
+        log_info("Cleaning up Cohere Transcribe backend...")
+        pip_bin = VENV_DIR / 'bin' / 'pip'
+        if pip_bin.exists():
+            try:
+                subprocess.run(
+                    [str(pip_bin), 'uninstall', '-y', 'transformers', 'sentencepiece', 'protobuf', 'librosa'],
+                    check=False,
+                    capture_output=True
+                )
+                log_success("Cohere Transcribe backend cleaned up")
+            except Exception as e:
+                log_warning(f"Cleanup warning: {e}")
+        return True
+
     if backend_type in ['rest-api', 'remote']:
         # REST API doesn't have venv, nothing to clean
         return True
@@ -661,11 +727,12 @@ def _prompt_backend_selection():
     print("\nChoose your transcription backend:")
     print()
     print("Local In-Memory Backends:")
-    print("  [1] Parakeet TDT V3       - Solid performance for most people (Autodetects CPU/GPU)")
+    print("  [1] Parakeet TDT V3       - Leading accuracy, no GPU required (autodetects CPU/GPU)")
     print("  [2] Whisper (CPU)         - whisper.cpp, works everywhere")
-    print("  [3] Whisper (NVIDIA)      - whisper.cpp + CUDA, perfect for NVIDIA GPUs")
+    print("  [3] Whisper (NVIDIA)      - whisper.cpp + CUDA, fastest local transcription (NVIDIA GPUs)")
     print("  [4] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
-    print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, AMD/Intel GPUs")
+    print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, fastest local transcription (AMD/Intel GPUs)")
+    print("  [8] Cohere Transcribe     - #1 Open ASR leaderboard, 14 languages, ~4-5 GB VRAM (fp16) [BETA]")
     print()
     print("Cloud/REST Backends:")
     print("  [6] REST API              - OpenAI, Groq, or custom endpoint")
@@ -674,7 +741,7 @@ def _prompt_backend_selection():
 
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8'], default='1')
             backend_map = {
                 '1': 'onnx-asr',
                 '2': 'cpu',
@@ -682,7 +749,8 @@ def _prompt_backend_selection():
                 '4': 'faster-whisper',
                 '5': 'vulkan',
                 '6': 'rest-api',
-                '7': 'realtime-ws'
+                '7': 'realtime-ws',
+                '8': 'cohere-transcribe',
             }
             selected = backend_map[choice]
 
@@ -692,6 +760,7 @@ def _prompt_backend_selection():
                 'cpu': 'Whisper CPU',
                 'nvidia': 'Whisper NVIDIA (CUDA)',
                 'faster-whisper': 'faster-whisper (CTranslate2)',
+                'cohere-transcribe': 'Cohere Transcribe 2B',
                 'amd': 'Whisper AMD/Intel (Vulkan)',
                 'vulkan': 'Whisper AMD/Intel (Vulkan)',
                 'rest-api': 'REST API',
@@ -718,8 +787,8 @@ def _prompt_backend_selection():
                     return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
 
             # If re-selecting same backend, offer reinstall option
-            # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr, faster-whisper
-            local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper']
+            # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr, faster-whisper, cohere-transcribe
+            local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']
             if current_backend == selected and selected in local_install_backends:
                 print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
@@ -1260,18 +1329,24 @@ def setup_command(python_path: Optional[str] = None):
             is_parakeet_config = True
     
     if is_parakeet_config:
-        log_info("Parakeet REST backend detected.")
-        if Confirm.ask("\nMigrate to in-process onnx-asr backend (GPU-accelerated, no REST server)?", default=True):
+        print("\n" + "="*60)
+        print("Backend Migration Available")
+        print("="*60)
+        print("\nYou're currently using the Parakeet REST backend (deprecated).")
+        print("The onnx-asr backend replaces it with an in-process version:")
+        print("  • No REST server to manage")
+        print("  • GPU-accelerated (auto-detected)")
+        print("  • Same Parakeet model, faster startup")
+        if Confirm.ask("\nMigrate to onnx-asr?", default=True):
             backend_normalized = 'onnx-asr'
             backend = 'onnx-asr'
-            log_info("Migrating to onnx-asr backend...")
             # Clean up Parakeet REST service
             if _cleanup_backend('parakeet'):
-                log_success("Parakeet REST backend cleaned up")
-            log_info("Will install onnx-asr backend instead")
+                log_success("Parakeet REST backend removed")
+            log_info("Will install onnx-asr backend")
         else:
             log_warning("Keeping Parakeet REST backend. Note: Parakeet REST is deprecated.")
-            log_warning("Consider migrating to onnx-asr for better performance and simpler setup.")
+            log_warning("You can migrate later by re-running: hyprwhspr setup")
             # Preserve Parakeet backend to prevent cleanup
             backend_normalized = 'parakeet'
             backend = 'parakeet'
@@ -1292,6 +1367,7 @@ def setup_command(python_path: Optional[str] = None):
                 log_success("Venv removed")
     
     # Step 1.5: Backend installation (if not cloud backend)
+    backend_install_skipped = False
     if backend_normalized not in ['rest-api', 'remote', 'realtime-ws']:
         # Skip installation section if user selected the same backend and declined reinstalling
         if current_backend == backend_normalized and not wants_reinstall:
@@ -1313,13 +1389,48 @@ def setup_command(python_path: Optional[str] = None):
                 print("On NVIDIA: large-v3-turbo runs in ~3.1 GB VRAM. On CPU: INT8 is faster than pywhispercpp.")
                 print("Built-in Silero VAD reduces hallucination loops on longer recordings.")
                 print("Models are downloaded automatically on first use.")
+            elif backend_normalized == 'cohere-transcribe':
+                print("\nThis will install the Cohere Transcribe backend (transformers).")
+                print("2B parameter Conformer model — #1 on the Open ASR Leaderboard (English), 14 languages.")
+                print("Requires ~4-5 GB VRAM with fp16 (default) or ~8-9 GB with fp32.")
+                print("Falls back to CPU if no GPU is available (slow — not recommended for live dictation).")
+                print("Model weights (~4 GB) will be downloaded from HuggingFace during setup.")
+                print("This may take several minutes depending on your connection speed.")
             else:
                 print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
             if not Confirm.ask("Proceed with backend installation?", default=True):
                 log_warning("Skipping backend installation. You can install it later.")
                 log_warning("Backend installation is required for local transcription to work.")
+                backend_install_skipped = True
             else:
+                backend_install_skipped = False
+
+                # Cohere Transcribe is a gated HuggingFace model — each user must accept
+                # the license and authenticate with their own token before downloading.
+                if backend_normalized == 'cohere-transcribe':
+                    existing_hf_token = get_credential('huggingface')
+                    if existing_hf_token:
+                        log_success("HuggingFace token already saved — skipping prompt")
+                    else:
+                        print("\nCohere Transcribe is a gated model on HuggingFace.")
+                        print("Before continuing:")
+                        print("  1. Accept the license at: https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
+                        print("  2. Generate a read token at: https://huggingface.co/settings/tokens")
+                        hf_token = Prompt.ask("\nHuggingFace token", password=True)
+                        if hf_token and hf_token.strip():
+                            token_clean = hf_token.strip()
+                            # Basic format check: HF read tokens start with "hf_"
+                            if not token_clean.startswith('hf_'):
+                                log_warning("Token doesn't start with 'hf_' — double-check you copied a read token")
+                            else:
+                                masked = token_clean[:6] + '*' * (len(token_clean) - 9) + token_clean[-3:]
+                                log_success(f"Token received: {masked} ({len(token_clean)} chars)")
+                            save_credential('huggingface', token_clean)
+                            log_success("HuggingFace token securely saved")
+                        else:
+                            log_warning("No token provided — model download will likely fail")
+
                 # Pass force_rebuild=True when reinstalling to ensure clean venv
                 # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
                 if not install_backend(backend_normalized, force_rebuild=wants_reinstall, custom_python=python_path):
@@ -1420,11 +1531,14 @@ def setup_command(python_path: Optional[str] = None):
             return
         
         # Prompt for realtime mode
-        # NOTE: Only OpenAI (and custom OpenAI-compatible endpoints) support "converse".
-        if provider_id in ('openai', 'custom'):
+        # NOTE: OpenAI, Google Gemini, and custom endpoints support "converse".
+        if provider_id in ('openai', 'google', 'custom'):
             print("\nRealtime Mode:")
             print("  1. Transcribe - Convert speech to text (default)")
-            print("  2. Converse - Voice-to-AI: speak and get AI responses")
+            if provider_id == 'google':
+                print("  2. Converse - Gemini speaks back; its response is transcribed and typed into your active window")
+            else:
+                print("  2. Converse - Voice-to-AI: speak and get AI responses")
             mode_choice = Prompt.ask("Select mode", choices=['1', '2'], default='1')
             realtime_mode = 'transcribe' if mode_choice == '1' else 'converse'
         else:
@@ -1507,18 +1621,19 @@ def setup_command(python_path: Optional[str] = None):
         else:
             log_info("Base Python dependencies up to date")
     
-    # Step 2: Model selection for local backends (always prompt, regardless of install/reinstall)
-    if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper']:
-        # Local backend - prompt for model selection
-        # Note: ONNX-ASR and faster-whisper don't use Whisper.cpp models
-        selected_model = _prompt_model_selection()
-    elif backend_normalized == 'faster-whisper':
-        faster_whisper_model = _prompt_faster_whisper_model_selection()
-        if download_faster_whisper_model(faster_whisper_model):
-            log_success(f"Model {faster_whisper_model} downloaded successfully")
-        else:
-            log_warning(f"Model download failed. You can download it later with:")
-            log_warning(f"  hyprwhspr model download {faster_whisper_model}")
+    # Model selection for local backends
+    if not backend_install_skipped:
+        if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
+            # Local backend - prompt for model selection
+            # Note: ONNX-ASR, faster-whisper, and cohere-transcribe don't use Whisper.cpp models
+            selected_model = _prompt_model_selection()
+        elif backend_normalized == 'faster-whisper':
+            faster_whisper_model = _prompt_faster_whisper_model_selection()
+            if download_faster_whisper_model(faster_whisper_model):
+                log_success(f"Model {faster_whisper_model} downloaded successfully")
+            else:
+                log_warning(f"Model download failed. You can download it later with:")
+                log_warning(f"  hyprwhspr model download {faster_whisper_model}")
     
     # Step 3: Waybar integration
     print("\n" + "="*60)
@@ -1635,7 +1750,7 @@ def setup_command(python_path: Optional[str] = None):
     print("\n" + "="*60)
     print("Setup Summary")
     print("="*60)
-    print(f"\nBackend: {backend}")
+    print(f"\nBackend: {backend_normalized}")
     if remote_config:
         print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
         if remote_config.get('rest_body'):
@@ -1659,6 +1774,10 @@ def setup_command(python_path: Optional[str] = None):
         print(f"Model: {faster_whisper_model}")
     elif selected_model:
         print(f"Model: {selected_model}")
+    elif backend_normalized == 'onnx-asr':
+        print("Model: nemo-parakeet-tdt-0.6b-v3 (~1 GB, downloaded during setup)")
+    elif backend_normalized == 'cohere-transcribe':
+        print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
     if setup_audio_ducking_choice:
@@ -1671,8 +1790,23 @@ def setup_command(python_path: Optional[str] = None):
     else:
         print("Systemd service: No")
     print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
+
+    # Paste mode detection notice — only shown when auto-detection won't work at runtime.
+    # Hyprland users get hyprctl, Niri sessions expose niri msg through
+    # NIRI_SOCKET, and XWayland users get xdotool. Pure Wayland compositors
+    # without one of those APIs cannot tell terminals from other apps, so
+    # terminal paste (Ctrl+Shift+V) won't be auto-selected.
+    _has_hyprctl = bool(shutil.which('hyprctl'))
+    _has_niri = bool(shutil.which('niri')) and bool(os.environ.get('NIRI_SOCKET'))
+    _has_xdotool = bool(shutil.which('xdotool'))
+    if not _has_hyprctl and not _has_niri and not _has_xdotool:
+        print("\nNote: Window detection unavailable on this system (no hyprctl, niri session, or xdotool).")
+        print("Paste will default to Ctrl+V, which works in most apps but not terminals.")
+        print("If you primarily dictate into terminals, run after setup:")
+        print("  hyprwhspr config set paste_mode ctrl_shift")
+
     print()
-    
+
     # Final confirmation
     if not Confirm.ask("Proceed with setup?", default=True):
         print("\nSetup cancelled.")
@@ -1693,11 +1827,6 @@ def setup_command(python_path: Optional[str] = None):
             config = ConfigManager()
             config.set_setting('faster_whisper_model', faster_whisper_model)
             config.save_config()
-        
-        # Check if running manually before systemd setup
-        if _is_running_manually():
-            log_warning("hyprwhspr appears to be running manually (not via systemd).")
-            log_warning("Please restart it manually for configuration changes to take effect.")
         
         # Step 2: Waybar
         if setup_waybar_choice:
@@ -1764,19 +1893,19 @@ def setup_command(python_path: Optional[str] = None):
                 pass  # Service check failed, continue
         else:
             log_info("Skipping systemd setup")
-            # Check if service is running anyway and warn user
+            # Warn if the service is running and won't pick up the new config automatically
             try:
                 result = subprocess.run(
                     ['systemctl', '--user', 'is-active', SERVICE_NAME],
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                    check=False
+                    capture_output=True, text=True, timeout=2, check=False
                 )
                 if result.returncode == 0:
                     log_warning("Systemd service is running but setup was skipped.")
-                    log_warning("You may need to manually restart the service for changes to take effect:")
+                    log_warning("Restart it for configuration changes to take effect:")
                     log_warning("  systemctl --user restart hyprwhspr")
+                elif _is_running_manually():
+                    log_warning("hyprwhspr appears to be running manually (not via systemd).")
+                    log_warning("Restart it manually for configuration changes to take effect.")
             except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
                 pass
         
@@ -1955,7 +2084,7 @@ def _verify_backend_installation(backend: str) -> bool:
     Returns:
         True if backend is importable, False otherwise
     """
-    if backend not in ['cpu', 'nvidia', 'vulkan', 'onnx-asr']:
+    if backend not in ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
         # For non-local backends, skip import check
         return True
 
@@ -1966,6 +2095,10 @@ def _verify_backend_installation(backend: str) -> bool:
     # Choose the module to import based on backend
     if backend == 'onnx-asr':
         import_module = 'onnx_asr'
+    elif backend == 'faster-whisper':
+        import_module = 'faster_whisper'
+    elif backend == 'cohere-transcribe':
+        import_module = 'transformers'
     else:
         import_module = 'pywhispercpp'
 
@@ -2167,7 +2300,7 @@ def omarchy_command(args=None):
             log_warning("Model download verification failed - model may not be available")
             log_warning(f"You can download it later with: hyprwhspr model download {model_to_download}")
     elif backend == 'onnx-asr':
-        log_info("onnx-asr model will be downloaded automatically on first use")
+        log_info("onnx-asr model downloaded during setup")
 
     # 7. Waybar integration (if detected and not skipped)
     print("\n" + "="*60)
@@ -2478,6 +2611,16 @@ def setup_systemd(mode: str = 'install'):
     except IOError as e:
         log_error(f"Failed to read/write service file: {e}")
         return False
+
+    # Import the compositor environment visible to this setup process into the
+    # systemd user manager. Niri's focused-window IPC needs NIRI_SOCKET; Hyprland
+    # detection needs HYPRLAND_INSTANCE_SIGNATURE; wtype/wl-clipboard need the
+    # Wayland display environment.
+    run_command([
+        'systemctl', '--user', 'import-environment',
+        'WAYLAND_DISPLAY', 'XDG_CURRENT_DESKTOP',
+        'HYPRLAND_INSTANCE_SIGNATURE', 'NIRI_SOCKET',
+    ], check=False)
 
     # Reload systemd daemon
     run_command(['systemctl', '--user', 'daemon-reload'], check=False)
@@ -2985,7 +3128,7 @@ def model_command(action: str, model_name: str = 'base'):
     if action == 'unload':
         if backend in ('rest-api', 'realtime-ws'):
             log_error(f"Model unload not applicable for backend: {backend}")
-            log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr) hold GPU memory.")
+            log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr, cohere-transcribe) hold GPU memory.")
             return
         if MODEL_UNLOADED_FILE.exists():
             log_warning("Model is already unloaded.")
@@ -3024,8 +3167,17 @@ def model_command(action: str, model_name: str = 'base'):
         elif action == 'status':
             onnx_asr_model_status()
         elif action == 'download':
-            log_info("Parakeet model is downloaded automatically when the backend starts.")
-            log_info("To pre-download: start the Parakeet service once (e.g. hyprwhspr start, or enable systemd and log in).")
+            log_info("Parakeet model is downloaded during setup.")
+            log_info("If the model is missing, re-run: hyprwhspr setup")
+        else:
+            log_error(f"Unknown model action: {action}")
+    elif backend == 'cohere-transcribe':
+        if action == 'list':
+            list_cohere_transcribe_models()
+        elif action == 'status':
+            cohere_transcribe_model_status()
+        elif action == 'download':
+            download_cohere_transcribe_model()
         else:
             log_error(f"Unknown model action: {action}")
     else:
@@ -3158,7 +3310,7 @@ def onnx_asr_model_status():
                 found.append(model_dir)
     if not found:
         log_warning("No Parakeet model found in ~/.cache/huggingface/hub/")
-        log_info("The model will download automatically when the Parakeet backend starts.")
+        log_info("Model not found. Re-run: hyprwhspr setup to download it.")
         return
 
     print("Parakeet (onnx-asr) model cache:")
@@ -3175,11 +3327,97 @@ def onnx_asr_model_status():
 def list_onnx_asr_models():
     """List Parakeet/onnx-asr model option (single supported model for now)."""
     print("Parakeet (onnx-asr) model:\n")
-    print("  - nemo-parakeet-tdt-0.6b-v3  (default; downloaded from Hugging Face on first use)")
+    print("  - nemo-parakeet-tdt-0.6b-v3  (~1 GB, downloaded during setup)")
     print()
     print("Storage: ~/.cache/huggingface/hub/")
     print("To check if the model is cached: hyprwhspr model status")
     print("The model downloads automatically when the Parakeet service starts.")
+
+
+# ==================== Cohere Transcribe Model Commands ====================
+
+def cohere_transcribe_model_status():
+    """Check Cohere Transcribe model in Hugging Face cache (~/.cache/huggingface/hub/)"""
+    hf_hub_dir = Path.home() / '.cache' / 'huggingface' / 'hub'
+    model_cache = hf_hub_dir / 'models--CohereLabs--cohere-transcribe-03-2026'
+
+    if not model_cache.exists():
+        log_warning("Cohere Transcribe model not found in ~/.cache/huggingface/hub/")
+        log_info("Re-run: hyprwhspr setup and select cohere-transcribe to download the model.")
+        return
+
+    total_bytes = sum(f.stat().st_size for f in model_cache.rglob('*') if f.is_file())
+    size_gb = total_bytes / (1024 ** 3)
+    log_success(f"  {model_cache.name} ({size_gb:.1f} GB)")
+
+
+def list_cohere_transcribe_models():
+    """List Cohere Transcribe model (single model)."""
+    print("Cohere Transcribe model:\n")
+    print("  - CohereLabs/cohere-transcribe-03-2026  (~4 GB, downloaded during setup)")
+    print()
+    print("Storage: ~/.cache/huggingface/hub/")
+    print("To check cache status: hyprwhspr model status")
+    print("Precision: bfloat16 on GPU (default), float32 on CPU")
+
+
+def download_cohere_transcribe_model():
+    """Download (or re-download) the Cohere Transcribe model weights."""
+    try:
+        from credential_manager import get_credential
+    except ImportError:
+        try:
+            from .credential_manager import get_credential
+        except ImportError:
+            get_credential = lambda _: None
+
+    hf_token = get_credential('huggingface') or None
+    if not hf_token:
+        log_warning("No HuggingFace token found.")
+        log_info("Run hyprwhspr setup to provide your token, or accept the model license at:")
+        log_info("  https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
+        return
+
+    try:
+        from backend_installer import install_backend
+    except ImportError:
+        from .backend_installer import install_backend
+
+    from paths import VENV_DIR
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        log_error("Cohere Transcribe venv not found. Run: hyprwhspr setup")
+        return
+
+    import subprocess, os
+    download_script = '''
+try:
+    from huggingface_hub import enable_progress_bars
+    enable_progress_bars()
+except ImportError:
+    pass
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+import torch, os, sys
+model_id = "CohereLabs/cohere-transcribe-03-2026"
+token = os.environ.get("HF_TOKEN") or None
+print("Downloading processor...", flush=True)
+AutoProcessor.from_pretrained(model_id, trust_remote_code=True, token=token)
+print("Downloading model weights (~4 GB)...", flush=True)
+sys.stdout.flush()
+model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    model_id, trust_remote_code=True, dtype=torch.bfloat16,
+    low_cpu_mem_usage=True, token=token,
+)
+del model
+print("Done.", flush=True)
+'''
+    env = {**os.environ, 'HF_TOKEN': hf_token, 'PYTHONUNBUFFERED': '1'}
+    log_info("Downloading Cohere Transcribe model (~4 GB)...")
+    result = subprocess.run([str(venv_python), '-c', download_script], env=env)
+    if result.returncode == 0:
+        log_success("Model downloaded and cached successfully")
+    else:
+        log_error("Download failed — check your HuggingFace token and license acceptance")
 
 
 # ==================== faster-whisper Model Commands ====================
@@ -3309,6 +3547,8 @@ def status_command():
             faster_whisper_model_status()
         elif backend == 'onnx-asr':
             onnx_asr_model_status()
+        elif backend == 'cohere-transcribe':
+            cohere_transcribe_model_status()
         else:
             model_status()
     except Exception:
@@ -3936,18 +4176,29 @@ def validate_command():
     except Exception:
         pass
 
-    # Check WAYLAND_DISPLAY in systemd user environment
+    # Check Wayland compositor environment in systemd user environment
     try:
         result = subprocess.run(
             ['systemctl', '--user', 'show-environment'],
             capture_output=True, text=True, timeout=5, check=False
         )
-        if result.returncode == 0 and 'WAYLAND_DISPLAY=' in result.stdout:
+        env_output = result.stdout if result.returncode == 0 else ''
+        if 'WAYLAND_DISPLAY=' in env_output:
             log_success("✓ WAYLAND_DISPLAY set in systemd user environment")
         else:
             log_warning("⚠ WAYLAND_DISPLAY not found in systemd user environment")
-            print("  Add to ~/.config/hypr/hyprland.conf:")
+            print("  Add the relevant compositor environment export to your startup config.")
+            print("  Hyprland example:")
             print("    exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
+
+        if _is_niri_session():
+            if 'NIRI_SOCKET=' in env_output:
+                log_success("✓ NIRI_SOCKET set in systemd user environment")
+            else:
+                log_warning("⚠ NIRI_SOCKET not found in systemd user environment")
+                print("  Niri window detection needs NIRI_SOCKET in the systemd user environment.")
+                print("  Add to your Niri startup config:")
+                print("    spawn-at-startup \"dbus-update-activation-environment\" \"--systemd\" \"WAYLAND_DISPLAY\" \"XDG_CURRENT_DESKTOP\" \"NIRI_SOCKET\"")
     except Exception:
         pass
 
@@ -4106,6 +4357,21 @@ def test_command(live: bool = False, mic_only: bool = False):
             backend_ready = True
         except ImportError:
             log_error("faster-whisper not installed. Run: hyprwhspr setup")
+            all_passed = False
+
+    elif backend == 'cohere-transcribe':
+        # Test Cohere Transcribe availability
+        try:
+            from transformers import AutoModelForSpeechSeq2Seq  # noqa: F401
+            log_success("Cohere Transcribe (transformers) available")
+            hf_cache = Path.home() / '.cache' / 'huggingface' / 'hub' / 'models--CohereLabs--cohere-transcribe-03-2026'
+            if hf_cache.exists():
+                log_success("Model weights cached in ~/.cache/huggingface/hub/")
+            else:
+                log_warning("Model weights not yet downloaded — will fetch on first use (~4 GB)")
+            backend_ready = True
+        except ImportError:
+            log_error("transformers not installed. Run: hyprwhspr setup and select cohere-transcribe")
             all_passed = False
 
     elif backend in ('pywhispercpp', 'nvidia', 'cpu', 'vulkan'):
@@ -4300,6 +4566,8 @@ def list_keyboards():
         shortcut = config.get_setting("primary_shortcut", "Super+Alt+D")
         selected_device_name = config.get_setting("selected_device_name", None)
         selected_device_path = config.get_setting("selected_device_path", None)
+        keyboard_device_names = config.get_setting("keyboard_device_names", None) or []
+        allowlist_lower = [n.lower() for n in keyboard_device_names]
         
         # Get available keyboards
         keyboards = get_available_keyboards(shortcut)
@@ -4318,8 +4586,7 @@ def list_keyboards():
             search_name_lower = selected_device_name.lower()
             for i, kb in enumerate(keyboards):
                 kb_name_lower = kb['name'].lower()
-                # Match GlobalShortcuts logic: exact match OR partial match
-                if kb_name_lower == search_name_lower or search_name_lower in kb_name_lower:
+                if kb_name_lower == search_name_lower:
                     selected_device_index = i
                     break  # Use first match, same as GlobalShortcuts
         elif selected_device_path:
@@ -4329,10 +4596,21 @@ def list_keyboards():
                     break
         
         for i, kb in enumerate(keyboards, 1):
-            # Mark only the device that would actually be selected
-            marker = " [SELECTED]" if (i - 1) == selected_device_index else ""
+            name_lower = kb['name'].lower()
+            markers = []
+            if (i - 1) == selected_device_index:
+                markers.append("SELECTED")
+            if allowlist_lower and name_lower in allowlist_lower:
+                markers.append("ALLOWED")
+            # Virtual devices aren't real hardware — they're created by
+            # hyprwhspr itself or by ydotool. Don't put them in your allowlist.
+            if ('hyprwhspr' in name_lower
+                    or 'ydotoold' in name_lower
+                    or 'uinput' in name_lower):
+                markers.append("VIRTUAL")
+            marker_str = f" [{' '.join(markers)}]" if markers else ""
             print(f"  {i}. {kb['name']}")
-            print(f"     Path: {kb['path']}{marker}")
+            print(f"     Path: {kb['path']}{marker_str}")
         
         print("-" * 70)
         print(f"\nTotal: {len(keyboards)} accessible device(s)")
@@ -4341,12 +4619,40 @@ def list_keyboards():
             print(f"\nCurrently selected by name: '{selected_device_name}'")
         elif selected_device_path:
             print(f"\nCurrently selected by path: {selected_device_path}")
+        elif keyboard_device_names:
+            print(f"\nAllowlist active (keyboard_device_names), {len(keyboard_device_names)} device(s):")
+            for name in keyboard_device_names:
+                print(f"  - {name}")
+            print("Hotplug detection enabled for listed devices.")
+            # Surface allowlist entries that don't match any present device —
+            # helps the user catch typos vs. just-unplugged devices.
+            present_names = {kb['name'].lower() for kb in keyboards}
+            missing = [n for n in keyboard_device_names if n.lower() not in present_names]
+            if missing:
+                print("\nAllowlist entries not currently present on this system:")
+                for name in missing:
+                    print(f"  - {name}")
+                print("  (These may just be unplugged; if so, they'll be grabbed when plugged in.)")
         else:
-            print("\nNo specific device selected - using auto-detection")
+            print("\nNo specific device selected — using auto-detection.")
+            # Point the user at the allowlist in case auto-detection grabs a
+            # mouse or media controller. Use a real device name from this
+            # system as the example so it's obvious how to populate the list.
+            real_candidates = [kb for kb in keyboards
+                               if 'hyprwhspr' not in kb['name'].lower()
+                               and 'ydotoold' not in kb['name'].lower()
+                               and 'uinput' not in kb['name'].lower()]
+            example_name = real_candidates[0]['name'] if real_candidates else "My Keyboard"
+            print("\nTo enable keyboard hotplug detection (useful for laptops that dock)")
+            print("or to restrict grabbing when auto-detection grabs a mouse-like device,")
+            print("set an allowlist in ~/.config/hyprwhspr/config.json:")
+            print('  "keyboard_device_names": [')
+            print(f'    "{example_name}"')
+            print('  ]')
+            print("(Also enables hotplug for listed devices plugged in after startup.)")
         
-        print("\nTo select a device, add to your config (~/.config/hyprwhspr/config.json):")
+        print("\nOther single-device overrides (take priority over the allowlist):")
         print('  "selected_device_name": "Device Name"')
-        print('  or')
         print('  "selected_device_path": "/dev/input/eventX"')
         
     except Exception as e:
@@ -4827,3 +5133,51 @@ def record_command(action: str, language: str = None):
         log_error(f"Unknown action: {action}")
         log_info("Available actions: start, stop, cancel, toggle, status")
 
+
+def record_capture_command(language: str = None):
+    """
+    Connect to the capture socket, trigger a recording, stream the transcription to stdout.
+
+    Blocks until the daemon closes the connection. If daemon is idle, this self-triggers a recording via the socket.
+    If daemon is already recording, this attaches to the in-flight transcription.
+
+    Args:
+      language: Language code (e.g., 'en', 'it', 'fr') or None for auto-detect
+    """
+
+    if not SOCKET_FILE.exists():
+        log_error("Capture socket not found.")
+        log_error("Is the hyprwhspr service running?")
+        log_error("Start it with: systemctl --user start hyprwhspr")
+        sys.exit(1)
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.connect(str(SOCKET_FILE))
+            request = "capture"
+            if language:
+                request += f":{language}"
+            request += "\n"
+            s.sendall(request.encode())
+
+            first = True
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                if first:
+                    first = False
+                    if chunk.startswith(b"ERROR:"):
+                        msg = chunk.decode().strip().removeprefix("ERROR:")
+                        log_error(f"Capture rejected: {msg}")
+                        sys.exit(1)
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except ConnectionRefusedError:
+        log_error("Capture socket refused connection. Daemon may be shutting down.")
+        sys.exit(1)
+    except OSError as e:
+        log_error(f"Capture socket error: {e}")
+        sys.exit(1)

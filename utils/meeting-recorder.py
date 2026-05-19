@@ -182,6 +182,24 @@ class MeetingRecorder:
     def _transcribe_pcm(self, pcm):
         """Transcribe a single PCM buffer. Returns text or empty string."""
         audio = self._pcm_to_float32(pcm)
+
+        # For realtime-ws backends, stream audio then commit (batch transcribe_audio
+        # doesn't work because the audio needs to be streamed live).
+        if self.whisper._realtime_client:
+            client = self.whisper._realtime_client
+            if not client.connected:
+                self.whisper._reconnect_realtime_client()
+            if not client.connected:
+                print("[transcribe] Realtime client not connected, skipping", flush=True)
+                return ""
+            client.clear_audio_buffer()
+            # Stream in small chunks to avoid overwhelming the server
+            chunk_samples = SAMPLE_RATE  # 1 second chunks
+            for i in range(0, len(audio), chunk_samples):
+                client.append_audio(audio[i:i + chunk_samples])
+            timeout = self.config.get_setting('realtime_timeout', 30)
+            return client.commit_and_get_text(timeout=timeout).strip()
+
         kwargs = {}
         if self.language:
             kwargs["language_override"] = self.language

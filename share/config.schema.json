@@ -32,9 +32,9 @@
     },
     "recording_mode": {
       "type": "string",
-      "enum": ["toggle", "push_to_talk", "auto"],
+      "enum": ["toggle", "push_to_talk", "auto", "continuous"],
       "default": "toggle",
-      "description": "Recording mode: 'toggle' (press to start/stop), 'push_to_talk' (hold to record), 'auto' (hybrid tap/hold)"
+      "description": "Recording mode: 'toggle' (press to start/stop), 'push_to_talk' (hold to record), 'auto' (hybrid tap/hold), 'continuous' (keeps transcribing, auto-pastes on speech pause)"
     },
     "grab_keys": {
       "type": "boolean",
@@ -55,6 +55,12 @@
       "type": ["string", "null"],
       "default": null,
       "description": "Specific keyboard device name (e.g., 'USB Keyboard'). Takes priority over path if both set."
+    },
+    "keyboard_device_names": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "default": null,
+      "description": "Optional allowlist of keyboard device names. When set: (1) only listed devices are grabbed at startup; (2) pyudev-based hotplug detection is enabled so listed devices plugged in later (e.g. docking a laptop) are attached without restarting the service. Ignored if selected_device_name or selected_device_path is set. Null (default) = legacy startup-only discovery."
     },
     "audio_device_id": {
       "type": ["integer", "null"],
@@ -122,6 +128,11 @@
       "type": "string",
       "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
       "description": "Prompt passed to Whisper to guide transcription style"
+    },
+    "post_transcription_hook": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Shell command run after preprocessing, before paste. Stdin receives the transcription; non-empty stdout replaces it. Empty stdout = observer-only (original text is kept). Env vars HYPRWHSPR_MODEL and HYPRWHSPR_BACKEND are set. Subject to a 5s timeout; errors pass through the original text."
     },
     "clipboard_behavior": {
       "type": "boolean",
@@ -203,12 +214,12 @@
     "websocket_provider": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai')"
+      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai', 'google', 'elevenlabs')"
     },
     "websocket_model": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-mini-2025-12-15')"
+      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-mini-2025-12-15', 'gemini-3.1-flash-live-preview')"
     },
     "websocket_url": {
       "type": ["string", "null"],
@@ -362,6 +373,20 @@
       "minimum": 1,
       "default": 300,
       "description": "Auto-save interval in seconds for long-form recording (default: 5 minutes)"
+    },
+    "continuous_silence_seconds": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 30,
+      "default": 2.0,
+      "description": "Seconds of silence before auto-pasting transcription in continuous mode"
+    },
+    "continuous_silence_threshold": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0,
+      "description": "RMS level below which audio is considered silence in continuous mode. 0 (default) = auto-calibrate from noise floor at session start. Set manually if auto-calibration misbehaves on your mic."
     }
   }
 }

@@ -21,6 +21,11 @@ except ImportError:
 evdev = require_package('evdev')
 from evdev import InputDevice, categorize, ecodes, UInput
 
+try:
+    from .keyboard_monitor import KeyboardMonitor, PYUDEV_AVAILABLE
+except ImportError:
+    from keyboard_monitor import KeyboardMonitor, PYUDEV_AVAILABLE  # noqa: F401
+
 
 # Layout detection for non-QWERTY keyboard layouts
 # X11 keycode = evdev keycode + 8
@@ -210,13 +215,21 @@ KEY_ALIASES: dict[str, str] = {
 class GlobalShortcuts:
     """Handles global keyboard shortcuts using evdev for hardware-level capture"""
 
-    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None, device_name: Optional[str] = None, grab_keys: bool = True):
+    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None, device_name: Optional[str] = None, grab_keys: bool = True, keyboard_device_names: Optional[List[str]] = None):
         self.primary_key = primary_key
         self.callback = callback
         self.selected_device_path = device_path
         self.selected_device_name = device_name
         self.release_callback = release_callback
         self.grab_keys = grab_keys
+        # Allowlist: lower-cased for case-insensitive comparison.
+        # Ignored when selected_device_name/path is set (those are single-device overrides).
+        self.keyboard_device_names = ([n.lower() for n in keyboard_device_names]
+                                       if keyboard_device_names else None)
+
+        # Hotplug monitor: detects keyboards plugged in after startup (e.g. docking).
+        # Started in start(); stopped in stop(). Gated on a non-nil allowlist.
+        self.keyboard_monitor: Optional[KeyboardMonitor] = None
 
         # Device and event handling
         self.devices = []
@@ -257,21 +270,36 @@ class GlobalShortcuts:
                 all_device_paths = evdev.list_devices()
                 devices = [evdev.InputDevice(path) for path in all_device_paths]
                 
+                # Never grab our own UInput virtual keyboard. Doing so creates
+                # a feedback loop (physical key -> virtual -> re-grab) that locks
+                # out all input. Relevant on service restart when a stale
+                # virtual-keyboard node may briefly still be present.
+                filtered = []
+                for device in devices:
+                    try:
+                        if 'hyprwhspr' in device.name.lower():
+                            device.close()
+                            continue
+                    except Exception:
+                        device.close()
+                        continue
+                    filtered.append(device)
+                devices = filtered
+
                 # Device selection: prefer name over path if both are provided
                 if self.selected_device_name:
-                    # Match by device name (case-insensitive partial match)
+                    # Match by device name (case-insensitive exact match)
                     selected_device = None
                     matching_devices = []
                     search_name_lower = self.selected_device_name.lower()
-                    processed_paths = set()  # Track which device paths we've processed
+                    processed_paths = set()
 
                     try:
                         for device in devices:
                             try:
                                 device_name_lower = device.name.lower()
                                 processed_paths.add(device.path)
-                                # Check for exact match or partial match
-                                if device_name_lower == search_name_lower or search_name_lower == device_name_lower:
+                                if device_name_lower == search_name_lower:
                                     matching_devices.append(device)
                                 else:
                                     device.close()
@@ -346,6 +374,17 @@ class GlobalShortcuts:
                     devices = [selected_device]
                 
                 for device in devices:
+                    # Allowlist filter (only in auto-discover mode).
+                    # When keyboard_device_names is set, skip everything not on the list.
+                    # Prevents grabbing mice/media controllers that advertise enough
+                    # EV_KEY codes to pass the capability check below.
+                    if (self.keyboard_device_names
+                            and not self.selected_device_name
+                            and not self.selected_device_path):
+                        if device.name.lower() not in self.keyboard_device_names:
+                            device.close()
+                            continue
+
                     # Require EV_KEY events
                     capabilities = device.capabilities()
                     if ecodes.EV_KEY not in capabilities:
@@ -598,6 +637,116 @@ class GlobalShortcuts:
         except Exception:
             pass
     
+    def _try_hotplug_add(self, path: str):
+        """Handle a udev 'add' event for /dev/input/eventN.
+
+        Called from KeyboardMonitor's observer thread. Opens the device,
+        applies the same filters as _discover_keyboards, and attaches it
+        to the live event loop if it qualifies.
+        """
+        if self.stop_event.is_set():
+            return
+
+        # Already monitored: common when the udev event races _discover_keyboards.
+        with self._device_lock:
+            if any(d.path == path for d in self.devices):
+                return
+
+        # InputDevice can fail transiently right after an add event. One cheap retry.
+        device = None
+        for _ in range(2):
+            try:
+                device = evdev.InputDevice(path)
+                break
+            except (OSError, IOError):
+                time.sleep(0.05)
+        if device is None:
+            return
+
+        try:
+            try:
+                name_lower = device.name.lower()
+            except Exception:
+                device.close()
+                return
+            if 'hyprwhspr' in name_lower:
+                device.close()
+                return
+
+            if self.selected_device_name:
+                if name_lower != self.selected_device_name.lower():
+                    device.close()
+                    return
+            elif self.selected_device_path:
+                if device.path != self.selected_device_path:
+                    device.close()
+                    return
+            elif self.keyboard_device_names:
+                if name_lower not in self.keyboard_device_names:
+                    device.close()
+                    return
+
+            try:
+                capabilities = device.capabilities()
+            except (OSError, IOError):
+                device.close()
+                return
+            if ecodes.EV_KEY not in capabilities:
+                device.close()
+                return
+            available_keys = set(capabilities[ecodes.EV_KEY])
+            if not self.target_keys.issubset(available_keys):
+                device.close()
+                return
+
+            # Grab only if the main grabbing pass has already run; otherwise the
+            # devices_grabbed bookkeeping and UInput re-emit path are out of sync.
+            if self.grab_keys:
+                if not self.devices_grabbed:
+                    device.close()
+                    return
+                try:
+                    device.grab()
+                except (OSError, IOError) as e:
+                    print(f"[HOTPLUG] Cannot grab {device.name} ({path}): {e}")
+                    device.close()
+                    return
+
+            with self._device_lock:
+                # Recheck under lock to avoid a double-add race.
+                if any(d.path == path for d in self.devices):
+                    try:
+                        if self.grab_keys:
+                            device.ungrab()
+                    except Exception:
+                        pass
+                    device.close()
+                    return
+                self.devices.append(device)
+                self.device_fds[device.fd] = device
+
+            print(f"[HOTPLUG] Keyboard attached: {device.name} ({path})")
+
+        except Exception as e:
+            print(f"[HOTPLUG] Error adding device {path}: {e}")
+            try:
+                device.close()
+            except Exception:
+                pass
+
+    def _remove_device_by_path(self, path: str):
+        """Handle a udev 'remove' event for /dev/input/eventN.
+
+        The event-loop's read-error path normally catches unplugs, but udev
+        removal is more deterministic and avoids a one-iteration lag.
+        """
+        if self.stop_event.is_set():
+            return
+        with self._device_lock:
+            victim = next((d for d in self.devices if d.path == path), None)
+        if victim is not None:
+            self._remove_device(victim)
+
     # Modifier keys that should never get "stuck" - always pass through releases
     MODIFIER_KEYS = {
         ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL,
@@ -755,6 +904,7 @@ class GlobalShortcuts:
             self.listener_thread = threading.Thread(target=self._event_loop, daemon=True)
             self.listener_thread.start()
             self.is_running = True
+            self._start_hotplug_monitor()
             return True
 
         try:
@@ -769,6 +919,7 @@ class GlobalShortcuts:
             self.listener_thread.start()
             self.is_running = True
 
+            self._start_hotplug_monitor()
             return True
 
         except Exception as e:
@@ -777,6 +928,37 @@ class GlobalShortcuts:
             traceback.print_exc()
             self._cleanup_key_grabbing()
             return False
+
+    def _start_hotplug_monitor(self):
+        """Start pyudev-based hotplug monitor for input devices.
+
+        Gated on a non-nil `keyboard_device_names` allowlist: by listing
+        real keyboards the user has consented to runtime device discovery
+        for those devices. Without an allowlist, aggressive hotplug can
+        grab mice and media controllers whose EV_KEY capabilities look
+        keyboard-shaped (e.g. Logitech multi-device mice), so we keep the
+        legacy startup-only discovery path.
+
+        Non-fatal if pyudev is unavailable or the monitor fails to start.
+        """
+        if not self.keyboard_device_names:
+            return
+        if not PYUDEV_AVAILABLE:
+            print("[HOTPLUG] pyudev not available; keyboards plugged in after "
+                  "startup will require a service restart")
+            return
+        if self.keyboard_monitor is not None:
+            return
+        try:
+            self.keyboard_monitor = KeyboardMonitor(
+                on_add=self._try_hotplug_add,
+                on_remove=self._remove_device_by_path,
+            )
+            if not self.keyboard_monitor.start():
+                self.keyboard_monitor = None
+        except Exception as e:
+            print(f"[HOTPLUG] Failed to start keyboard monitor: {e}")
+            self.keyboard_monitor = None
 
     def _setup_key_grabbing(self) -> bool:
         """Set up UInput virtual keyboard and grab physical devices
@@ -875,6 +1057,14 @@ class GlobalShortcuts:
 
         try:
             self.stop_event.set()
+
+            # Stop the hotplug monitor first so we don't race with device teardown.
+            if self.keyboard_monitor is not None:
+                try:
+                    self.keyboard_monitor.stop()
+                except Exception as e:
+                    print(f"[HOTPLUG] Error stopping keyboard monitor: {e}")
+                self.keyboard_monitor = None
 
             if self.listener_thread and self.listener_thread.is_alive():
                 self.listener_thread.join(timeout=2.0)  # Increased from 1.0s to 2.0s
@@ -1060,21 +1250,17 @@ def get_available_keyboards(shortcut: Optional[str] = None) -> List[Dict[str, st
                 device.close()
                 continue
             
-            try:
-                # Test if we can access the device
-                device.grab()
-                device.ungrab()
-                
-                keyboards.append({
-                    'name': device.name,
-                    'path': device.path,
-                    'display_name': f"{device.name} ({device.path})"
-                })
-            except (OSError, IOError):
-                # Device not accessible, skip it
-                pass
-            finally:
-                device.close()
+            # If we got this far, we can read the device (opened successfully
+            # above). Don't test grab() here: when the service is running it
+            # already holds the grab exclusively and the test would fail, so
+            # `hyprwhspr keyboard list` would hide the very device the user
+            # is trying to look up. Read access is sufficient to list it.
+            keyboards.append({
+                'name': device.name,
+                'path': device.path,
+                'display_name': f"{device.name} ({device.path})"
+            })
+            device.close()
                 
     except Exception as e:
         print(f"Error getting available keyboards: {e}")

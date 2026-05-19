@@ -7,15 +7,24 @@ import sys
 import time
 import threading
 import os
+import socket
 import fcntl
 import atexit
 import subprocess
+import select
 from pathlib import Path
 
 try:
     import numpy as np
 except ImportError:
     np = None  # Will be checked when needed
+
+# Whisper hallucination markers for silence/noise segments
+_HALLUCINATION_MARKERS = {
+    'blank audio', 'blank', 'silence', 'no speech',
+    'you', 'thank you', 'thanks for watching', 'thank you for watching',
+    'video playback', 'music', 'music playing', 'keyboard clicking',
+}
 
 # Ensure unbuffered output for journald logging
 if sys.stdout.isatty():
@@ -59,7 +68,7 @@ from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR,
-    MODEL_UNLOADED_FILE,
+    MODEL_UNLOADED_FILE, SOCKET_FILE
 )
 from backend_utils import normalize_backend
 from segment_manager import SegmentManager
@@ -123,15 +132,27 @@ class hyprwhsprApp:
 
         # Cancel pending delayed-hide from _show_result_and_hide when a new recording starts
         self._cancel_pending_hide = False
+        self._cancel_pending_hide_lock = threading.Lock()
 
         # Background recovery retry state (for suspend/resume)
         self._background_recovery_needed = threading.Event()  # Signal that recovery should be retried
         self._background_recovery_thread = None  # Background thread handle
         self._background_recovery_stop = threading.Event()  # Signal to stop background recovery
 
+        # Set when model is loading in background (e.g. slow backends like cohere-transcribe)
+        # Recording is blocked while True; cleared once initialize() succeeds or fails.
+        self._model_initializing = False
+
         # Recording control FIFO (for immediate push-to-talk response)
         self._recording_control_thread = None  # Background thread handle for FIFO listener
         self._recording_control_stop = threading.Event()  # Signal to stop FIFO listener
+
+        # Capture socket state (for capture on the recording - streams transcription back to client)
+        self._capture_socket_thread = None  # Background thread handle for accepting socket connections
+        self._capture_socket_stop = threading.Event()  # Signal to stop for capture socket thread
+        self._capture_subscriber = None  # Active client connection, or None
+        self._capture_subscriber_lock = threading.Lock()  # Guards claim and release of subscriber connection
+        self._capture_subscriber_done = threading.Event()  # Set by notifier so that handler closes cleanly
 
         # Hybrid tap/hold mode state tracking (auto mode)
         recording_mode = self.config.get_setting('recording_mode', 'toggle')
@@ -144,6 +165,14 @@ class hyprwhsprApp:
             self._shortcut_press_time = None
             self._recording_started_this_press = None
             self._tap_threshold = None
+
+        # Continuous mode state (auto-paste on speech pause)
+        self._continuous_silence_thread = None
+        self._continuous_silence_stop = threading.Event()
+        self._continuous_flush_lock = threading.Lock()
+        self._continuous_transcription_done = threading.Event()
+        self._continuous_transcription_done.set()  # no transcription in flight
+        self._continuous_cancelled = False  # set on cancel to suppress in-flight injection
 
         # Long-form recording mode state
         self._longform_state = 'IDLE'  # IDLE, RECORDING, PAUSED, PROCESSING, ERROR
@@ -214,18 +243,20 @@ class hyprwhsprApp:
             grab_keys = self.config.get_setting("grab_keys", False)
             selected_device_path = self.config.get_setting("selected_device_path", None)
             selected_device_name = self.config.get_setting("selected_device_name", None)
+            keyboard_device_names = self.config.get_setting("keyboard_device_names", None)
 
             # Register callbacks based on recording mode
             # Validate recording_mode and only register release callback for modes that need it
-            if recording_mode == 'toggle':
-                # Toggle mode: only register press callback
+            if recording_mode in ('toggle', 'continuous'):
+                # Toggle/continuous mode: only register press callback
                 self.global_shortcuts = GlobalShortcuts(
                     shortcut_key,
                     self._on_shortcut_triggered,
-                    None,  # No release callback for toggle mode
+                    None,  # No release callback for toggle modes
                     device_path=selected_device_path,
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
+                    keyboard_device_names=keyboard_device_names,
                 )
             elif recording_mode in ('push_to_talk', 'auto'):
                 # Push-to-talk and auto modes: register both press and release callbacks
@@ -236,6 +267,7 @@ class hyprwhsprApp:
                     device_path=selected_device_path,
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
+                    keyboard_device_names=keyboard_device_names,
                 )
             elif recording_mode == 'long_form':
                 # Long-form mode: primary key toggles recording/paused, no release callback
@@ -246,6 +278,7 @@ class hyprwhsprApp:
                     device_path=selected_device_path,
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
+                    keyboard_device_names=keyboard_device_names,
                 )
                 # Initialize segment manager for long-form mode
                 max_size_mb = self.config.get_setting('long_form_temp_limit_mb', 500)
@@ -263,9 +296,10 @@ class hyprwhsprApp:
                     device_path=selected_device_path,
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
+                    keyboard_device_names=keyboard_device_names,
                 )
         except Exception as e:
-            print(f"[ERROR] Failed to initialize global shortcuts: {e}")
+            print(f"[ERROR] Failed to initialize global shortcuts: {e}", flush=True)
             self.global_shortcuts = None
 
         # Set up secondary shortcut if configured
@@ -275,14 +309,15 @@ class hyprwhsprApp:
                 secondary_language = self.config.get_setting("secondary_language", None)
                 if secondary_language:
                     # Register callbacks based on recording mode (same as primary)
-                    if recording_mode == 'toggle':
+                    if recording_mode in ('toggle', 'continuous'):
                         self.secondary_shortcuts = GlobalShortcuts(
                             secondary_shortcut_key,
                             self._on_secondary_shortcut_triggered,
-                            None,  # No release callback for toggle mode
+                            None,  # No release callback for toggle modes
                             device_path=selected_device_path,
                             device_name=selected_device_name,
                             grab_keys=grab_keys,
+                            keyboard_device_names=keyboard_device_names,
                         )
                     elif recording_mode in ('push_to_talk', 'auto'):
                         self.secondary_shortcuts = GlobalShortcuts(
@@ -292,6 +327,7 @@ class hyprwhsprApp:
                             device_path=selected_device_path,
                             device_name=selected_device_name,
                             grab_keys=grab_keys,
+                            keyboard_device_names=keyboard_device_names,
                         )
                     else:
                         # Invalid mode: default to toggle behavior
@@ -302,6 +338,7 @@ class hyprwhsprApp:
                             device_path=selected_device_path,
                             device_name=selected_device_name,
                             grab_keys=grab_keys,
+                            keyboard_device_names=keyboard_device_names,
                         )
                     
                     # Start the secondary shortcuts
@@ -327,6 +364,7 @@ class hyprwhsprApp:
                     device_path=selected_device_path,
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
+                    keyboard_device_names=keyboard_device_names,
                 )
                 if self._cancel_shortcuts.start():
                     print(f"[INFO] Cancel shortcut registered: {cancel_shortcut_key}", flush=True)
@@ -349,6 +387,7 @@ class hyprwhsprApp:
                         device_path=selected_device_path,
                         device_name=selected_device_name,
                         grab_keys=grab_keys,
+                        keyboard_device_names=keyboard_device_names,
                     )
                     if self._longform_submit_shortcuts.start():
                         print(f"[INFO] Long-form submit shortcut registered: {submit_shortcut_key}", flush=True)
@@ -444,21 +483,24 @@ class hyprwhsprApp:
                     should_recover = True
 
             if should_recover:
-                # Debounce recovery attempts: USB reseat generates multiple events
+                # Debounce recovery attempts: USB reseat generates multiple events.
+                # Also cancel any in-progress background recovery and reset its cooldown
+                # while still holding _hotplug_lock — this closes the window where another
+                # thread reads a stale _last_recovery_attempt_time between the two steps.
+                canceled_background_recovery = False
                 with self._hotplug_lock:
                     current_time = time.monotonic()
                     if current_time - self._last_hotplug_add_time < 2.0:
                         return  # Skip duplicate
                     self._last_hotplug_add_time = current_time
 
-                # Check if background recovery is already running - cancel it
-                if self._background_recovery_needed.is_set():
-                    self._background_recovery_needed.clear()
-                    # Reset cooldown timer to allow hotplug recovery to proceed immediately
-                    # Without this, if background recovery just attempted, hotplug would hit cooldown
-                    # Must hold recovery_lock when writing _last_recovery_attempt_time (same lock used in recover_audio_capture)
-                    with self.audio_capture.recovery_lock:
-                        self.audio_capture._last_recovery_attempt_time = 0.0
+                    if self._background_recovery_needed.is_set():
+                        self._background_recovery_needed.clear()
+                        canceled_background_recovery = True
+                        with self.audio_capture.recovery_lock:
+                            self.audio_capture._last_recovery_attempt_time = 0.0
+
+                if canceled_background_recovery:
                     time.sleep(0.1)
 
                 print(f"[HOTPLUG] Microphone detected - recovering...", flush=True)
@@ -564,12 +606,16 @@ class hyprwhsprApp:
         """Shared logic for handling shortcut trigger with optional language override"""
         recording_mode = self.config.get_setting("recording_mode", "toggle")
 
-        if recording_mode == 'toggle':
-            # Toggle mode: start/stop recording
+        if recording_mode in ('toggle', 'continuous'):
+            # Toggle/continuous mode: start/stop recording
             if self.is_recording:
+                if recording_mode == 'continuous':
+                    self._continuous_stop_and_wait()
                 self._stop_recording()
             else:
                 self._start_recording(language_override=language_override)
+                if recording_mode == 'continuous':
+                    self._continuous_start_silence_monitor()
         elif recording_mode == 'push_to_talk':
             # Push-to-talk mode: only start recording on key press
             if not self.is_recording:
@@ -654,6 +700,124 @@ class hyprwhsprApp:
     # Secondary release is identical to primary release - reuse the same handler
     _on_secondary_shortcut_released = _on_shortcut_released
 
+    # Continuous mode: auto-paste on speech pause
+    _POLL_INTERVAL = 0.1  # seconds between silence checks
+
+    def _continuous_start_silence_monitor(self):
+        """Start monitoring for silence to trigger auto-paste in continuous mode"""
+        self._continuous_cancelled = False
+        self._continuous_stop_silence_monitor()
+        self._continuous_silence_stop.clear()
+
+        silence_seconds = self.config.get_setting('continuous_silence_seconds', 2.0)
+        configured_threshold = self.config.get_setting('continuous_silence_threshold', 0)
+        samples_needed = int(silence_seconds / self._POLL_INTERVAL)
+
+        def monitor():
+            silent_count = 0
+            try:
+                # Auto-calibrate threshold from noise floor if not manually configured
+                threshold = configured_threshold
+                if threshold <= 0:
+                    # Sample level 6 times over 0.6s; use minimum to get noise floor
+                    # even if the user starts speaking immediately after pressing record
+                    samples = []
+                    for _ in range(6):
+                        self._continuous_silence_stop.wait(0.1)
+                        if self._continuous_silence_stop.is_set() or not self.is_recording:
+                            return
+                        samples.append(self.audio_capture.rolling_avg_level)
+                    noise_floor = min(samples)
+                    threshold = max(noise_floor * 2, 2e-4)
+                    print(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f} (noise floor={noise_floor:.5f})", flush=True)
+
+                while self.is_recording and not self._continuous_silence_stop.is_set():
+                    raw_level = self.audio_capture.rolling_avg_level
+                    if raw_level < threshold:
+                        silent_count += 1
+                        if silent_count >= samples_needed:
+                            self._continuous_flush_audio()
+                            silent_count = 0
+                    else:
+                        silent_count = 0
+                    self._continuous_silence_stop.wait(self._POLL_INTERVAL)
+            except Exception as e:
+                print(f"[CONTINUOUS] Silence monitor error: {e}", flush=True)
+
+        self._continuous_silence_thread = threading.Thread(target=monitor, daemon=True)
+        self._continuous_silence_thread.start()
+
+    def _continuous_stop_silence_monitor(self):
+        """Stop the continuous silence monitor"""
+        self._continuous_silence_stop.set()
+        if self._continuous_silence_thread and self._continuous_silence_thread.is_alive():
+            self._continuous_silence_thread.join(timeout=0.5)
+        self._continuous_silence_thread = None
+
+    def _continuous_stop_and_wait(self):
+        """Stop the silence monitor and wait for any in-progress transcription"""
+        self._continuous_stop_silence_monitor()
+        self._continuous_transcription_done.wait(timeout=30)
+
+    def _continuous_flush_audio(self):
+        """Flush accumulated audio: transcribe and paste without stopping recording"""
+        if not self._continuous_flush_lock.acquire(blocking=False):
+            return  # another flush/transcription in progress
+
+        # Lock is now held — all paths must go through the finally that releases it.
+        self._continuous_transcription_done.clear()
+        should_transcribe = False
+        audio_data = None
+        try:
+            audio_data = self.audio_capture.flush_buffer()
+            if audio_data is None or len(audio_data) == 0:
+                return
+
+            duration = len(audio_data) / self.audio_capture.sample_rate
+            if duration < 0.5 or self._is_zero_volume(audio_data):
+                return
+
+            print(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription", flush=True)
+            should_transcribe = True
+        except Exception as e:
+            print(f"[CONTINUOUS] Flush error: {e}", flush=True)
+        finally:
+            if not should_transcribe:
+                self._continuous_flush_lock.release()
+                self._continuous_transcription_done.set()
+
+        if not should_transcribe:
+            return
+
+        # Transcribe in background thread; lock is held until transcription
+        # completes so the next flush is blocked until this one finishes.
+        def process():
+            try:
+                transcription = self.whisper_manager.transcribe_audio(
+                    audio_data, language_override=self._current_language_override
+                )
+                if transcription and transcription.strip():
+                    text = transcription.strip()
+                    lower = text.lower().strip('.!? ')
+                    if lower in _HALLUCINATION_MARKERS or text.startswith('♪'):
+                        print(f"[CONTINUOUS] Hallucination ignored: {text!r}", flush=True)
+                        return
+                    if self._continuous_cancelled:
+                        print("[CONTINUOUS] Cancelled — discarding transcription", flush=True)
+                        return
+                    self._inject_text(text)
+                    print(f"[CONTINUOUS] Pasted: {text[:80]}{'...' if len(text) > 80 else ''}", flush=True)
+                else:
+                    print("[CONTINUOUS] No transcription from flushed audio", flush=True)
+            except Exception as e:
+                print(f"[CONTINUOUS] Transcription error: {e}", flush=True)
+            finally:
+                self._notify_capture_subscriber("", final=True)
+                self._continuous_flush_lock.release()
+                self._continuous_transcription_done.set()
+
+        threading.Thread(target=process, daemon=True).start()
+
     def _on_cancel_shortcut_triggered(self):
         """Handle cancel shortcut trigger - discard recording without transcribing"""
         recording_mode = self.config.get_setting("recording_mode", "toggle")
@@ -662,6 +826,9 @@ class hyprwhsprApp:
             with self._longform_lock:
                 self._cancel_longform_recording()
         else:
+            if recording_mode == "continuous":
+                self._continuous_cancelled = True
+                self._continuous_stop_silence_monitor()
             self._cancel_recording()
 
     # Long-form recording mode handlers
@@ -798,6 +965,7 @@ class hyprwhsprApp:
             return
 
         print("[LONGFORM] Recording cancelled (discarded)", flush=True)
+        self._notify_capture_subscriber("", final=True)
 
         try:
             self._stop_longform_auto_save_timer()
@@ -858,9 +1026,8 @@ class hyprwhsprApp:
                 text = transcription.strip()
 
                 # Filter hallucinations
-                normalized = text.lower().replace('_', ' ').strip('[]() ')
-                hallucination_markers = ('blank audio', 'blank', 'video playback', 'music', 'music playing', 'keyboard clicking')
-                if normalized in hallucination_markers:
+                normalized = text.lower().replace('_', ' ').strip('[]().!?, ')
+                if normalized in _HALLUCINATION_MARKERS or text.startswith('♪'):
                     print(f"[LONGFORM] Whisper hallucination detected: {text!r}")
                     self.audio_manager.play_error_sound()
                     self._longform_error_audio = audio_data  # Store for retry
@@ -889,13 +1056,14 @@ class hyprwhsprApp:
                 self._set_visualizer_state('error')
 
         except Exception as e:
-            print(f"[LONGFORM] Transcription error: {e}")
+            print(f"[LONGFORM] Transcription error: {e}", flush=True)
             self.audio_manager.play_error_sound()
             self._longform_error_audio = audio_data  # Store for retry
             self._longform_state = 'ERROR'
             self._write_longform_state('ERROR')
             self._set_visualizer_state('error')
         finally:
+            self._notify_capture_subscriber("", final=True)
             self.is_processing = False
 
     def _start_longform_auto_save_timer(self):
@@ -932,7 +1100,7 @@ class hyprwhsprApp:
             LONGFORM_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             LONGFORM_STATE_FILE.write_text(state)
         except Exception as e:
-            print(f"[LONGFORM] Failed to write state file: {e}")
+            print(f"[LONGFORM] Failed to write state file: {e}", flush=True)
 
     def _cleanup_longform_temp_on_startup(self):
         """Check temp directory size on startup and clean up old segments if needed"""
@@ -958,7 +1126,7 @@ class hyprwhsprApp:
             elif total_size > 0:
                 print(f"[LONGFORM] Found {total_size / 1024 / 1024:.1f}MB of previous segments (limit: {max_size / 1024 / 1024:.1f}MB)")
         except Exception as e:
-            print(f"[LONGFORM] Error during startup cleanup: {e}")
+            print(f"[LONGFORM] Error during startup cleanup: {e}", flush=True)
 
     def _start_recording(self, language_override=None):
         """Start voice recording
@@ -977,10 +1145,20 @@ class hyprwhsprApp:
             # Store language override for this recording session
             self._current_language_override = language_override
         
-        # Block recording if model was deliberately unloaded to free GPU resources
-        if getattr(self.whisper_manager, '_model_manually_unloaded', False):
+        # Block recording if model is still loading in background
+        if self._model_initializing:
             with self._recording_lock:
                 self.is_recording = False
+            self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
+            print("[CONTROL] Recording blocked: model is still initializing", flush=True)
+            return
+
+        # Block recording if model was deliberately unloaded to free GPU resources
+        with self._recording_lock:
+            model_unloaded = getattr(self.whisper_manager, '_model_manually_unloaded', False)
+            if model_unloaded:
+                self.is_recording = False
+        if model_unloaded:
             self._notify_user(
                 "hyprwhspr",
                 "Model unloaded — run: hyprwhspr model reload",
@@ -998,10 +1176,6 @@ class hyprwhsprApp:
             
             # Write recording status to file for tray script
             self._write_recording_status(True)
-
-            # Duck system audio if enabled
-            if self.config.get_setting('audio_ducking', False):
-                self.audio_ducker.duck()
 
             # Update language in realtime client if override is provided
             if language_override is not None:
@@ -1130,6 +1304,10 @@ class hyprwhsprApp:
                     print("[HEALTH] Recording succeeded - canceling background recovery", flush=True)
                     self._background_recovery_needed.clear()
                 
+                # Duck system audio now that stream is confirmed working
+                if self.config.get_setting('audio_ducking', False):
+                    self.audio_ducker.duck()
+
                 # Stream is working and stable - start monitoring
                 self._start_audio_level_monitoring()
                     
@@ -1184,6 +1362,28 @@ class hyprwhsprApp:
             if self.audio_ducker.is_ducked:
                 self.audio_ducker.restore()
 
+    def _cleanup_recording_state(self):
+        """Best-effort cleanup after any recording ends. Safe to call multiple times."""
+        self._notify_capture_subscriber("", final=True)
+
+        try:
+            self._hide_mic_osd()
+        except Exception:
+            pass
+        try:
+            self._stop_audio_level_monitoring()
+        except Exception:
+            pass
+        try:
+            self._write_recording_status(False)
+        except Exception:
+            pass
+        try:
+            if self.audio_ducker.is_ducked:
+                self.audio_ducker.restore()
+        except Exception:
+            pass
+
     def _cancel_recording_muted(self):
         """Cancel recording early due to muted microphone"""
         with self._recording_lock:
@@ -1194,30 +1394,13 @@ class hyprwhsprApp:
 
         print("[MUTE] Recording cancelled - microphone returned silence for 1 second", flush=True)
 
+        self._cleanup_recording_state()
         try:
-            self._hide_mic_osd()
-            self._stop_audio_level_monitoring()
-            self._write_recording_status(False)
-
-            # Restore audio if it was ducked
-            if self.audio_ducker.is_ducked:
-                self.audio_ducker.restore()
-
             self.audio_capture.stop_recording()
             self.audio_manager.play_error_sound()
             # Note: No desktop notification - tray will detect muted state via audio level monitoring
         except Exception as e:
-            print(f"[ERROR] Error canceling recording: {e}")
-            # Ensure cleanup even if error occurs
-            try:
-                self._hide_mic_osd()
-                self._stop_audio_level_monitoring()
-                self._write_recording_status(False)
-                # Restore audio if it was ducked
-                if self.audio_ducker.is_ducked:
-                    self.audio_ducker.restore()
-            except Exception:
-                pass  # Best effort cleanup
+            print(f"[ERROR] Error canceling recording: {e}", flush=True)
 
     def _cancel_recording(self):
         """Cancel recording and discard audio without transcribing or injecting text"""
@@ -1229,15 +1412,8 @@ class hyprwhsprApp:
 
         print("Recording cancelled (discarded)", flush=True)
 
+        self._cleanup_recording_state()
         try:
-            self._hide_mic_osd()
-            self._stop_audio_level_monitoring()
-            self._write_recording_status(False)
-
-            # Restore audio if it was ducked
-            if self.audio_ducker.is_ducked:
-                self.audio_ducker.restore()
-
             # Stop capture and discard the audio data
             self.audio_capture.stop_recording()
 
@@ -1249,16 +1425,6 @@ class hyprwhsprApp:
             self.audio_manager.play_error_sound()
         except Exception as e:
             print(f"[ERROR] Error cancelling recording: {e}", flush=True)
-            # Ensure cleanup even if error occurs (is_recording already False from above)
-            try:
-                self._hide_mic_osd()
-                self._stop_audio_level_monitoring()
-                self._write_recording_status(False)
-                if self.audio_ducker.is_ducked:
-                    self.audio_ducker.restore()
-                self.audio_capture.stop_recording()
-            except Exception:
-                pass  # Best effort cleanup
 
     def _stop_recording(self):
         """Stop voice recording and process audio"""
@@ -1305,6 +1471,7 @@ class hyprwhsprApp:
                     self._notify_zero_volume("Audio stream broke during recording - no audio data captured. Try recording again after reseating.")
                 # Show error state and hide OSD
                 self._show_result_and_hide(False)
+                self._notify_capture_subscriber("", final=True)
             elif self._is_zero_volume(audio_data):
                 # Audio data exists but is all zeros - mic not producing sound
                 # Play error sound and notify user (may be intentional muting, but still inform)
@@ -1312,6 +1479,7 @@ class hyprwhsprApp:
                 self._notify_zero_volume("Microphone not producing audio (zero volume detected). This may be intentional muting, or the microphone may need to be reseated.")
                 # Show error state and hide OSD
                 self._show_result_and_hide(False)
+                self._notify_capture_subscriber("", final=True)
             else:
                 # Valid audio data - process it
                 self.audio_manager.play_stop_sound()
@@ -1322,6 +1490,7 @@ class hyprwhsprApp:
                 
         except Exception as e:
             print(f"[ERROR] Error stopping recording: {e}", flush=True)
+            self._notify_capture_subscriber("", final=True)
             # Ensure cleanup even if error occurs
             try:
                 self.is_recording = False
@@ -1329,6 +1498,7 @@ class hyprwhsprApp:
                 self._show_result_and_hide(False)
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
+                self._continuous_stop_silence_monitor()
 
                 # Close WebSocket if using realtime-ws backend
                 backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
@@ -1354,9 +1524,8 @@ class hyprwhsprApp:
                 text = transcription.strip()
 
                 # Filter out Whisper hallucination markers - don't touch clipboard
-                normalized = text.lower().replace('_', ' ').strip('[]() ')
-                hallucination_markers = ('blank audio', 'blank', 'video playback', 'music', 'music playing', 'keyboard clicking')
-                if normalized in hallucination_markers:
+                normalized = text.lower().replace('_', ' ').strip('[]().!?, ')
+                if normalized in _HALLUCINATION_MARKERS or text.startswith('♪'):
                     print(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
                     self.audio_manager.play_error_sound()
                     success = False
@@ -1375,14 +1544,21 @@ class hyprwhsprApp:
                 self.audio_manager.play_error_sound()
 
         except Exception as e:
-            print(f"[ERROR] Error processing audio: {e}")
+            print(f"[ERROR] Error processing audio: {e}", flush=True)
         finally:
+            self._notify_capture_subscriber("", final=True)
             self.is_processing = False
             # Show success/error state and hide OSD after delay
             self._show_result_and_hide(success)
 
     def _inject_text(self, text):
         """Inject transcribed text into active application"""
+
+        # Capture mode: route text to client instead of injecting into active app
+        if self._capture_subscriber is not None:
+            self._notify_capture_subscriber(text, final=True)
+            return
+
         try:
             self.text_injector.inject_text(text)
             print(f"[INJECT] Text injected ({len(text)} chars)", flush=True)
@@ -1403,7 +1579,7 @@ class hyprwhsprApp:
             except Exception:
                 pass
         except Exception as e:
-            print(f"[ERROR] Text injection failed: {e}")
+            print(f"[ERROR] Text injection failed: {e}", flush=True)
 
     def _is_zero_volume(self, audio_data) -> bool:
         """Check if audio data has zero or near-zero volume"""
@@ -1529,7 +1705,8 @@ class hyprwhsprApp:
         """Show mic-osd visualization overlay"""
         # Cancel any pending delayed-hide from a previous recording's _show_result_and_hide
         # so we don't hide the visualizer for this new recording
-        self._cancel_pending_hide = True
+        with self._cancel_pending_hide_lock:
+            self._cancel_pending_hide = True
         if self._mic_osd_runner and self._mic_osd_runner.is_available():
             self._mic_osd_runner.set_state('recording')
             self._mic_osd_runner.show()
@@ -1560,12 +1737,15 @@ class hyprwhsprApp:
 
         # Clear cancel so this scheduled hide is allowed to run (avoids inheriting
         # cancel from an earlier _show_mic_osd that already completed)
-        self._cancel_pending_hide = False
+        with self._cancel_pending_hide_lock:
+            self._cancel_pending_hide = False
 
         # Schedule hiding after 1.25 seconds (matches animation fade duration)
         def delayed_hide():
             time.sleep(1.25)
-            if self._cancel_pending_hide:
+            with self._cancel_pending_hide_lock:
+                should_hide = not self._cancel_pending_hide
+            if not should_hide:
                 return  # New recording started; don't hide
             self._hide_mic_osd()
 
@@ -1648,8 +1828,12 @@ class hyprwhsprApp:
                             else:
                                 zero_samples = 0
                     except Exception as e:
-                        # Silently fail - don't spam errors
-                        pass
+                        # Rate-limit to avoid log spam on repeated failure
+                        import time as _time
+                        now = _time.monotonic()
+                        if not hasattr(self, '_last_level_error_log') or now - self._last_level_error_log > 10.0:
+                            print(f"[WARN] Audio level monitoring error: {e}", flush=True)
+                            self._last_level_error_log = now
                     # Sleep in small increments so the stop event wakes us quickly
                     self._audio_level_stop.wait(0.1)
             finally:
@@ -1712,51 +1896,6 @@ class hyprwhsprApp:
             print("[WARN] Recording control will fall back to file polling (1 second delay)", flush=True)
         except Exception as e:
             print(f"[WARN] Unexpected error creating recording control FIFO: {e}", flush=True)
-
-    def _check_recording_control(self):
-        """
-        Check for recording control requests from tray script and start/stop recording
-        
-        DEPRECATED: This method is replaced by _recording_control_listener() which uses
-        a FIFO for immediate response. Kept for reference/fallback only.
-        """
-        # Check if recording control file exists
-        if not RECORDING_CONTROL_FILE.exists():
-            return
-        
-        try:
-            # Read the control file to determine action
-            with open(RECORDING_CONTROL_FILE, 'r') as f:
-                action = f.read().strip().lower()
-            
-            # Clear the file immediately to prevent duplicate processing
-            RECORDING_CONTROL_FILE.unlink()
-            
-            if action == "start":
-                # Start recording if not already recording
-                if not self.is_recording:
-                    print("[CONTROL] Recording start requested by tray script", flush=True)
-                    self._start_recording()
-                else:
-                    print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
-            elif action == "stop":
-                # Stop recording if currently recording
-                if self.is_recording:
-                    print("[CONTROL] Recording stop requested by tray script", flush=True)
-                    self._stop_recording()
-                else:
-                    print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
-            else:
-                print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
-                
-        except Exception as e:
-            print(f"[CONTROL] Error processing recording control: {e}", flush=True)
-            # Try to clear the file even if there was an error
-            try:
-                if RECORDING_CONTROL_FILE.exists():
-                    RECORDING_CONTROL_FILE.unlink()
-            except Exception:
-                pass
 
     def _recording_control_listener(self):
         """Listen on FIFO for recording control commands (blocking, immediate)"""
@@ -1833,6 +1972,8 @@ class hyprwhsprApp:
                     elif not self.is_recording:
                         print(f"[CONTROL] Recording start requested (immediate){lang_info}", flush=True)
                         self._start_recording(language_override=language_param)
+                        if recording_mode == "continuous":
+                            self._continuous_start_silence_monitor()
                     else:
                         print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
                 elif action == "stop":
@@ -1851,6 +1992,8 @@ class hyprwhsprApp:
                                 print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring stop request", flush=True)
                     elif self.is_recording:
                         print("[CONTROL] Recording stop requested (immediate)", flush=True)
+                        if recording_mode == "continuous":
+                            self._continuous_stop_and_wait()
                         self._stop_recording()
                     else:
                         print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
@@ -1865,6 +2008,9 @@ class hyprwhsprApp:
                                 print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring cancel request", flush=True)
                     elif self.is_recording:
                         print("[CONTROL] Recording cancel requested (immediate)", flush=True)
+                        if recording_mode == "continuous":
+                            self._continuous_cancelled = True
+                            self._continuous_stop_silence_monitor()
                         self._cancel_recording()
                     else:
                         print("[CONTROL] Not currently recording, ignoring cancel request", flush=True)
@@ -1917,6 +2063,190 @@ class hyprwhsprApp:
                 if not self._recording_control_stop.is_set():
                     print(f"[CONTROL] Error in FIFO listener: {e}", flush=True)
                     time.sleep(0.1)  # Brief pause before retrying
+
+    def _notify_capture_subscriber(self, text, final):
+        """
+        Forward a transcription chunk to the active capture subscriber if any.
+
+        Handler thread owns the connection fd and is the only closer.
+        This method only writes; on final=True it signals the handler to close.
+        """
+        with self._capture_subscriber_lock:
+            subscriber = self._capture_subscriber
+            if subscriber is None:
+                if final:
+                    self._capture_subscriber_done.set()
+                return
+
+            if text:
+                try:
+                    subscriber.sendall(text.encode('utf-8'))
+                except (BrokenPipeError, ConnectionError, OSError) as e:
+                    # handler select loop will detect disconnect and clean up.
+                    print(f"[CAPTURE] Subscriber write failed: {e}", flush=True)
+
+            if final:
+                self._capture_subscriber_done.set()
+
+    def _setup_capture_socket(self):
+        """
+        Create unix-domain socket for `record capture` client requests.
+
+        Returns (sock: socket.socket or None)
+        """
+        try:
+            SOCKET_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+            # we do a cleanup at the startup to ensure no stale socket remains
+            if SOCKET_FILE.exists():
+                try:
+                    SOCKET_FILE.unlink()
+                    print("[INIT] Removed stale capture socket", flush=True)
+                except OSError as e:
+                    print(f"[WARN] Failed to remove stale capture socket: {e}", flush=True)
+                    return None
+
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.bind(str(SOCKET_FILE))
+            os.chmod(str(SOCKET_FILE), 0o600)
+            sock.listen(4)
+            sock.settimeout(1.0)
+            print(f"[INIT] Created capture socket: {SOCKET_FILE}", flush=True)
+
+            return sock
+        except OSError as e:
+            print(f"[WARN] Failed to create capture socket: {e}", flush=True)
+            print("[WARN] `record capture` will be unavailable this session", flush=True)
+
+            return None
+
+    def _capture_socket_listener(self):
+        """
+        Connection handler for the capture socket.
+        """
+        sock = self._setup_capture_socket()
+        if sock is None:
+            return
+
+        try:
+            while not self._capture_socket_stop.is_set():
+                try:
+                    conn, _ = sock.accept()
+                except socket.timeout:
+                    # proceed to check stop flag
+                    continue
+                except OSError as e:
+                    if self._capture_socket_stop.is_set():
+                        break
+                    print(f"[CAPTURE] Accept error: {e}", flush=True)
+                    time.sleep(0.1)
+                    continue
+
+                threading.Thread(
+                    target=self._handle_capture_connection,
+                    args=(conn,),
+                    daemon=True,
+                    name="CaptureConnectionHandler",
+                ).start()
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            try:
+                SOCKET_FILE.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _handle_capture_connection(self, conn):
+        """
+        Handle one capture client that is claiming the subscriber slot to receive transcription text.
+        """
+
+        try:
+            # fetch the request line with a timeout
+            conn.settimeout(1.0)
+            line = conn.recv(256).split(b"\n", 1)[0].decode("utf-8", errors="replace").strip()
+
+            verb, _, language = line.partition(":")
+            language = language.strip() or None
+
+            if verb != "capture":
+                print(f"[CAPTURE] Unknown request: {line!r}", flush=True)
+                return
+
+            conn.settimeout(None)
+
+            # claim the subscriber slot if available
+            with self._capture_subscriber_lock:
+                if self._capture_subscriber is not None:
+                    print("[CAPTURE] Rejecting — slot occupied", flush=True)
+                    try:
+                        conn.sendall(b"ERROR:slot_occupied\n")
+                    except OSError:
+                        pass
+                    return
+                self._capture_subscriber = conn
+                self._capture_subscriber_done.clear()
+
+            # trigger recording via fifo
+            if not self.is_recording:
+                cmd = f"start:{language}\n" if language else "start\n"
+                try:
+                    fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
+                    try:
+                        os.write(fd, cmd.encode())
+                    finally:
+                        os.close(fd)
+                except OSError as e:
+                    print(f"[CAPTURE] Failed to self-trigger via FIFO: {e}", flush=True)
+
+            # either wait for recording to finish or for client disconnect
+            client_disconnected = False
+            while True:
+                if self._capture_subscriber_done.is_set():
+                    break
+                try:
+                    readable, _, _ = select.select([conn], [], [], 0.5)
+                except (OSError, ValueError):
+                    client_disconnected = True
+                    break
+                if readable:
+                    try:
+                        peek = conn.recv(1, socket.MSG_PEEK)
+                    except OSError:
+                        peek = b""
+                    if not peek:
+                        client_disconnected = True
+                        break
+
+            # we should cleanup if there was a premature disconnect
+            if client_disconnected and self.is_recording:
+                print("[CAPTURE] Client disconnected, cancelling recording", flush=True)
+                try:
+                    fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
+                    try:
+                        os.write(fd, b"cancel\n")
+                    finally:
+                        os.close(fd)
+                except OSError:
+                    pass
+
+        except Exception as e:
+            print(f"[CAPTURE] Handler error: {e}", flush=True)
+        finally:
+            # clear lock since we are the owner
+            with self._capture_subscriber_lock:
+                if self._capture_subscriber is conn:
+                    self._capture_subscriber = None
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                conn.close()
+            except OSError:
+                pass
 
     def _attempt_recovery_if_needed(self):
         """
@@ -2235,11 +2565,6 @@ class hyprwhsprApp:
             print("[ERROR] Audio capture not available!")
             return False
 
-        # Initialize whisper manager
-        if not self.whisper_manager.initialize():
-            print("[ERROR] Failed to initialize Whisper.")
-            return False
-        
         # Start global shortcuts (unless using Hyprland compositor bindings)
         use_hypr_bindings = self.config.get_setting("use_hypr_bindings", False)
         if self.global_shortcuts:
@@ -2247,12 +2572,7 @@ class hyprwhsprApp:
                 print("[ERROR] Failed to start global shortcuts!")
                 print("[ERROR] Check permissions: you may need to be in 'input' group")
                 return False
-            print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
-        elif use_hypr_bindings:
-            # Using Hyprland bindings - global_shortcuts is intentionally None
-            print("\n[READY] hyprwhspr ready - using Hyprland compositor bindings", flush=True)
-        else:
-            # global_shortcuts is None but we're not using Hyprland bindings - this is an error
+        elif not use_hypr_bindings:
             print("[ERROR] Global shortcuts not initialized!")
             return False
 
@@ -2267,6 +2587,42 @@ class hyprwhsprApp:
             print("[INIT] Started recording control FIFO listener", flush=True)
         else:
             print("[WARN] Recording control FIFO not available, using fallback polling", flush=True)
+
+        # start capture socket listener thread
+        self._capture_socket_thread = threading.Thread(
+            target=self._capture_socket_listener,
+            daemon=True,
+            name="CaptureSocketListener",
+        )
+        self._capture_socket_thread.start()
+        print("[INIT] Started capture socket listener", flush=True)
+
+        # Initialize whisper backend. Slow backends (e.g. cohere-transcribe loading a
+        # 4 GB model onto the GPU) run in a background thread so shortcuts and the FIFO
+        # listener are active immediately. Recording is blocked until ready.
+        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        slow_backends = {'cohere-transcribe'}
+        if backend in slow_backends:
+            self._model_initializing = True
+            print(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...", flush=True)
+            def _bg_init():
+                ok = self.whisper_manager.initialize()
+                self._model_initializing = False
+                if ok:
+                    print("[READY] Model ready — recording now available", flush=True)
+                    self._notify_user("hyprwhspr", "Ready", urgency="low")
+                else:
+                    print("[ERROR] Failed to initialize backend in background", flush=True)
+            threading.Thread(target=_bg_init, daemon=True, name="BackendInit").start()
+        else:
+            if not self.whisper_manager.initialize():
+                print("[ERROR] Failed to initialize Whisper.")
+                return False
+
+        if use_hypr_bindings:
+            print("\n[READY] hyprwhspr ready - using Hyprland compositor bindings", flush=True)
+        else:
+            print("\n[READY] hyprwhspr ready - press shortcut to start dictation", flush=True)
 
         # Give microphone 1 second to fully initialize before checking for recovery
         # This prevents spurious errors on startup if device is still settling
@@ -2283,7 +2639,7 @@ class hyprwhsprApp:
             print("\n[SHUTDOWN] Shutting down hyprwhspr...")
             self._cleanup()
         except Exception as e:
-            print(f"[ERROR] Error in main loop: {e}")
+            print(f"[ERROR] Error in main loop: {e}", flush=True)
             self._cleanup()
             return False
         
@@ -2306,6 +2662,15 @@ class hyprwhsprApp:
                     self._recording_control_thread.join(timeout=1.0)
                     if self._recording_control_thread.is_alive():
                         print("[WARN] Recording control thread did not stop cleanly", flush=True)
+
+            # Stop capture socket listener thread
+            if hasattr(self, '_capture_socket_stop'):
+                self._capture_socket_stop.set()
+                if hasattr(self, '_capture_socket_thread') and self._capture_socket_thread and self._capture_socket_thread.is_alive():
+                    print("[SHUTDOWN] Stopping capture socket listener...", flush=True)
+                    self._capture_socket_thread.join(timeout=2.0)
+                    if self._capture_socket_thread.is_alive():
+                        print("[WARN] Capture socket thread did not stop cleanly", flush=True)
 
             # Stop background recovery thread
             if hasattr(self, '_background_recovery_stop'):
@@ -2369,10 +2734,10 @@ class hyprwhsprApp:
             # don't see stale values after shutdown
             self._reset_stale_state()
 
-            print("[CLEANUP] Cleanup completed")
-            
+            print("[CLEANUP] Cleanup completed", flush=True)
+
         except Exception as e:
-            print(f"[WARN] Error during cleanup: {e}")
+            print(f"[WARN] Error during cleanup: {e}", flush=True)
         finally:
             # Release lock file
             _release_lock_file()

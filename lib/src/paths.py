@@ -18,6 +18,7 @@ CONFIG_FILE = CONFIG_DIR / 'config.json'
 # Runtime state signal files (used for IPC between service and waybar)
 RECORDING_STATUS_FILE = CONFIG_DIR / 'recording_status'
 RECORDING_CONTROL_FILE = CONFIG_DIR / 'recording_control'
+SOCKET_FILE = CONFIG_DIR / 'hyprwhspr.sock'
 AUDIO_LEVEL_FILE = CONFIG_DIR / 'audio_level'
 RECOVERY_REQUESTED_FILE = CONFIG_DIR / 'recovery_requested'
 RECOVERY_RESULT_FILE = CONFIG_DIR / 'recovery_result'

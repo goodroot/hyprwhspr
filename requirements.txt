@@ -1,28 +1,28 @@
 # Audio processing
-sounddevice>=0.4.6
-numpy>=1.21.0
+sounddevice>=0.5.0
+numpy>=1.26.0
 scipy>=1.10.0
 
 # Global shortcuts and text injection
-evdev>=1.6.0
-pyperclip>=1.8.2
+evdev>=1.9.0
+pyperclip>=1.11.0
 
 # Whisper integration
 pywhispercpp==1.4.1
-requests>=2.25.0
+requests>=2.32.0
 websocket-client>=1.9.0
 
 # System integration
-psutil>=5.8.0
-pyudev>=0.24.0
-pulsectl>=24.4.0
-dbus-python>=1.2.0
+psutil>=7.0.0
+pyudev>=0.24.4
+pulsectl>=24.12.0
+dbus-python>=1.3.0
 
 # CLI formatting and logging
-rich>=13.0.0
+rich>=14.0.0
 
 # Mic-osd visualization (requires python-gobject system package)
-PyGObject>=3.42.0
+PyGObject>=3.50.0
 
 # ElevenLabs integration
-elevenlabs>=2.34.0
+elevenlabs>=2.40.0
