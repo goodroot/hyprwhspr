@@ -164,6 +164,7 @@ sys.exit(main())
                 break
         if lib_path:
             env['LD_PRELOAD'] = lib_path
+        env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
 
         try:
             python_cmd = sys.executable or 'python3'
@@ -225,14 +226,30 @@ sys.exit(main())
         except (ProcessLookupError, PermissionError, OSError):
             return False
 
-        cmdline_path = Path('/proc') / str(pid) / 'cmdline'
+        proc_path = Path('/proc') / str(pid)
+        environ_path = proc_path / 'environ'
+        try:
+            environ = environ_path.read_bytes().split(b'\x00')
+            if b'HYPRWHSPR_MIC_OSD_DAEMON=1' in environ:
+                return True
+        except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+            pass
+
+        cmdline_path = proc_path / 'cmdline'
         try:
             raw_cmdline = cmdline_path.read_bytes()
         except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
             return False
 
         cmdline = raw_cmdline.replace(b'\x00', b' ').decode('utf-8', errors='ignore')
-        return 'mic_osd.main' in cmdline and '--daemon' in cmdline
+        if '--daemon' not in cmdline:
+            return False
+
+        return (
+            'mic_osd.main' in cmdline
+            or 'mic-osd' in cmdline
+            or 'com.hyprwhspr.mic-osd' in cmdline
+        )
 
     def _signal_daemon(self, sig: signal.Signals) -> bool:
         """Signal the tracked daemon after validating orphaned PID-file reuse."""

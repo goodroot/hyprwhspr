@@ -160,6 +160,34 @@ class MicOSDRunnerTests(unittest.TestCase):
                 mock.patch.object(runner_module.Path, "read_bytes", return_value=cmdline):
             self.assertTrue(MicOSDRunner._is_mic_osd_daemon_pid(12345))
 
+    def test_pid_validation_accepts_daemon_environment_marker(self):
+        with mock.patch.object(runner_module.os, "kill", return_value=None), \
+                mock.patch.object(runner_module.Path, "read_bytes", return_value=b"HYPRWHSPR_MIC_OSD_DAEMON=1\0"):
+            self.assertTrue(MicOSDRunner._is_mic_osd_daemon_pid(12345))
+
+    def test_ensure_daemon_reuses_python_c_daemon_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "mic_osd.pid"
+            pid_file.write_text("12345", encoding="utf-8")
+            original_pid_file = runner_module.MIC_OSD_PID_FILE
+            runner_module.MIC_OSD_PID_FILE = pid_file
+
+            cmdline = b"python3\0-c\0from mic_osd.main import main\nsys.argv = ['mic-osd', '--daemon']\0"
+            try:
+                with mock.patch.object(runner_module.os, "kill", return_value=None), \
+                        mock.patch.object(runner_module.Path, "read_bytes", side_effect=[b"", cmdline]), \
+                        mock.patch.object(runner_module.subprocess, "Popen", return_value=types.SimpleNamespace()) as popen:
+                    runner = MicOSDRunner()
+
+                    self.assertTrue(runner._ensure_daemon())
+
+                popen.assert_called_once()
+                self.assertEqual(popen.call_args.args[0], ['true'])
+                self.assertEqual(runner._orphaned_daemon_pid, 12345)
+                self.assertTrue(pid_file.exists())
+            finally:
+                runner_module.MIC_OSD_PID_FILE = original_pid_file
+
     def test_orphaned_pid_signal_revalidates_before_sending(self):
         runner = MicOSDRunner()
         runner._process = types.SimpleNamespace(pid=999, poll=lambda: None)

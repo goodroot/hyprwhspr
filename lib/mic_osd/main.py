@@ -217,6 +217,8 @@ class MicOSD:
     
     def _hide(self):
         """Hide the OSD and stop audio monitoring."""
+        self._clear_preview_file()
+
         if not self.visible:
             return
         
@@ -287,6 +289,13 @@ class MicOSD:
                 except Exception:
                     pass
                 self.audio_monitor = None
+
+    def _clear_preview_file(self):
+        try:
+            if TRANSCRIPT_PREVIEW_FILE.exists():
+                TRANSCRIPT_PREVIEW_FILE.unlink()
+        except Exception:
+            pass
     
     def _update(self):
         """Update visualization with current audio data."""
@@ -376,11 +385,7 @@ class MicOSD:
     
     def _cleanup(self):
         """Clean up resources."""
-        try:
-            if TRANSCRIPT_PREVIEW_FILE.exists():
-                TRANSCRIPT_PREVIEW_FILE.unlink()
-        except Exception:
-            pass
+        self._clear_preview_file()
 
         if self.update_timer_id:
             GLib.source_remove(self.update_timer_id)
