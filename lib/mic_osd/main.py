@@ -371,6 +371,12 @@ class MicOSD:
     
     def _cleanup(self):
         """Clean up resources."""
+        try:
+            if TRANSCRIPT_PREVIEW_FILE.exists():
+                TRANSCRIPT_PREVIEW_FILE.unlink()
+        except Exception:
+            pass
+
         if self.update_timer_id:
             GLib.source_remove(self.update_timer_id)
             self.update_timer_id = None

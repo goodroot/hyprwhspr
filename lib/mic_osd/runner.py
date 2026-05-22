@@ -248,6 +248,7 @@ sys.exit(main())
                         MIC_OSD_PID_FILE.unlink()
                     except Exception:
                         pass
+                self.clear_preview_text()
                 return
         
         # For normal daemons, verify process is actually alive before signaling
@@ -262,6 +263,7 @@ sys.exit(main())
                     MIC_OSD_PID_FILE.unlink()
                 except Exception:
                     pass
+            self.clear_preview_text()
             return
         
         # Verify process is actually alive before sending signal
@@ -278,6 +280,7 @@ sys.exit(main())
                     MIC_OSD_PID_FILE.unlink()
                 except Exception:
                     pass
+            self.clear_preview_text()
             return
         
         # Process is alive, send hide signal
@@ -287,6 +290,7 @@ sys.exit(main())
             print(f"[MIC-OSD] Failed to send SIGUSR2 to daemon (PID {self._process.pid}): {e}", flush=True)
             self._process = None
             self._orphaned_daemon_pid = None
+            self.clear_preview_text()
 
     def set_state(self, state: str):
         """
@@ -312,10 +316,24 @@ sys.exit(main())
     def set_preview_text(self, text: str):
         """Set live transcript preview text."""
         try:
-            TRANSCRIPT_PREVIEW_FILE.parent.mkdir(parents=True, exist_ok=True)
+            TRANSCRIPT_PREVIEW_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            try:
+                TRANSCRIPT_PREVIEW_FILE.parent.chmod(0o700)
+            except Exception:
+                pass
             text = (text or "").strip()
             if text:
-                TRANSCRIPT_PREVIEW_FILE.write_text(text, encoding='utf-8')
+                fd = os.open(
+                    TRANSCRIPT_PREVIEW_FILE,
+                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                    0o600,
+                )
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(text)
+                try:
+                    TRANSCRIPT_PREVIEW_FILE.chmod(0o600)
+                except Exception:
+                    pass
             elif TRANSCRIPT_PREVIEW_FILE.exists():
                 TRANSCRIPT_PREVIEW_FILE.unlink()
         except Exception as e:
@@ -359,3 +377,4 @@ sys.exit(main())
                     MIC_OSD_PID_FILE.unlink()
                 except Exception:
                     pass
+            self.clear_preview_text()
