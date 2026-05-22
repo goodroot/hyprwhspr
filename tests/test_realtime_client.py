@@ -86,6 +86,18 @@ class RealtimeClientTests(unittest.TestCase):
         self.assertEqual(previews, ["hello", "hello wor", ""])
         self.assertEqual(client.commit_and_get_text(timeout=0.1), "hello world")
 
+    def test_completed_without_transcript_uses_accumulated_delta_text(self):
+        previews = []
+        client = self._client_with_ws()
+        client.set_partial_transcript_callback(previews.append)
+
+        client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "delta"})
+        client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": " only"})
+        client._handle_event({"type": "conversation.item.input_audio_transcription.completed"})
+
+        self.assertEqual(previews, ["delta", "delta only", ""])
+        self.assertEqual(client.commit_and_get_text(timeout=0.1), "delta only")
+
     def test_speech_started_clears_stale_partial(self):
         previews = []
         client = self._client_with_ws()

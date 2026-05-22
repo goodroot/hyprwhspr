@@ -360,6 +360,8 @@ class RealtimeClient:
             transcript = event.get('transcript', '') or ''
             transcript = transcript.strip()
             with self.lock:
+                if not transcript:
+                    transcript = self._partial_transcript.strip()
                 if transcript:
                     self._committed_segments.append(transcript)
                 self._transcript_generation += 1
