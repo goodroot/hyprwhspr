@@ -2,6 +2,7 @@ import sys
 import tempfile
 import types
 import unittest
+import builtins
 from pathlib import Path
 from unittest import mock
 
@@ -93,6 +94,17 @@ class MicOSDRunnerTests(unittest.TestCase):
 
         self.assertIs(window_module.cairo, cairo_module)
 
+    def test_is_available_returns_false_when_cairo_missing(self):
+        original_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "cairo":
+                raise ImportError("no cairo")
+            return original_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=fake_import):
+            self.assertFalse(MicOSDRunner.is_available())
+
     def test_text_extents_support_tuple_and_attribute_shapes(self):
         window_module, _ = self._import_window_with_stubs()
         window = object.__new__(window_module.OSDWindow)
@@ -137,7 +149,7 @@ class MicOSDRunnerTests(unittest.TestCase):
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original
 
-    def test_hide_cancels_pending_preview_flush(self):
+    def test_hide_clears_preview_without_delayed_rewrite(self):
         with tempfile.TemporaryDirectory() as tmp:
             preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
             original_file = runner_module.TRANSCRIPT_PREVIEW_FILE
@@ -147,20 +159,16 @@ class MicOSDRunnerTests(unittest.TestCase):
             runner = MicOSDRunner()
             try:
                 runner.set_preview_text("first")
-                runner.set_preview_text("stale pending")
+                runner.set_preview_text("ignored throttled update")
 
                 runner.hide()
-                runner._flush_pending_preview_text()
 
                 self.assertFalse(preview_file.exists())
             finally:
-                with runner._preview_lock:
-                    if runner._preview_flush_timer:
-                        runner._preview_flush_timer.cancel()
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
                 MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = original_interval
 
-    def test_high_frequency_preview_updates_are_coalesced(self):
+    def test_high_frequency_preview_updates_are_throttled_without_timer(self):
         with tempfile.TemporaryDirectory() as tmp:
             preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
             original_file = runner_module.TRANSCRIPT_PREVIEW_FILE
@@ -174,12 +182,8 @@ class MicOSDRunnerTests(unittest.TestCase):
                 runner.set_preview_text("third")
 
                 self.assertEqual(preview_file.read_text(encoding="utf-8"), "first")
-                runner._flush_pending_preview_text()
-                self.assertEqual(preview_file.read_text(encoding="utf-8"), "third")
+                self.assertFalse(hasattr(runner, "_preview_flush_timer"))
             finally:
-                with runner._preview_lock:
-                    if runner._preview_flush_timer:
-                        runner._preview_flush_timer.cancel()
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
                 MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = original_interval
 

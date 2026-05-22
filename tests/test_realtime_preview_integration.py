@@ -61,9 +61,10 @@ class RealtimePreviewIntegrationTests(unittest.TestCase):
 
                 client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "hello "})
                 client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "world"})
-                runner._flush_pending_preview_text()
+                runner._last_preview_write_at -= runner.PREVIEW_WRITE_INTERVAL_SECONDS
+                client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "!"})
 
-                self.assertEqual(preview_file.read_text(encoding="utf-8"), "hello world")
+                self.assertEqual(preview_file.read_text(encoding="utf-8"), "hello world!")
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original
 

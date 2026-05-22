@@ -10,7 +10,6 @@ import subprocess
 import signal
 import sys
 import os
-import threading
 import time
 from pathlib import Path
 
@@ -35,10 +34,7 @@ class MicOSDRunner:
         self._process = None
         self._mic_osd_dir = Path(__file__).parent
         self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
-        self._preview_lock = threading.Lock()
         self._last_preview_write_at = 0.0
-        self._pending_preview_text = None
-        self._preview_flush_timer = None
     
     @staticmethod
     def is_available() -> bool:
@@ -328,42 +324,16 @@ sys.exit(main())
         text = (text or "").rstrip('\r\n')
 
         if not text:
-            with self._preview_lock:
-                self._pending_preview_text = None
-                if self._preview_flush_timer:
-                    self._preview_flush_timer.cancel()
-                    self._preview_flush_timer = None
             self._write_preview_text_file("")
             return
 
         now = time.monotonic()
-        write_now = False
-        with self._preview_lock:
-            elapsed = now - self._last_preview_write_at
-            if elapsed >= self.PREVIEW_WRITE_INTERVAL_SECONDS:
-                self._last_preview_write_at = now
-                self._pending_preview_text = None
-                write_now = True
-            else:
-                self._pending_preview_text = text
-                if self._preview_flush_timer is None:
-                    delay = self.PREVIEW_WRITE_INTERVAL_SECONDS - elapsed
-                    self._preview_flush_timer = threading.Timer(delay, self._flush_pending_preview_text)
-                    self._preview_flush_timer.daemon = True
-                    self._preview_flush_timer.start()
+        elapsed = now - self._last_preview_write_at
+        if elapsed < self.PREVIEW_WRITE_INTERVAL_SECONDS:
+            return
 
-        if write_now:
-            self._write_preview_text_file(text)
-
-    def _flush_pending_preview_text(self):
-        with self._preview_lock:
-            text = self._pending_preview_text
-            self._pending_preview_text = None
-            self._preview_flush_timer = None
-            self._last_preview_write_at = time.monotonic()
-
-        if text is not None:
-            self._write_preview_text_file(text)
+        self._last_preview_write_at = now
+        self._write_preview_text_file(text)
 
     def _write_preview_text_file(self, text: str):
         """Write live preview text to the runtime IPC file."""
@@ -393,11 +363,6 @@ sys.exit(main())
     def clear_preview_text(self):
         """Clear live transcript preview text."""
         try:
-            with self._preview_lock:
-                self._pending_preview_text = None
-                if self._preview_flush_timer:
-                    self._preview_flush_timer.cancel()
-                    self._preview_flush_timer = None
             if TRANSCRIPT_PREVIEW_FILE.exists():
                 TRANSCRIPT_PREVIEW_FILE.unlink()
         except Exception as e:
