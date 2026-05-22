@@ -961,7 +961,7 @@ class WhisperManager:
         
         Args:
             provider_id: Provider identifier (e.g., 'openai')
-            model_id: Model identifier (e.g., 'gpt-realtime-mini')
+            model_id: Model identifier (e.g., 'gpt-realtime-whisper')
             mode: 'transcribe' or 'converse'
         
         Returns:

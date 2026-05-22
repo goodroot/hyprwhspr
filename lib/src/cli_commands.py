@@ -736,7 +736,7 @@ def _prompt_backend_selection():
     print()
     print("Cloud/REST Backends:")
     print("  [6] REST API              - OpenAI, Groq, or custom endpoint")
-    print("  [7] Realtime WS           - Low-latency streaming (experimental)")
+    print("  [7] Realtime WS           - Low-latency streaming")
     print()
 
     while True:
@@ -898,6 +898,117 @@ def _prompt_faster_whisper_model_selection() -> str:
             selected = FASTER_WHISPER_MODELS[int(choice) - 1][0]
             print(f"\n✓ Selected: {selected}")
             return selected
+        except KeyboardInterrupt:
+            print("\n\nCancelled by user.")
+            raise
+        except (ValueError, IndexError):
+            print("\nInvalid selection. Please try again.")
+            continue
+
+
+def _prompt_realtime_provider_model_selection():
+    """
+    Prompt user for realtime provider and model selection in one flat list.
+
+    Returns:
+        Tuple of (provider_id, model_id, api_key, custom_config) or None if cancelled.
+        custom_config contains websocket_url for custom WebSocket endpoints.
+    """
+    print("\n" + "="*60)
+    print("Realtime Provider and Model Selection")
+    print("="*60)
+    print("\nChoose a realtime streaming provider and model:")
+    print()
+
+    realtime_options = []
+    for provider_id, provider in PROVIDERS.items():
+        if not provider.get('websocket_endpoint'):
+            continue
+
+        for model_id, model_data in provider.get('models', {}).items():
+            if not model_data.get('realtime_model', False):
+                continue
+            realtime_options.append((provider_id, provider, model_id, model_data))
+            print(
+                f"  [{len(realtime_options)}] "
+                f"{provider['name']}: {model_data['name']} - {model_data['description']}"
+            )
+
+    custom_choice = len(realtime_options) + 1
+    print(f"  [{custom_choice}] Custom WebSocket endpoint")
+    print()
+
+    choices = [str(i) for i in range(1, custom_choice + 1)]
+
+    while True:
+        try:
+            choice = Prompt.ask("Select provider and model", choices=choices, default='1')
+            choice_num = int(choice)
+
+            if choice_num == custom_choice:
+                print("\n" + "="*60)
+                print("Custom WebSocket Configuration")
+                print("="*60)
+                print("\nConfigure a custom realtime WebSocket backend.")
+                print()
+
+                websocket_url = Prompt.ask("WebSocket URL (e.g., wss://api.example.com/v1/realtime)", default="")
+                if not websocket_url:
+                    log_error("WebSocket URL is required for custom realtime backends")
+                    if not Confirm.ask("Try again?", default=True):
+                        return None
+                    continue
+
+                if not websocket_url.startswith('wss://') and not websocket_url.startswith('ws://'):
+                    log_warning("WebSocket URL should start with wss:// or ws://")
+                    if not Confirm.ask("Continue anyway?", default=True):
+                        continue
+
+                model_id = Prompt.ask("Model identifier", default="")
+                if not model_id:
+                    log_error("Model identifier is required for custom realtime backends")
+                    if not Confirm.ask("Try again?", default=True):
+                        return None
+                    continue
+
+                has_api_key = Confirm.ask("Do you have an API key?", default=False)
+                api_key = None
+                if has_api_key:
+                    api_key = getpass.getpass("Enter API key: ")
+                    if api_key:
+                        save_credential('custom', api_key)
+
+                custom_config = {'websocket_url': websocket_url}
+                return ('custom', model_id, api_key, custom_config)
+
+            provider_id, provider, model_id, model_data = realtime_options[choice_num - 1]
+            print(f"\n✓ Selected: {provider['name']}: {model_data['name']}")
+
+            existing_key = get_credential(provider_id)
+            if existing_key:
+                masked = mask_api_key(existing_key)
+                print(f"\nFound existing API key: {masked}")
+                use_existing = Confirm.ask("Use existing API key?", default=True)
+                if use_existing:
+                    api_key = existing_key
+                else:
+                    api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
+            else:
+                api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
+
+            is_valid, error_msg = validate_api_key(provider_id, api_key)
+            if not is_valid:
+                log_warning(f"API key validation: {error_msg}")
+                if not Confirm.ask("Continue anyway?", default=True):
+                    continue
+
+            if save_credential(provider_id, api_key):
+                log_success("API key saved securely")
+            else:
+                log_warning("Failed to save API key, but continuing with configuration")
+
+            return (provider_id, model_id, api_key, None)
+
         except KeyboardInterrupt:
             print("\n\nCancelled by user.")
             raise
@@ -1459,68 +1570,12 @@ def setup_command(python_path: Optional[str] = None):
             log_error(f"Failed to generate remote configuration: {e}")
             return
     elif backend_normalized == 'realtime-ws':
-        # Prompt for remote provider selection (filter for realtime models)
-        provider_result = _prompt_remote_provider_selection(filter_realtime=True)
+        provider_result = _prompt_realtime_provider_model_selection()
         if not provider_result:
             log_error("Provider selection cancelled. Exiting.")
             return
         
         provider_id, model_id, api_key, custom_config = provider_result
-        
-        # Validate that selected model is realtime-compatible (for known providers)
-        if provider_id != 'custom':
-            models = get_provider_models(provider_id)
-            if models:
-                # Check if selected model exists
-                if model_id not in models:
-                    log_error(f"Selected model {model_id} not found in provider models")
-                    return
-                
-                # Verify it's a realtime-compatible model
-                model_data = models.get(model_id, {})
-                is_realtime_model = model_data.get('realtime_model', False) or 'realtime' in model_id.lower()
-                
-                if not is_realtime_model:
-                    log_warning(f"Selected model {model_id} may not be realtime-compatible")
-                    # Try to find a realtime model
-                    realtime_models = [mid for mid in models.keys() 
-                                      if models[mid].get('realtime_model', False) or 'realtime' in mid.lower()]
-                    if realtime_models:
-                        if not Confirm.ask(f"Use realtime model '{realtime_models[0]}' instead?", default=True):
-                            log_error("Realtime-compatible model required for realtime-ws backend")
-                            return
-                        model_id = realtime_models[0]
-                        log_info(f"Using realtime model: {model_id}")
-                    else:
-                        log_error(f"No realtime-compatible models found for provider {provider_id}")
-                        return
-        
-        # Handle custom backends specially - require websocket_url
-        if provider_id == 'custom':
-            if not custom_config:
-                custom_config = {}
-            
-            # Prompt for WebSocket URL (required for custom realtime backends)
-            websocket_url = Prompt.ask("WebSocket URL (e.g., wss://api.example.com/v1/realtime)", default="")
-            if not websocket_url:
-                log_error("WebSocket URL is required for custom realtime backends")
-                return
-            
-            # Validate URL format
-            if not websocket_url.startswith('wss://') and not websocket_url.startswith('ws://'):
-                log_warning("WebSocket URL should start with wss:// or ws://")
-                if not Confirm.ask("Continue anyway?", default=True):
-                    return
-            
-            # Store websocket_url in custom_config
-            custom_config['websocket_url'] = websocket_url
-            
-            # Model is required for custom realtime backends
-            if not model_id:
-                model_id = Prompt.ask("Model identifier (for URL query parameter)", default="")
-                if not model_id:
-                    log_error("Model identifier is required for custom realtime backends")
-                    return
         
         # Generate realtime-ws configuration
         try:
@@ -1530,21 +1585,8 @@ def setup_command(python_path: Optional[str] = None):
             log_error(f"Failed to generate realtime configuration: {e}")
             return
         
-        # Prompt for realtime mode
-        # NOTE: OpenAI, Google Gemini, and custom endpoints support "converse".
-        if provider_id in ('openai', 'google', 'custom'):
-            print("\nRealtime Mode:")
-            print("  1. Transcribe - Convert speech to text (default)")
-            if provider_id == 'google':
-                print("  2. Converse - Gemini speaks back; its response is transcribed and typed into your active window")
-            else:
-                print("  2. Converse - Voice-to-AI: speak and get AI responses")
-            mode_choice = Prompt.ask("Select mode", choices=['1', '2'], default='1')
-            realtime_mode = 'transcribe' if mode_choice == '1' else 'converse'
-        else:
-            realtime_mode = 'transcribe'
-        remote_config['realtime_mode'] = realtime_mode
-        log_info(f"Realtime mode: {realtime_mode}")
+        remote_config['realtime_mode'] = 'transcribe'
+        log_info("Realtime mode: transcribe")
     
     # Step 1.4: Ensure venv and base dependencies for cloud backends
     if backend_normalized in ['rest-api', 'remote', 'realtime-ws']:
@@ -1752,24 +1794,39 @@ def setup_command(python_path: Optional[str] = None):
     print("="*60)
     print(f"\nBackend: {backend_normalized}")
     if remote_config:
-        print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
-        if remote_config.get('rest_body'):
-            model_name = remote_config['rest_body'].get('model', 'N/A')
-            print(f"Model: {model_name}")
-        provider_id = remote_config.get('rest_api_provider')
-        if provider_id:
-            # Retrieve and mask API key for display
-            api_key = get_credential(provider_id)
-            if api_key:
+        if backend_normalized == 'realtime-ws':
+            provider_id = remote_config.get('websocket_provider')
+            print(f"Provider: {provider_id or 'N/A'}")
+            print(f"Model: {remote_config.get('websocket_model', 'N/A')}")
+            if remote_config.get('websocket_url'):
+                print(f"WebSocket URL: {remote_config['websocket_url']}")
+            print("Realtime mode: transcribe (change with: hyprwhspr config edit)")
+            if provider_id:
+                api_key = get_credential(provider_id)
+                if api_key:
+                    masked = mask_api_key(api_key)
+                    print(f"API Key: {masked}")
+                elif provider_id != 'custom':
+                    print(f"API Key: not found in credential store for provider {provider_id}")
+        else:
+            print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
+            if remote_config.get('rest_body'):
+                model_name = remote_config['rest_body'].get('model', 'N/A')
+                print(f"Model: {model_name}")
+            provider_id = remote_config.get('rest_api_provider')
+            if provider_id:
+                # Retrieve and mask API key for display
+                api_key = get_credential(provider_id)
+                if api_key:
+                    masked = mask_api_key(api_key)
+                    print(f"Provider: {provider_id} (API Key: {masked})")
+                else:
+                    print(f"Provider: {provider_id} (API Key: not found in credential store)")
+            # Backward compatibility: check for old rest_api_key
+            elif remote_config.get('rest_api_key'):
+                api_key = remote_config.get('rest_api_key')
                 masked = mask_api_key(api_key)
-                print(f"Provider: {provider_id} (API Key: {masked})")
-            else:
-                print(f"Provider: {provider_id} (API Key: not found in credential store)")
-        # Backward compatibility: check for old rest_api_key
-        elif remote_config.get('rest_api_key'):
-            api_key = remote_config.get('rest_api_key')
-            masked = mask_api_key(api_key)
-            print(f"API Key: {masked} (legacy - will be migrated)")
+                print(f"API Key: {masked} (legacy - will be migrated)")
     elif faster_whisper_model:
         print(f"Model: {faster_whisper_model}")
     elif selected_model:
