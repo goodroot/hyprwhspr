@@ -174,7 +174,7 @@ Use a different hotkey for a specific language:
 
 > **Note**: Works with backends that support language parameters:
 > - **REST API**: Works if the endpoint accepts `language` in the request body
-> - **Realtime WebSocket**: Fully supported (OpenAI Realtime API)
+> - **Realtime WebSocket**: Fully supported (OpenAI, Google, ElevenLabs)
 > - **Local whisper models**: Fully supported (all pywhispercpp models)
 > - **Custom REST endpoints**: May not work if the endpoint doesn't accept a language parameter
 
@@ -625,14 +625,12 @@ Connect to any backend, local or cloud, via your own custom configuration:
 
 Low-latency streaming transcription.
 
-> Experimental!
-
 #### OpenAI Realtime
 
-Two modes available:
+Two modes available (set `realtime_mode` in your config):
 
 - **transcribe** (default) - Pure speech-to-text, more expensive than HTTP
-- **converse** - Voice-to-AI: speak and get AI responses
+- **converse** - Voice-to-AI: speak and get AI responses, configurable via `hyprwhspr config edit`
 
 ```jsonc
 {

@@ -181,7 +181,7 @@ class RealtimeClient:
         Establish WebSocket connection with authentication.
         
         Args:
-            url: WebSocket URL (e.g., 'wss://api.openai.com/v1/realtime?model=gpt-realtime-mini-2025-12-15')
+            url: WebSocket URL (e.g., 'wss://api.openai.com/v1/realtime?model=gpt-realtime-whisper')
             api_key: API key for authentication
             model: Model identifier
             instructions: Optional session instructions/prompt

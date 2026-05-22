@@ -30,7 +30,7 @@ BACKEND_DISPLAY_NAMES = {
     'onnx-asr': 'Parakeet TDT V3 (onnx-asr, CPU/GPU)',
     'cohere-transcribe': 'Cohere Transcribe 2B (transformers, CPU/GPU)',
     'rest-api': 'REST API',
-    'realtime-ws': 'Realtime WebSocket (experimental)',
+    'realtime-ws': 'Realtime WebSocket',
     'cpu': 'Whisper CPU (pywhispercpp)',
     'nvidia': 'Whisper NVIDIA (CUDA)',
     'amd': 'Whisper AMD/Intel (Vulkan)',
