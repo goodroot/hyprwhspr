@@ -56,10 +56,12 @@ class RealtimePreviewIntegrationTests(unittest.TestCase):
             original = runner_module.TRANSCRIPT_PREVIEW_FILE
             runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
             try:
-                manager.set_realtime_partial_callback(runner_module.MicOSDRunner().set_preview_text)
+                runner = runner_module.MicOSDRunner()
+                manager.set_realtime_partial_callback(runner.set_preview_text)
 
                 client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "hello "})
                 client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "world"})
+                runner._flush_pending_preview_text()
 
                 self.assertEqual(preview_file.read_text(encoding="utf-8"), "hello world")
             finally:

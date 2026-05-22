@@ -137,6 +137,34 @@ class MicOSDRunnerTests(unittest.TestCase):
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original
 
+    def test_high_frequency_preview_updates_are_coalesced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
+            original_file = runner_module.TRANSCRIPT_PREVIEW_FILE
+            original_interval = MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS
+            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
+            MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = 60.0
+            runner = MicOSDRunner()
+            try:
+                runner.set_preview_text("first")
+                runner.set_preview_text("second")
+                runner.set_preview_text("third")
+
+                self.assertEqual(preview_file.read_text(encoding="utf-8"), "first")
+                runner._flush_pending_preview_text()
+                self.assertEqual(preview_file.read_text(encoding="utf-8"), "third")
+            finally:
+                with runner._preview_lock:
+                    if runner._preview_flush_timer:
+                        runner._preview_flush_timer.cancel()
+                runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
+                MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = original_interval
+
+    def test_requirements_include_pycairo_for_service_environment(self):
+        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+
+        self.assertIn("pycairo", requirements.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

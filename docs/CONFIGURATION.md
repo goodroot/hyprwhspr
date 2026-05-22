@@ -704,6 +704,8 @@ Visual feedback that will auto-match Omarchy themes.
 }
 ```
 
+When OpenAI `gpt-realtime-whisper` live preview is enabled, partial transcript text is written to a restrictive runtime IPC file under `$XDG_RUNTIME_DIR/hyprwhspr/` so the OSD daemon can render it. The file is `0600`, cleared on normal hide/shutdown and scrubbed on service startup; if the machine loses power or the service is killed, the last partial may remain until the next startup/runtime-directory cleanup.
+
 ### Audio feedback
 
 Optional sound notifications:
