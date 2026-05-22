@@ -68,7 +68,7 @@ from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR,
-    MODEL_UNLOADED_FILE, SOCKET_FILE
+    MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE
 )
 from backend_utils import normalize_backend
 from segment_manager import SegmentManager
@@ -223,8 +223,7 @@ class hyprwhsprApp:
                 import traceback
                 traceback.print_exc()
 
-        preview_callback = self._set_mic_osd_preview_text if self._is_realtime_whisper_preview_enabled() else None
-        self.whisper_manager.set_realtime_partial_callback(preview_callback)
+        self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -1693,6 +1692,7 @@ class hyprwhsprApp:
             RECOVERY_REQUESTED_FILE,
             RECOVERY_RESULT_FILE,
             MODEL_UNLOADED_FILE,
+            TRANSCRIPT_PREVIEW_FILE,
         ]
         for f in stale_files:
             try:
@@ -1731,18 +1731,6 @@ class hyprwhsprApp:
                 runner.clear_preview_text()
             except Exception:
                 pass
-
-    def _is_realtime_whisper_preview_enabled(self) -> bool:
-        """Return True when live OSD preview should be wired."""
-        if not self.config.get_setting('mic_osd_enabled', True):
-            return False
-        backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-        return (
-            backend == 'realtime-ws'
-            and self.config.get_setting('websocket_provider') == 'openai'
-            and self.config.get_setting('websocket_model') == 'gpt-realtime-whisper'
-            and self.config.get_setting('realtime_mode', 'transcribe') == 'transcribe'
-        )
 
     def _set_mic_osd_preview_text(self, text: str):
         """Update live transcript preview text in the mic OSD."""

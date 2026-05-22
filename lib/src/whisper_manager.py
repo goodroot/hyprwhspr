@@ -524,8 +524,11 @@ class WhisperManager:
 
                     delay = self.config.get_setting('realtime_transcription_delay', 'low')
                     self._realtime_client.set_transcription_delay(delay)
-                    if self._realtime_partial_callback:
+                    if self._is_realtime_whisper_preview_enabled(provider_id, model_id, realtime_mode):
                         self._realtime_client.set_partial_transcript_callback(self._realtime_partial_callback)
+                    else:
+                        self._realtime_client.set_partial_transcript_callback(None)
+                        self._clear_realtime_partial_preview()
                     
                     # Set buffer max seconds
                     buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
@@ -1568,7 +1571,31 @@ class WhisperManager:
         """Set callback for realtime partial transcript previews."""
         self._realtime_partial_callback = callback
         if self._realtime_client and hasattr(self._realtime_client, 'set_partial_transcript_callback'):
-            self._realtime_client.set_partial_transcript_callback(callback)
+            provider_id = self.config.get_setting('websocket_provider')
+            model_id = self.config.get_setting('websocket_model')
+            realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+            if self._is_realtime_whisper_preview_enabled(provider_id, model_id, realtime_mode):
+                self._realtime_client.set_partial_transcript_callback(callback)
+            else:
+                self._realtime_client.set_partial_transcript_callback(None)
+                self._clear_realtime_partial_preview()
+
+    def _is_realtime_whisper_preview_enabled(self, provider_id: str, model_id: str, realtime_mode: str) -> bool:
+        return (
+            self.config.get_setting('mic_osd_enabled', True)
+            and provider_id == 'openai'
+            and model_id == 'gpt-realtime-whisper'
+            and realtime_mode == 'transcribe'
+            and self._realtime_partial_callback is not None
+        )
+
+    def _clear_realtime_partial_preview(self) -> None:
+        if not self._realtime_partial_callback:
+            return
+        try:
+            self._realtime_partial_callback("")
+        except Exception as e:
+            print(f'[REALTIME] Failed to clear partial transcript preview: {e}', flush=True)
 
     def _reconnect_realtime_client(self) -> bool:
         """Reconnect realtime client using stored connect params."""
