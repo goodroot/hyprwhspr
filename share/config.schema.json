@@ -219,7 +219,7 @@
     "websocket_model": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-mini-2025-12-15', 'gemini-3.1-flash-live-preview')"
+      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-whisper', 'gemini-3.1-flash-live-preview')"
     },
     "websocket_url": {
       "type": ["string", "null"],
@@ -243,6 +243,12 @@
       "enum": ["transcribe", "converse"],
       "default": "transcribe",
       "description": "'transcribe' for speech-to-text, 'converse' for voice-to-AI"
+    },
+    "realtime_transcription_delay": {
+      "type": "string",
+      "enum": ["minimal", "low", "medium", "high", "xhigh"],
+      "default": "low",
+      "description": "Latency/accuracy delay setting for OpenAI gpt-realtime-whisper transcription"
     },
     "onnx_asr_model": {
       "type": "string",

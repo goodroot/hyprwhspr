@@ -21,23 +21,37 @@ def is_gnome():
     desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
     return 'gnome' in desktop
 
-from .window import OSDWindow, load_css
-from .audio import AudioMonitor
-from .visualizations import VISUALIZATIONS
-from .theme import ThemeWatcher
+_MIC_OSD_IMPORT_ERROR = None
+try:
+    from .window import OSDWindow, load_css
+    from .audio import AudioMonitor
+    from .visualizations import VISUALIZATIONS
+    from .theme import ThemeWatcher
+except ImportError as e:
+    _MIC_OSD_IMPORT_ERROR = e
+    OSDWindow = None
+    AudioMonitor = None
+    VISUALIZATIONS = {}
+    ThemeWatcher = None
 
 # Import paths with fallback for daemon context
 try:
-    from ..src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE
+    from ..src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
 except ImportError:
     try:
-        from src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE
+        from src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
     except ImportError:
         # Fallback: construct paths manually if imports fail
         home = Path.home()
         xdg_config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
+        xdg_runtime = os.environ.get('XDG_RUNTIME_DIR')
+        if xdg_runtime:
+            runtime_dir = Path(xdg_runtime) / 'hyprwhspr'
+        else:
+            runtime_dir = Path(os.environ.get('TMPDIR', '/tmp')) / f"hyprwhspr-{os.getuid()}"
         RECORDING_STATUS_FILE = xdg_config / 'hyprwhspr' / 'recording_status'
         VISUALIZER_STATE_FILE = xdg_config / 'hyprwhspr' / 'visualizer_state'
+        TRANSCRIPT_PREVIEW_FILE = runtime_dir / 'transcript_preview'
 
 
 class MicOSD:
@@ -54,6 +68,7 @@ class MicOSD:
         self._auto_hide_timeout_id = None
         self._state_poll_timer_id = None
         self._last_visualizer_state = None
+        self._last_preview_text = None
         self.daemon = daemon
         self.visible = False
         self.theme_watcher = None
@@ -210,6 +225,8 @@ class MicOSD:
     
     def _hide(self):
         """Hide the OSD and stop audio monitoring."""
+        self._clear_preview_file()
+
         if not self.visible:
             return
         
@@ -221,6 +238,9 @@ class MicOSD:
         
         try:
             self.visible = False
+            if hasattr(self.window, 'set_preview_text'):
+                self.window.set_preview_text("")
+            self._last_preview_text = None
             self.window.set_visible(False)
             
             # Stop update timer
@@ -277,6 +297,13 @@ class MicOSD:
                 except Exception:
                     pass
                 self.audio_monitor = None
+
+    def _clear_preview_file(self):
+        try:
+            if TRANSCRIPT_PREVIEW_FILE.exists():
+                TRANSCRIPT_PREVIEW_FILE.unlink()
+        except Exception:
+            pass
     
     def _update(self):
         """Update visualization with current audio data."""
@@ -294,6 +321,8 @@ class MicOSD:
                     state = f.read().strip()
                     if state and state != self._last_visualizer_state:
                         self._last_visualizer_state = state
+                        if self.window and hasattr(self.window, 'set_visualizer_state'):
+                            self.window.set_visualizer_state(state)
                         # Update visualization state if it has the set_state method
                         if hasattr(self.visualization, 'set_state'):
                             self.visualization.set_state(state)
@@ -301,8 +330,18 @@ class MicOSD:
                 # No state file means default to recording state
                 if self._last_visualizer_state != 'recording':
                     self._last_visualizer_state = 'recording'
+                    if self.window and hasattr(self.window, 'set_visualizer_state'):
+                        self.window.set_visualizer_state('recording')
                     if hasattr(self.visualization, 'set_state'):
                         self.visualization.set_state('recording')
+
+            preview = ""
+            if TRANSCRIPT_PREVIEW_FILE.exists():
+                preview = TRANSCRIPT_PREVIEW_FILE.read_text(encoding='utf-8').rstrip('\r\n')
+            if preview != self._last_preview_text:
+                self._last_preview_text = preview
+                if self.window and hasattr(self.window, 'set_preview_text'):
+                    self.window.set_preview_text(preview)
         except Exception:
             pass  # Ignore file read errors
         return True  # Continue polling
@@ -358,6 +397,8 @@ class MicOSD:
     
     def _cleanup(self):
         """Clean up resources."""
+        self._clear_preview_file()
+
         if self.update_timer_id:
             GLib.source_remove(self.update_timer_id)
             self.update_timer_id = None
@@ -439,6 +480,10 @@ def main():
         help="Run as daemon (start hidden, show on SIGUSR1, hide on SIGUSR2)"
     )
     args = parser.parse_args()
+
+    if _MIC_OSD_IMPORT_ERROR is not None:
+        print(f"[MIC-OSD] Unavailable: {_MIC_OSD_IMPORT_ERROR}", file=sys.stderr, flush=True)
+        return 1
     
     # Set up signal handlers
     signal.signal(signal.SIGTERM, _signal_handler)

@@ -638,12 +638,15 @@ Two modes available:
 {
     "transcription_backend": "realtime-ws",
     "websocket_provider": "openai",
-    "websocket_model": "gpt-realtime-mini-2025-12-15",
+    "websocket_model": "gpt-realtime-whisper",
     "realtime_mode": "transcribe",       // "transcribe" or "converse"
+    "realtime_transcription_delay": "low", // "minimal", "low", "medium", "high", or "xhigh"
     "realtime_timeout": 30,              // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
 }
 ```
+
+With OpenAI `gpt-realtime-whisper`, the mic OSD can show a live partial transcript while recording. Only the completed final transcript is pasted after you stop.
 
 #### Google Gemini
 
@@ -700,6 +703,8 @@ Visual feedback that will auto-match Omarchy themes.
   "mic_osd_enabled": true,
 }
 ```
+
+When OpenAI `gpt-realtime-whisper` live preview is enabled, partial transcript text is written to a restrictive runtime IPC file under `$XDG_RUNTIME_DIR/hyprwhspr/` so the OSD daemon can render it. The file is `0600`, cleared on normal hide/shutdown and scrubbed on service startup; if the machine loses power or the service is killed, the last partial may remain until the next startup/runtime-directory cleanup.
 
 ### Audio feedback
 

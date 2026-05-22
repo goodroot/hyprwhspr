@@ -1,16 +1,22 @@
 """Centralized path constants for hyprwhspr with XDG Base Directory support"""
 from pathlib import Path
 import os
+import tempfile
 
 # XDG Base Directory specification
 # https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
 HOME = Path.home()
 XDG_CONFIG_HOME = Path(os.environ.get('XDG_CONFIG_HOME', HOME / '.config'))
 XDG_DATA_HOME = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local' / 'share'))
+XDG_RUNTIME_DIR = os.environ.get('XDG_RUNTIME_DIR')
 
 # hyprwhspr directories
 CONFIG_DIR = XDG_CONFIG_HOME / 'hyprwhspr'
 DATA_DIR = XDG_DATA_HOME / 'hyprwhspr'
+if XDG_RUNTIME_DIR:
+    RUNTIME_DIR = Path(XDG_RUNTIME_DIR) / 'hyprwhspr'
+else:
+    RUNTIME_DIR = Path(tempfile.gettempdir()) / f"hyprwhspr-{os.getuid()}"
 
 # Configuration files
 CONFIG_FILE = CONFIG_DIR / 'config.json'
@@ -27,6 +33,7 @@ MIC_OSD_PID_FILE = CONFIG_DIR / 'mic_osd.pid'
 SUSPEND_MARKER_FILE = CONFIG_DIR / '.suspend_marker'
 LOCK_FILE = CONFIG_DIR / 'hyprwhspr.lock'
 VISUALIZER_STATE_FILE = CONFIG_DIR / 'visualizer_state'  # recording|paused|processing|error|success
+TRANSCRIPT_PREVIEW_FILE = RUNTIME_DIR / 'transcript_preview'
 
 # Secure credential storage
 CREDENTIALS_DIR = DATA_DIR

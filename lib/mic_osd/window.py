@@ -5,9 +5,12 @@ Creates an overlay window at the bottom center of the screen
 for displaying audio visualizations.
 """
 
+from __future__ import annotations
+
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
+import cairo
 
 try:
     gi.require_version('Gtk4LayerShell', '1.0')
@@ -16,6 +19,7 @@ except ValueError:
     LAYER_SHELL_AVAILABLE = False
 
 from gi.repository import Gtk, Gdk, GLib
+from .theme import theme
 
 if LAYER_SHELL_AVAILABLE:
     from gi.repository import Gtk4LayerShell
@@ -28,6 +32,9 @@ class OSDWindow(Gtk.Window):
     Uses gtk4-layer-shell to create a Wayland layer surface
     that appears above all windows at the bottom of the screen.
     """
+
+    PREVIEW_WORD_LIMIT = 14
+    PREVIEW_TIMER_RESERVE = 58
     
     def __init__(self, visualization, width=300, height=60):
         """
@@ -43,6 +50,8 @@ class OSDWindow(Gtk.Window):
         self.visualization = visualization
         self._width = width
         self._height = height
+        self._preview_text = ""
+        self._visualizer_state = "recording"
         
         # Layer shell MUST be initialized immediately after window creation
         # and BEFORE any other window configuration
@@ -111,6 +120,8 @@ class OSDWindow(Gtk.Window):
         
         # Draw the visualization
         self.visualization.draw(cr, width, height)
+
+        self._draw_preview_text(cr, width, height)
     
     def update(self, level: float, samples=None):
         """
@@ -122,11 +133,98 @@ class OSDWindow(Gtk.Window):
         """
         self.visualization.update(level, samples)
         self.drawing_area.queue_draw()
+
+    def set_preview_text(self, text: str):
+        """Set compact transcript preview text."""
+        self._preview_text = (text or "").rstrip('\r\n')
+        self.drawing_area.queue_draw()
+
+    def set_visualizer_state(self, state: str):
+        """Track visualizer state so partial previews only render while recording."""
+        self._visualizer_state = (state or "recording").lower()
+        self.drawing_area.queue_draw()
     
     def set_visualization(self, visualization):
         """Change the visualization type."""
         self.visualization = visualization
         self.drawing_area.queue_draw()
+
+    def _draw_preview_text(self, cr: cairo.Context, width: int, height: int):
+        if not self._preview_text or self._visualizer_state != "recording":
+            return
+
+        padding = 14
+        max_width = max(0, width - padding * 2 - self.PREVIEW_TIMER_RESERVE)
+
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        cr.set_font_size(12)
+        text = self._ellipsize(cr, self._recent_preview_text(self._preview_text), max_width)
+        if not text:
+            return
+
+        extents = cr.text_extents(text)
+        text_width = self._text_extent(extents, 'width', 2)
+        text_height = self._text_extent(extents, 'height', 3)
+
+        y = height - 10
+        bg_padding_x = 7
+        bg_padding_y = 4
+        bg_x = padding - bg_padding_x
+        bg_y = y - text_height - bg_padding_y - 1
+        bg_w = min(max_width + bg_padding_x * 2, text_width + bg_padding_x * 2)
+        bg_h = text_height + bg_padding_y * 2 + 2
+
+        bg = theme.background
+        cr.set_source_rgba(bg[0], bg[1], bg[2], 0.88)
+        cr.rectangle(bg_x, bg_y, bg_w, bg_h)
+        cr.fill()
+
+        text_color = theme.text
+        cr.set_source_rgba(text_color[0], text_color[1], text_color[2], 0.96)
+        cr.move_to(padding, y)
+        cr.show_text(text)
+
+    @staticmethod
+    def _text_extent(extents, field: str, index: int) -> float:
+        if hasattr(extents, field):
+            return getattr(extents, field)
+        return extents[index]
+
+    def _text_width(self, cr: cairo.Context, text: str) -> float:
+        return self._text_extent(cr.text_extents(text), 'width', 2)
+
+    def _text_height(self, cr: cairo.Context, text: str) -> float:
+        return self._text_extent(cr.text_extents(text), 'height', 3)
+
+    def _recent_preview_text(self, text: str) -> str:
+        words = text.split()
+        if len(words) <= self.PREVIEW_WORD_LIMIT:
+            return " ".join(words)
+        return "... " + " ".join(words[-self.PREVIEW_WORD_LIMIT:])
+
+    def _ellipsize(self, cr: cairo.Context, text: str, max_width: float) -> str:
+        if self._text_width(cr, text) <= max_width:
+            return text
+
+        prefix = "... "
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+
+        available = max_width - self._text_width(cr, prefix)
+        if available <= 0:
+            return ""
+
+        low = 0
+        high = len(text)
+        while low < high:
+            mid = (low + high + 1) // 2
+            if self._text_width(cr, text[-mid:]) <= available:
+                low = mid
+            else:
+                high = mid - 1
+
+        truncated = text[-low:].lstrip()
+        return prefix + truncated if truncated else prefix
     
     def make_click_through(self):
         """

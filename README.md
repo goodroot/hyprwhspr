@@ -44,7 +44,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Requires a Wayland session** (GNOME, KDE Plasma Wayland, Sway, Hyprland)
 
 - **Waybar** (optional, for status bar)
-- **gtk4** (optional, for visualizer)
+- **gtk4 + PyCairo** (optional, for visualizer)
 - **NVIDIA GPU** (optional, for CUDA acceleration)
 - **AMD/Intel GPU / APU** (optional, for Vulkan acceleration)
 

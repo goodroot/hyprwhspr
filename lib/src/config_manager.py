@@ -111,11 +111,12 @@ class ConfigManager:
             'rest_audio_format': 'wav',        # Audio format for remote transcription
             # WebSocket realtime backend settings
             'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai', 'google', 'elevenlabs')
-            'websocket_model': None,           # Model identifier (e.g., 'gpt-realtime-mini-2025-12-15')
+            'websocket_model': None,           # Model identifier (e.g., 'gpt-realtime-whisper')
             'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
             'realtime_timeout': 30,            # Completion timeout (seconds)
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
             'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
+            'realtime_transcription_delay': 'low',  # gpt-realtime-whisper delay: minimal|low|medium|high|xhigh
             # ONNX-ASR backend settings (CPU-optimized)
             'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
             'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)

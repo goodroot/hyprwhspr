@@ -10,14 +10,16 @@ import subprocess
 import signal
 import sys
 import os
+import threading
+import time
 from pathlib import Path
 
 # Import paths
 try:
-    from ..src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE
+    from ..src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
 except ImportError:
     # Fallback for direct execution
-    from src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE
+    from src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
 
 
 class MicOSDRunner:
@@ -26,16 +28,24 @@ class MicOSDRunner:
     
     Spawns mic-osd in daemon mode at init, then signals it to show/hide.
     """
+
+    PREVIEW_WRITE_INTERVAL_SECONDS = 0.05
     
     def __init__(self):
         self._process = None
         self._mic_osd_dir = Path(__file__).parent
         self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
+        self._preview_lock = threading.Lock()
+        self._last_preview_write_at = 0.0
+        self._pending_preview_text = None
+        self._preview_flush_timer = None
+        self._preview_generation = 0
     
     @staticmethod
     def is_available() -> bool:
         """Check if mic-osd can run."""
         try:
+            import cairo  # noqa: F401
             import gi
             gi.require_version('Gtk', '4.0')
             gi.require_version('Gtk4LayerShell', '1.0')
@@ -49,26 +59,32 @@ class MicOSDRunner:
         # Check for common distro indicators
         try:
             if Path('/etc/debian_version').exists():
-                return ('python3-gi gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
+                return ('python3-gi python3-cairo gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
             elif Path('/etc/arch-release').exists():
-                return ('python-gobject gtk4', 'gtk4-layer-shell')
+                return ('python-gobject python-cairo gtk4', 'gtk4-layer-shell')
             elif Path('/etc/fedora-release').exists():
-                return ('python3-gobject gtk4', 'gtk4-layer-shell')
+                return ('python3-gobject python3-cairo gtk4', 'gtk4-layer-shell')
             elif Path('/etc/os-release').exists():
-                content = Path('/etc/os-release').read_text().lower()
+                content = Path('/etc/os-release').read_text(encoding='utf-8').lower()
                 if 'debian' in content or 'ubuntu' in content:
-                    return ('python3-gi gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
+                    return ('python3-gi python3-cairo gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
                 elif 'fedora' in content or 'rhel' in content:
-                    return ('python3-gobject gtk4', 'gtk4-layer-shell')
+                    return ('python3-gobject python3-cairo gtk4', 'gtk4-layer-shell')
+                elif 'suse' in content:
+                    return ('python3-gobject python3-pycairo typelib-1_0-Gtk-4_0', 'gtk4-layer-shell')
         except Exception:
             pass
         # Default to Arch-style names
-        return ('python-gobject gtk4', 'gtk4-layer-shell')
+        return ('python-gobject python-cairo gtk4', 'gtk4-layer-shell')
 
     @staticmethod
     def get_unavailable_reason() -> str:
         """Get reason why mic-osd is unavailable."""
         gtk_pkg, layer_pkg = MicOSDRunner._get_distro_packages()
+        try:
+            import cairo  # noqa: F401
+        except ImportError:
+            return f"PyCairo bindings not installed. Install: {gtk_pkg}"
         try:
             import gi
             gi.require_version('Gtk', '4.0')
@@ -90,8 +106,8 @@ class MicOSDRunner:
         if MIC_OSD_PID_FILE.exists():
             try:
                 pid = int(MIC_OSD_PID_FILE.read_text().strip())
-                # Check if process still exists (signal 0 = existence check)
-                os.kill(pid, 0)
+                if not self._is_mic_osd_daemon_pid(pid):
+                    raise ProcessLookupError(f"PID {pid} is not a mic-osd daemon")
                 print(f"[MIC-OSD] Found orphaned daemon (PID {pid}), reusing it")
                 # Create dummy process reference (we can't use wait() on it)
                 # The actual daemon PID is tracked in _orphaned_daemon_pid
@@ -148,6 +164,7 @@ sys.exit(main())
                 break
         if lib_path:
             env['LD_PRELOAD'] = lib_path
+        env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
 
         try:
             python_cmd = sys.executable or 'python3'
@@ -197,6 +214,62 @@ sys.exit(main())
             traceback.print_exc()
             self._process = None
             return False
+
+    @staticmethod
+    def _is_mic_osd_daemon_pid(pid: int) -> bool:
+        """Return True only if pid appears to be this project's mic-osd daemon."""
+        if pid <= 0:
+            return False
+
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
+
+        proc_path = Path('/proc') / str(pid)
+        environ_path = proc_path / 'environ'
+        try:
+            environ = environ_path.read_bytes().split(b'\x00')
+            if b'HYPRWHSPR_MIC_OSD_DAEMON=1' in environ:
+                return True
+        except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+            pass
+
+        cmdline_path = proc_path / 'cmdline'
+        try:
+            raw_cmdline = cmdline_path.read_bytes()
+        except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+            return False
+
+        cmdline = raw_cmdline.replace(b'\x00', b' ').decode('utf-8', errors='ignore')
+        if '--daemon' not in cmdline:
+            return False
+
+        return (
+            'mic_osd.main' in cmdline
+            or 'mic-osd' in cmdline
+            or 'com.hyprwhspr.mic-osd' in cmdline
+        )
+
+    def _signal_daemon(self, sig: signal.Signals) -> bool:
+        """Signal the tracked daemon after validating orphaned PID-file reuse."""
+        pid = self._orphaned_daemon_pid if self._orphaned_daemon_pid is not None else self._process.pid
+        if self._orphaned_daemon_pid is not None and not self._is_mic_osd_daemon_pid(pid):
+            print(f"[MIC-OSD] Refusing to signal non mic-osd PID {pid}", flush=True)
+            self._process = None
+            self._orphaned_daemon_pid = None
+            self._unlink_pid_file()
+            return False
+
+        os.kill(pid, sig)
+        return True
+
+    def _unlink_pid_file(self):
+        try:
+            if MIC_OSD_PID_FILE.exists():
+                MIC_OSD_PID_FILE.unlink()
+        except Exception:
+            pass
     
     def show(self) -> bool:
         """Show the mic-osd overlay (instant via signal)."""
@@ -207,10 +280,7 @@ sys.exit(main())
             return False
         
         try:
-            # For orphaned daemons, use the tracked PID
-            pid = self._orphaned_daemon_pid if self._orphaned_daemon_pid is not None else self._process.pid
-            os.kill(pid, signal.SIGUSR1)
-            return True
+            return self._signal_daemon(signal.SIGUSR1)
         except (ProcessLookupError, OSError):
             self._process = None
             self._orphaned_daemon_pid = None
@@ -218,6 +288,8 @@ sys.exit(main())
     
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
+        self.clear_preview_text()
+
         if self._process is None:
             return
         
@@ -225,10 +297,8 @@ sys.exit(main())
         # (poll() returns exit code of dummy process, not the actual daemon)
         if self._orphaned_daemon_pid is not None:
             try:
-                # Verify the orphaned daemon PID is still alive
-                os.kill(self._orphaned_daemon_pid, 0)
-                # PID exists, send hide signal
-                os.kill(self._orphaned_daemon_pid, signal.SIGUSR2)
+                if not self._signal_daemon(signal.SIGUSR2):
+                    return
                 return
             except (ProcessLookupError, OSError) as e:
                 # Orphaned daemon is dead, clean up and log warning
@@ -236,11 +306,8 @@ sys.exit(main())
                 self._process = None
                 self._orphaned_daemon_pid = None
                 # Clean up stale PID file
-                if MIC_OSD_PID_FILE.exists():
-                    try:
-                        MIC_OSD_PID_FILE.unlink()
-                    except Exception:
-                        pass
+                self._unlink_pid_file()
+                self.clear_preview_text()
                 return
         
         # For normal daemons, verify process is actually alive before signaling
@@ -250,11 +317,8 @@ sys.exit(main())
             self._process = None
             self._orphaned_daemon_pid = None
             # Clean up stale PID file
-            if MIC_OSD_PID_FILE.exists():
-                try:
-                    MIC_OSD_PID_FILE.unlink()
-                except Exception:
-                    pass
+            self._unlink_pid_file()
+            self.clear_preview_text()
             return
         
         # Verify process is actually alive before sending signal
@@ -266,11 +330,8 @@ sys.exit(main())
             self._process = None
             self._orphaned_daemon_pid = None
             # Clean up stale PID file
-            if MIC_OSD_PID_FILE.exists():
-                try:
-                    MIC_OSD_PID_FILE.unlink()
-                except Exception:
-                    pass
+            self._unlink_pid_file()
+            self.clear_preview_text()
             return
         
         # Process is alive, send hide signal
@@ -280,6 +341,7 @@ sys.exit(main())
             print(f"[MIC-OSD] Failed to send SIGUSR2 to daemon (PID {self._process.pid}): {e}", flush=True)
             self._process = None
             self._orphaned_daemon_pid = None
+            self.clear_preview_text()
 
     def set_state(self, state: str):
         """
@@ -302,6 +364,101 @@ sys.exit(main())
         except Exception as e:
             print(f"[MIC-OSD] Failed to clear visualizer state: {e}", flush=True)
 
+    def set_preview_text(self, text: str):
+        """Set live transcript preview text."""
+        text = (text or "").rstrip('\r\n')
+
+        with self._preview_lock:
+            if not text:
+                self._cancel_pending_preview_flush()
+                self._preview_generation += 1
+                self._write_preview_text_file("")
+                return
+
+            now = time.monotonic()
+            elapsed = now - self._last_preview_write_at
+            if elapsed >= self.PREVIEW_WRITE_INTERVAL_SECONDS:
+                self._cancel_pending_preview_flush()
+                self._last_preview_write_at = now
+                self._write_preview_text_file(text)
+                return
+
+            self._pending_preview_text = text
+            if self._preview_flush_timer is None:
+                generation = self._preview_generation
+                delay = self.PREVIEW_WRITE_INTERVAL_SECONDS - elapsed
+                self._preview_flush_timer = threading.Timer(
+                    delay,
+                    self._flush_pending_preview_text,
+                    args=(generation,),
+                )
+                self._preview_flush_timer.daemon = True
+                self._preview_flush_timer.start()
+
+    def _cancel_pending_preview_flush(self):
+        self._pending_preview_text = None
+        if self._preview_flush_timer:
+            self._preview_flush_timer.cancel()
+            self._preview_flush_timer = None
+
+    def _flush_pending_preview_text(self, generation: int):
+        with self._preview_lock:
+            if generation != self._preview_generation:
+                return
+
+            text = self._pending_preview_text
+            self._pending_preview_text = None
+            self._preview_flush_timer = None
+
+            if text is None:
+                return
+
+            self._last_preview_write_at = time.monotonic()
+            self._write_preview_text_file(text)
+
+    def _write_preview_text_file(self, text: str):
+        """Write live preview text to the runtime IPC file."""
+        try:
+            TRANSCRIPT_PREVIEW_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            try:
+                TRANSCRIPT_PREVIEW_FILE.parent.chmod(0o700)
+            except Exception:
+                pass
+            if text:
+                temp_path = TRANSCRIPT_PREVIEW_FILE.with_name(
+                    f".{TRANSCRIPT_PREVIEW_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+                )
+                fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                try:
+                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                        f.write(text)
+                    os.replace(temp_path, TRANSCRIPT_PREVIEW_FILE)
+                finally:
+                    try:
+                        if temp_path.exists():
+                            temp_path.unlink()
+                    except Exception:
+                        pass
+                try:
+                    TRANSCRIPT_PREVIEW_FILE.chmod(0o600)
+                except Exception:
+                    pass
+            elif TRANSCRIPT_PREVIEW_FILE.exists():
+                TRANSCRIPT_PREVIEW_FILE.unlink()
+        except Exception as e:
+            print(f"[MIC-OSD] Failed to write transcript preview: {e}", flush=True)
+
+    def clear_preview_text(self):
+        """Clear live transcript preview text."""
+        try:
+            with self._preview_lock:
+                self._cancel_pending_preview_flush()
+                self._preview_generation += 1
+                if TRANSCRIPT_PREVIEW_FILE.exists():
+                    TRANSCRIPT_PREVIEW_FILE.unlink()
+        except Exception as e:
+            print(f"[MIC-OSD] Failed to clear transcript preview: {e}", flush=True)
+
     def stop(self):
         """Stop the daemon completely."""
         if self._process is None:
@@ -309,8 +466,8 @@ sys.exit(main())
 
         try:
             # For orphaned daemons, use the tracked PID
-            pid = self._orphaned_daemon_pid if self._orphaned_daemon_pid is not None else self._process.pid
-            os.kill(pid, signal.SIGTERM)
+            if not self._signal_daemon(signal.SIGTERM):
+                return
             # Only wait if it's a normal process (not orphaned)
             if self._orphaned_daemon_pid is None:
                 self._process.wait(timeout=1.0)
@@ -320,15 +477,13 @@ sys.exit(main())
                 time.sleep(0.5)
         except subprocess.TimeoutExpired:
             pid = self._orphaned_daemon_pid if self._orphaned_daemon_pid is not None else self._process.pid
-            os.kill(pid, signal.SIGKILL)
+            if self._orphaned_daemon_pid is None or self._is_mic_osd_daemon_pid(pid):
+                os.kill(pid, signal.SIGKILL)
         except (ProcessLookupError, OSError):
             pass
         finally:
             self._process = None
             self._orphaned_daemon_pid = None
             # Clean up PID file
-            if MIC_OSD_PID_FILE.exists():
-                try:
-                    MIC_OSD_PID_FILE.unlink()
-                except Exception:
-                    pass
+            self._unlink_pid_file()
+            self.clear_preview_text()

@@ -68,7 +68,7 @@ from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR,
-    MODEL_UNLOADED_FILE, SOCKET_FILE
+    MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE
 )
 from backend_utils import normalize_backend
 from segment_manager import SegmentManager
@@ -222,6 +222,9 @@ class hyprwhsprApp:
                 print(f"[WARN] Failed to initialize mic-osd: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
+
+        if hasattr(self.whisper_manager, 'set_realtime_partial_callback'):
+            self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -1170,6 +1173,8 @@ class hyprwhsprApp:
         print("Recording started", flush=True)
 
         try:
+            self._clear_mic_osd_preview_text()
+
             # Clear zero-volume signal file when starting a new recording
             # This allows waybar to recover immediately on successful start
             self._clear_zero_volume_signal()
@@ -1367,6 +1372,10 @@ class hyprwhsprApp:
         self._notify_capture_subscriber("", final=True)
 
         try:
+            self._clear_mic_osd_preview_text()
+        except Exception:
+            pass
+        try:
             self._hide_mic_osd()
         except Exception:
             pass
@@ -1436,6 +1445,7 @@ class hyprwhsprApp:
         print("Recording stopped", flush=True)
 
         try:
+            self._clear_mic_osd_preview_text()
 
             # Set visualizer to processing state (keep it visible during transcription)
             self._set_visualizer_state('processing')
@@ -1547,6 +1557,7 @@ class hyprwhsprApp:
             print(f"[ERROR] Error processing audio: {e}", flush=True)
         finally:
             self._notify_capture_subscriber("", final=True)
+            self._clear_mic_osd_preview_text()
             self.is_processing = False
             # Show success/error state and hide OSD after delay
             self._show_result_and_hide(success)
@@ -1683,6 +1694,7 @@ class hyprwhsprApp:
             RECOVERY_REQUESTED_FILE,
             RECOVERY_RESULT_FILE,
             MODEL_UNLOADED_FILE,
+            TRANSCRIPT_PREVIEW_FILE,
         ]
         for f in stale_files:
             try:
@@ -1708,6 +1720,7 @@ class hyprwhsprApp:
         with self._cancel_pending_hide_lock:
             self._cancel_pending_hide = True
         if self._mic_osd_runner and self._mic_osd_runner.is_available():
+            self._mic_osd_runner.clear_preview_text()
             self._mic_osd_runner.set_state('recording')
             self._mic_osd_runner.show()
 
@@ -1718,6 +1731,24 @@ class hyprwhsprApp:
             try:
                 runner.hide()
                 runner.clear_state()
+                runner.clear_preview_text()
+            except Exception:
+                pass
+
+    def _set_mic_osd_preview_text(self, text: str):
+        """Update live transcript preview text in the mic OSD."""
+        runner = getattr(self, '_mic_osd_runner', None)
+        if runner:
+            try:
+                runner.set_preview_text(text)
+            except Exception:
+                pass
+
+    def _clear_mic_osd_preview_text(self):
+        runner = getattr(self, '_mic_osd_runner', None)
+        if runner:
+            try:
+                runner.clear_preview_text()
             except Exception:
                 pass
 
