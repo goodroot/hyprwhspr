@@ -21,10 +21,18 @@ def is_gnome():
     desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
     return 'gnome' in desktop
 
-from .window import OSDWindow, load_css
-from .audio import AudioMonitor
-from .visualizations import VISUALIZATIONS
-from .theme import ThemeWatcher
+_MIC_OSD_IMPORT_ERROR = None
+try:
+    from .window import OSDWindow, load_css
+    from .audio import AudioMonitor
+    from .visualizations import VISUALIZATIONS
+    from .theme import ThemeWatcher
+except ImportError as e:
+    _MIC_OSD_IMPORT_ERROR = e
+    OSDWindow = None
+    AudioMonitor = None
+    VISUALIZATIONS = {}
+    ThemeWatcher = None
 
 # Import paths with fallback for daemon context
 try:
@@ -472,6 +480,10 @@ def main():
         help="Run as daemon (start hidden, show on SIGUSR1, hide on SIGUSR2)"
     )
     args = parser.parse_args()
+
+    if _MIC_OSD_IMPORT_ERROR is not None:
+        print(f"[MIC-OSD] Unavailable: {_MIC_OSD_IMPORT_ERROR}", file=sys.stderr, flush=True)
+        return 1
     
     # Set up signal handlers
     signal.signal(signal.SIGTERM, _signal_handler)

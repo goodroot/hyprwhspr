@@ -1,12 +1,53 @@
 import ast
+import builtins
+import sys
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
 
 
 class MicOSDMainFallbackTests(unittest.TestCase):
+    def _stub_gtk_modules(self):
+        gtk_module = types.SimpleNamespace(Application=object)
+        glib_module = types.SimpleNamespace()
+        gi_module = types.SimpleNamespace(require_version=lambda *args: None)
+        gi_repository = types.SimpleNamespace(Gtk=gtk_module, GLib=glib_module)
+        return {
+            "gi": gi_module,
+            "gi.repository": gi_repository,
+        }
+
+    def test_main_import_degrades_cleanly_when_cairo_missing(self):
+        for module_name in (
+            "mic_osd.main",
+            "mic_osd.window",
+            "mic_osd.visualizations",
+            "mic_osd.visualizations.base",
+            "mic_osd.visualizations.waveform",
+            "mic_osd.visualizations.vu_meter",
+        ):
+            sys.modules.pop(module_name, None)
+
+        original_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "cairo":
+                raise ImportError("no cairo")
+            return original_import(name, *args, **kwargs)
+
+        with mock.patch.dict(sys.modules, self._stub_gtk_modules()), \
+                mock.patch("builtins.__import__", side_effect=fake_import):
+            import mic_osd.main as main_module
+
+        self.assertIsNotNone(main_module._MIC_OSD_IMPORT_ERROR)
+        with mock.patch.object(sys, "argv", ["mic-osd"]):
+            self.assertEqual(main_module.main(), 1)
+
     def test_transcript_preview_fallback_uses_runtime_dir(self):
         tree = ast.parse((ROOT / "lib" / "mic_osd" / "main.py").read_text(encoding="utf-8"))
 
