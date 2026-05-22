@@ -233,6 +233,8 @@ sys.exit(main())
     
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
+        self.clear_preview_text()
+
         if self._process is None:
             return
         

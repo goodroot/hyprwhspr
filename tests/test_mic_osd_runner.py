@@ -137,6 +137,29 @@ class MicOSDRunnerTests(unittest.TestCase):
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original
 
+    def test_hide_cancels_pending_preview_flush(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
+            original_file = runner_module.TRANSCRIPT_PREVIEW_FILE
+            original_interval = MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS
+            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
+            MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = 60.0
+            runner = MicOSDRunner()
+            try:
+                runner.set_preview_text("first")
+                runner.set_preview_text("stale pending")
+
+                runner.hide()
+                runner._flush_pending_preview_text()
+
+                self.assertFalse(preview_file.exists())
+            finally:
+                with runner._preview_lock:
+                    if runner._preview_flush_timer:
+                        runner._preview_flush_timer.cancel()
+                runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
+                MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = original_interval
+
     def test_high_frequency_preview_updates_are_coalesced(self):
         with tempfile.TemporaryDirectory() as tmp:
             preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
