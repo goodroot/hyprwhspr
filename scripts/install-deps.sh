@@ -310,6 +310,7 @@ install_deps_apt() {
         python3-pyudev \
         python3-dbus \
         python3-gi \
+        python3-cairo \
         gir1.2-gtk-4.0 \
         pipewire \
         pipewire-pulse \
@@ -371,6 +372,7 @@ install_deps_dnf() {
         python3-pyudev \
         python3-dbus \
         python3-gobject \
+        python3-cairo \
         gtk4 \
         gtk4-layer-shell \
         pipewire \
@@ -404,6 +406,7 @@ install_deps_zypper() {
         python3-pulsectl \
         python3-pyudev \
         python3-gobject \
+        python3-pycairo \
         typelib-1_0-Gtk-4_0 \
         pipewire \
         pipewire-pulseaudio \

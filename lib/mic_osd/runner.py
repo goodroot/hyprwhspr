@@ -36,6 +36,7 @@ class MicOSDRunner:
     def is_available() -> bool:
         """Check if mic-osd can run."""
         try:
+            import cairo  # noqa: F401
             import gi
             gi.require_version('Gtk', '4.0')
             gi.require_version('Gtk4LayerShell', '1.0')
@@ -49,26 +50,32 @@ class MicOSDRunner:
         # Check for common distro indicators
         try:
             if Path('/etc/debian_version').exists():
-                return ('python3-gi gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
+                return ('python3-gi python3-cairo gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
             elif Path('/etc/arch-release').exists():
-                return ('python-gobject gtk4', 'gtk4-layer-shell')
+                return ('python-gobject python-cairo gtk4', 'gtk4-layer-shell')
             elif Path('/etc/fedora-release').exists():
-                return ('python3-gobject gtk4', 'gtk4-layer-shell')
+                return ('python3-gobject python3-cairo gtk4', 'gtk4-layer-shell')
             elif Path('/etc/os-release').exists():
-                content = Path('/etc/os-release').read_text().lower()
+                content = Path('/etc/os-release').read_text(encoding='utf-8').lower()
                 if 'debian' in content or 'ubuntu' in content:
-                    return ('python3-gi gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
+                    return ('python3-gi python3-cairo gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
                 elif 'fedora' in content or 'rhel' in content:
-                    return ('python3-gobject gtk4', 'gtk4-layer-shell')
+                    return ('python3-gobject python3-cairo gtk4', 'gtk4-layer-shell')
+                elif 'suse' in content:
+                    return ('python3-gobject python3-pycairo typelib-1_0-Gtk-4_0', 'gtk4-layer-shell')
         except Exception:
             pass
         # Default to Arch-style names
-        return ('python-gobject gtk4', 'gtk4-layer-shell')
+        return ('python-gobject python-cairo gtk4', 'gtk4-layer-shell')
 
     @staticmethod
     def get_unavailable_reason() -> str:
         """Get reason why mic-osd is unavailable."""
         gtk_pkg, layer_pkg = MicOSDRunner._get_distro_packages()
+        try:
+            import cairo  # noqa: F401
+        except ImportError:
+            return f"PyCairo bindings not installed. Install: {gtk_pkg}"
         try:
             import gi
             gi.require_version('Gtk', '4.0')
@@ -308,7 +315,7 @@ sys.exit(main())
             TRANSCRIPT_PREVIEW_FILE.parent.mkdir(parents=True, exist_ok=True)
             text = (text or "").strip()
             if text:
-                TRANSCRIPT_PREVIEW_FILE.write_text(text)
+                TRANSCRIPT_PREVIEW_FILE.write_text(text, encoding='utf-8')
             elif TRANSCRIPT_PREVIEW_FILE.exists():
                 TRANSCRIPT_PREVIEW_FILE.unlink()
         except Exception as e:

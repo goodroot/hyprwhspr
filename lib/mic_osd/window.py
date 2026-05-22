@@ -5,10 +5,11 @@ Creates an overlay window at the bottom center of the screen
 for displaying audio visualizations.
 """
 
+from __future__ import annotations
+
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
-import cairo
 
 try:
     gi.require_version('Gtk4LayerShell', '1.0')
