@@ -110,6 +110,33 @@ class MicOSDRunnerTests(unittest.TestCase):
         self.assertEqual(window._text_width(ObjectContext(), "abcd"), 20)
         self.assertEqual(window._text_height(ObjectContext(), "abcd"), 10)
 
+    def test_preview_text_preserves_spaces_but_trims_newlines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
+            original = runner_module.TRANSCRIPT_PREVIEW_FILE
+            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
+            try:
+                MicOSDRunner().set_preview_text(" cafe 東京 \n")
+
+                self.assertEqual(preview_file.read_text(encoding="utf-8"), " cafe 東京 ")
+            finally:
+                runner_module.TRANSCRIPT_PREVIEW_FILE = original
+
+    def test_clear_preview_text_removes_stale_runtime_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
+            original = runner_module.TRANSCRIPT_PREVIEW_FILE
+            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
+            try:
+                MicOSDRunner().set_preview_text("stale preview")
+                self.assertTrue(preview_file.exists())
+
+                MicOSDRunner().clear_preview_text()
+
+                self.assertFalse(preview_file.exists())
+            finally:
+                runner_module.TRANSCRIPT_PREVIEW_FILE = original
+
 
 if __name__ == "__main__":
     unittest.main()

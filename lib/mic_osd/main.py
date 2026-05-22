@@ -311,7 +311,7 @@ class MicOSD:
 
             preview = ""
             if TRANSCRIPT_PREVIEW_FILE.exists():
-                preview = TRANSCRIPT_PREVIEW_FILE.read_text(encoding='utf-8').strip()
+                preview = TRANSCRIPT_PREVIEW_FILE.read_text(encoding='utf-8').rstrip('\r\n')
             if preview != self._last_preview_text:
                 self._last_preview_text = preview
                 if self.window and hasattr(self.window, 'set_preview_text'):

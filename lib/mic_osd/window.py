@@ -135,7 +135,7 @@ class OSDWindow(Gtk.Window):
 
     def set_preview_text(self, text: str):
         """Set compact transcript preview text."""
-        self._preview_text = (text or "").strip()
+        self._preview_text = (text or "").rstrip('\r\n')
         self.drawing_area.queue_draw()
     
     def set_visualization(self, visualization):

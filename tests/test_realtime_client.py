@@ -107,8 +107,17 @@ class RealtimeClientTests(unittest.TestCase):
         client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "東京"})
         client._handle_event({"type": "conversation.item.input_audio_transcription.completed"})
 
-        self.assertEqual(previews, ["cafe", "cafe 東京", ""])
+        self.assertEqual(previews, ["cafe ", "cafe 東京", ""])
         self.assertEqual(client.commit_and_get_text(timeout=0.1), "cafe 東京")
+
+    def test_partial_preview_preserves_trailing_spaces(self):
+        previews = []
+        client = self._client_with_ws()
+        client.set_partial_transcript_callback(previews.append)
+
+        client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "hello "})
+
+        self.assertEqual(previews, ["hello "])
 
     def test_speech_started_clears_stale_partial(self):
         previews = []

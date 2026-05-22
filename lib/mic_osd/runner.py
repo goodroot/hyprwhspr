@@ -321,7 +321,7 @@ sys.exit(main())
                 TRANSCRIPT_PREVIEW_FILE.parent.chmod(0o700)
             except Exception:
                 pass
-            text = (text or "").strip()
+            text = (text or "").rstrip('\r\n')
             if text:
                 fd = os.open(
                     TRANSCRIPT_PREVIEW_FILE,

@@ -382,7 +382,7 @@ class RealtimeClient:
             if delta:
                 with self.lock:
                     self._partial_transcript += delta
-                    partial = self._partial_transcript.strip()
+                    partial = self._partial_transcript
                 self._notify_partial_transcript(partial)
         
         elif event_type == 'input_audio_buffer.committed':
