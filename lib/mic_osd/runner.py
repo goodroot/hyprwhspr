@@ -10,6 +10,7 @@ import subprocess
 import signal
 import sys
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -34,7 +35,11 @@ class MicOSDRunner:
         self._process = None
         self._mic_osd_dir = Path(__file__).parent
         self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
+        self._preview_lock = threading.Lock()
         self._last_preview_write_at = 0.0
+        self._pending_preview_text = None
+        self._preview_flush_timer = None
+        self._preview_generation = 0
     
     @staticmethod
     def is_available() -> bool:
@@ -323,17 +328,53 @@ sys.exit(main())
         """Set live transcript preview text."""
         text = (text or "").rstrip('\r\n')
 
-        if not text:
-            self._write_preview_text_file("")
-            return
+        with self._preview_lock:
+            if not text:
+                self._cancel_pending_preview_flush()
+                self._preview_generation += 1
+                self._write_preview_text_file("")
+                return
 
-        now = time.monotonic()
-        elapsed = now - self._last_preview_write_at
-        if elapsed < self.PREVIEW_WRITE_INTERVAL_SECONDS:
-            return
+            now = time.monotonic()
+            elapsed = now - self._last_preview_write_at
+            if elapsed >= self.PREVIEW_WRITE_INTERVAL_SECONDS:
+                self._cancel_pending_preview_flush()
+                self._last_preview_write_at = now
+                self._write_preview_text_file(text)
+                return
 
-        self._last_preview_write_at = now
-        self._write_preview_text_file(text)
+            self._pending_preview_text = text
+            if self._preview_flush_timer is None:
+                generation = self._preview_generation
+                delay = self.PREVIEW_WRITE_INTERVAL_SECONDS - elapsed
+                self._preview_flush_timer = threading.Timer(
+                    delay,
+                    self._flush_pending_preview_text,
+                    args=(generation,),
+                )
+                self._preview_flush_timer.daemon = True
+                self._preview_flush_timer.start()
+
+    def _cancel_pending_preview_flush(self):
+        self._pending_preview_text = None
+        if self._preview_flush_timer:
+            self._preview_flush_timer.cancel()
+            self._preview_flush_timer = None
+
+    def _flush_pending_preview_text(self, generation: int):
+        with self._preview_lock:
+            if generation != self._preview_generation:
+                return
+
+            text = self._pending_preview_text
+            self._pending_preview_text = None
+            self._preview_flush_timer = None
+
+            if text is None:
+                return
+
+            self._last_preview_write_at = time.monotonic()
+            self._write_preview_text_file(text)
 
     def _write_preview_text_file(self, text: str):
         """Write live preview text to the runtime IPC file."""
@@ -363,8 +404,11 @@ sys.exit(main())
     def clear_preview_text(self):
         """Clear live transcript preview text."""
         try:
-            if TRANSCRIPT_PREVIEW_FILE.exists():
-                TRANSCRIPT_PREVIEW_FILE.unlink()
+            with self._preview_lock:
+                self._cancel_pending_preview_flush()
+                self._preview_generation += 1
+                if TRANSCRIPT_PREVIEW_FILE.exists():
+                    TRANSCRIPT_PREVIEW_FILE.unlink()
         except Exception as e:
             print(f"[MIC-OSD] Failed to clear transcript preview: {e}", flush=True)
 

@@ -14,6 +14,25 @@ from mic_osd.runner import MicOSDRunner
 import mic_osd.runner as runner_module
 
 
+class FakeTimer:
+    def __init__(self, delay, callback, args=()):
+        self.delay = delay
+        self.callback = callback
+        self.args = args
+        self.daemon = False
+        self.started = False
+        self.cancelled = False
+
+    def start(self):
+        self.started = True
+
+    def cancel(self):
+        self.cancelled = True
+
+    def fire(self):
+        self.callback(*self.args)
+
+
 class MicOSDRunnerTests(unittest.TestCase):
     def _import_window_with_stubs(self):
         for module_name in ("mic_osd.window",):
@@ -149,40 +168,61 @@ class MicOSDRunnerTests(unittest.TestCase):
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original
 
-    def test_hide_clears_preview_without_delayed_rewrite(self):
+    def test_hide_cancels_pending_preview_flush(self):
         with tempfile.TemporaryDirectory() as tmp:
             preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
             original_file = runner_module.TRANSCRIPT_PREVIEW_FILE
             original_interval = MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS
+            timers = []
             runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
             MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = 60.0
             runner = MicOSDRunner()
             try:
-                runner.set_preview_text("first")
-                runner.set_preview_text("ignored throttled update")
+                def make_timer(*args, **kwargs):
+                    timer = FakeTimer(*args, **kwargs)
+                    timers.append(timer)
+                    return timer
+
+                with mock.patch.object(runner_module.threading, "Timer", side_effect=make_timer):
+                    runner.set_preview_text("first")
+                    runner.set_preview_text("stale pending")
 
                 runner.hide()
+                timers[0].fire()
 
+                self.assertTrue(timers[0].cancelled)
                 self.assertFalse(preview_file.exists())
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
                 MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = original_interval
 
-    def test_high_frequency_preview_updates_are_throttled_without_timer(self):
+    def test_high_frequency_preview_updates_are_coalesced(self):
         with tempfile.TemporaryDirectory() as tmp:
             preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
             original_file = runner_module.TRANSCRIPT_PREVIEW_FILE
             original_interval = MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS
+            timers = []
             runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
             MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = 60.0
             runner = MicOSDRunner()
             try:
-                runner.set_preview_text("first")
-                runner.set_preview_text("second")
-                runner.set_preview_text("third")
+                def make_timer(*args, **kwargs):
+                    timer = FakeTimer(*args, **kwargs)
+                    timers.append(timer)
+                    return timer
+
+                with mock.patch.object(runner_module.threading, "Timer", side_effect=make_timer):
+                    runner.set_preview_text("first")
+                    runner.set_preview_text("second")
+                    runner.set_preview_text("third")
 
                 self.assertEqual(preview_file.read_text(encoding="utf-8"), "first")
-                self.assertFalse(hasattr(runner, "_preview_flush_timer"))
+                self.assertEqual(len(timers), 1)
+                self.assertTrue(timers[0].started)
+
+                timers[0].fire()
+
+                self.assertEqual(preview_file.read_text(encoding="utf-8"), "third")
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
                 MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = original_interval
