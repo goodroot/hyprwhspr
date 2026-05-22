@@ -86,6 +86,18 @@ class RealtimeClientTests(unittest.TestCase):
         self.assertEqual(previews, ["hello", "hello wor", ""])
         self.assertEqual(client.commit_and_get_text(timeout=0.1), "hello world")
 
+    def test_speech_started_clears_stale_partial(self):
+        previews = []
+        client = self._client_with_ws()
+        client.set_partial_transcript_callback(previews.append)
+
+        client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "first segment"})
+        client._handle_event({"type": "input_audio_buffer.speech_started"})
+        client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "next"})
+
+        self.assertEqual(client._partial_transcript, "next")
+        self.assertEqual(previews, ["first segment", "", "next"])
+
     def test_clear_audio_buffer_clears_stale_partial(self):
         previews = []
         client = self._client_with_ws()

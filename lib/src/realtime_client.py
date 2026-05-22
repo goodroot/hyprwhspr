@@ -393,6 +393,8 @@ class RealtimeClient:
             # Reset commit tracking - new speech means we haven't committed THIS audio yet
             with self.lock:
                 self._buffer_committed = False
+                self._partial_transcript = ""
+            self._notify_partial_transcript("")
         
         elif event_type == 'input_audio_buffer.speech_stopped':
             print(f'[REALTIME] Speech ended', flush=True)
