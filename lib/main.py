@@ -1719,6 +1719,7 @@ class hyprwhsprApp:
         with self._cancel_pending_hide_lock:
             self._cancel_pending_hide = True
         if self._mic_osd_runner and self._mic_osd_runner.is_available():
+            self._mic_osd_runner.clear_preview_text()
             self._mic_osd_runner.set_state('recording')
             self._mic_osd_runner.show()
 

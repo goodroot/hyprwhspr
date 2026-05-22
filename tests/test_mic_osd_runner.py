@@ -108,6 +108,31 @@ class MicOSDRunnerTests(unittest.TestCase):
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original
 
+    def test_preview_text_write_uses_atomic_replace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
+            original_file = runner_module.TRANSCRIPT_PREVIEW_FILE
+            original_replace = runner_module.os.replace
+            replace_calls = []
+            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
+            try:
+                def replace_spy(src, dst):
+                    replace_calls.append((Path(src), Path(dst)))
+                    original_replace(src, dst)
+
+                with mock.patch.object(runner_module.os, "replace", side_effect=replace_spy):
+                    MicOSDRunner().set_preview_text("atomic preview")
+
+                self.assertEqual(preview_file.read_text(encoding="utf-8"), "atomic preview")
+                self.assertEqual(len(replace_calls), 1)
+                temp_path, final_path = replace_calls[0]
+                self.assertNotEqual(temp_path, final_path)
+                self.assertEqual(final_path, preview_file)
+                self.assertTrue(temp_path.name.startswith(".transcript_preview."))
+                self.assertFalse(temp_path.exists())
+            finally:
+                runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
+
     def test_window_module_imports_with_cairo_available(self):
         window_module, cairo_module = self._import_window_with_stubs()
 
@@ -123,6 +148,31 @@ class MicOSDRunnerTests(unittest.TestCase):
 
         with mock.patch("builtins.__import__", side_effect=fake_import):
             self.assertFalse(MicOSDRunner.is_available())
+
+    def test_pid_validation_rejects_unrelated_process_cmdline(self):
+        with mock.patch.object(runner_module.os, "kill", return_value=None), \
+                mock.patch.object(runner_module.Path, "read_bytes", return_value=b"python\0not-osd\0"):
+            self.assertFalse(MicOSDRunner._is_mic_osd_daemon_pid(12345))
+
+    def test_pid_validation_accepts_mic_osd_daemon_cmdline(self):
+        cmdline = b"python3\0-c\0from mic_osd.main import main\nsys.argv = ['mic-osd', '--daemon']\0"
+        with mock.patch.object(runner_module.os, "kill", return_value=None), \
+                mock.patch.object(runner_module.Path, "read_bytes", return_value=cmdline):
+            self.assertTrue(MicOSDRunner._is_mic_osd_daemon_pid(12345))
+
+    def test_orphaned_pid_signal_revalidates_before_sending(self):
+        runner = MicOSDRunner()
+        runner._process = types.SimpleNamespace(pid=999, poll=lambda: None)
+        runner._orphaned_daemon_pid = 12345
+
+        with mock.patch.object(MicOSDRunner, "is_available", return_value=True), \
+                mock.patch.object(runner, "_is_mic_osd_daemon_pid", return_value=False), \
+                mock.patch.object(runner_module.os, "kill") as kill:
+            self.assertFalse(runner.show())
+
+        kill.assert_not_called()
+        self.assertIsNone(runner._process)
+        self.assertIsNone(runner._orphaned_daemon_pid)
 
     def test_text_extents_support_tuple_and_attribute_shapes(self):
         window_module, _ = self._import_window_with_stubs()
