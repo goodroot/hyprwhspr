@@ -27,6 +27,7 @@ MIC_OSD_PID_FILE = CONFIG_DIR / 'mic_osd.pid'
 SUSPEND_MARKER_FILE = CONFIG_DIR / '.suspend_marker'
 LOCK_FILE = CONFIG_DIR / 'hyprwhspr.lock'
 VISUALIZER_STATE_FILE = CONFIG_DIR / 'visualizer_state'  # recording|paused|processing|error|success
+TRANSCRIPT_PREVIEW_FILE = CONFIG_DIR / 'transcript_preview'
 
 # Secure credential storage
 CREDENTIALS_DIR = DATA_DIR

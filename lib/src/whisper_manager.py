@@ -59,6 +59,7 @@ class WhisperManager:
         # Realtime WebSocket client
         self._realtime_client = None
         self._realtime_streaming_callback = None
+        self._realtime_partial_callback = None
         # Connection parameters used for reconnect-on-demand.
         # (Stored in-memory only; do not log API keys.)
         self._realtime_connect_params = None
@@ -486,6 +487,9 @@ class WhisperManager:
                     
                     # Initialize RealtimeClient with mode
                     realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+                    if provider_id == 'openai' and model_id == 'gpt-realtime-whisper' and realtime_mode != 'transcribe':
+                        print('ERROR: gpt-realtime-whisper is supported only with realtime_mode="transcribe"', flush=True)
+                        return False
                     self._realtime_client = RealtimeClient(mode=realtime_mode)
                     
                     # Get WebSocket URL
@@ -517,6 +521,11 @@ class WhisperManager:
                     
                     # Set language in realtime client (for session.update)
                     self._realtime_client.language = language
+
+                    delay = self.config.get_setting('realtime_transcription_delay', 'low')
+                    self._realtime_client.set_transcription_delay(delay)
+                    if self._realtime_partial_callback:
+                        self._realtime_client.set_partial_transcript_callback(self._realtime_partial_callback)
                     
                     # Set buffer max seconds
                     buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
@@ -1554,6 +1563,12 @@ class WhisperManager:
             self._realtime_client.clear_audio_buffer()
             return self._realtime_streaming_callback
         return None
+
+    def set_realtime_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
+        """Set callback for realtime partial transcript previews."""
+        self._realtime_partial_callback = callback
+        if self._realtime_client and hasattr(self._realtime_client, 'set_partial_transcript_callback'):
+            self._realtime_client.set_partial_transcript_callback(callback)
 
     def _reconnect_realtime_client(self) -> bool:
         """Reconnect realtime client using stored connect params."""

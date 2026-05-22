@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple
 
 
 # Provider registry with known cloud transcription providers
+# Model entries marked hidden stay out of the REST setup model list while
+# remaining selectable for provider-specific realtime setup flows.
 PROVIDERS: Dict[str, Dict] = {
     'openai': {
         'name': 'OpenAI',
@@ -29,6 +31,13 @@ PROVIDERS: Dict[str, Dict] = {
                 'name': 'GPT-4o Mini Transcribe (2025-12-15)',
                 'description': 'Updated version of the faster, lighter transcription model',
                 'body': {'model': 'gpt-4o-mini-transcribe-2025-12-15'}
+            },
+            'gpt-realtime-whisper': {
+                'name': 'GPT Realtime Whisper',
+                'description': 'Recommended realtime streaming transcription model',
+                'body': {'model': 'gpt-realtime-whisper'},
+                'realtime_model': True,
+                'hidden': True
             },
             'gpt-realtime-mini-2025-12-15': {
                 'name': 'GPT Realtime Mini (2025-12-15)',
@@ -210,4 +219,3 @@ def validate_api_key(provider_id: str, api_key: str) -> Tuple[bool, Optional[str
         return False, "API key appears too short"
     
     return True, None
-

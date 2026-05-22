@@ -14,10 +14,10 @@ from pathlib import Path
 
 # Import paths
 try:
-    from ..src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE
+    from ..src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
 except ImportError:
     # Fallback for direct execution
-    from src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE
+    from src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
 
 
 class MicOSDRunner:
@@ -301,6 +301,26 @@ sys.exit(main())
                 VISUALIZER_STATE_FILE.unlink()
         except Exception as e:
             print(f"[MIC-OSD] Failed to clear visualizer state: {e}", flush=True)
+
+    def set_preview_text(self, text: str):
+        """Set live transcript preview text."""
+        try:
+            TRANSCRIPT_PREVIEW_FILE.parent.mkdir(parents=True, exist_ok=True)
+            text = (text or "").strip()
+            if text:
+                TRANSCRIPT_PREVIEW_FILE.write_text(text)
+            elif TRANSCRIPT_PREVIEW_FILE.exists():
+                TRANSCRIPT_PREVIEW_FILE.unlink()
+        except Exception as e:
+            print(f"[MIC-OSD] Failed to write transcript preview: {e}", flush=True)
+
+    def clear_preview_text(self):
+        """Clear live transcript preview text."""
+        try:
+            if TRANSCRIPT_PREVIEW_FILE.exists():
+                TRANSCRIPT_PREVIEW_FILE.unlink()
+        except Exception as e:
+            print(f"[MIC-OSD] Failed to clear transcript preview: {e}", flush=True)
 
     def stop(self):
         """Stop the daemon completely."""

@@ -28,16 +28,17 @@ from .theme import ThemeWatcher
 
 # Import paths with fallback for daemon context
 try:
-    from ..src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE
+    from ..src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
 except ImportError:
     try:
-        from src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE
+        from src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
     except ImportError:
         # Fallback: construct paths manually if imports fail
         home = Path.home()
         xdg_config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
         RECORDING_STATUS_FILE = xdg_config / 'hyprwhspr' / 'recording_status'
         VISUALIZER_STATE_FILE = xdg_config / 'hyprwhspr' / 'visualizer_state'
+        TRANSCRIPT_PREVIEW_FILE = xdg_config / 'hyprwhspr' / 'transcript_preview'
 
 
 class MicOSD:
@@ -54,6 +55,7 @@ class MicOSD:
         self._auto_hide_timeout_id = None
         self._state_poll_timer_id = None
         self._last_visualizer_state = None
+        self._last_preview_text = None
         self.daemon = daemon
         self.visible = False
         self.theme_watcher = None
@@ -221,6 +223,9 @@ class MicOSD:
         
         try:
             self.visible = False
+            if hasattr(self.window, 'set_preview_text'):
+                self.window.set_preview_text("")
+            self._last_preview_text = None
             self.window.set_visible(False)
             
             # Stop update timer
@@ -303,6 +308,14 @@ class MicOSD:
                     self._last_visualizer_state = 'recording'
                     if hasattr(self.visualization, 'set_state'):
                         self.visualization.set_state('recording')
+
+            preview = ""
+            if TRANSCRIPT_PREVIEW_FILE.exists():
+                preview = TRANSCRIPT_PREVIEW_FILE.read_text().strip()
+            if preview != self._last_preview_text:
+                self._last_preview_text = preview
+                if self.window and hasattr(self.window, 'set_preview_text'):
+                    self.window.set_preview_text(preview)
         except Exception:
             pass  # Ignore file read errors
         return True  # Continue polling

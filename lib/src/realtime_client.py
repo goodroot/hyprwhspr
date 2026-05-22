@@ -31,6 +31,8 @@ except (ImportError, ModuleNotFoundError) as e:
 
 class RealtimeClient:
     """Generic WebSocket client for realtime transcription APIs"""
+
+    VALID_TRANSCRIPTION_DELAYS = {'minimal', 'low', 'medium', 'high', 'xhigh'}
     
     def __init__(self, mode: str = 'transcribe'):
         """
@@ -46,6 +48,8 @@ class RealtimeClient:
         self.instructions = None
         self.mode = mode
         self.language = None  # Language code for transcription (None = auto-detect)
+        self.transcription_delay = 'low'
+        self.partial_transcript_callback = None
 
         # Threading
         self.lock = threading.Lock()
@@ -65,6 +69,7 @@ class RealtimeClient:
         # Transcription assembly (transcribe mode)
         self._transcript_generation = 0
         self._committed_segments = []
+        self._partial_transcript = ""
 
         # Track whether new audio has been queued since the last received transcript.
         # This helps avoid returning stale mid-stream text on stop.
@@ -359,14 +364,24 @@ class RealtimeClient:
                     self._committed_segments.append(transcript)
                 self._transcript_generation += 1
                 self._last_transcript_audio_activity_id = self._audio_activity_id
+                self._partial_transcript = ""
                 # Keep legacy fields coherent
                 self.current_response_text = transcript
                 self.response_complete = True
+            self._notify_partial_transcript("")
             self.response_event.set()
             print(
                 f'[REALTIME] Transcription completed ({len(transcript)} chars)',
                 flush=True,
             )
+
+        elif event_type == 'conversation.item.input_audio_transcription.delta':
+            delta = event.get('delta', '') or ''
+            if delta:
+                with self.lock:
+                    self._partial_transcript += delta
+                    partial = self._partial_transcript.strip()
+                self._notify_partial_transcript(partial)
         
         elif event_type == 'input_audio_buffer.committed':
             print(f'[REALTIME] Audio buffer committed', flush=True)
@@ -386,6 +401,9 @@ class RealtimeClient:
             error = event.get('error', {})
             error_message = error.get('message', 'Unknown error')
             print(f'[REALTIME] Server error: {error_message}', flush=True)
+            with self.lock:
+                self._partial_transcript = ""
+            self._notify_partial_transcript("")
             self.response_complete = True
             self.response_event.set()  # Unblock waiting thread
     
@@ -397,9 +415,14 @@ class RealtimeClient:
         if self.mode == 'transcribe':
             # Transcription-only session
             # Build transcription config - omit language for auto-detect
-            transcription_config = {'model': 'gpt-4o-mini-transcribe'}
+            model = self.model or 'gpt-4o-mini-transcribe'
+            transcription_config = {'model': model}
             if self.language:
                 transcription_config['language'] = self.language
+
+            is_realtime_whisper = model == 'gpt-realtime-whisper'
+            if is_realtime_whisper:
+                transcription_config['delay'] = self._validated_transcription_delay()
 
             session_data = {
                 'type': 'transcription',
@@ -410,7 +433,7 @@ class RealtimeClient:
                             'rate': 24000
                         },
                         'transcription': transcription_config,
-                        'turn_detection': {
+                        'turn_detection': None if is_realtime_whisper else {
                             'type': 'server_vad',
                             'threshold': 0.5,
                             'prefix_padding_ms': 300,
@@ -456,6 +479,36 @@ class RealtimeClient:
         self.language = language
         if self.connected:
             self._send_session_update()
+
+    def set_transcription_delay(self, delay: str):
+        """Set gpt-realtime-whisper transcription delay."""
+        self.transcription_delay = self._normalize_transcription_delay(delay)
+        if self.connected:
+            self._send_session_update()
+
+    def set_partial_transcript_callback(self, callback):
+        """Register a callback for live transcription deltas."""
+        self.partial_transcript_callback = callback
+
+    def _normalize_transcription_delay(self, delay: str) -> str:
+        delay = (delay or 'low').strip().lower()
+        if delay not in self.VALID_TRANSCRIPTION_DELAYS:
+            print(f"[REALTIME] Invalid realtime_transcription_delay '{delay}', using 'low'", flush=True)
+            return 'low'
+        return delay
+
+    def _validated_transcription_delay(self) -> str:
+        self.transcription_delay = self._normalize_transcription_delay(self.transcription_delay)
+        return self.transcription_delay
+
+    def _notify_partial_transcript(self, text: str):
+        callback = self.partial_transcript_callback
+        if not callback:
+            return
+        try:
+            callback(text)
+        except Exception as e:
+            print(f'[REALTIME] Partial transcript callback failed: {e}', flush=True)
     
     def _attempt_reconnect(self):
         """Attempt to reconnect with exponential backoff"""
@@ -503,12 +556,14 @@ class RealtimeClient:
                 self.response_complete = False
                 self._transcript_generation = 0
                 self._committed_segments = []
+                self._partial_transcript = ""
                 self._audio_activity_id = 0
                 self._last_transcript_audio_activity_id = 0
                 self._dropped_chunks = 0
                 self._last_drop_log_time = 0.0
                 self._queue_cond.notify_all()
             self.response_event.clear()
+            self._notify_partial_transcript("")
         except Exception as e:
             print(f'[REALTIME] Failed to clear buffer: {e}', flush=True)
     
@@ -756,4 +811,3 @@ class RealtimeClient:
     def set_max_buffer_seconds(self, seconds: float):
         """Set maximum buffer size in seconds for backpressure handling"""
         self.max_buffer_seconds = max(1.0, seconds)  # Minimum 1 second
-

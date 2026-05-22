@@ -223,6 +223,9 @@ class hyprwhsprApp:
                 import traceback
                 traceback.print_exc()
 
+        preview_callback = self._set_mic_osd_preview_text if self._is_realtime_whisper_preview_enabled() else None
+        self.whisper_manager.set_realtime_partial_callback(preview_callback)
+
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
 
@@ -1170,6 +1173,8 @@ class hyprwhsprApp:
         print("Recording started", flush=True)
 
         try:
+            self._clear_mic_osd_preview_text()
+
             # Clear zero-volume signal file when starting a new recording
             # This allows waybar to recover immediately on successful start
             self._clear_zero_volume_signal()
@@ -1367,6 +1372,10 @@ class hyprwhsprApp:
         self._notify_capture_subscriber("", final=True)
 
         try:
+            self._clear_mic_osd_preview_text()
+        except Exception:
+            pass
+        try:
             self._hide_mic_osd()
         except Exception:
             pass
@@ -1547,6 +1556,7 @@ class hyprwhsprApp:
             print(f"[ERROR] Error processing audio: {e}", flush=True)
         finally:
             self._notify_capture_subscriber("", final=True)
+            self._clear_mic_osd_preview_text()
             self.is_processing = False
             # Show success/error state and hide OSD after delay
             self._show_result_and_hide(success)
@@ -1718,6 +1728,36 @@ class hyprwhsprApp:
             try:
                 runner.hide()
                 runner.clear_state()
+                runner.clear_preview_text()
+            except Exception:
+                pass
+
+    def _is_realtime_whisper_preview_enabled(self) -> bool:
+        """Return True when live OSD preview should be wired."""
+        if not self.config.get_setting('mic_osd_enabled', True):
+            return False
+        backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+        return (
+            backend == 'realtime-ws'
+            and self.config.get_setting('websocket_provider') == 'openai'
+            and self.config.get_setting('websocket_model') == 'gpt-realtime-whisper'
+            and self.config.get_setting('realtime_mode', 'transcribe') == 'transcribe'
+        )
+
+    def _set_mic_osd_preview_text(self, text: str):
+        """Update live transcript preview text in the mic OSD."""
+        runner = getattr(self, '_mic_osd_runner', None)
+        if runner:
+            try:
+                runner.set_preview_text(text)
+            except Exception:
+                pass
+
+    def _clear_mic_osd_preview_text(self):
+        runner = getattr(self, '_mic_osd_runner', None)
+        if runner:
+            try:
+                runner.clear_preview_text()
             except Exception:
                 pass
 
