@@ -14,23 +14,7 @@ import mic_osd.runner as runner_module
 
 
 class MicOSDRunnerTests(unittest.TestCase):
-    def test_preview_text_is_written_as_utf8_with_restrictive_permissions(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
-            original = runner_module.TRANSCRIPT_PREVIEW_FILE
-            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
-            try:
-                text = "cafe 東京"
-                MicOSDRunner().set_preview_text(text)
-
-                self.assertEqual(preview_file.read_bytes(), text.encode("utf-8"))
-                self.assertEqual(preview_file.read_text(encoding="utf-8"), text)
-                self.assertEqual(preview_file.parent.stat().st_mode & 0o777, 0o700)
-                self.assertEqual(preview_file.stat().st_mode & 0o777, 0o600)
-            finally:
-                runner_module.TRANSCRIPT_PREVIEW_FILE = original
-
-    def test_window_module_imports_with_cairo_available(self):
+    def _import_window_with_stubs(self):
         for module_name in ("mic_osd.window",):
             sys.modules.pop(module_name, None)
 
@@ -76,17 +60,55 @@ class MicOSDRunnerTests(unittest.TestCase):
             Gtk4LayerShell=layer_shell_module,
         )
 
-        with mock.patch.dict(
+        patcher = mock.patch.dict(
             sys.modules,
             {
                 "cairo": cairo_module,
                 "gi": gi_module,
                 "gi.repository": gi_repository,
             },
-        ):
+        )
+        with patcher:
             import mic_osd.window as window_module
+        return window_module, cairo_module
+
+    def test_preview_text_is_written_as_utf8_with_restrictive_permissions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
+            original = runner_module.TRANSCRIPT_PREVIEW_FILE
+            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
+            try:
+                text = "cafe 東京"
+                MicOSDRunner().set_preview_text(text)
+
+                self.assertEqual(preview_file.read_bytes(), text.encode("utf-8"))
+                self.assertEqual(preview_file.read_text(encoding="utf-8"), text)
+                self.assertEqual(preview_file.parent.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(preview_file.stat().st_mode & 0o777, 0o600)
+            finally:
+                runner_module.TRANSCRIPT_PREVIEW_FILE = original
+
+    def test_window_module_imports_with_cairo_available(self):
+        window_module, cairo_module = self._import_window_with_stubs()
 
         self.assertIs(window_module.cairo, cairo_module)
+
+    def test_text_extents_support_tuple_and_attribute_shapes(self):
+        window_module, _ = self._import_window_with_stubs()
+        window = object.__new__(window_module.OSDWindow)
+
+        class TupleContext:
+            def text_extents(self, text):
+                return (0, 0, len(text) * 5, 10, 0, 0)
+
+        class ObjectContext:
+            def text_extents(self, text):
+                return types.SimpleNamespace(width=len(text) * 5, height=10)
+
+        self.assertEqual(window._text_width(TupleContext(), "abcd"), 20)
+        self.assertEqual(window._text_height(TupleContext(), "abcd"), 10)
+        self.assertEqual(window._text_width(ObjectContext(), "abcd"), 20)
+        self.assertEqual(window._text_height(ObjectContext(), "abcd"), 10)
 
 
 if __name__ == "__main__":

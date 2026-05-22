@@ -223,7 +223,8 @@ class hyprwhsprApp:
                 import traceback
                 traceback.print_exc()
 
-        self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
+        if hasattr(self.whisper_manager, 'set_realtime_partial_callback'):
+            self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
