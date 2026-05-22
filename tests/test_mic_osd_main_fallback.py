@@ -82,6 +82,25 @@ class MicOSDMainFallbackTests(unittest.TestCase):
         )
         self.assertTrue(calls_helper)
 
+    def test_state_poll_updates_window_visualizer_state(self):
+        tree = ast.parse((ROOT / "lib" / "mic_osd" / "main.py").read_text(encoding="utf-8"))
+
+        poll_func = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_poll_state_file":
+                poll_func = node
+                break
+
+        self.assertIsNotNone(poll_func)
+
+        calls_window_state = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "set_visualizer_state"
+            for node in ast.walk(poll_func)
+        )
+        self.assertTrue(calls_window_state)
+
 
 if __name__ == "__main__":
     unittest.main()

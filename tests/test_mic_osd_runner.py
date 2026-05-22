@@ -33,6 +33,35 @@ class FakeTimer:
         self.callback(*self.args)
 
 
+class FakeCairoContext:
+    def __init__(self):
+        self.shown_text = []
+
+    def select_font_face(self, *args):
+        pass
+
+    def set_font_size(self, *args):
+        pass
+
+    def text_extents(self, text):
+        return (0, 0, len(text) * 5, 10, 0, 0)
+
+    def set_source_rgba(self, *args):
+        pass
+
+    def rectangle(self, *args):
+        pass
+
+    def fill(self):
+        pass
+
+    def move_to(self, *args):
+        pass
+
+    def show_text(self, text):
+        self.shown_text.append(text)
+
+
 class MicOSDRunnerTests(unittest.TestCase):
     def _import_window_with_stubs(self):
         for module_name in ("mic_osd.window",):
@@ -218,6 +247,22 @@ class MicOSDRunnerTests(unittest.TestCase):
         self.assertEqual(window._text_height(TupleContext(), "abcd"), 10)
         self.assertEqual(window._text_width(ObjectContext(), "abcd"), 20)
         self.assertEqual(window._text_height(ObjectContext(), "abcd"), 10)
+
+    def test_preview_text_draws_only_while_recording(self):
+        window_module, _ = self._import_window_with_stubs()
+        window = object.__new__(window_module.OSDWindow)
+        window._preview_text = "live partial"
+        window._visualizer_state = "processing"
+
+        processing_cr = FakeCairoContext()
+        window._draw_preview_text(processing_cr, 400, 68)
+
+        window._visualizer_state = "recording"
+        recording_cr = FakeCairoContext()
+        window._draw_preview_text(recording_cr, 400, 68)
+
+        self.assertEqual(processing_cr.shown_text, [])
+        self.assertEqual(recording_cr.shown_text, ["live partial"])
 
     def test_preview_text_preserves_spaces_but_trims_newlines(self):
         with tempfile.TemporaryDirectory() as tmp:

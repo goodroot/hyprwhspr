@@ -1445,6 +1445,7 @@ class hyprwhsprApp:
         print("Recording stopped", flush=True)
 
         try:
+            self._clear_mic_osd_preview_text()
 
             # Set visualizer to processing state (keep it visible during transcription)
             self._set_visualizer_state('processing')

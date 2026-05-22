@@ -51,6 +51,7 @@ class OSDWindow(Gtk.Window):
         self._width = width
         self._height = height
         self._preview_text = ""
+        self._visualizer_state = "recording"
         
         # Layer shell MUST be initialized immediately after window creation
         # and BEFORE any other window configuration
@@ -137,6 +138,11 @@ class OSDWindow(Gtk.Window):
         """Set compact transcript preview text."""
         self._preview_text = (text or "").rstrip('\r\n')
         self.drawing_area.queue_draw()
+
+    def set_visualizer_state(self, state: str):
+        """Track visualizer state so partial previews only render while recording."""
+        self._visualizer_state = (state or "recording").lower()
+        self.drawing_area.queue_draw()
     
     def set_visualization(self, visualization):
         """Change the visualization type."""
@@ -144,7 +150,7 @@ class OSDWindow(Gtk.Window):
         self.drawing_area.queue_draw()
 
     def _draw_preview_text(self, cr: cairo.Context, width: int, height: int):
-        if not self._preview_text:
+        if not self._preview_text or self._visualizer_state != "recording":
             return
 
         padding = 14

@@ -313,6 +313,8 @@ class MicOSD:
                     state = f.read().strip()
                     if state and state != self._last_visualizer_state:
                         self._last_visualizer_state = state
+                        if self.window and hasattr(self.window, 'set_visualizer_state'):
+                            self.window.set_visualizer_state(state)
                         # Update visualization state if it has the set_state method
                         if hasattr(self.visualization, 'set_state'):
                             self.visualization.set_state(state)
@@ -320,6 +322,8 @@ class MicOSD:
                 # No state file means default to recording state
                 if self._last_visualizer_state != 'recording':
                     self._last_visualizer_state = 'recording'
+                    if self.window and hasattr(self.window, 'set_visualizer_state'):
+                        self.window.set_visualizer_state('recording')
                     if hasattr(self.visualization, 'set_state'):
                         self.visualization.set_state('recording')
 

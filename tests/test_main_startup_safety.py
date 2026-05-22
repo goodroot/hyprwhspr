@@ -58,6 +58,37 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertIsNotNone(show_line)
         self.assertLess(clear_line, show_line)
 
+    def test_stop_recording_clears_preview_before_processing_state(self):
+        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
+
+        stop_func = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_stop_recording":
+                stop_func = node
+                break
+
+        self.assertIsNotNone(stop_func)
+
+        clear_line = None
+        processing_line = None
+        for node in ast.walk(stop_func):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "_clear_mic_osd_preview_text":
+                clear_line = node.lineno
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_set_visualizer_state"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "processing"
+            ):
+                processing_line = node.lineno
+
+        self.assertIsNotNone(clear_line)
+        self.assertIsNotNone(processing_line)
+        self.assertLess(clear_line, processing_line)
+
 
 if __name__ == "__main__":
     unittest.main()
