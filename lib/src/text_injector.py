@@ -85,6 +85,24 @@ class TextInjector:
         except Exception:
             return DEFAULT_PASTE_KEYCODE
 
+    def _has_custom_paste_keycode(self) -> bool:
+        """Return True when config indicates a non-QWERTY paste key workaround."""
+        if not self.config_manager:
+            return False
+
+        wev_keycode = self.config_manager.get_setting('paste_keycode_wev', None)
+        if wev_keycode is not None:
+            try:
+                return int(wev_keycode) - 8 != DEFAULT_PASTE_KEYCODE
+            except Exception:
+                return True
+
+        paste_keycode = self.config_manager.get_setting('paste_keycode', DEFAULT_PASTE_KEYCODE)
+        try:
+            return int(paste_keycode) != DEFAULT_PASTE_KEYCODE
+        except Exception:
+            return True
+
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
         """Get active window info, trying multiple compositor APIs."""
         # Niri
@@ -348,6 +366,49 @@ class TextInjector:
 
         except Exception as e:
             print(f"Slow paste key injection failed: {e}")
+            return False
+
+    def _is_gnome_wayland_session(self) -> bool:
+        """Return True for Mutter/GNOME Wayland sessions where uinput chords are unreliable."""
+        session_type = os.environ.get('XDG_SESSION_TYPE', '').lower()
+        if session_type and session_type != 'wayland':
+            return False
+        if not session_type and not os.environ.get('WAYLAND_DISPLAY'):
+            return False
+
+        desktop_values = [
+            os.environ.get('XDG_CURRENT_DESKTOP', ''),
+            os.environ.get('XDG_SESSION_DESKTOP', ''),
+            os.environ.get('DESKTOP_SESSION', ''),
+        ]
+        desktop = ':'.join(desktop_values).lower()
+        desktop_tokens = set(filter(None, re.split(r'[^a-z0-9]+', desktop)))
+        return bool(desktop_tokens & {'gnome', 'pop'})
+
+    def _type_text_ydotool(self, text: str) -> bool:
+        """
+        Type text directly with ydotool.
+
+        This is slower and less layout-aware than clipboard paste on compositors
+        where paste chords work, but it avoids Mutter dropping synthetic modifier
+        combos from uinput devices.
+        """
+        if not self.ydotool_available:
+            return False
+
+        try:
+            result = subprocess.run(
+                ['ydotool', 'type', '--key-delay', '5', '--key-hold', '5', '--', text],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
+                print(f"  ydotool type failed: {stderr}")
+                return False
+            return True
+        except Exception as e:
+            print(f"ydotool type injection failed: {e}")
             return False
 
     def _save_clipboard(self) -> Optional[bytes]:
@@ -624,6 +685,24 @@ class TextInjector:
         """Copy text to clipboard, then trigger paste via wtype (or ydotool fallback)."""
         try:
             window_info = self._get_active_window_info()
+            gnome_wayland_session = self._is_gnome_wayland_session()
+
+            # On GNOME/Mutter, both wtype and ydotool paste chords are unreliable.
+            # Type directly before touching the clipboard, unless the user has
+            # configured a non-QWERTY paste key workaround that ydotool type
+            # cannot honor.
+            if (
+                gnome_wayland_session
+                and self.ydotool_available
+                and not self._has_custom_paste_keycode()
+            ):
+                self._clear_stuck_modifiers()
+                time.sleep(0.05)
+                typed = self._type_text_ydotool(text)
+                if typed:
+                    self._send_enter_if_auto_submit()
+                    return True
+
             saved_clipboard = self._save_clipboard()
 
             # Copy text to clipboard
@@ -645,7 +724,9 @@ class TextInjector:
                 else:
                     paste_mode = self._detect_paste_mode(window_info)
 
-            # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back to ydotool
+            # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back to ydotool.
+            # Mutter/GNOME accepts individual uinput key events but drops modifier
+            # chords, so skip ydotool's paste chord there and use direct typing.
             pasted = False
             if self.wtype_available:
                 pasted = self._send_paste_keys_wtype(paste_mode)
@@ -654,7 +735,7 @@ class TextInjector:
                     # state so subsequent physical keypresses are not affected.
                     self._clear_stuck_modifiers()
 
-            if not pasted and self.ydotool_available:
+            if not pasted and self.ydotool_available and not gnome_wayland_session:
                 self._clear_stuck_modifiers()
                 time.sleep(0.02)
                 pasted = self._send_paste_keys_slow(paste_mode)
@@ -665,7 +746,7 @@ class TextInjector:
                 # and don't auto-submit (nothing was pasted into the field).
                 return True
 
-            # Only restore clipboard after a successful hotkey paste — if paste failed,
+            # Only restore clipboard after successful injection — if injection failed,
             # leave dictated text on clipboard so the user can paste manually.
             if pasted:
                 restore_delay = 0.5

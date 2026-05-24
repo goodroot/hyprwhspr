@@ -1571,7 +1571,10 @@ class hyprwhsprApp:
             return
 
         try:
-            self.text_injector.inject_text(text)
+            if not self.text_injector.inject_text(text):
+                print(f"[ERROR] Text injection failed ({len(text)} chars)", flush=True)
+                return
+
             print(f"[INJECT] Text injected ({len(text)} chars)", flush=True)
 
             # Text injection succeeded - system is fully healthy

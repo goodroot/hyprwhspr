@@ -893,6 +893,8 @@ Quick way to fix it on Wayland (no arithmetic):
 
 Advanced (if you already know the Linux evdev keycode): set `paste_keycode` directly.
 
+On GNOME/Mutter Wayland, hyprwhspr may use `ydotool type` because Mutter can drop synthetic paste chords. If you set `paste_keycode_wev` or a non-default `paste_keycode`, this direct typing fallback is disabled because it cannot honor that layout workaround; the dictated text remains on the clipboard if no paste backend succeeds.
+
 ### Auto-submit
 
 Automatically press Enter after pasting.
@@ -911,9 +913,9 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 ### Clipboard behavior
 
-hyprwhspr saves your clipboard before injection and restores it automatically afterward — your clipboard contents are never permanently overwritten by dictated text.
+For clipboard-based paste injection, hyprwhspr saves your clipboard before injection and restores it automatically afterward -- your clipboard contents are never permanently overwritten by dictated text.
 
-The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool` is used as a fallback when `wtype` is not installed.
+The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool key` is used as a fallback when `wtype` is not installed or cannot paste. On GNOME/Mutter Wayland, where synthetic modifier chords may be dropped, hyprwhspr can use `ydotool type` and inject the text directly without touching the clipboard.
 
 ### Post-transcription hook
 

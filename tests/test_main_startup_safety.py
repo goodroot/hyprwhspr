@@ -132,6 +132,40 @@ class MainStartupSafetyTests(unittest.TestCase):
 
         self.assertTrue(clears_in_finally)
 
+    def test_inject_text_checks_injector_result_before_success_log(self):
+        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
+
+        inject_func = self._find_function(tree, "_inject_text")
+        self.assertIsNotNone(inject_func)
+
+        result_checked_line = None
+        success_log_line = None
+        for node in ast.walk(inject_func):
+            if (
+                isinstance(node, ast.UnaryOp)
+                and isinstance(node.op, ast.Not)
+                and isinstance(node.operand, ast.Call)
+                and isinstance(node.operand.func, ast.Attribute)
+                and node.operand.func.attr == "inject_text"
+            ):
+                result_checked_line = node.lineno
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "print"
+                and node.args
+                and isinstance(node.args[0], ast.JoinedStr)
+                and any(
+                    isinstance(part, ast.Constant) and "[INJECT] Text injected" in str(part.value)
+                    for part in node.args[0].values
+                )
+            ):
+                success_log_line = node.lineno
+
+        self.assertIsNotNone(result_checked_line)
+        self.assertIsNotNone(success_log_line)
+        self.assertLess(result_checked_line, success_log_line)
+
 
 if __name__ == "__main__":
     unittest.main()
