@@ -911,9 +911,9 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 ### Clipboard behavior
 
-hyprwhspr saves your clipboard before injection and restores it automatically afterward — your clipboard contents are never permanently overwritten by dictated text.
+hyprwhspr saves your clipboard before injection and restores it automatically afterward -- your clipboard contents are never permanently overwritten by dictated text.
 
-The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool` is used as a fallback when `wtype` is not installed.
+The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool key` is used as a fallback when `wtype` is not installed or cannot paste. On GNOME/Mutter Wayland, where synthetic modifier chords may be dropped, hyprwhspr falls back to `ydotool type` and injects the text directly.
 
 ### Post-transcription hook
 
