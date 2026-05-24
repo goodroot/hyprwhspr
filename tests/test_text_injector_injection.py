@@ -13,8 +13,11 @@ from text_injector import TextInjector
 
 
 class ConfigStub:
+    def __init__(self, settings=None):
+        self.settings = settings or {}
+
     def get_setting(self, name, default=None):
-        return default
+        return self.settings.get(name, default)
 
 
 class TextInjectorInjectionTests(unittest.TestCase):
@@ -30,13 +33,13 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         with (
             mock.patch("text_injector.shutil.which", return_value=None),
-            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch("text_injector.pyperclip.copy") as copy,
             mock.patch.object(injector, "_get_active_window_info", return_value=None),
-            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard") as save_clipboard,
             mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
             mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
             mock.patch.object(injector, "_restore_clipboard") as restore_clipboard,
-            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit") as auto_submit,
             mock.patch.dict(
                 "text_injector.os.environ",
                 {
@@ -53,11 +56,43 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         paste_chord.assert_not_called()
         direct_type.assert_called_once_with("hello")
-        restore_clipboard.assert_called_once_with(
-            b"old clipboard",
-            injected=b"hello",
-            delay=0.5,
-        )
+        auto_submit.assert_called_once_with()
+        save_clipboard.assert_not_called()
+        copy.assert_not_called()
+        restore_clipboard.assert_not_called()
+
+    def test_gnome_wayland_with_custom_paste_keycode_keeps_clipboard_fallback(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"paste_keycode": 54})
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy") as copy,
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_restore_clipboard") as restore_clipboard,
+            mock.patch.object(injector, "_send_enter_if_auto_submit") as auto_submit,
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "XDG_SESSION_DESKTOP": "gnome",
+                    "DESKTOP_SESSION": "gnome",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertFalse(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        copy.assert_called_once_with("hello")
+        paste_chord.assert_not_called()
+        direct_type.assert_not_called()
+        restore_clipboard.assert_not_called()
+        auto_submit.assert_not_called()
 
     def test_non_gnome_leaves_clipboard_on_failed_paste_chord(self):
         injector = self._injector()

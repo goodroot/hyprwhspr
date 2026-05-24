@@ -85,6 +85,24 @@ class TextInjector:
         except Exception:
             return DEFAULT_PASTE_KEYCODE
 
+    def _has_custom_paste_keycode(self) -> bool:
+        """Return True when config indicates a non-QWERTY paste key workaround."""
+        if not self.config_manager:
+            return False
+
+        wev_keycode = self.config_manager.get_setting('paste_keycode_wev', None)
+        if wev_keycode is not None:
+            try:
+                return int(wev_keycode) - 8 != DEFAULT_PASTE_KEYCODE
+            except Exception:
+                return True
+
+        paste_keycode = self.config_manager.get_setting('paste_keycode', DEFAULT_PASTE_KEYCODE)
+        try:
+            return int(paste_keycode) != DEFAULT_PASTE_KEYCODE
+        except Exception:
+            return True
+
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
         """Get active window info, trying multiple compositor APIs."""
         # Niri
@@ -667,6 +685,24 @@ class TextInjector:
         """Copy text to clipboard, then trigger paste via wtype (or ydotool fallback)."""
         try:
             window_info = self._get_active_window_info()
+            gnome_wayland_session = self._is_gnome_wayland_session()
+
+            # On GNOME/Mutter, both wtype and ydotool paste chords are unreliable.
+            # Type directly before touching the clipboard, unless the user has
+            # configured a non-QWERTY paste key workaround that ydotool type
+            # cannot honor.
+            if (
+                gnome_wayland_session
+                and self.ydotool_available
+                and not self._has_custom_paste_keycode()
+            ):
+                self._clear_stuck_modifiers()
+                time.sleep(0.05)
+                typed = self._type_text_ydotool(text)
+                if typed:
+                    self._send_enter_if_auto_submit()
+                    return True
+
             saved_clipboard = self._save_clipboard()
 
             # Copy text to clipboard
@@ -699,16 +735,10 @@ class TextInjector:
                     # state so subsequent physical keypresses are not affected.
                     self._clear_stuck_modifiers()
 
-            gnome_wayland_session = self._is_gnome_wayland_session()
             if not pasted and self.ydotool_available and not gnome_wayland_session:
                 self._clear_stuck_modifiers()
                 time.sleep(0.02)
                 pasted = self._send_paste_keys_slow(paste_mode)
-
-            if not pasted and self.ydotool_available and gnome_wayland_session:
-                self._clear_stuck_modifiers()
-                time.sleep(0.05)
-                pasted = self._type_text_ydotool(text)
 
             if not pasted and not self.wtype_available and not self.ydotool_available:
                 print("No key-injection tool available; text is on the clipboard.")
