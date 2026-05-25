@@ -915,11 +915,20 @@ For clipboard-based paste injection, hyprwhspr saves your clipboard before injec
 
 The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool key` is used as a fallback when `wtype` is not installed or cannot paste. On GNOME/Mutter Wayland, where paste chords may be blocked, hyprwhspr uses `ydotool type` as a direct-typing fallback; this restores automatic insertion but may be less exact than clipboard paste on unusual layouts or complex input.
 
+To instead clear the clipboard a few seconds after pasting (rather than restoring your previous contents):
+
+```jsonc
+{
+    "clipboard_behavior": true,         // true = clear clipboard after a delay (default: false = restore previous contents)
+    "clipboard_clear_delay": 5.0        // seconds to wait before clearing (only used when clipboard_behavior is true)
+}
+```
+
 ### Post-transcription hook
 
 Pipe each transcription through a shell command before it's pasted. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and fire-and-forget observers.
 
-```json
+```jsonc
 {
     "post_transcription_hook": "sed 's|.*|<dictation>&</dictation>|'"
 }

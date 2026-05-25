@@ -2699,6 +2699,28 @@ def setup_systemd(mode: str = 'install'):
         log_error(f"Failed to read/write service file: {e}")
         return False
 
+    # Deploy a user-scope ydotool.service so paste injection works on
+    # compositors that reject the Wayland virtual-keyboard protocol (notably
+    # GNOME/Mutter). Skipped if a ydotool.service is already discoverable on
+    # the systemd --user search path (AUR/distro packages, hand-rolled overrides).
+    ydotool_template = Path(HYPRWHSPR_ROOT) / 'config' / 'systemd' / YDOTOOL_UNIT
+    ydotool_dest = USER_SYSTEMD_DIR / YDOTOOL_UNIT
+    if not ydotool_template.exists():
+        log_debug(f"Skipping {YDOTOOL_UNIT} deploy: template missing at {ydotool_template}")
+    else:
+        probe = run_command(
+            ['systemctl', '--user', 'cat', YDOTOOL_UNIT],
+            check=False, capture_output=True, show_output_on_error=False,
+        )
+        if probe is not None and probe.returncode == 0:
+            log_debug(f"Skipping {YDOTOOL_UNIT} deploy: already on systemd --user path")
+        else:
+            try:
+                shutil.copy(ydotool_template, ydotool_dest)
+                log_success(f"User-scope {YDOTOOL_UNIT} deployed (paste fallback)")
+            except IOError as e:
+                log_warning(f"Failed to deploy {YDOTOOL_UNIT}: {e}")
+
     # Import the compositor environment visible to this setup process into the
     # systemd user manager. Niri's focused-window IPC needs NIRI_SOCKET; Hyprland
     # detection needs HYPRLAND_INSTANCE_SIGNATURE; wtype/wl-clipboard need the
@@ -4810,6 +4832,8 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         items_to_remove.append(f"Systemd service: {PARAKEET_SERVICE_NAME}")
     if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {RESUME_SERVICE_NAME} (deprecated)")
+    if (USER_SYSTEMD_DIR / YDOTOOL_UNIT).exists():
+        items_to_remove.append(f"Systemd service: {YDOTOOL_UNIT}")
 
     # Waybar integration
     waybar_module = USER_HOME / '.config' / 'waybar' / 'hyprwhspr-module.jsonc'
@@ -4897,6 +4921,12 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             run_command(['systemctl', '--user', 'disable', RESUME_SERVICE_NAME], check=False)
             (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).unlink(missing_ok=True)
             log_success(f"Removed {RESUME_SERVICE_NAME}")
+
+        if (USER_SYSTEMD_DIR / YDOTOOL_UNIT).exists():
+            run_command(['systemctl', '--user', 'stop', YDOTOOL_UNIT], check=False)
+            run_command(['systemctl', '--user', 'disable', YDOTOOL_UNIT], check=False)
+            (USER_SYSTEMD_DIR / YDOTOOL_UNIT).unlink(missing_ok=True)
+            log_success(f"Removed {YDOTOOL_UNIT}")
 
         # Reload systemd daemon
         run_command(['systemctl', '--user', 'daemon-reload'], check=False)

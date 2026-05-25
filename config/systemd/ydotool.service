@@ -1,0 +1,14 @@
+[Unit]
+Description=ydotool user daemon (deployed by hyprwhspr)
+Documentation=https://github.com/ReimuNotMoe/ydotool
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=2
+ExecStart=/usr/bin/ydotoold
+KillMode=process
+TimeoutSec=180
+
+[Install]
+WantedBy=default.target
