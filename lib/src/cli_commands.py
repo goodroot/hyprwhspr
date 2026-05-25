@@ -107,6 +107,10 @@ SERVICE_NAME = 'hyprwhspr.service'
 RESUME_SERVICE_NAME = 'hyprwhspr-resume.service'  # Deprecated, kept for cleanup in uninstall/status
 PARAKEET_SERVICE_NAME = 'parakeet-tdt-0.6b-v3.service'
 YDOTOOL_UNIT = 'ydotool.service'
+# A user-scope ydotool.service that hyprwhspr authored carries one of these
+# markers (the new comment header, or the legacy Description string). Used to
+# decide whether it is safe to refresh our own unit vs. respect a foreign one.
+_YDOTOOL_MARKERS = ('Managed by hyprwhspr', 'deployed by hyprwhspr')
 USER_HOME = Path.home()
 USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
 USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
@@ -2676,6 +2680,44 @@ def systemd_command(action: str):
         log_error(f"Unknown systemd action: {action}")
 
 
+def _ydotool_deploy_decision(fragment_path: str, target_path: str,
+                             target_text: Optional[str],
+                             template_text: str) -> tuple[str, str]:
+    """Decide how to deploy the user-scope ydotool.service.
+
+    Pure (no I/O) so it can be unit-tested across the distro matrix.
+
+    Args:
+        fragment_path: Value of
+            `systemctl --user show -p FragmentPath --value ydotool.service`
+            ('' when the user manager knows no such unit).
+        target_path: Where hyprwhspr would write its own unit
+            (~/.config/systemd/user/ydotool.service).
+        target_text: Current contents of target_path, or None if absent.
+        template_text: Contents hyprwhspr wants to deploy.
+
+    Returns:
+        (action, reason); action is 'skip', 'write', or 'update'.
+    """
+    # 1. Respect a unit provided elsewhere on the user search path
+    #    (distro at /usr/lib/systemd/user, admin at /etc/systemd/user).
+    #    Never shadow it with a higher-priority ~/.config copy.
+    if fragment_path and os.path.realpath(fragment_path) != os.path.realpath(target_path):
+        return ('skip', f"respecting existing unit at {fragment_path}")
+
+    # 2. Our own target path.
+    if target_text is None:
+        return ('write', "no user-scope unit present; deploying fallback")
+
+    if any(marker in target_text for marker in _YDOTOOL_MARKERS):
+        if target_text == template_text:
+            return ('skip', "already up to date")
+        return ('update', "refreshing hyprwhspr-managed unit")
+
+    # 3. A foreign file sitting exactly at our target path — respect it.
+    return ('skip', f"respecting your own unit at {target_path}")
+
+
 def setup_systemd(mode: str = 'install'):
     """Setup systemd user service"""
     log_info("Configuring systemd user services...")
@@ -2720,23 +2762,44 @@ def setup_systemd(mode: str = 'install'):
 
     # Deploy a user-scope ydotool.service so paste injection works on
     # compositors that reject the Wayland virtual-keyboard protocol (notably
-    # GNOME/Mutter). Skipped if a ydotool.service is already discoverable on
-    # the systemd --user search path (AUR/distro packages, hand-rolled overrides).
+    # GNOME/Mutter). ydotool is hyprwhspr's *fallback* paste backend (primary is
+    # wtype). Most distros already ship a user unit at
+    # /usr/lib/systemd/user/ydotool.service (Arch, Debian) and we touch nothing
+    # there. We only fill the gap on distros that ship just a system-scope unit
+    # (notably Fedora). We never overwrite a unit we did not author, and we back
+    # up our own unit before refreshing it.
     ydotool_template = Path(HYPRWHSPR_ROOT) / 'config' / 'systemd' / YDOTOOL_UNIT
     ydotool_dest = USER_SYSTEMD_DIR / YDOTOOL_UNIT
     if not ydotool_template.exists():
         log_debug(f"Skipping {YDOTOOL_UNIT} deploy: template missing at {ydotool_template}")
     else:
-        probe = run_command(
-            ['systemctl', '--user', 'cat', YDOTOOL_UNIT],
-            check=False, capture_output=True, show_output_on_error=False,
+        try:
+            fragment = subprocess.run(
+                ['systemctl', '--user', 'show', '-p', 'FragmentPath', '--value', YDOTOOL_UNIT],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            fragment_path = fragment.stdout.strip() if fragment.returncode == 0 else ''
+        except (subprocess.SubprocessError, FileNotFoundError):
+            fragment_path = ''
+
+        template_text = ydotool_template.read_text(encoding='utf-8')
+        target_text = ydotool_dest.read_text(encoding='utf-8') if ydotool_dest.exists() else None
+
+        action, reason = _ydotool_deploy_decision(
+            fragment_path, str(ydotool_dest), target_text, template_text,
         )
-        if probe is not None and probe.returncode == 0:
-            log_debug(f"Skipping {YDOTOOL_UNIT} deploy: already on systemd --user path")
+
+        if action == 'skip':
+            log_debug(f"Skipping {YDOTOOL_UNIT} deploy: {reason}")
         else:
             try:
-                shutil.copy(ydotool_template, ydotool_dest)
-                log_success(f"User-scope {YDOTOOL_UNIT} deployed (paste fallback)")
+                USER_SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
+                if action == 'update':
+                    backup = ydotool_dest.parent / (ydotool_dest.name + '.bak')
+                    shutil.copy(ydotool_dest, backup)
+                    log_debug(f"Backed up existing {YDOTOOL_UNIT} to {backup}")
+                ydotool_dest.write_text(template_text, encoding='utf-8')
+                log_success(f"User-scope {YDOTOOL_UNIT} deployed (paste fallback): {reason}")
             except IOError as e:
                 log_warning(f"Failed to deploy {YDOTOOL_UNIT}: {e}")
 

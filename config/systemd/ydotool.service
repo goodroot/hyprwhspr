@@ -1,3 +1,16 @@
+# Managed by hyprwhspr.
+#
+# Why: hyprwhspr uses ydotool's daemon (ydotoold) as a FALLBACK paste backend
+# (the primary path is wtype). ydotoold must run as a *user* service so its
+# socket lands in $XDG_RUNTIME_DIR, reachable by the ydotool client. Most distros
+# already ship a user unit at /usr/lib/systemd/user/ydotool.service (e.g. Arch,
+# Debian) and then hyprwhspr leaves everything alone. This file is written ONLY
+# on distros that ship just a system-scope unit (notably Fedora), to fill the gap.
+#
+# Safe to delete if your distro provides /usr/lib/systemd/user/ydotool.service.
+# To keep your own version, remove the "Managed by hyprwhspr" line above — then
+# hyprwhspr treats this file as foreign and never touches it.
+# Docs: docs/CONFIGURATION.md (ydotool section)
 [Unit]
 Description=ydotool user daemon (deployed by hyprwhspr)
 Documentation=https://github.com/ReimuNotMoe/ydotool
