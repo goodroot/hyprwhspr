@@ -875,6 +875,8 @@ hyprwhspr auto-detects the correct paste shortcut based on the focused window:
 - **Terminals** (Ghostty, Kitty, WezTerm, Alacritty, foot, etc.) → Ctrl+Shift+V
 - **Everything else** (editors, browsers, chat apps) → Ctrl+V
 
+Detection uses your compositor's window API (Hyprland `hyprctl`, niri, or XWayland `xdotool`). On **GNOME/Mutter** it uses the **accessibility bridge** (AT-SPI); `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). If the bridge is off, GNOME can't distinguish terminals from other apps and paste falls back to Ctrl+V (wrong in terminals) — re-run setup or enable it manually.
+
 No configuration needed for most setups. Override with `paste_mode` if your app needs something different:
 
 ```jsonc

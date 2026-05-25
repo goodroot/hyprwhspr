@@ -1724,6 +1724,22 @@ def setup_command(python_path: Optional[str] = None):
             print(f"\nNote: 'notify-send' not found. Install: {notify_pkg}")
 
         setup_mic_osd_choice = Confirm.ask("Show recording status as desktop notifications?", default=True)
+
+        # GNOME picks the paste shortcut per app (terminal → Ctrl+Shift+V, GUI → Ctrl+V)
+        # by detecting the focused window via AT-SPI, which needs the GNOME accessibility
+        # bridge enabled. Without it, detection fails and paste falls back to Ctrl+V.
+        print("\nGNOME can auto-pick the paste shortcut per app (terminal vs. GUI) via the")
+        print("accessibility bridge. Without it, paste falls back to Ctrl+V (wrong in terminals).")
+        if shutil.which('gsettings') and Confirm.ask(
+            "Enable the GNOME accessibility bridge for automatic paste-shortcut detection?",
+            default=True,
+        ):
+            run_command(
+                ['gsettings', 'set', 'org.gnome.desktop.interface', 'toolkit-accessibility', 'true'],
+                check=False,
+            )
+            print("Enabled (revert: gsettings set org.gnome.desktop.interface toolkit-accessibility false).")
+            print("Apps started before this may need a restart to be detected.")
     else:
         print("\nShows a visual overlay during recording with animated bars")
         print("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
@@ -1881,14 +1897,15 @@ def setup_command(python_path: Optional[str] = None):
     print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
 
     # Paste mode detection notice — only shown when auto-detection won't work at runtime.
-    # Hyprland users get hyprctl, Niri sessions expose niri msg through
-    # NIRI_SOCKET, and XWayland users get xdotool. Pure Wayland compositors
-    # without one of those APIs cannot tell terminals from other apps, so
-    # terminal paste (Ctrl+Shift+V) won't be auto-selected.
+    # Per-app paste detection: Hyprland uses hyprctl, Niri uses niri msg
+    # (NIRI_SOCKET), XWayland uses xdotool, and GNOME uses the AT-SPI accessibility
+    # bridge (offered above). A pure-Wayland compositor with none of these can't
+    # tell terminals from other apps, so terminal paste (Ctrl+Shift+V) isn't
+    # auto-selected there.
     _has_hyprctl = bool(shutil.which('hyprctl'))
     _has_niri = bool(shutil.which('niri')) and bool(os.environ.get('NIRI_SOCKET'))
     _has_xdotool = bool(shutil.which('xdotool'))
-    if not _has_hyprctl and not _has_niri and not _has_xdotool:
+    if not is_mutter_session and not _has_hyprctl and not _has_niri and not _has_xdotool:
         print("\nNote: Window detection unavailable on this system (no hyprctl, niri session, or xdotool).")
         print("Paste will default to Ctrl+V, which works in most apps but not terminals.")
         print("If a paste ever lands in the wrong place, you can override the key combo")
