@@ -112,6 +112,24 @@ USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
 USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
 PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', USER_HOME / '.local' / 'share')) / 'pywhispercpp' / 'models'
 
+# Selectable Whisper models, shared by the setup prompt and `model list`.
+# Single source of truth so the two never drift.
+MULTILINGUAL_MODELS = [
+    ('tiny', 'Fastest, least accurate'),
+    ('base', 'Good balance (recommended)'),
+    ('small', 'Better accuracy'),
+    ('medium', 'High accuracy'),
+    ('large-v3-turbo', 'Fast, near-large-v3 accuracy, requires GPU'),
+    ('large', 'Best accuracy, requires GPU'),
+    ('large-v3', 'Latest large model, requires GPU'),
+]
+ENGLISH_ONLY_MODELS = [
+    ('tiny.en', 'Fastest, least accurate (English only)'),
+    ('base.en', 'Good balance (English only, recommended)'),
+    ('small.en', 'Better accuracy (English only)'),
+    ('medium.en', 'High accuracy (English only)'),
+]
+
 
 def _is_niri_session() -> bool:
     """Return true when the current process appears to be running inside Niri."""
@@ -833,37 +851,21 @@ def _prompt_backend_selection():
 
 def _prompt_model_selection():
     """Prompt user for model selection"""
-    multilingual_models = [
-        ('tiny', 'Fastest, least accurate'),
-        ('base', 'Good balance (recommended)'),
-        ('small', 'Better accuracy'),
-        ('medium', 'High accuracy'),
-        ('large', 'Best accuracy, requires GPU'),
-        ('large-v3', 'Latest large model, requires GPU')
-    ]
-    
-    english_only_models = [
-        ('tiny.en', 'Fastest, least accurate (English only)'),
-        ('base.en', 'Good balance (English only, recommended)'),
-        ('small.en', 'Better accuracy (English only)'),
-        ('medium.en', 'High accuracy (English only)')
-    ]
-    
     print("\n" + "="*60)
     print("Model Selection")
     print("="*60)
     print("\nChoose your default Whisper model:")
     print()
     print("Multilingual models (support all languages, auto-detect):")
-    for i, (model, desc) in enumerate(multilingual_models, 1):
-        print(f"  [{i}] {model:12} - {desc}")
-    
+    for i, (model, desc) in enumerate(MULTILINGUAL_MODELS, 1):
+        print(f"  [{i}] {model:15} - {desc}")
+
     print("\nEnglish-only models (smaller, faster, English only):")
-    for i, (model, desc) in enumerate(english_only_models, len(multilingual_models) + 1):
-        print(f"  [{i}] {model:12} - {desc}")
+    for i, (model, desc) in enumerate(ENGLISH_ONLY_MODELS, len(MULTILINGUAL_MODELS) + 1):
+        print(f"  [{i}] {model:15} - {desc}")
     print()
-    
-    all_models = [m[0] for m in multilingual_models] + [m[0] for m in english_only_models]
+
+    all_models = [m[0] for m in MULTILINGUAL_MODELS] + [m[0] for m in ENGLISH_ONLY_MODELS]
     choices = [str(i) for i in range(1, len(all_models) + 1)]
     
     while True:
@@ -3348,35 +3350,16 @@ def download_model(model_name: str = 'base'):
 
 def list_models():
     """List available models"""
-    # Multilingual models (support all languages, auto-detect)
-    multilingual_models = [
-        'tiny',      # Fastest, least accurate
-        'base',      # Good balance (recommended)
-        'small',     # Better accuracy
-        'medium',    # High accuracy
-        'large',     # Best accuracy, requires GPU
-        'large-v3'   # Latest large model, requires GPU
-    ]
-    
-    # English-only models (smaller, faster, English only)
-    english_only_models = [
-        'tiny.en',   # Fastest, least accurate
-        'base.en',   # Good balance
-        'small.en',  # Better accuracy
-        'medium.en'  # High accuracy
-    ]
-    
     print("Available models:\n")
-    
+
     print("Multilingual models (support all languages, auto-detect):")
-    for model in multilingual_models:
-        size_note = " (requires GPU)" if model in ('large', 'large-v3') else ""
-        print(f"  - {model}{size_note}")
-    
+    for name, desc in MULTILINGUAL_MODELS:
+        print(f"  - {name} - {desc}")
+
     print("\nEnglish-only models (smaller, faster, English only):")
-    for model in english_only_models:
-        print(f"  - {model}")
-    
+    for name, desc in ENGLISH_ONLY_MODELS:
+        print(f"  - {name} - {desc}")
+
     print("\nNote: Use multilingual models for non-English languages or mixed-language content.")
     print("      Use English-only (.en) models for English-only content (smaller file size).")
 
