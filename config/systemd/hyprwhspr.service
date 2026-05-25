@@ -7,7 +7,7 @@ After=graphical-session.target
 
 After=pipewire.service ydotool.service
 Wants=pipewire.service
-Requires=ydotool.service
+Wants=ydotool.service
 
 Wants=wireplumber.service
 After=wireplumber.service
