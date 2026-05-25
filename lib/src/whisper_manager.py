@@ -287,7 +287,7 @@ class WhisperManager:
 
                 model_id = 'CohereLabs/cohere-transcribe-03-2026'
                 device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
-                dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
+                dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
 
                 # Resolve device
                 if device_setting == 'auto':
@@ -1512,7 +1512,7 @@ class WhisperManager:
 
             model_id = 'CohereLabs/cohere-transcribe-03-2026'
             device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
-            dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
+            dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
 
             device = 'cuda' if (device_setting == 'auto' and torch.cuda.is_available()) else device_setting if device_setting != 'auto' else 'cpu'
             torch_dtype = torch.bfloat16 if (device == 'cuda' and dtype_setting in ('float16', 'bfloat16')) else torch.float32

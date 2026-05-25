@@ -15,13 +15,13 @@ except ImportError:
 class AudioDucker:
     """Manages audio ducking (volume reduction) during recording"""
 
-    def __init__(self, reduction_percent: float = 70.0):
+    def __init__(self, reduction_percent: float = 50.0):
         """
         Initialize audio ducker.
 
         Args:
             reduction_percent: How much to reduce volume BY (0-100).
-                              70 means reduce to 30% of original volume.
+                              50 means reduce to 50% of original volume.
         """
         self._reduction_percent = max(0.0, min(100.0, reduction_percent))
         self._original_volumes = {}  # sink_name -> original volume

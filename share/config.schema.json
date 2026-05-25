@@ -337,7 +337,7 @@
       "type": "number",
       "minimum": 0,
       "maximum": 1,
-      "default": 1.0,
+      "default": 0.5,
       "description": "Master audio feedback volume (0.0-1.0)"
     },
     "start_sound_volume": {
@@ -358,7 +358,7 @@
       "type": "number",
       "minimum": 0,
       "maximum": 1,
-      "default": 1.0,
+      "default": 0.5,
       "description": "Volume multiplier for error sound"
     },
     "start_sound_path": {

@@ -88,7 +88,7 @@ class hyprwhsprApp:
         self.audio_manager = AudioManager(self.config)
 
         # Initialize audio ducker for reducing system volume during recording
-        ducking_percent = self.config.get_setting('audio_ducking_percent', 70)
+        ducking_percent = self.config.get_setting('audio_ducking_percent', 50)
         self.audio_ducker = AudioDucker(reduction_percent=ducking_percent)
 
         # Initialize whisper manager with shared config
