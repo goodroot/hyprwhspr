@@ -103,7 +103,8 @@ def main():
     config_show_parser = config_subparsers.add_parser('show', help='Display current config')
     config_show_parser.add_argument('--all', action='store_true', dest='show_all', help='Show all settings including defaults')
     config_subparsers.add_parser('edit', help='Open config in editor')
-    
+    config_subparsers.add_parser('secondary-shortcut', help='Configure secondary shortcut and its language')
+
     # waybar command
     waybar_parser = subparsers.add_parser('waybar', help='Waybar integration')
     waybar_subparsers = waybar_parser.add_subparsers(dest='waybar_action', help='Waybar actions')
