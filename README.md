@@ -130,14 +130,17 @@ hyprwhspr status
 After installation, use the `hyprwhspr` CLI to manage your installation:
 
 - `hyprwhspr setup` - Interactive initial setup
-- `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit`)
-- `hyprwhspr model` - Manage models (`download` / `list` / `unload` / `reload`)
+- `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit` / `secondary-shortcut`)
+- `hyprwhspr model` - Manage models (`download` / `list` / `status` / `unload` / `reload`)
+- `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle` / `cancel` / `capture` / `status`)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation
 - `hyprwhspr test` - Test microphone and transcription end-to-end
+- `hyprwhspr keyboard` - List/test keyboard devices (`list` / `test`)
 - `hyprwhspr waybar` - Manage Waybar integration
+- `hyprwhspr mic-osd` - Enable/disable the mic OSD (`enable` / `disable` / `status`)
 - `hyprwhspr systemd` - Manage systemd services
-- `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle`)
+- `hyprwhspr uninstall` - Remove hyprwhspr and user data
 
 For the full command reference, see the **[Configuration guide](docs/CONFIGURATION.md)**.
 
