@@ -1201,6 +1201,22 @@ systemctl --user status ydotool.service
 journalctl --user -u ydotool.service -f
 ```
 
+#### Why a ydotool user service?
+
+hyprwhspr uses `ydotoold` (ydotool's daemon) as a **fallback** paste backend; the
+primary path is `wtype`. `ydotoold` must run as a *user* service so its socket lives
+in `$XDG_RUNTIME_DIR` where the `ydotool` client can reach it.
+
+Most distributions already ship that user unit at
+`/usr/lib/systemd/user/ydotool.service` (e.g. Arch, Debian) — there hyprwhspr leaves
+everything alone. On distributions that ship only a *system*-scope unit (notably
+Fedora), hyprwhspr writes its own copy to `~/.config/systemd/user/ydotool.service`,
+marked with a `# Managed by hyprwhspr` header. It is safe to delete if your distro
+provides the user unit, and hyprwhspr never overwrites a unit it did not author. To
+keep a hand-edited version, remove the `# Managed by hyprwhspr` line and hyprwhspr
+will treat it as foreign and leave it untouched. hyprwhspr also backs up its own unit
+to `ydotool.service.bak` before refreshing it.
+
 If you are using the hyprland input method, do you have shortcuts?
 
 #### Service starts but doesn't work until restarted

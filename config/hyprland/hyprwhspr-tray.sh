@@ -533,7 +533,7 @@ control_recording() {
 start_ydotoold() {
     if ! is_ydotoold_running; then
         echo "Starting ydotoold..." >&2
-        systemctl --user start ydotool.service  # Using system service
+        systemctl --user start ydotool.service  # user-scope service
         sleep 1
         if is_ydotoold_running; then
             show_notification "hyprwhspr" "ydotoold started" "low"
