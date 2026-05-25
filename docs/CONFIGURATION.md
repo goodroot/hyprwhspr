@@ -930,7 +930,9 @@ Useful for chat applications, search boxes, or any input where you want to submi
 
 For clipboard-based paste injection, hyprwhspr saves your clipboard before injection and restores it automatically afterward -- your clipboard contents are never permanently overwritten by dictated text.
 
-The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool key` is used as a fallback when `wtype` is not installed or cannot paste. On GNOME/Mutter Wayland, where paste chords may be blocked, hyprwhspr uses `ydotool type` as a direct-typing fallback; this restores automatic insertion but may be less exact than clipboard paste on unusual layouts or complex input.
+The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool key` is used as a fallback when `wtype` is not installed or cannot paste.
+
+On GNOME/Mutter Wayland (no layer-shell), hyprwhspr may type text directly with `ydotool type` instead of pasting. Direct typing assumes a US/QWERTY layout and can only emit ASCII, so it is used **only for ASCII text on a US layout**. On non-US layouts (e.g. German QWERTZ, where it would mangle `z`/`y` and `?`) or for text containing umlauts/accents/typographic characters, hyprwhspr automatically switches to verbatim clipboard paste, which reproduces any character exactly regardless of layout. Set `"prefer_clipboard_paste": true` to force clipboard paste in all cases.
 
 To instead clear the clipboard a few seconds after pasting (rather than restoring your previous contents):
 

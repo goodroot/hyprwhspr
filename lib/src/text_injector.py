@@ -40,6 +40,7 @@ class TextInjector:
         # Detect available injectors
         self.ydotool_available = self._check_ydotool()
         self.wtype_available = shutil.which('wtype') is not None
+        self._layout_type_safe_cache = None  # lazily filled by _layout_is_type_safe()
 
         if not self.ydotool_available and not self.wtype_available:
             print("⚠️  No injection backend found (wtype or ydotool). hyprwhspr requires wtype or ydotool for paste injection.")
@@ -102,6 +103,60 @@ class TextInjector:
             return int(paste_keycode) != DEFAULT_PASTE_KEYCODE
         except Exception:
             return True
+
+    def _detect_active_layout(self) -> str:
+        """Best-effort active XKB keyboard layout, lowercased (e.g. 'us', 'de').
+
+        Returns '' when undetectable. Tries, in order: GNOME input-sources
+        (the most-recently-used source is the active one), `localectl` (system
+        X11 layout), then the XKB_DEFAULT_LAYOUT environment variable.
+        """
+        try:
+            out = subprocess.run(
+                ['gsettings', 'get', 'org.gnome.desktop.input-sources', 'mru-sources'],
+                capture_output=True, text=True, timeout=2,
+            )
+            if out.returncode == 0:
+                m = re.search(r"\('xkb',\s*'([^']+)'\)", out.stdout)
+                if m:
+                    return m.group(1).split('+')[0].lower()
+        except Exception:
+            pass
+        try:
+            out = subprocess.run(['localectl', 'status'], capture_output=True, text=True, timeout=2)
+            if out.returncode == 0:
+                m = re.search(r'X11 Layout:\s*([^\s,]+)', out.stdout)
+                if m:
+                    return m.group(1).lower()
+        except Exception:
+            pass
+        env_layout = os.environ.get('XKB_DEFAULT_LAYOUT', '')
+        if env_layout:
+            return env_layout.split(',')[0].strip().lower()
+        return ''
+
+    def _layout_is_type_safe(self) -> bool:
+        """True unless we positively detect a non-US keyboard layout.
+
+        `ydotool type` assumes US/QWERTY keycodes and can only emit ASCII, so on
+        non-US layouts (de, fr, ...) it mangles output (z<->y, ?-> _, dropped
+        umlauts). There we must use layout-independent clipboard paste instead.
+        Conservative toward the status quo: an unknown layout keeps direct typing.
+        Cached for the process lifetime.
+        """
+        cached = getattr(self, '_layout_type_safe_cache', None)
+        if cached is None:
+            layout = self._detect_active_layout()
+            cached = (layout == '' or layout.startswith('us'))
+            self._layout_type_safe_cache = cached
+        return cached
+
+    def _force_clipboard_paste(self) -> bool:
+        """User override (config `prefer_clipboard_paste`): always use verbatim
+        clipboard paste, never direct typing."""
+        if not self.config_manager:
+            return False
+        return bool(self.config_manager.get_setting('prefer_clipboard_paste', False))
 
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
         """Get active window info, trying multiple compositor APIs."""
@@ -687,14 +742,21 @@ class TextInjector:
             window_info = self._get_active_window_info()
             gnome_wayland_session = self._is_gnome_wayland_session()
 
-            # On GNOME/Mutter, both wtype and ydotool paste chords are unreliable.
-            # Type directly before touching the clipboard, unless the user has
-            # configured a non-QWERTY paste key workaround that ydotool type
-            # cannot honor.
+            # On GNOME/Mutter the layer-shell overlay is unavailable, so we can
+            # type directly with `ydotool type` to avoid touching the clipboard.
+            # But that is ONLY correct for pure-ASCII text on a US layout:
+            # ydotool type assumes US keycodes and can't emit non-ASCII, so on a
+            # non-US layout (z<->y, ?-> _) or with umlauts/typographic characters
+            # it mangles the output. In those cases — or with a custom paste
+            # keycode / the prefer_clipboard_paste override — fall through to the
+            # layout-independent verbatim clipboard paste below.
             if (
                 gnome_wayland_session
                 and self.ydotool_available
                 and not self._has_custom_paste_keycode()
+                and not self._force_clipboard_paste()
+                and self._layout_is_type_safe()
+                and text.isascii()
             ):
                 self._clear_stuck_modifiers()
                 time.sleep(0.05)
@@ -724,9 +786,11 @@ class TextInjector:
                 else:
                     paste_mode = self._detect_paste_mode(window_info)
 
-            # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back to ydotool.
-            # Mutter/GNOME accepts individual uinput key events but drops modifier
-            # chords, so skip ydotool's paste chord there and use direct typing.
+            # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back
+            # to ydotool's uinput chord. ydotool key chords DO reach Mutter (uinput
+            # is seen as a real device, unlike wtype's virtual-keyboard protocol
+            # which Mutter blocks), so we use them on GNOME too — this is the path
+            # taken when direct typing was skipped for a non-US layout / non-ASCII text.
             pasted = False
             if self.wtype_available:
                 pasted = self._send_paste_keys_wtype(paste_mode)
@@ -735,7 +799,7 @@ class TextInjector:
                     # state so subsequent physical keypresses are not affected.
                     self._clear_stuck_modifiers()
 
-            if not pasted and self.ydotool_available and not gnome_wayland_session:
+            if not pasted and self.ydotool_available:
                 self._clear_stuck_modifiers()
                 time.sleep(0.02)
                 pasted = self._send_paste_keys_slow(paste_mode)

@@ -189,6 +189,11 @@
       "default": true,
       "description": "Back-compat: true = Ctrl+Shift+V, false = Ctrl+V. Only used if paste_mode is absent."
     },
+    "prefer_clipboard_paste": {
+      "type": "boolean",
+      "default": false,
+      "description": "Force verbatim clipboard paste instead of direct typing on GNOME/Mutter. Direct typing (ydotool type) is only correct for ASCII text on a US layout; hyprwhspr already switches to clipboard paste automatically for non-US layouts or non-ASCII text, so set this only to force clipboard paste in all cases."
+    },
     "transcription_backend": {
       "type": "string",
       "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "faster-whisper", "cohere-transcribe"],
