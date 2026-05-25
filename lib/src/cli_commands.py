@@ -1692,32 +1692,61 @@ def setup_command(python_path: Optional[str] = None):
         print("\nWaybar configuration not found.")
         setup_waybar_choice = Confirm.ask("Set up Waybar integration anyway?", default=False)
     
-    # Step 3b: Mic-OSD setup
+    # Step 3b: Recording status indicator setup
     print("\n" + "="*60)
-    print("Mic-OSD Visualization")
+    print("Recording Status Indicator")
     print("="*60)
-    print("\nShows a visual overlay during recording with animated bars")
-    print("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
-    
-    # Check if dependencies are available using service's Python
-    mic_osd_available, mic_osd_reason = _check_mic_osd_availability()
-    if not mic_osd_available:
-        print(f"\nNote: {mic_osd_reason}")
-    
-    if mic_osd_available:
-        setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=True)
+
+    # GNOME/Mutter does not implement the layer-shell protocol the animated
+    # overlay needs. There the overlay degrades to a focus-stealing toplevel
+    # window that swallows the post-dictation paste keystroke, so recording
+    # status is shown as desktop notifications instead (these never take focus).
+    mic_osd_desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
+    is_mutter_session = 'gnome' in mic_osd_desktop or 'mutter' in mic_osd_desktop
+
+    if is_mutter_session:
+        print("\nGNOME/Mutter detected. The animated overlay needs the layer-shell")
+        print("protocol, which Mutter does not support, so recording status is shown")
+        print("as desktop notifications instead (they never steal keyboard focus).")
+        print("This needs 'notify-send' (libnotify) — no GTK4/gtk4-layer-shell required.")
+
+        if shutil.which('notify-send') is None:
+            if Path('/etc/debian_version').exists():
+                notify_pkg = "libnotify-bin"
+            elif Path('/etc/fedora-release').exists():
+                notify_pkg = "libnotify"
+            elif Path('/etc/os-release').exists() and 'suse' in Path('/etc/os-release').read_text(encoding='utf-8').lower():
+                notify_pkg = "libnotify-tools"
+            else:
+                notify_pkg = "libnotify (Arch naming)"
+            print(f"\nNote: 'notify-send' not found. Install: {notify_pkg}")
+
+        setup_mic_osd_choice = Confirm.ask("Show recording status as desktop notifications?", default=True)
     else:
-        # Provide distro-appropriate package names
-        if Path('/etc/debian_version').exists():
-            pkg_hint = "python3-gi python3-cairo gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0"
-        elif Path('/etc/fedora-release').exists():
-            pkg_hint = "python3-gobject python3-cairo gtk4 gtk4-layer-shell"
-        elif Path('/etc/os-release').exists() and 'suse' in Path('/etc/os-release').read_text(encoding='utf-8').lower():
-            pkg_hint = "python3-gobject python3-pycairo typelib-1_0-Gtk-4_0 (gtk4-layer-shell from community repo)"
+        print("\nShows a visual overlay during recording with animated bars")
+        print("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
+        print("(On compositors without layer-shell support — e.g. GNOME/Mutter — the")
+        print("status automatically falls back to desktop notifications instead.)")
+
+        # Check if dependencies are available using service's Python
+        mic_osd_available, mic_osd_reason = _check_mic_osd_availability()
+        if not mic_osd_available:
+            print(f"\nNote: {mic_osd_reason}")
+
+        if mic_osd_available:
+            setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=True)
         else:
-            pkg_hint = "python-gobject python-cairo gtk4 gtk4-layer-shell (Arch naming)"
-        print(f"\nDependencies not found. Install: {pkg_hint}")
-        setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
+            # Provide distro-appropriate package names
+            if Path('/etc/debian_version').exists():
+                pkg_hint = "python3-gi python3-cairo gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0"
+            elif Path('/etc/fedora-release').exists():
+                pkg_hint = "python3-gobject python3-cairo gtk4 gtk4-layer-shell"
+            elif Path('/etc/os-release').exists() and 'suse' in Path('/etc/os-release').read_text(encoding='utf-8').lower():
+                pkg_hint = "python3-gobject python3-pycairo typelib-1_0-Gtk-4_0 (gtk4-layer-shell from community repo)"
+            else:
+                pkg_hint = "python-gobject python-cairo gtk4 gtk4-layer-shell (Arch naming)"
+            print(f"\nDependencies not found. Install: {pkg_hint}")
+            setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
 
     # Step 3c: Audio ducking setup
     print("\n" + "="*60)
@@ -1836,7 +1865,8 @@ def setup_command(python_path: Optional[str] = None):
     elif backend_normalized == 'cohere-transcribe':
         print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
-    print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
+    _status_label = "Recording status (notifications)" if is_mutter_session else "Mic-OSD visualization"
+    print(f"{_status_label}: {'Yes' if setup_mic_osd_choice else 'No'}")
     if setup_audio_ducking_choice:
         print(f"Audio ducking: Yes ({audio_ducking_percent}% reduction)")
     else:
@@ -1859,8 +1889,8 @@ def setup_command(python_path: Optional[str] = None):
     if not _has_hyprctl and not _has_niri and not _has_xdotool:
         print("\nNote: Window detection unavailable on this system (no hyprctl, niri session, or xdotool).")
         print("Paste will default to Ctrl+V, which works in most apps but not terminals.")
-        print("If you primarily dictate into terminals, run after setup:")
-        print("  hyprwhspr config set paste_mode ctrl_shift")
+        print("If a paste ever lands in the wrong place, you can override the key combo")
+        print("with paste_mode — see docs/CONFIGURATION.md (Paste mode).")
 
     print()
 

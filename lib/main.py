@@ -207,19 +207,26 @@ class hyprwhsprApp:
         self._mic_osd_runner = None
         if self.config.get_setting('mic_osd_enabled', True):
             try:
-                from mic_osd import MicOSDRunner
-                runner = MicOSDRunner()
-                if runner.is_available():
+                from mic_osd import MicOSDRunner, NotificationPresenter
+                if MicOSDRunner.is_available() and MicOSDRunner.layer_shell_active():
+                    runner = MicOSDRunner()
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
                         print("[INIT] Mic-OSD daemon started", flush=True)
                     else:
                         print("[WARN] Failed to start mic-osd daemon", flush=True)
                 else:
-                    reason = runner.get_unavailable_reason()
-                    print(f"[WARN] Mic-OSD unavailable: {reason}", flush=True)
+                    # No layer-shell (e.g. GNOME/Mutter): the overlay would steal
+                    # keyboard focus and swallow the paste keystroke. Show recording
+                    # status via desktop notifications instead.
+                    presenter = NotificationPresenter()
+                    if presenter.is_available():
+                        self._mic_osd_runner = presenter
+                        print("[INIT] Recording status via notifications (no layer-shell)", flush=True)
+                    else:
+                        print("[WARN] No layer-shell overlay and no notify-send; recording has no status indicator", flush=True)
             except Exception as e:
-                print(f"[WARN] Failed to initialize mic-osd: {e}", flush=True)
+                print(f"[WARN] Failed to initialize recording status indicator: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
 

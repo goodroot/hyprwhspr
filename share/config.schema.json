@@ -339,7 +339,7 @@
     "mic_osd_enabled": {
       "type": "boolean",
       "default": true,
-      "description": "Show microphone visualization overlay during recording"
+      "description": "Show recording status during recording. Shown as the animated overlay on layer-shell compositors (Hyprland, Sway, niri, KDE), or as desktop notifications on GNOME/Mutter (which has no layer-shell support)."
     },
     "mute_detection": {
       "type": "boolean",

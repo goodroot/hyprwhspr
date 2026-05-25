@@ -54,6 +54,49 @@ class MicOSDRunner:
             return False
     
     @staticmethod
+    def _layer_shell_ld_preload() -> str:
+        """Resolve the gtk4-layer-shell .so to LD_PRELOAD (same search as the daemon)."""
+        for pattern in [
+            '/usr/lib64/libgtk4-layer-shell.so*',
+            '/usr/lib/libgtk4-layer-shell.so*',
+            '/usr/local/lib64/libgtk4-layer-shell.so*',
+            '/usr/local/lib/libgtk4-layer-shell.so*',
+        ]:
+            for candidate in sorted(glob.glob(pattern)):
+                resolved = os.path.realpath(candidate)
+                if os.path.isfile(resolved):
+                    return resolved
+        return ""
+
+    @staticmethod
+    def layer_shell_active() -> bool:
+        """Return True only if the running compositor supports the layer-shell
+        protocol (Hyprland, Niri, Sway, ...). False on GNOME/Mutter and on any
+        uncertainty, so callers safely fall back to a non-overlay status display.
+
+        Probed in a subprocess to keep GTK out of the main process.
+        """
+        probe = (
+            "import gi; gi.require_version('Gtk', '4.0');"
+            "gi.require_version('Gtk4LayerShell', '1.0');"
+            "from gi.repository import Gtk, Gtk4LayerShell;"
+            "Gtk.init();"
+            "print('1' if Gtk4LayerShell.is_supported() else '0')"
+        )
+        env = os.environ.copy()
+        preload = MicOSDRunner._layer_shell_ld_preload()
+        if preload:
+            env['LD_PRELOAD'] = preload
+        try:
+            result = subprocess.run(
+                [sys.executable or 'python3', '-c', probe],
+                env=env, capture_output=True, timeout=5,
+            )
+            return result.stdout.decode('utf-8', 'ignore').strip() == '1'
+        except Exception:
+            return False
+
+    @staticmethod
     def _get_distro_packages() -> tuple:
         """Return (gtk_pkg, layer_shell_pkg) package names for current distro."""
         # Check for common distro indicators
