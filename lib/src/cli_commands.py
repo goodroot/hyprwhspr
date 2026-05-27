@@ -109,9 +109,10 @@ SERVICE_NAME = 'hyprwhspr.service'
 RESUME_SERVICE_NAME = 'hyprwhspr-resume.service'  # Deprecated, kept for cleanup in uninstall/status
 PARAKEET_SERVICE_NAME = 'parakeet-tdt-0.6b-v3.service'
 YDOTOOL_UNIT = 'ydotool.service'
-# A user-scope ydotool.service that hyprwhspr authored carries one of these
-# markers (the new comment header, or the legacy Description string). Used to
-# decide whether it is safe to refresh our own unit vs. respect a foreign one.
+# Older hyprwhspr versions deployed a user-scope ydotool.service carrying one of
+# these markers. hyprwhspr now runs a private ydotoold child instead, so the markers
+# are used only to identify (and safely retire) a unit we authored — never a
+# distro/admin/user-owned one.
 _YDOTOOL_MARKERS = ('Managed by hyprwhspr', 'deployed by hyprwhspr')
 USER_HOME = Path.home()
 USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
@@ -1881,7 +1882,6 @@ def setup_command(python_path: Optional[str] = None):
     print("="*60)
     print("\nSystemd user service will run hyprwhspr in the background.")
     print("This will enable/configure:")
-    print("  • ydotool.service (required dependency, provides paste)")
     print("  • hyprwhspr.service (main application)")
     setup_systemd_choice = Confirm.ask("Set up systemd user service?", default=True)
     
@@ -1954,7 +1954,7 @@ def setup_command(python_path: Optional[str] = None):
     elif keyboard_allowlist_choice == []:
         print("Keyboard allowlist: cleared (auto-detect)")
     if setup_systemd_choice:
-        print("Systemd services: Yes (ydotool + hyprwhspr)")
+        print("Systemd service: Yes (hyprwhspr)")
     else:
         print("Systemd service: No")
     print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
@@ -2746,42 +2746,32 @@ def systemd_command(action: str):
         log_error(f"Unknown systemd action: {action}")
 
 
-def _ydotool_deploy_decision(fragment_path: str, target_path: str,
-                             target_text: Optional[str],
-                             template_text: str) -> tuple[str, str]:
-    """Decide how to deploy the user-scope ydotool.service.
+def _migrate_remove_managed_ydotool_unit():
+    """Retire a user-scope ydotool.service that older hyprwhspr versions deployed.
 
-    Pure (no I/O) so it can be unit-tested across the distro matrix.
-
-    Args:
-        fragment_path: Value of
-            `systemctl --user show -p FragmentPath --value ydotool.service`
-            ('' when the user manager knows no such unit).
-        target_path: Where hyprwhspr would write its own unit
-            (~/.config/systemd/user/ydotool.service).
-        target_text: Current contents of target_path, or None if absent.
-        template_text: Contents hyprwhspr wants to deploy.
-
-    Returns:
-        (action, reason); action is 'skip', 'write', or 'update'.
+    hyprwhspr now runs a *private* ydotoold child from the app itself
+    (lib/src/ydotoold_session.py) instead of managing a systemd unit. Stop, disable
+    and remove a unit we authored (one carrying a hyprwhspr marker); never touch a
+    distro/admin/user-owned unit at that path.
     """
-    # 1. Respect a unit provided elsewhere on the user search path
-    #    (distro at /usr/lib/systemd/user, admin at /etc/systemd/user).
-    #    Never shadow it with a higher-priority ~/.config copy.
-    if fragment_path and os.path.realpath(fragment_path) != os.path.realpath(target_path):
-        return ('skip', f"respecting existing unit at {fragment_path}")
-
-    # 2. Our own target path.
-    if target_text is None:
-        return ('write', "no user-scope unit present; deploying fallback")
-
-    if any(marker in target_text for marker in _YDOTOOL_MARKERS):
-        if target_text == template_text:
-            return ('skip', "already up to date")
-        return ('update', "refreshing hyprwhspr-managed unit")
-
-    # 3. A foreign file sitting exactly at our target path — respect it.
-    return ('skip', f"respecting your own unit at {target_path}")
+    target = USER_SYSTEMD_DIR / YDOTOOL_UNIT
+    if not target.exists():
+        return
+    try:
+        text = target.read_text(encoding='utf-8')
+    except OSError:
+        return
+    if not any(marker in text for marker in _YDOTOOL_MARKERS):
+        log_debug(f"Leaving foreign {YDOTOOL_UNIT} untouched at {target}")
+        return
+    run_command(['systemctl', '--user', 'disable', '--now', YDOTOOL_UNIT], check=False)
+    try:
+        target.unlink(missing_ok=True)
+        (target.parent / (target.name + '.bak')).unlink(missing_ok=True)
+        log_success(f"Retired previously-managed {YDOTOOL_UNIT} (hyprwhspr now runs a private ydotoold)")
+    except OSError as e:
+        log_warning(f"Could not remove {YDOTOOL_UNIT}: {e}")
+    run_command(['systemctl', '--user', 'daemon-reload'], check=False)
 
 
 def setup_systemd(mode: str = 'install'):
@@ -2826,48 +2816,11 @@ def setup_systemd(mode: str = 'install'):
         log_error(f"Failed to read/write service file: {e}")
         return False
 
-    # Deploy a user-scope ydotool.service so paste injection works on
-    # compositors that reject the Wayland virtual-keyboard protocol (notably
-    # GNOME/Mutter). ydotool is hyprwhspr's *fallback* paste backend (primary is
-    # wtype). Most distros already ship a user unit at
-    # /usr/lib/systemd/user/ydotool.service (Arch, Debian) and we touch nothing
-    # there. We only fill the gap on distros that ship just a system-scope unit
-    # (notably Fedora). We never overwrite a unit we did not author, and we back
-    # up our own unit before refreshing it.
-    ydotool_template = Path(HYPRWHSPR_ROOT) / 'config' / 'systemd' / YDOTOOL_UNIT
-    ydotool_dest = USER_SYSTEMD_DIR / YDOTOOL_UNIT
-    if not ydotool_template.exists():
-        log_debug(f"Skipping {YDOTOOL_UNIT} deploy: template missing at {ydotool_template}")
-    else:
-        try:
-            fragment = subprocess.run(
-                ['systemctl', '--user', 'show', '-p', 'FragmentPath', '--value', YDOTOOL_UNIT],
-                capture_output=True, text=True, timeout=5, check=False,
-            )
-            fragment_path = fragment.stdout.strip() if fragment.returncode == 0 else ''
-        except (subprocess.SubprocessError, FileNotFoundError):
-            fragment_path = ''
-
-        template_text = ydotool_template.read_text(encoding='utf-8')
-        target_text = ydotool_dest.read_text(encoding='utf-8') if ydotool_dest.exists() else None
-
-        action, reason = _ydotool_deploy_decision(
-            fragment_path, str(ydotool_dest), target_text, template_text,
-        )
-
-        if action == 'skip':
-            log_debug(f"Skipping {YDOTOOL_UNIT} deploy: {reason}")
-        else:
-            try:
-                USER_SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
-                if action == 'update':
-                    backup = ydotool_dest.parent / (ydotool_dest.name + '.bak')
-                    shutil.copy(ydotool_dest, backup)
-                    log_debug(f"Backed up existing {YDOTOOL_UNIT} to {backup}")
-                ydotool_dest.write_text(template_text, encoding='utf-8')
-                log_success(f"User-scope {YDOTOOL_UNIT} deployed (paste fallback): {reason}")
-            except IOError as e:
-                log_warning(f"Failed to deploy {YDOTOOL_UNIT}: {e}")
+    # hyprwhspr no longer deploys/manages a ydotool.service. The paste fallback now
+    # runs a *private* ydotoold child from the app (lib/src/ydotoold_session.py) on
+    # its own socket — no shared daemon, no managed unit. Retire any unit a previous
+    # version of hyprwhspr deployed.
+    _migrate_remove_managed_ydotool_unit()
 
     # Import the compositor environment visible to this setup process into the
     # systemd user manager. Niri's focused-window IPC needs NIRI_SOCKET; Hyprland
@@ -2883,9 +2836,6 @@ def setup_systemd(mode: str = 'install'):
     run_command(['systemctl', '--user', 'daemon-reload'], check=False)
     
     if mode in ('install', 'enable'):
-        # Enable & start services
-        run_command(['systemctl', '--user', 'enable', '--now', YDOTOOL_UNIT], check=False)
-
         # Check if hyprwhspr service was already running before enabling
         service_was_running = False
         try:
@@ -3869,7 +3819,12 @@ def setup_permissions():
         import time
         time.sleep(2)
 
-    # Create udev rule
+    # Create udev rule.
+    # On modern systemd the active-session user already gets /dev/uinput via a
+    # `uaccess` ACL (so user-scope ydotoold runs rootless without this). This rule
+    # is a stable fallback: uaccess only covers the *active* session. The `input`
+    # group is needed mainly for the global hotkey, which reads /dev/input/event*
+    # via evdev (no uaccess ACL there) — not for the ydotool paste path.
     udev_rule = Path('/etc/udev/rules.d/99-uinput.rules')
     if not udev_rule.exists():
         log_info("Creating udev rule...")

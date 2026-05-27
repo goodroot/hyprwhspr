@@ -58,16 +58,8 @@ is_hyprwhspr_running() {
     systemctl --user is-active --quiet hyprwhspr.service
 }
 
-# Function to check if ydotoold is running and working
-is_ydotoold_running() {
-    # Check if service is active
-    if systemctl --user is-active --quiet ydotool.service; then
-        # Test if ydotool actually works by using a simple command
-        timeout 1s ydotool help > /dev/null 2>&1
-        return $?
-    fi
-    return 1
-}
+# Note: hyprwhspr runs a *private* ydotoold child from the app itself (no shared
+# daemon, no systemd unit), so the tray no longer starts or monitors ydotoold.
 
 # Function to check PipeWire health comprehensively
 # Uses retry logic to handle startup timing issues (PipeWire may take a moment to initialize)
@@ -548,20 +540,6 @@ control_recording() {
     fi
 }
 
-# Function to start ydotoold if needed
-start_ydotoold() {
-    if ! is_ydotoold_running; then
-        echo "Starting ydotoold..." >&2
-        systemctl --user start ydotool.service  # user-scope service
-        sleep 1
-        if is_ydotoold_running; then
-            show_notification "hyprwhspr" "ydotoold started" "low"
-        else
-            show_notification "hyprwhspr" "Failed to start ydotoold" "critical"
-        fi
-    fi
-}
-
 # Function to check service health and recover from stuck states
 check_service_health() {
     if is_hyprwhspr_running; then
@@ -699,11 +677,6 @@ get_current_state() {
         echo "recording"; return
     fi
 
-    # Service running but not recording - check dependencies
-    if ! is_ydotoold_running; then
-        echo "error:ydotoold"; return
-    fi
-
     # Check if mic is present and accessible
     # BUT: if recovery just succeeded (within last 5 seconds), give it grace period
     local recovery_file="$HOME/.config/hyprwhspr/recovery_result"
@@ -807,14 +780,6 @@ case "${1:-status}" in
             emit_json "$s" "$r" "$(mic_tooltip_line)"
         fi
         ;;
-    "ydotoold")
-        start_ydotoold
-        IFS=: read -r s r <<<"$(get_current_state)"
-        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
-        if [ ! -t 1 ]; then
-            emit_json "$s" "$r" "$(mic_tooltip_line)"
-        fi
-        ;;
     "restart")
         systemctl --user restart hyprwhspr.service
         show_notification "hyprwhspr" "Restarted" "normal"
@@ -838,14 +803,13 @@ case "${1:-status}" in
         fi
         ;;
     *)
-        echo "Usage: $0 [status|toggle|record|start|stop|ydotoold|restart|health]"
+        echo "Usage: $0 [status|toggle|record|start|stop|restart|health]"
         echo ""
         echo "Commands:"
         echo "  status    - Show current status (JSON output)"
         echo "  toggle    - Toggle hyprwhspr on/off"
         echo "  start     - Start hyprwhspr"
         echo "  stop      - Stop hyprwhspr"
-        echo "  ydotoold  - Start ydotoold daemon"
         echo "  restart   - Restart hyprwhspr"
         echo "  health    - Check service health and recover if needed"
         ;;
