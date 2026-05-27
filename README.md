@@ -161,7 +161,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 
 ## Getting help
 
-1. **Check logs**: `journalctl --user -u hyprwhspr.service` `journalctl --user -u ydotool.service`
+1. **Check logs**: `journalctl --user -u hyprwhspr.service`
 2. **Verify permissions**: Run the permissions fix script
 3. **Test components**: Check ydotool, audio devices, whisper.cpp
 4. **Report issues**: [Create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) - logging info helpful!

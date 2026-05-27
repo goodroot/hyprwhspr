@@ -1210,30 +1210,34 @@ journalctl --user -u hyprwhspr.service -f
 ```
 
 ```bash
-# Check service status for ydotool
-systemctl --user status ydotool.service
-
-# Check logs
-journalctl --user -u ydotool.service -f
+# The ydotool paste fallback (GNOME/Mutter) runs as a private child of hyprwhspr.
+# After a dictation, confirm the daemon is alive:
+pgrep -af 'ydotoold .*hyprwhspr-ydotool.sock'
 ```
 
-#### Why a ydotool user service?
+#### Why no ydotool service? (private ydotoold)
 
-hyprwhspr uses `ydotoold` (ydotool's daemon) as a **fallback** paste backend; the
-primary path is `wtype`. `ydotoold` must run as a *user* service so its socket lives
-in `$XDG_RUNTIME_DIR` where the `ydotool` client can reach it.
+hyprwhspr uses `ydotoold` (ydotool's daemon) as a **fallback** paste backend on
+compositors that reject the Wayland virtual-keyboard protocol (notably GNOME/Mutter);
+the primary path is `wtype`. Rather than enabling a shared, system-wide
+`ydotool.service`, hyprwhspr starts its **own private `ydotoold`** as a child process on
+a dedicated socket (`$XDG_RUNTIME_DIR/hyprwhspr-ydotool.sock`, reached via
+`YDOTOOL_SOCKET`). It is launched lazily — only when the uinput fallback is actually
+needed, so `wtype`-only sessions (wlroots/Hyprland/niri) never spawn it — and torn down
+with hyprwhspr. Nothing to enable, no shared daemon to manage, and any system/other-tool
+`ydotoold` is left untouched. (Earlier versions deployed a
+`~/.config/systemd/user/ydotool.service`; `hyprwhspr setup` now retires a unit it
+previously authored.)
 
-Most distributions already ship that user unit at
-`/usr/lib/systemd/user/ydotool.service` (e.g. Arch, Debian) — there hyprwhspr leaves
-everything alone. On distributions that ship only a *system*-scope unit (notably
-Fedora), hyprwhspr writes its own copy to `~/.config/systemd/user/ydotool.service`,
-marked with a `# Managed by hyprwhspr` header. It is safe to delete if your distro
-provides the user unit, and hyprwhspr never overwrites a unit it did not author. To
-keep a hand-edited version, remove the `# Managed by hyprwhspr` line and hyprwhspr
-will treat it as foreign and leave it untouched. hyprwhspr also backs up its own unit
-to `ydotool.service.bak` before refreshing it.
-
-If you are using the hyprland input method, do you have shortcuts?
+**Access vs. the daemon — two separate layers.** Running the daemon is one thing;
+*access* to `/dev/uinput` is another. On modern systemd the active-session user is
+granted `/dev/uinput` automatically through a `uaccess` ACL (visible as the `+` in
+`getfacl /dev/uinput`), which is why `ydotoold` runs rootless. The `input` group and the
+`/etc/udev/rules.d/99-uinput.rules` rule that `hyprwhspr setup` adds are a stable
+fallback for that access — a `uaccess` ACL only covers the *active* session and is
+dropped once it goes inactive. The `input` group is mainly required for the global
+hotkey, which reads `/dev/input/event*` via evdev (those devices carry no `uaccess`
+ACL), not for the paste path.
 
 #### Service starts but doesn't work until restarted
 
