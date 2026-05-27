@@ -1656,10 +1656,8 @@ def setup_command(python_path: Optional[str] = None):
         
         try:
             from .backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
-            from .output_control import run_command
         except ImportError:
             from backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
-            from output_control import run_command
         
         # Setup venv (creates if needed, updates if exists)
         pip_bin = setup_python_venv()
@@ -2509,11 +2507,6 @@ def omarchy_command(args=None):
         log_info("Systemd service setup skipped (--no-systemd)")
     else:
         systemd_command('install')
-
-        try:
-            from .output_control import run_command
-        except ImportError:
-            from output_control import run_command
 
         try:
             # Use MISE-free environment if MISE was detected
