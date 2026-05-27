@@ -10,6 +10,7 @@ import subprocess
 import getpass
 import shutil
 import socket
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -154,6 +155,18 @@ def _is_niri_session() -> bool:
             return True
 
     return False
+
+
+def _is_gnome_or_mutter_session() -> bool:
+    """Return true for GNOME/Mutter/Pop sessions using common desktop env vars."""
+    desktop_values = (
+        os.environ.get('XDG_CURRENT_DESKTOP', ''),
+        os.environ.get('XDG_SESSION_DESKTOP', ''),
+        os.environ.get('DESKTOP_SESSION', ''),
+    )
+    desktop = ':'.join(desktop_values).lower()
+    desktop_tokens = set(filter(None, re.split(r'[^a-z0-9]+', desktop)))
+    return bool(desktop_tokens & {'gnome', 'mutter', 'pop'})
 
 
 def _check_mise_active() -> tuple[bool, str]:
@@ -1759,8 +1772,7 @@ def setup_command(python_path: Optional[str] = None):
     # overlay needs. There the overlay degrades to a focus-stealing toplevel
     # window that swallows the post-dictation paste keystroke, so recording
     # status is shown as desktop notifications instead (these never take focus).
-    mic_osd_desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
-    is_mutter_session = 'gnome' in mic_osd_desktop or 'mutter' in mic_osd_desktop
+    is_mutter_session = _is_gnome_or_mutter_session()
 
     if is_mutter_session:
         print("\nGNOME/Mutter detected. The animated overlay needs the layer-shell")
@@ -5036,6 +5048,8 @@ def _edit_keyboard_selection(candidates: list, selected: set):
     print("  Enter = keep the recommendation · 0 = none (auto-detect)")
     while True:
         raw = Prompt.ask("Numbers", default=default_nums).strip()
+        if raw == "" and default_nums == "":
+            return []
         if raw == "0":
             return []
         chosen = set()
@@ -5119,14 +5133,7 @@ def configure_keyboard_allowlist():
 
 def _hyprwhspr_service_active() -> bool:
     """True if the hyprwhspr user service is currently active."""
-    try:
-        result = subprocess.run(
-            ['systemctl', '--user', 'is-active', SERVICE_NAME],
-            capture_output=True, text=True, timeout=2, check=False,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
-        return False
+    return _is_service_running_via_systemd()
 
 
 def list_keyboards():

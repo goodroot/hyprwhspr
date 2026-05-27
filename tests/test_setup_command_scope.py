@@ -54,6 +54,18 @@ class SetupCommandScopeTests(unittest.TestCase):
             "run_command", cli_commands.setup_command.__code__.co_varnames
         )
 
+    def test_gnome_detection_uses_session_desktop_fallback(self):
+        with mock.patch.dict(
+            cli_commands.os.environ,
+            {
+                "XDG_CURRENT_DESKTOP": "",
+                "XDG_SESSION_DESKTOP": "gnome",
+                "DESKTOP_SESSION": "",
+            },
+            clear=True,
+        ):
+            self.assertTrue(cli_commands._is_gnome_or_mutter_session())
+
 
 class ConfigDefaultTests(unittest.TestCase):
     def test_defaults_match_schema_for_new_settings(self):

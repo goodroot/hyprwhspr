@@ -233,6 +233,35 @@ class TextInjectorInjectionTests(unittest.TestCase):
         paste_chord.assert_called_once_with("ctrl")
         direct_type.assert_not_called()
 
+    def test_gnome_failed_paste_restores_previous_clipboard(self):
+        injector = self._injector()
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=False),
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True),
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=False),
+            mock.patch.object(injector, "_restore_clipboard") as restore_clipboard,
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertFalse(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        restore_clipboard.assert_called_once_with(
+            b"old clipboard", injected=b"hello", delay=0
+        )
+
     def test_ydotool_type_command_uses_small_delay_and_argument_separator(self):
         injector = self._injector()
         completed = types.SimpleNamespace(returncode=0, stderr=b"")
@@ -275,6 +304,16 @@ class TextInjectorInjectionTests(unittest.TestCase):
             self.assertFalse(injector._layout_is_type_safe())
 
         self.assertEqual(detect.call_count, 2)
+
+    def test_localectl_unset_layout_is_unknown_not_non_us(self):
+        injector = self._injector()
+        calls = [
+            types.SimpleNamespace(returncode=1, stdout=""),
+            types.SimpleNamespace(returncode=0, stdout="System Locale: LANG=en_US.UTF-8\n   X11 Layout: (unset)\n"),
+        ]
+
+        with mock.patch("text_injector.subprocess.run", side_effect=calls):
+            self.assertEqual(injector._detect_active_layout(), "")
 
 
 if __name__ == "__main__":

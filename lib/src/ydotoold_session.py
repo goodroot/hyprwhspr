@@ -38,6 +38,8 @@ class YdotooldSession:
         self._spawn = spawn or self._default_spawn
         self._socket_timeout = socket_timeout
         self._poll_interval = poll_interval
+        self._socket_env = dict(os.environ)
+        self._socket_env['YDOTOOL_SOCKET'] = self.socket_path
         self._proc: Optional[subprocess.Popen] = None
         self._lock = threading.RLock()
 
@@ -69,9 +71,10 @@ class YdotooldSession:
         with self._lock:
             if self.is_running() and os.path.exists(self.socket_path):
                 return True
-            return self._start_locked(allow_restart=True)
+            deadline = time.monotonic() + self._socket_timeout
+            return self._start_locked(deadline, allow_restart=True)
 
-    def _start_locked(self, allow_restart: bool) -> bool:
+    def _start_locked(self, deadline: float, allow_restart: bool) -> bool:
         # Drop a dead handle.
         if self._proc is not None and self._proc.poll() is not None:
             self._proc = None
@@ -88,12 +91,11 @@ class YdotooldSession:
             except (OSError, ValueError):
                 return False
 
-        deadline = time.monotonic() + self._socket_timeout
         while time.monotonic() < deadline:
             if self._proc.poll() is not None:
                 # Died during startup — retry once from scratch.
                 self._proc = None
-                return self._start_locked(allow_restart=False) if allow_restart else False
+                return self._start_locked(deadline, allow_restart=False) if allow_restart else False
             if os.path.exists(self.socket_path):
                 return True
             time.sleep(self._poll_interval)
@@ -101,9 +103,7 @@ class YdotooldSession:
 
     def socket_env(self) -> dict:
         """Environment for ydotool client calls, pointing at our private socket."""
-        env = dict(os.environ)
-        env['YDOTOOL_SOCKET'] = self.socket_path
-        return env
+        return self._socket_env
 
     def close(self) -> None:
         """Terminate our daemon and remove the socket. Idempotent; never raises."""

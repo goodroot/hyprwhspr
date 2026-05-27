@@ -132,6 +132,42 @@ class YdotooldSessionTests(unittest.TestCase):
         env = s.socket_env()
         self.assertEqual(env['YDOTOOL_SOCKET'], self.sock)
 
+    def test_socket_env_reuses_overlay(self):
+        s = YdotooldSession(socket_path=self.sock, spawn=_spawn_factory(self.sock))
+        self.assertIs(s.socket_env(), s.socket_env())
+
+    def test_startup_retry_shares_original_deadline(self):
+        record = []
+
+        def _spawn():
+            proc = FakeProc(alive=len(record) != 0)
+            record.append(proc)
+            return proc
+
+        now = [0.0]
+
+        def _monotonic():
+            now[0] += 0.05
+            return now[0]
+
+        def _sleep(seconds):
+            now[0] += seconds
+
+        orig_monotonic = ydotoold_session.time.monotonic
+        orig_sleep = ydotoold_session.time.sleep
+        ydotoold_session.time.monotonic = _monotonic
+        ydotoold_session.time.sleep = _sleep
+        try:
+            s = YdotooldSession(socket_path=self.sock, spawn=_spawn,
+                                socket_timeout=0.15, poll_interval=0.05)
+            self.assertFalse(s.ensure_running())
+        finally:
+            ydotoold_session.time.monotonic = orig_monotonic
+            ydotoold_session.time.sleep = orig_sleep
+
+        self.assertEqual(len(record), 2)
+        self.assertLess(now[0], 0.3)
+
     def test_close_terminates_and_unlinks_and_is_idempotent(self):
         record = []
         s = YdotooldSession(socket_path=self.sock,

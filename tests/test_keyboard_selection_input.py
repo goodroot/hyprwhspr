@@ -83,6 +83,19 @@ class KeyboardSelectionTests(unittest.TestCase):
         result = self._run(confirm=False, prompt_inputs=["0"])
         self.assertEqual(result, [])
 
+    def test_enter_with_empty_recommendation_selects_none(self):
+        candidates = [{
+            "name": "Mouse Keyboard Thing",
+            "is_keyboard": True,
+            "is_mouse": True,
+            "is_virtual": False,
+        }]
+        with mock.patch.object(cli_commands, "Prompt") as prompt_mock:
+            prompt_mock.ask.return_value = ""
+            result = cli_commands._edit_keyboard_selection(candidates, set())
+
+        self.assertEqual(result, [])
+
     def test_detect_flushes_input_buffer(self):
         # Regression: physical keystrokes during evdev detection are echoed into
         # the tty line buffer; detect_keyboard must drain them so they don't leak

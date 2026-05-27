@@ -154,7 +154,9 @@ class TextInjector:
             if out.returncode == 0:
                 m = re.search(r'X11 Layout:\s*([^\s,]+)', out.stdout)
                 if m:
-                    return m.group(1).lower()
+                    layout = m.group(1).lower()
+                    if layout not in {'(unset)', 'unset', 'n/a', 'none'}:
+                        return layout
         except Exception:
             pass
         env_layout = os.environ.get('XKB_DEFAULT_LAYOUT', '')
@@ -831,13 +833,18 @@ class TextInjector:
                 return True
 
             # Only restore clipboard after successful injection — if injection failed,
-            # leave dictated text on clipboard so the user can paste manually.
+            # leave dictated text on clipboard so the user can paste manually. GNOME is
+            # the exception: the ydotool chord is an automatic fallback after direct
+            # typing was skipped, and a failed chord should not clobber the user's
+            # previous clipboard.
             if pasted:
                 restore_delay = 0.5
                 if self.config_manager:
                     restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 0.5))
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
                 self._send_enter_if_auto_submit()
+            elif gnome_wayland_session:
+                self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=0)
 
             return pasted
 
