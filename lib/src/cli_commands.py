@@ -734,6 +734,38 @@ def _cleanup_backend(backend_type: str) -> bool:
         return True  # Don't fail on cleanup errors
 
 
+def _load_existing_setup_config() -> dict:
+    """Return current config settings (merged over defaults) for seeding setup
+    prompt defaults, or {} when no config exists yet / on any error."""
+    try:
+        if CONFIG_FILE.exists():
+            return ConfigManager().get_all_settings()
+    except Exception:
+        pass
+    return {}
+
+
+def _bool_default(cfg: dict, key: str, fallback: bool) -> bool:
+    """Default for a Confirm prompt: the stored bool, else `fallback`."""
+    val = cfg.get(key, fallback)
+    return val if isinstance(val, bool) else fallback
+
+
+def _choice_default(value, ordered_values, fallback: str) -> str:
+    """1-based choice string for `value` within `ordered_values`, else `fallback`."""
+    try:
+        return str(ordered_values.index(value) + 1)
+    except (ValueError, AttributeError):
+        return fallback
+
+
+# Reverse of the backend_map inside _prompt_backend_selection: name -> choice.
+_BACKEND_CHOICE = {
+    'onnx-asr': '1', 'cpu': '2', 'nvidia': '3', 'faster-whisper': '4',
+    'vulkan': '5', 'rest-api': '6', 'realtime-ws': '7', 'cohere-transcribe': '8',
+}
+
+
 def _prompt_backend_selection():
     """Prompt user for backend selection with current state detection"""
     current_backend = _detect_current_backend()
@@ -763,9 +795,22 @@ def _prompt_backend_selection():
     print("  [7] Realtime WS           - Low-latency streaming")
     print()
 
+    # Seed the prompt default with the currently configured/installed backend so
+    # a re-run keeps it (Enter = keep). Prefer the verified install; fall back to
+    # the raw config value so a configured backend still preselects even if the
+    # venv check returned None.
+    default_src = current_backend
+    if not default_src:
+        try:
+            default_src = ConfigManager().get_setting('transcription_backend', None)
+        except Exception:
+            default_src = None
+    default_backend_choice = (_BACKEND_CHOICE.get(normalize_backend(default_src), '1')
+                              if default_src else '1')
+
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8'], default=default_backend_choice)
             backend_map = {
                 '1': 'onnx-asr',
                 '2': 'cpu',
@@ -855,7 +900,7 @@ def _prompt_backend_selection():
             continue
 
 
-def _prompt_model_selection():
+def _prompt_model_selection(current_model: Optional[str] = None):
     """Prompt user for model selection"""
     print("\n" + "="*60)
     print("Model Selection")
@@ -876,7 +921,8 @@ def _prompt_model_selection():
     
     while True:
         try:
-            choice = Prompt.ask("Select model", choices=choices, default='2')  # default to base
+            choice = Prompt.ask("Select model", choices=choices,
+                                default=_choice_default(current_model, all_models, '2'))
             selected_model = all_models[int(choice) - 1]
             print(f"\n✓ Selected: {selected_model}")
             return selected_model
@@ -888,7 +934,7 @@ def _prompt_model_selection():
             continue
 
 
-def _prompt_faster_whisper_model_selection() -> str:
+def _prompt_faster_whisper_model_selection(current_model: Optional[str] = None) -> str:
     """Prompt user for faster-whisper model selection"""
     print("\n" + "="*60)
     print("Model Selection")
@@ -902,7 +948,8 @@ def _prompt_faster_whisper_model_selection() -> str:
     choices = [str(i) for i in range(1, len(FASTER_WHISPER_MODELS) + 1)]
     while True:
         try:
-            choice = Prompt.ask("Select model", choices=choices, default='2')  # default to 'base'
+            choice = Prompt.ask("Select model", choices=choices,
+                                default=_choice_default(current_model, [m[0] for m in FASTER_WHISPER_MODELS], '2'))
             selected = FASTER_WHISPER_MODELS[int(choice) - 1][0]
             print(f"\n✓ Selected: {selected}")
             return selected
@@ -1408,6 +1455,10 @@ def setup_command(python_path: Optional[str] = None):
     # Setup command symlink for git clone installs
     _setup_command_symlink()
 
+    # Load the existing config (if any) so each prompt below can default to the
+    # current value — re-running setup then keeps settings on Enter.
+    existing_cfg = _load_existing_setup_config()
+
     # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
     backend_result = _prompt_backend_selection()
     if not backend_result:
@@ -1676,9 +1727,9 @@ def setup_command(python_path: Optional[str] = None):
         if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
             # Local backend - prompt for model selection
             # Note: ONNX-ASR, faster-whisper, and cohere-transcribe don't use Whisper.cpp models
-            selected_model = _prompt_model_selection()
+            selected_model = _prompt_model_selection(current_model=existing_cfg.get('model'))
         elif backend_normalized == 'faster-whisper':
-            faster_whisper_model = _prompt_faster_whisper_model_selection()
+            faster_whisper_model = _prompt_faster_whisper_model_selection(current_model=existing_cfg.get('faster_whisper_model'))
             if download_faster_whisper_model(faster_whisper_model):
                 log_success(f"Model {faster_whisper_model} downloaded successfully")
             else:
@@ -1729,7 +1780,7 @@ def setup_command(python_path: Optional[str] = None):
                 notify_pkg = "libnotify (Arch naming)"
             print(f"\nNote: 'notify-send' not found. Install: {notify_pkg}")
 
-        setup_mic_osd_choice = Confirm.ask("Show recording status as desktop notifications?", default=True)
+        setup_mic_osd_choice = Confirm.ask("Show recording status as desktop notifications?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
 
         # GNOME picks the paste shortcut per app (terminal → Ctrl+Shift+V, GUI → Ctrl+V)
         # by detecting the focused window via AT-SPI, which needs the GNOME accessibility
@@ -1758,7 +1809,7 @@ def setup_command(python_path: Optional[str] = None):
             print(f"\nNote: {mic_osd_reason}")
 
         if mic_osd_available:
-            setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=True)
+            setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
         else:
             # Provide distro-appropriate package names
             if Path('/etc/debian_version').exists():
@@ -1770,7 +1821,7 @@ def setup_command(python_path: Optional[str] = None):
             else:
                 pkg_hint = "python-gobject python-cairo gtk4 gtk4-layer-shell (Arch naming)"
             print(f"\nDependencies not found. Install: {pkg_hint}")
-            setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
+            setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=_bool_default(existing_cfg, 'mic_osd_enabled', False))
 
     # Step 3c: Audio ducking setup
     print("\n" + "="*60)
@@ -1779,14 +1830,14 @@ def setup_command(python_path: Optional[str] = None):
     print("\nAutomatically reduces system volume while recording to prevent")
     print("audio interference with your microphone.")
 
-    setup_audio_ducking_choice = Confirm.ask("Enable audio ducking?", default=True)
+    setup_audio_ducking_choice = Confirm.ask("Enable audio ducking?", default=_bool_default(existing_cfg, 'audio_ducking', True))
     audio_ducking_percent = 50  # Default
     if setup_audio_ducking_choice:
         print("\nHow much to reduce volume BY during recording?")
         print("  50 = reduce to 50% of original (recommended)")
         print("  70 = reduce to 30% of original (aggressive)")
         print("  30 = reduce to 70% of original (subtle)")
-        ducking_input = Prompt.ask("Reduction percentage", default="50")
+        ducking_input = Prompt.ask("Reduction percentage", default=str(existing_cfg.get('audio_ducking_percent', 50)))
         try:
             audio_ducking_percent = max(0, min(100, int(ducking_input)))
         except ValueError:
@@ -1811,13 +1862,13 @@ def setup_command(python_path: Optional[str] = None):
 
         if is_hyprland_session:
             print("\nHyprland session detected.")
-            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=True)
+            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=_bool_default(existing_cfg, 'use_hypr_bindings', True))
         elif hypr_config_exists:
             print(f"\nHyprland configuration detected at: {hypr_config_dir}")
-            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=True)
+            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=_bool_default(existing_cfg, 'use_hypr_bindings', True))
         else:
             print("\nHyprland configuration not found.")
-            setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=False)
+            setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=_bool_default(existing_cfg, 'use_hypr_bindings', False))
     else:
         # Not a Hyprland system - skip this section entirely
         setup_hyprland_choice = False
