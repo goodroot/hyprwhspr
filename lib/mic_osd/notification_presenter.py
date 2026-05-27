@@ -14,6 +14,11 @@ assigned to self._mic_osd_runner unchanged.
 import shutil
 import subprocess
 
+try:
+    from src.desktop_notify import close_notification
+except ImportError:
+    from desktop_notify import close_notification
+
 
 class NotificationPresenter:
     """Show recording status as a desktop notification (no focus stealing)."""
@@ -68,16 +73,7 @@ class NotificationPresenter:
         """Actively dismiss the notification so it doesn't linger in the
         notification center. GNOME keeps even transient notifications in its
         list, so letting it expire is not enough — we must close it by id."""
-        try:
-            subprocess.run(
-                ['gdbus', 'call', '--session',
-                 '--dest', 'org.freedesktop.Notifications',
-                 '--object-path', '/org/freedesktop/Notifications',
-                 '--method', 'org.freedesktop.Notifications.CloseNotification',
-                 str(nid)],
-                capture_output=True, timeout=2)
-        except Exception:
-            pass
+        close_notification(nid)
 
     # ---- interface mirrored from MicOSDRunner ----
 
