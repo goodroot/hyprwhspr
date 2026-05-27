@@ -45,7 +45,6 @@ class TextInjector:
         # Detect available injectors
         self.ydotool_available = self._check_ydotool()
         self.wtype_available = shutil.which('wtype') is not None
-        self._layout_type_safe_cache = None  # lazily filled by _layout_is_type_safe()
 
         # Private ydotoold instance (lazily started on first uinput-fallback use, so
         # wtype-only sessions never spawn it). Replaces the old shared/managed
@@ -170,14 +169,9 @@ class TextInjector:
         non-US layouts (de, fr, ...) it mangles output (z<->y, ?-> _, dropped
         umlauts). There we must use layout-independent clipboard paste instead.
         Conservative toward the status quo: an unknown layout keeps direct typing.
-        Cached for the process lifetime.
         """
-        cached = getattr(self, '_layout_type_safe_cache', None)
-        if cached is None:
-            layout = self._detect_active_layout()
-            cached = (layout == '' or layout.startswith('us'))
-            self._layout_type_safe_cache = cached
-        return cached
+        layout = self._detect_active_layout()
+        return layout == '' or layout.startswith('us')
 
     def _force_clipboard_paste(self) -> bool:
         """User override (config `prefer_clipboard_paste`): always use verbatim

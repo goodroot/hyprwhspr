@@ -265,6 +265,17 @@ class TextInjectorInjectionTests(unittest.TestCase):
         ):
             self.assertFalse(injector._is_gnome_wayland_session())
 
+    def test_layout_type_safe_redetects_each_call(self):
+        injector = self._injector()
+
+        with mock.patch.object(
+            injector, "_detect_active_layout", side_effect=["us", "de"]
+        ) as detect:
+            self.assertTrue(injector._layout_is_type_safe())
+            self.assertFalse(injector._layout_is_type_safe())
+
+        self.assertEqual(detect.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
