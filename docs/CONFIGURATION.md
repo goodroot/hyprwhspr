@@ -1034,9 +1034,27 @@ Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see
 
 ### Keyboard hotplug (docks, Bluetooth)
 
-By default, hyprwhspr only discovers keyboards at startup. If you dock a laptop or reconnect a Bluetooth keyboard, the service won't see it until restarted.
+By default, hyprwhspr only discovers keyboards at startup. If you dock a laptop, reconnect a Bluetooth/USB keyboard, or resume from suspend, the service won't re-attach that keyboard until it is restarted — so the shortcut silently stops working on it.
 
-Set `keyboard_device_names` to enable hotplug detection for specific devices:
+The fix is to set a `keyboard_device_names` allowlist. Listed devices are attached at startup **and** automatically re-attached when they reappear later, which keeps the shortcut alive across disconnect/reconnect, docking and suspend. Devices not on the list (mice, media controllers) are ignored even if they advertise keyboard-like capabilities.
+
+**Recommended — interactive configurator:**
+
+```bash
+hyprwhspr keyboard configure
+```
+
+This detects your keyboards and pre-selects the real ones (using udev's
+keyboard/mouse classification so a fancy mouse isn't picked by mistake). It shows
+the recommended set and lets you accept it as-is or adjust the list by number,
+then writes `keyboard_device_names` and offers to restart the service so it takes
+effect immediately.
+
+If the device names are cryptic and you're not sure which one is your keyboard,
+run `hyprwhspr keyboard detect` and press a key — it reports which device the
+keypress came from (and its number in `keyboard configure`).
+
+**Manual alternative** — edit `config.json` directly (run `hyprwhspr keyboard list` to find exact device names) and restart the service:
 
 ```jsonc
 {
@@ -1046,8 +1064,6 @@ Set `keyboard_device_names` to enable hotplug detection for specific devices:
   ]
 }
 ```
-
-Use `hyprwhspr keyboard list` to find exact device names. Listed devices are grabbed at startup and automatically attached when plugged in later. Devices not on the list (mice, media controllers) are ignored even if they advertise keyboard-like capabilities.
 
 `selected_device_name` and `selected_device_path` take priority over this list if set.
 
