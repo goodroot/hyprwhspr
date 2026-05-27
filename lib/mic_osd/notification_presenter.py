@@ -28,6 +28,11 @@ class NotificationPresenter:
     # States that represent a finished action and should auto-dismiss.
     _TRANSIENT_STATES = {'success', 'error'}
     _APP_NAME = 'hyprwhspr'
+    # All status bubbles carry the transient hint (see _send), so they never
+    # land in the notification center. These timeouts only govern how long the
+    # banner lingers on screen (GNOME ignores -t and uses its own duration).
+    _ACTIVE_TIMEOUT_MS = 5000
+    _TRANSIENT_TIMEOUT_MS = 2000
 
     def __init__(self, active_timeout_ms: int = None):
         self._nid = None  # active notification id (for in-place replace)
@@ -75,12 +80,6 @@ class NotificationPresenter:
             pass
 
     # ---- interface mirrored from MicOSDRunner ----
-
-    # All status bubbles carry the transient hint (see _send), so they never
-    # land in the notification center. These timeouts only govern how long the
-    # banner lingers on screen (GNOME ignores -t and uses its own duration).
-    _ACTIVE_TIMEOUT_MS = 5000
-    _TRANSIENT_TIMEOUT_MS = 2000
 
     def show(self) -> bool:
         if not self.is_available():
