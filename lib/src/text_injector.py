@@ -18,6 +18,11 @@ try:
 except ImportError:
     from dependencies import require_package
 
+try:
+    from .ydotoold_session import YdotooldSession
+except ImportError:
+    from ydotoold_session import YdotooldSession
+
 pyperclip = require_package('pyperclip')
 
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
@@ -42,18 +47,41 @@ class TextInjector:
         self.wtype_available = shutil.which('wtype') is not None
         self._layout_type_safe_cache = None  # lazily filled by _layout_is_type_safe()
 
+        # Private ydotoold instance (lazily started on first uinput-fallback use, so
+        # wtype-only sessions never spawn it). Replaces the old shared/managed
+        # ydotool.service: hyprwhspr owns this daemon on its own socket.
+        self._ydotoold = YdotooldSession()
+
         if not self.ydotool_available and not self.wtype_available:
             print("⚠️  No injection backend found (wtype or ydotool). hyprwhspr requires wtype or ydotool for paste injection.")
         elif not self.wtype_available and self.ydotool_available:
             print("ℹ️  wtype not found. Falling back to ydotool for paste hotkey injection.")
 
     def _check_ydotool(self) -> bool:
-        """Check if ydotool is available on the system"""
-        try:
-            result = subprocess.run(['which', 'ydotool'], capture_output=True, text=True, timeout=5)
-            return result.returncode == 0
-        except Exception:
-            return False
+        """Check if ydotool is usable (both the client and the ydotoold daemon)."""
+        return YdotooldSession.is_available()
+
+    def _run_ydotool(self, args, timeout):
+        """Run a ydotool client command against our private ydotoold daemon.
+
+        Ensures the daemon is running and points the client at our private socket
+        via YDOTOOL_SOCKET. Returns the CompletedProcess, or None if the daemon
+        could not be started (callers degrade gracefully).
+        """
+        if not self._ydotoold.ensure_running():
+            return None
+        return subprocess.run(
+            ['ydotool', *args],
+            capture_output=True,
+            timeout=timeout,
+            env=self._ydotoold.socket_env(),
+        )
+
+    def close(self):
+        """Tear down the private ydotoold daemon. Idempotent; safe to call on exit."""
+        ydotoold = getattr(self, '_ydotoold', None)
+        if ydotoold is not None:
+            ydotoold.close()
 
     def _get_paste_keycode(self) -> int:
         """
@@ -337,8 +365,12 @@ class TextInjector:
         Required after wtype paste: wtype sends Wayland modifier events, but
         ydotool's uinput layer may still consider those modifiers held, causing
         subsequent physical keypresses to behave incorrectly.
+
+        Only runs when our ydotoold is *already* alive — there is nothing to clear
+        before the daemon's first use, and we must not spawn it on wtype-only
+        (wlroots) sessions just to release modifiers.
         """
-        if not self.ydotool_available:
+        if not self.ydotool_available or not self._ydotoold.is_running():
             return
 
         try:
@@ -348,11 +380,7 @@ class TextInjector:
             # 29  = LeftCtrl,        97  = RightCtrl
             # 42  = LeftShift,       54  = RightShift
             modifiers_to_clear = ['125:0', '126:0', '56:0', '100:0', '29:0', '97:0', '42:0', '54:0']
-            subprocess.run(
-                ['ydotool', 'key'] + modifiers_to_clear,
-                capture_output=True,
-                timeout=1
-            )
+            self._run_ydotool(['key'] + modifiers_to_clear, timeout=1)
         except Exception as e:
             print(f"Warning: Could not clear stuck modifiers: {e}")
 
@@ -405,7 +433,9 @@ class TextInjector:
             return False
 
         def _key(*args):
-            result = subprocess.run(['ydotool', 'key'] + list(args), capture_output=True, timeout=1)
+            result = self._run_ydotool(['key'] + list(args), timeout=1)
+            if result is None:
+                raise RuntimeError("ydotoold unavailable")
             if result.returncode != 0:
                 stderr = (result.stderr or b'').decode('utf-8', 'ignore')
                 raise RuntimeError(f"ydotool key {' '.join(args)} failed: {stderr}")
@@ -452,13 +482,12 @@ class TextInjector:
             return False
 
         try:
-            result = subprocess.run(
-                ['ydotool', 'type', '--key-delay', '5', '--key-hold', '5', '--', text],
-                capture_output=True,
+            result = self._run_ydotool(
+                ['type', '--key-delay', '5', '--key-hold', '5', '--', text],
                 timeout=10,
             )
-            if result.returncode != 0:
-                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
+            if result is None or result.returncode != 0:
+                stderr = (result.stderr or b'').decode('utf-8', 'ignore') if result else 'ydotoold unavailable'
                 print(f"  ydotool type failed: {stderr}")
                 return False
             return True
@@ -523,12 +552,9 @@ class TextInjector:
             return
         try:
             if self.ydotool_available:
-                enter_result = subprocess.run(
-                    ['ydotool', 'key', '28:1', '28:0'],  # 28 = Enter key
-                    capture_output=True, timeout=1
-                )
-                if enter_result.returncode != 0:
-                    stderr = (enter_result.stderr or b"").decode("utf-8", "ignore")
+                enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1)  # 28 = Enter
+                if enter_result is None or enter_result.returncode != 0:
+                    stderr = (enter_result.stderr or b"").decode("utf-8", "ignore") if enter_result else "ydotoold unavailable"
                     print(f"  ydotool Enter key failed: {stderr}")
             elif self.wtype_available:
                 enter_result = subprocess.run(

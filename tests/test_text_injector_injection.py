@@ -26,6 +26,13 @@ class TextInjectorInjectionTests(unittest.TestCase):
         injector.config_manager = ConfigStub()
         injector.ydotool_available = True
         injector.wtype_available = False
+        # Private ydotoold daemon manager: not running by default (so
+        # _clear_stuck_modifiers is a no-op), but ensure_running() succeeds when a
+        # ydotool command is actually issued.
+        injector._ydotoold = mock.Mock()
+        injector._ydotoold.is_running.return_value = False
+        injector._ydotoold.ensure_running.return_value = True
+        injector._ydotoold.socket_env.return_value = {"YDOTOOL_SOCKET": "/run/x.sock"}
         return injector
 
     def test_gnome_wayland_uses_ydotool_type_instead_of_paste_chord(self):
@@ -233,10 +240,13 @@ class TextInjectorInjectionTests(unittest.TestCase):
         with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
             self.assertTrue(injector._type_text_ydotool("hello -- world"))
 
+        # Now routed through _run_ydotool: same argv, plus the private-socket env.
+        injector._ydotoold.ensure_running.assert_called_once_with()
         run.assert_called_once_with(
             ['ydotool', 'type', '--key-delay', '5', '--key-hold', '5', '--', 'hello -- world'],
             capture_output=True,
             timeout=10,
+            env={"YDOTOOL_SOCKET": "/run/x.sock"},
         )
 
     def test_gnome_detection_does_not_match_pop_substrings(self):

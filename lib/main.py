@@ -2771,6 +2771,14 @@ class hyprwhsprApp:
             if self.whisper_manager:
                 self.whisper_manager.cleanup()
 
+            # Tear down our private ydotoold daemon (only started if the uinput
+            # paste fallback was used; no-op otherwise).
+            if hasattr(self, 'text_injector') and self.text_injector:
+                try:
+                    self.text_injector.close()
+                except Exception:
+                    pass  # best-effort
+
             # Save configuration
             self.config.save_config()
 
