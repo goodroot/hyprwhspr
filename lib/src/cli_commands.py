@@ -1873,8 +1873,14 @@ def setup_command(python_path: Optional[str] = None):
         setup_hyprland_choice = False
 
     # Step 3e: Keyboard device allowlist (which keyboards the shortcut listens to).
-    # Returns names / [] (auto-detect) / None (unchanged). Prints its own header.
-    keyboard_allowlist_choice = _run_keyboard_selection(ConfigManager().get_all_settings())
+    # Gate this so routine setup re-runs do not always show the device table.
+    keyboard_cfg = ConfigManager().get_all_settings()
+    current_allowlist = keyboard_cfg.get('keyboard_device_names') or []
+    keyboard_allowlist_choice = None
+    if Confirm.ask("Configure keyboard allowlist?",
+                   default=not bool(current_allowlist)):
+        # Returns names / [] (auto-detect) / None (unchanged). Prints its own header.
+        keyboard_allowlist_choice = _run_keyboard_selection(keyboard_cfg)
 
     # Step 4: Systemd setup
     print("\n" + "="*60)
@@ -2755,14 +2761,9 @@ def _migrate_remove_managed_ydotool_unit():
     distro/admin/user-owned unit at that path.
     """
     target = USER_SYSTEMD_DIR / YDOTOOL_UNIT
-    if not target.exists():
-        return
-    try:
-        text = target.read_text(encoding='utf-8')
-    except OSError:
-        return
-    if not any(marker in text for marker in _YDOTOOL_MARKERS):
-        log_debug(f"Leaving foreign {YDOTOOL_UNIT} untouched at {target}")
+    if not _is_hyprwhspr_managed_ydotool_unit(target):
+        if target.exists():
+            log_debug(f"Leaving foreign {YDOTOOL_UNIT} untouched at {target}")
         return
     run_command(['systemctl', '--user', 'disable', '--now', YDOTOOL_UNIT], check=False)
     try:
@@ -2772,6 +2773,17 @@ def _migrate_remove_managed_ydotool_unit():
     except OSError as e:
         log_warning(f"Could not remove {YDOTOOL_UNIT}: {e}")
     run_command(['systemctl', '--user', 'daemon-reload'], check=False)
+
+
+def _is_hyprwhspr_managed_ydotool_unit(target: Path) -> bool:
+    """True only for ydotool.service files authored by older hyprwhspr setup."""
+    if not target.exists():
+        return False
+    try:
+        text = target.read_text(encoding='utf-8')
+    except OSError:
+        return False
+    return any(marker in text for marker in _YDOTOOL_MARKERS)
 
 
 def setup_systemd(mode: str = 'install'):
@@ -5285,7 +5297,8 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         items_to_remove.append(f"Systemd service: {PARAKEET_SERVICE_NAME}")
     if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {RESUME_SERVICE_NAME} (deprecated)")
-    if (USER_SYSTEMD_DIR / YDOTOOL_UNIT).exists():
+    ydotool_unit_path = USER_SYSTEMD_DIR / YDOTOOL_UNIT
+    if _is_hyprwhspr_managed_ydotool_unit(ydotool_unit_path):
         items_to_remove.append(f"Systemd service: {YDOTOOL_UNIT}")
 
     # Waybar integration
@@ -5375,10 +5388,10 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).unlink(missing_ok=True)
             log_success(f"Removed {RESUME_SERVICE_NAME}")
 
-        if (USER_SYSTEMD_DIR / YDOTOOL_UNIT).exists():
+        if _is_hyprwhspr_managed_ydotool_unit(ydotool_unit_path):
             run_command(['systemctl', '--user', 'stop', YDOTOOL_UNIT], check=False)
             run_command(['systemctl', '--user', 'disable', YDOTOOL_UNIT], check=False)
-            (USER_SYSTEMD_DIR / YDOTOOL_UNIT).unlink(missing_ok=True)
+            ydotool_unit_path.unlink(missing_ok=True)
             log_success(f"Removed {YDOTOOL_UNIT}")
 
         # Reload systemd daemon
