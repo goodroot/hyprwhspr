@@ -29,8 +29,10 @@ class NotificationPresenter:
     _TRANSIENT_STATES = {'success', 'error'}
     _APP_NAME = 'hyprwhspr'
 
-    def __init__(self):
+    def __init__(self, active_timeout_ms: int = None):
         self._nid = None  # active notification id (for in-place replace)
+        # Banner duration for active states; falls back to the class default.
+        self._active_timeout_ms = active_timeout_ms or self._ACTIVE_TIMEOUT_MS
 
     @staticmethod
     def is_available() -> bool:
@@ -39,8 +41,10 @@ class NotificationPresenter:
     def _send(self, body: str, timeout_ms: int):
         """Show or replace the status notification. Captures/keeps the id so
         subsequent calls replace the same bubble instead of stacking."""
+        # transient: bypass the server's persistence so status bubbles never
+        # accumulate in the notification center (mirrors the ephemeral overlay).
         cmd = ['notify-send', '-a', self._APP_NAME, '-u', 'normal',
-               '-t', str(timeout_ms), '-p']
+               '-t', str(timeout_ms), '-h', 'boolean:transient:true', '-p']
         if self._nid is not None:
             cmd += ['-r', str(self._nid)]
         cmd += [self._APP_NAME, body]
@@ -55,19 +59,33 @@ class NotificationPresenter:
         except Exception:
             pass
 
+    def _close(self, nid: int):
+        """Actively dismiss the notification so it doesn't linger in the
+        notification center. GNOME keeps even transient notifications in its
+        list, so letting it expire is not enough — we must close it by id."""
+        try:
+            subprocess.run(
+                ['gdbus', 'call', '--session',
+                 '--dest', 'org.freedesktop.Notifications',
+                 '--object-path', '/org/freedesktop/Notifications',
+                 '--method', 'org.freedesktop.Notifications.CloseNotification',
+                 str(nid)],
+                capture_output=True, timeout=2)
+        except Exception:
+            pass
+
     # ---- interface mirrored from MicOSDRunner ----
 
-    # Finite timeouts so notifications auto-expire and never accumulate.
-    # (-t 0 / "never expire" notifications could pile up and wedge GNOME's
-    # banner display.) GNOME hides the banner after a few seconds regardless;
-    # the timeout governs how long it lingers in the list.
+    # All status bubbles carry the transient hint (see _send), so they never
+    # land in the notification center. These timeouts only govern how long the
+    # banner lingers on screen (GNOME ignores -t and uses its own duration).
     _ACTIVE_TIMEOUT_MS = 5000
     _TRANSIENT_TIMEOUT_MS = 2000
 
     def show(self) -> bool:
         if not self.is_available():
             return False
-        self._send(self._STATE_TEXT['recording'], self._ACTIVE_TIMEOUT_MS)
+        self._send(self._STATE_TEXT['recording'], self._active_timeout_ms)
         return True
 
     def set_state(self, state: str):
@@ -79,12 +97,14 @@ class NotificationPresenter:
             return
         body = self._STATE_TEXT.get(state, self._STATE_TEXT['recording'])
         timeout = (self._TRANSIENT_TIMEOUT_MS if state in self._TRANSIENT_STATES
-                   else self._ACTIVE_TIMEOUT_MS)
+                   else self._active_timeout_ms)
         self._send(body, timeout)
 
     def hide(self):
-        # Let the last notification expire on its own timeout; just forget the
-        # id so the next recording starts a fresh (banner-popping) notification.
+        # Actively close the bubble so it does not persist in the notification
+        # center, then forget the id so the next recording starts fresh.
+        if self._nid is not None:
+            self._close(self._nid)
         self._nid = None
 
     def clear_state(self):
@@ -98,4 +118,6 @@ class NotificationPresenter:
         pass
 
     def stop(self):
+        if self._nid is not None:
+            self._close(self._nid)
         self._nid = None

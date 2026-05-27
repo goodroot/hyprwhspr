@@ -424,14 +424,18 @@ class AudioCapture:
             return None
 
     def _notify_device_fallback(self, device_name: str):
-        """Notify user that device fell back to system default"""
+        """Notify user that device fell back to system default.
+
+        Informational, so it auto-dismisses instead of lingering in the
+        notification center.
+        """
         try:
-            import subprocess
-            subprocess.run(
-                ["notify-send", "-u", "normal", "hyprwhspr",
-                 f"Configured microphone unavailable - using system default:\n{device_name}"],
-                timeout=2, check=False, capture_output=True
-            )
+            from desktop_notify import notify
+            timeout = (self.config.get_setting('notification_timeout_ms', 5000)
+                       if self.config is not None else 5000)
+            notify("hyprwhspr",
+                   f"Configured microphone unavailable - using system default:\n{device_name}",
+                   urgency="normal", timeout_ms=timeout)
         except Exception:
             pass  # Best effort notification
     

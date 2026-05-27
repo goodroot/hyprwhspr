@@ -141,6 +141,10 @@ class ConfigManager:
             'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)
             # Visual feedback settings
             'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
+            # Banner duration (ms) for non-critical desktop notifications. These are also
+            # marked transient so they never accumulate in the notification center;
+            # critical errors ignore this and persist. (GNOME Shell ignores -t entirely.)
+            'notification_timeout_ms': 5000,
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
             # Audio ducking settings
             'audio_ducking': False,              # Reduce system volume during recording

@@ -325,8 +325,27 @@ show_notification() {
     local message="$2"
     local urgency="${3:-normal}"
 
-    if command -v notify-send &> /dev/null; then
-        notify-send -i "$ICON_PATH" "$title" "$message" -u "$urgency"
+    command -v notify-send &> /dev/null || return
+
+    if [[ "$urgency" == "critical" ]]; then
+        # Real error: persist in the notification center, never expire.
+        notify-send -i "$ICON_PATH" -u critical -t 0 "$title" "$message"
+        return
+    fi
+
+    # Informational/status: transient hint (honored by mako/dunst/swaync) plus
+    # an explicit close after a few seconds. GNOME keeps even transient
+    # notifications in its list, so we capture the id and close it; on daemons
+    # that already dropped it the close is a harmless no-op.
+    local nid
+    nid=$(notify-send -p -i "$ICON_PATH" -u "$urgency" -t 5000 \
+        -h boolean:transient:true "$title" "$message")
+    if [[ -n "$nid" ]] && command -v gdbus &> /dev/null; then
+        ( sleep 5
+          gdbus call --session --dest org.freedesktop.Notifications \
+            --object-path /org/freedesktop/Notifications \
+            --method org.freedesktop.Notifications.CloseNotification "$nid" \
+            > /dev/null 2>&1 ) &
     fi
 }
 

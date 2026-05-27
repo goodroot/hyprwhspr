@@ -386,6 +386,12 @@
       "default": true,
       "description": "Show recording status during recording. Shown as the animated overlay on layer-shell compositors (Hyprland, Sway, niri, KDE), or as desktop notifications on GNOME/Mutter (which has no layer-shell support)."
     },
+    "notification_timeout_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 5000,
+      "description": "How long non-critical desktop notifications stay on screen, in milliseconds. These are also marked transient so they never pile up in the notification center. Critical errors ignore this and persist until dismissed. Note: GNOME Shell ignores notification timeouts and uses its own banner duration."
+    },
     "mute_detection": {
       "type": "boolean",
       "default": true,

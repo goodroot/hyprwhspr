@@ -219,7 +219,8 @@ class hyprwhsprApp:
                     # No layer-shell (e.g. GNOME/Mutter): the overlay would steal
                     # keyboard focus and swallow the paste keystroke. Show recording
                     # status via desktop notifications instead.
-                    presenter = NotificationPresenter()
+                    presenter = NotificationPresenter(
+                        active_timeout_ms=self.config.get_setting('notification_timeout_ms', 5000))
                     if presenter.is_available():
                         self._mic_osd_runner = presenter
                         print("[INIT] Recording status via notifications (no layer-shell)", flush=True)
@@ -1627,14 +1628,16 @@ class hyprwhsprApp:
         return False
 
     def _notify_user(self, title: str, message: str, urgency: str = "normal"):
-        """Send desktop notification if notify-send is available"""
+        """Send desktop notification if notify-send is available.
+
+        Non-critical notifications auto-dismiss so they don't accumulate in the
+        notification center; only genuine (critical) errors persist there until
+        the user dismisses them. See desktop_notify for the why.
+        """
         try:
-            subprocess.run(
-                ["notify-send", "-u", urgency, title, message],
-                timeout=2,
-                check=False,
-                capture_output=True
-            )
+            from desktop_notify import notify
+            timeout = self.config.get_setting('notification_timeout_ms', 5000)
+            notify(title, message, urgency=urgency, timeout_ms=timeout)
         except Exception:
             pass  # Silently fail if notify-send not available
 
