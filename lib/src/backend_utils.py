@@ -1,5 +1,29 @@
 """Backend utilities and constants for hyprwhspr"""
 
+import re
+
+
+_HARDWARE_DEVICE_TYPES = ('INTEGRATED_GPU', 'DISCRETE_GPU', 'VIRTUAL_GPU')
+_DEVICE_TYPE_LINE_RE = re.compile(r'deviceType\s*=\s*PHYSICAL_DEVICE_TYPE_(\w+)')
+
+
+def vulkaninfo_has_hardware_gpu(summary: str) -> bool:
+    """Return True if vulkaninfo --summary lists at least one non-software device.
+
+    vulkaninfo --summary prints one block per Vulkan device, each with a
+    `deviceType = PHYSICAL_DEVICE_TYPE_...` line. A hardware GPU has deviceType
+    INTEGRATED_GPU, DISCRETE_GPU, or VIRTUAL_GPU; llvmpipe and other software
+    renderers report PHYSICAL_DEVICE_TYPE_CPU (or _OTHER). On Mesa the llvmpipe
+    fallback ICD is always present alongside the real driver, so the previous
+    substring check (`'llvmpipe' in output`) was a false negative on every Mesa
+    system with a real GPU.
+    """
+    for match in _DEVICE_TYPE_LINE_RE.finditer(summary):
+        if match.group(1) in _HARDWARE_DEVICE_TYPES:
+            return True
+    return False
+
+
 def normalize_backend(backend: str) -> str:
     """Normalize backend name for backward compatibility.
 

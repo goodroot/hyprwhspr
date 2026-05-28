@@ -26,6 +26,13 @@ class TextInjectorInjectionTests(unittest.TestCase):
         injector.config_manager = ConfigStub()
         injector.ydotool_available = True
         injector.wtype_available = False
+        # Private ydotoold daemon manager: not running by default (so
+        # _clear_stuck_modifiers is a no-op), but ensure_running() succeeds when a
+        # ydotool command is actually issued.
+        injector._ydotoold = mock.Mock()
+        injector._ydotoold.is_running.return_value = False
+        injector._ydotoold.ensure_running.return_value = True
+        injector._ydotoold.socket_env.return_value = {"YDOTOOL_SOCKET": "/run/x.sock"}
         return injector
 
     def test_gnome_wayland_uses_ydotool_type_instead_of_paste_chord(self):
@@ -38,6 +45,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
             mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard") as save_clipboard,
             mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
             mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=True),
             mock.patch.object(injector, "_restore_clipboard") as restore_clipboard,
             mock.patch.object(injector, "_send_enter_if_auto_submit") as auto_submit,
             mock.patch.dict(
@@ -61,7 +69,10 @@ class TextInjectorInjectionTests(unittest.TestCase):
         copy.assert_not_called()
         restore_clipboard.assert_not_called()
 
-    def test_gnome_wayland_with_custom_paste_keycode_keeps_clipboard_fallback(self):
+    def test_gnome_wayland_with_custom_paste_keycode_uses_ydotool_chord(self):
+        # A custom paste keycode means direct typing can't honour the layout, so
+        # we use verbatim clipboard paste. The ydotool key chord DOES reach Mutter,
+        # so paste now succeeds on GNOME instead of being clipboard-only.
         injector = self._injector()
         injector.config_manager = ConfigStub({"paste_keycode": 54})
 
@@ -86,13 +97,112 @@ class TextInjectorInjectionTests(unittest.TestCase):
                 clear=True,
             ),
         ):
-            self.assertFalse(injector._inject_via_clipboard_and_hotkey("hello"))
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
 
         copy.assert_called_once_with("hello")
-        paste_chord.assert_not_called()
+        paste_chord.assert_called_once_with("ctrl")
         direct_type.assert_not_called()
-        restore_clipboard.assert_not_called()
-        auto_submit.assert_not_called()
+        restore_clipboard.assert_called_once()
+        auto_submit.assert_called_once_with()
+
+    def test_gnome_non_us_layout_uses_clipboard_paste_not_direct_typing(self):
+        # German (or any non-US) layout: ydotool type would mangle keys, so we
+        # must use verbatim clipboard paste even though it's a GNOME session.
+        injector = self._injector()
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy") as copy,
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=False),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit") as auto_submit,
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "XDG_SESSION_DESKTOP": "gnome",
+                    "DESKTOP_SESSION": "gnome",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        direct_type.assert_not_called()
+        copy.assert_called_once_with("hello")
+        paste_chord.assert_called_once_with("ctrl")
+        auto_submit.assert_called_once_with()
+
+    def test_gnome_non_ascii_text_uses_clipboard_paste_not_direct_typing(self):
+        # Umlauts/typographic characters can't be produced by ydotool type
+        # (ASCII-only), so non-ASCII text always goes through clipboard paste.
+        injector = self._injector()
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy") as copy,
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=True),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "XDG_SESSION_DESKTOP": "gnome",
+                    "DESKTOP_SESSION": "gnome",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("Größe"))
+
+        direct_type.assert_not_called()
+        copy.assert_called_once_with("Größe")
+        paste_chord.assert_called_once_with("ctrl")
+
+    def test_prefer_clipboard_paste_override_skips_direct_typing_on_gnome(self):
+        # Explicit user override: never type directly, even for ASCII on a US layout.
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"prefer_clipboard_paste": True})
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy") as copy,
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=True),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "XDG_SESSION_DESKTOP": "gnome",
+                    "DESKTOP_SESSION": "gnome",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        direct_type.assert_not_called()
+        paste_chord.assert_called_once_with("ctrl")
 
     def test_non_gnome_leaves_clipboard_on_failed_paste_chord(self):
         injector = self._injector()
@@ -123,6 +233,35 @@ class TextInjectorInjectionTests(unittest.TestCase):
         paste_chord.assert_called_once_with("ctrl")
         direct_type.assert_not_called()
 
+    def test_gnome_failed_paste_restores_previous_clipboard(self):
+        injector = self._injector()
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=False),
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True),
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=False),
+            mock.patch.object(injector, "_restore_clipboard") as restore_clipboard,
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertFalse(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        restore_clipboard.assert_called_once_with(
+            b"old clipboard", injected=b"hello", delay=0
+        )
+
     def test_ydotool_type_command_uses_small_delay_and_argument_separator(self):
         injector = self._injector()
         completed = types.SimpleNamespace(returncode=0, stderr=b"")
@@ -130,10 +269,13 @@ class TextInjectorInjectionTests(unittest.TestCase):
         with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
             self.assertTrue(injector._type_text_ydotool("hello -- world"))
 
+        # Now routed through _run_ydotool: same argv, plus the private-socket env.
+        injector._ydotoold.ensure_running.assert_called_once_with()
         run.assert_called_once_with(
             ['ydotool', 'type', '--key-delay', '5', '--key-hold', '5', '--', 'hello -- world'],
             capture_output=True,
             timeout=10,
+            env={"YDOTOOL_SOCKET": "/run/x.sock"},
         )
 
     def test_gnome_detection_does_not_match_pop_substrings(self):
@@ -151,6 +293,96 @@ class TextInjectorInjectionTests(unittest.TestCase):
             clear=True,
         ):
             self.assertFalse(injector._is_gnome_wayland_session())
+
+    def test_mutter_desktop_is_gnome_wayland_session(self):
+        injector = self._injector()
+
+        with mock.patch.dict(
+            "text_injector.os.environ",
+            {
+                "XDG_SESSION_TYPE": "wayland",
+                "XDG_CURRENT_DESKTOP": "Mutter",
+                "WAYLAND_DISPLAY": "wayland-1",
+            },
+            clear=True,
+        ):
+            self.assertTrue(injector._is_gnome_wayland_session())
+
+    def test_layout_type_safe_redetects_each_call(self):
+        injector = self._injector()
+
+        with mock.patch.object(
+            injector, "_detect_active_layout", side_effect=["us", "de"]
+        ) as detect:
+            self.assertTrue(injector._layout_is_type_safe())
+            self.assertFalse(injector._layout_is_type_safe())
+
+        self.assertEqual(detect.call_count, 2)
+
+    def test_clipboard_restore_default_delay_is_config_default(self):
+        injector = self._injector()
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True),
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True),
+            mock.patch.object(injector, "_restore_clipboard") as restore_clipboard,
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "sway",
+                    "WAYLAND_DISPLAY": "wayland-1",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        restore_clipboard.assert_called_once_with(
+            b"old clipboard", injected=b"hello", delay=5.0
+        )
+
+    def test_localectl_unset_layout_is_unknown_not_non_us(self):
+        injector = self._injector()
+        calls = [
+            types.SimpleNamespace(returncode=1, stdout=""),
+            types.SimpleNamespace(returncode=0, stdout="System Locale: LANG=en_US.UTF-8\n   X11 Layout: (unset)\n"),
+        ]
+
+        with mock.patch("text_injector.subprocess.run", side_effect=calls):
+            self.assertEqual(injector._detect_active_layout(), "")
+
+    def test_gnome_non_xkb_mru_source_is_not_type_safe(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(
+            returncode=0,
+            stdout="[('ibus', 'mozc-jp'), ('xkb', 'us')]",
+        )
+
+        with mock.patch("text_injector.subprocess.run", return_value=completed):
+            self.assertFalse(injector._layout_is_type_safe())
+
+    def test_layout_detection_uses_short_ttl_cache(self):
+        injector = self._injector()
+        calls = [
+            types.SimpleNamespace(returncode=0, stdout="[('xkb', 'us')]"),
+            types.SimpleNamespace(returncode=0, stdout="[('xkb', 'de')]"),
+        ]
+
+        with (
+            mock.patch("text_injector.subprocess.run", side_effect=calls) as run,
+            mock.patch("text_injector.time.monotonic", side_effect=[10.0, 10.5, 11.2]),
+        ):
+            self.assertEqual(injector._detect_active_layout(), "us")
+            self.assertEqual(injector._detect_active_layout(), "us")
+            self.assertEqual(injector._detect_active_layout(), "de")
+
+        self.assertEqual(run.call_count, 2)
 
 
 if __name__ == "__main__":

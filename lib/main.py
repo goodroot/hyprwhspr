@@ -26,6 +26,20 @@ _HALLUCINATION_MARKERS = {
     'video playback', 'music', 'music playing', 'keyboard clicking',
 }
 
+
+def _looks_like_wlroots_session() -> bool:
+    desktop = ':'.join([
+        os.environ.get('XDG_CURRENT_DESKTOP', ''),
+        os.environ.get('XDG_SESSION_DESKTOP', ''),
+        os.environ.get('DESKTOP_SESSION', ''),
+    ]).lower()
+    tokens = set(filter(None, desktop.replace('-', ':').replace('_', ':').split(':')))
+    return bool(
+        tokens & {'hyprland', 'sway', 'river', 'wayfire', 'labwc'}
+        or os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')
+        or os.environ.get('SWAYSOCK')
+    )
+
 # Ensure unbuffered output for journald logging
 if sys.stdout.isatty():
     # Interactive terminal - keep buffering
@@ -88,7 +102,7 @@ class hyprwhsprApp:
         self.audio_manager = AudioManager(self.config)
 
         # Initialize audio ducker for reducing system volume during recording
-        ducking_percent = self.config.get_setting('audio_ducking_percent', 70)
+        ducking_percent = self.config.get_setting('audio_ducking_percent', 50)
         self.audio_ducker = AudioDucker(reduction_percent=ducking_percent)
 
         # Initialize whisper manager with shared config
@@ -207,19 +221,29 @@ class hyprwhsprApp:
         self._mic_osd_runner = None
         if self.config.get_setting('mic_osd_enabled', True):
             try:
-                from mic_osd import MicOSDRunner
-                runner = MicOSDRunner()
-                if runner.is_available():
+                from mic_osd import MicOSDRunner, NotificationPresenter
+                if MicOSDRunner.is_available() and MicOSDRunner.layer_shell_active():
+                    runner = MicOSDRunner()
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
                         print("[INIT] Mic-OSD daemon started", flush=True)
                     else:
                         print("[WARN] Failed to start mic-osd daemon", flush=True)
                 else:
-                    reason = runner.get_unavailable_reason()
-                    print(f"[WARN] Mic-OSD unavailable: {reason}", flush=True)
+                    # No layer-shell (e.g. GNOME/Mutter): the overlay would steal
+                    # keyboard focus and swallow the paste keystroke. Show recording
+                    # status via desktop notifications instead.
+                    if _looks_like_wlroots_session():
+                        print("[INIT] layer-shell not supported, falling back to notifications", flush=True)
+                    presenter = NotificationPresenter(
+                        active_timeout_ms=self.config.get_setting('notification_timeout_ms', 5000))
+                    if presenter.is_available():
+                        self._mic_osd_runner = presenter
+                        print("[INIT] Recording status via notifications (no layer-shell)", flush=True)
+                    else:
+                        print("[WARN] No layer-shell overlay and no notify-send; recording has no status indicator", flush=True)
             except Exception as e:
-                print(f"[WARN] Failed to initialize mic-osd: {e}", flush=True)
+                print(f"[WARN] Failed to initialize recording status indicator: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
 
@@ -1620,14 +1644,16 @@ class hyprwhsprApp:
         return False
 
     def _notify_user(self, title: str, message: str, urgency: str = "normal"):
-        """Send desktop notification if notify-send is available"""
+        """Send desktop notification if notify-send is available.
+
+        Non-critical notifications auto-dismiss so they don't accumulate in the
+        notification center; only genuine (critical) errors persist there until
+        the user dismisses them. See desktop_notify for the why.
+        """
         try:
-            subprocess.run(
-                ["notify-send", "-u", urgency, title, message],
-                timeout=2,
-                check=False,
-                capture_output=True
-            )
+            from desktop_notify import notify
+            timeout = self.config.get_setting('notification_timeout_ms', 5000)
+            notify(title, message, urgency=urgency, timeout_ms=timeout)
         except Exception:
             pass  # Silently fail if notify-send not available
 
@@ -2760,6 +2786,14 @@ class hyprwhsprApp:
             # Cleanup whisper manager (closes WebSocket connections, etc.)
             if self.whisper_manager:
                 self.whisper_manager.cleanup()
+
+            # Tear down our private ydotoold daemon (only started if the uinput
+            # paste fallback was used; no-op otherwise).
+            if hasattr(self, 'text_injector') and self.text_injector:
+                try:
+                    self.text_injector.close()
+                except Exception:
+                    pass  # best-effort
 
             # Save configuration
             self.config.save_config()

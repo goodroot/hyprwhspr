@@ -33,6 +33,12 @@ except ImportError:
     # Fallback if rich is not available (shouldn't happen in normal usage)
     Confirm = None
 
+# Shared backend helpers
+try:
+    from .backend_utils import vulkaninfo_has_hardware_gpu
+except ImportError:
+    from backend_utils import vulkaninfo_has_hardware_gpu
+
 
 def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None,
                      verbose: Optional[bool] = None) -> subprocess.CompletedProcess:
@@ -1040,13 +1046,10 @@ def detect_gpu_type() -> str:
                 timeout=5
             )
             if result and result.returncode == 0 and result.stdout:
-                # Check if output mentions GPU/device
-                output = result.stdout.lower()
-                if 'gpu' in output or 'device' in output:
-                    # Further check: look for actual GPU device (not just software renderer)
-                    if 'llvmpipe' not in output and 'software' not in output:
-                        log_debug("GPU detected via vulkaninfo")
-                        return 'vulkan'
+                summary = _safe_decode(result.stdout)
+                if vulkaninfo_has_hardware_gpu(summary):
+                    log_debug("GPU detected via vulkaninfo")
+                    return 'vulkan'
         except Exception as e:
             log_debug(f"vulkaninfo check failed: {e}")
 
@@ -1116,8 +1119,8 @@ def setup_vulkan_support() -> bool:
             return False
 
         # Check for actual GPU (not software renderer)
-        output = _safe_decode(result.stdout).lower()
-        if 'llvmpipe' in output or 'software' in output:
+        summary = _safe_decode(result.stdout)
+        if not vulkaninfo_has_hardware_gpu(summary):
             log_warning("Only software Vulkan renderer detected (no GPU)")
             return False
 
@@ -1335,6 +1338,7 @@ def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
             try:
                 temp_req_path = _filter_requirements(requirements_file, skip_packages)
                 run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
+                set_state("installed_backend", "cpu")
                 return True
             except subprocess.CalledProcessError as e:
                 log_warning(f"Wheel installed but remaining deps failed: {e}")
@@ -1362,6 +1366,7 @@ def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
 
         run_command([str(pip_bin), 'install', '-r', str(install_file)], check=True)
         log_success("pywhispercpp installed (CPU-only mode)")
+        set_state("installed_backend", "cpu")
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to install pywhispercpp (CPU-only): {e}")
@@ -1379,6 +1384,7 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     wheel_path = download_pywhispercpp_wheel()  # Auto-detects CUDA version
     if wheel_path:
         if install_pywhispercpp_from_wheel(pip_bin, wheel_path):
+            set_state("installed_backend", "nvidia")
             return True
         log_warning("Pre-built wheel failed, falling back to source build...")
 
@@ -1481,6 +1487,7 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
         
         run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
         log_success("pywhispercpp installed with CUDA acceleration via pip")
+        set_state("installed_backend", "nvidia")
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"pip install of pywhispercpp with CUDA failed: {e}")
@@ -1595,6 +1602,7 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
         
         run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
         log_success("pywhispercpp installed with ROCm acceleration via pip")
+        set_state("installed_backend", "rocm")
         return True, False
     except subprocess.CalledProcessError:
         # Build failed - return should_fallback=True
@@ -1711,6 +1719,7 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
 
         run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
         log_success("pywhispercpp installed with Vulkan acceleration via pip")
+        set_state("installed_backend", "vulkan")
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to install pywhispercpp with Vulkan: {e}")
@@ -2545,15 +2554,33 @@ print("Models cached successfully", flush=True)
             deps_installed = result.returncode == 0
         except Exception:
             pass
-        
+
+        # Which pywhispercpp build variant is being requested *right now*?
+        # (Differs from backend_type only inside this function: GPU setup may
+        # have already downgraded backend_type='vulkan' to 'cpu' if Vulkan
+        # wasn't usable.)
+        if enable_cuda:
+            requested_variant = 'nvidia'
+        elif enable_rocm:
+            requested_variant = 'rocm'
+        elif enable_vulkan:
+            requested_variant = 'vulkan'
+        else:
+            requested_variant = 'cpu'
+
+        stored_installed_backend = get_state("installed_backend")
+        backend_mismatch = bool(stored_installed_backend) and stored_installed_backend != requested_variant
+
         # Install pywhispercpp if needed
-        if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed:
+        if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed or backend_mismatch:
             if not stored_req_hash:
                 # First time setup - no stored hash means venv is new
                 log_info("Installing Python dependencies...")
             elif cur_req_hash != stored_req_hash:
                 # Requirements actually changed
                 log_info("Installing Python dependencies (requirements.txt changed)...")
+            elif backend_mismatch:
+                log_info(f"Installing Python dependencies (backend variant changed: {stored_installed_backend or 'unknown'} → {requested_variant})...")
             else:
                 # Dependencies missing but hash matches (shouldn't happen often)
                 log_info("Installing Python dependencies (dependencies missing)...")
@@ -2678,6 +2705,8 @@ print("Models cached successfully", flush=True)
             set_state("requirements_hash", cur_req_hash)
             log_success("Python dependencies installed")
         else:
+            if not stored_installed_backend:
+                set_state("installed_backend", requested_variant)
             log_info("Python dependencies up to date (skipping pip install)")
         
         # Download base model

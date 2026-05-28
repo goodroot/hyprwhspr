@@ -32,9 +32,9 @@
     },
     "recording_mode": {
       "type": "string",
-      "enum": ["toggle", "push_to_talk", "auto", "continuous"],
+      "enum": ["toggle", "push_to_talk", "auto", "continuous", "long_form"],
       "default": "toggle",
-      "description": "Recording mode: 'toggle' (press to start/stop), 'push_to_talk' (hold to record), 'auto' (hybrid tap/hold), 'continuous' (keeps transcribing, auto-pastes on speech pause)"
+      "description": "Recording mode: 'toggle' (press to start/stop), 'push_to_talk' (hold to record), 'auto' (hybrid tap/hold), 'continuous' (keeps transcribing, auto-pastes on speech pause), 'long_form' (extended recording with pause/resume; requires long_form_submit_shortcut)"
     },
     "grab_keys": {
       "type": "boolean",
@@ -76,6 +76,11 @@
       "type": ["string", "null"],
       "default": null,
       "description": "USB vendor ID for audio device (most stable identifier, from udev)"
+    },
+    "keepalive_stream": {
+      "type": "boolean",
+      "default": false,
+      "description": "Hold a silent input stream open between recordings so the mic stays warm (fixes 'paTimedOut' on some USB mics). Off by default; when on, desktops show the mic-in-use indicator continuously."
     },
     "audio_device_model_id": {
       "type": ["string", "null"],
@@ -129,6 +134,24 @@
       "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
       "description": "Prompt passed to Whisper to guide transcription style"
     },
+    "task": {
+      "type": "string",
+      "enum": ["transcribe", "translate"],
+      "default": "transcribe",
+      "description": "'transcribe' outputs the source language; 'translate' translates speech into English. Supported by pywhispercpp and faster-whisper."
+    },
+    "sampling_strategy": {
+      "type": "string",
+      "enum": ["beam_search", "greedy"],
+      "default": "beam_search",
+      "description": "Whisper decoding strategy (pywhispercpp, faster-whisper). 'beam_search' tracks multiple candidates for better accuracy; 'greedy' is faster but lower quality. Locked at model load for pywhispercpp (restart to change)."
+    },
+    "beam_size": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 5,
+      "description": "Number of candidate sequences tracked during beam search (beam_search only). Higher is more accurate but slower."
+    },
     "post_transcription_hook": {
       "type": ["string", "null"],
       "default": null,
@@ -147,9 +170,9 @@
     },
     "paste_mode": {
       "type": "string",
-      "enum": ["super", "ctrl_shift", "ctrl"],
+      "enum": ["super", "ctrl_shift", "ctrl", "alt"],
       "default": "ctrl_shift",
-      "description": "Paste key combination: 'ctrl_shift' (Ctrl+Shift+V), 'super' (Super+V), 'ctrl' (Ctrl+V)"
+      "description": "Paste key combination: 'ctrl_shift' (Ctrl+Shift+V), 'super' (Super+V), 'ctrl' (Ctrl+V), 'alt' (Alt+V)"
     },
     "paste_keycode_wev": {
       "type": ["integer", "null"],
@@ -166,9 +189,14 @@
       "default": true,
       "description": "Back-compat: true = Ctrl+Shift+V, false = Ctrl+V. Only used if paste_mode is absent."
     },
+    "prefer_clipboard_paste": {
+      "type": "boolean",
+      "default": false,
+      "description": "Force verbatim clipboard paste instead of direct typing on GNOME/Mutter. Direct typing (ydotool type) is only correct for ASCII text on a US layout; hyprwhspr already switches to clipboard paste automatically for non-US layouts or non-ASCII text, so set this only to force clipboard paste in all cases."
+    },
     "transcription_backend": {
       "type": "string",
-      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "faster-whisper"],
+      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "faster-whisper", "cohere-transcribe"],
       "default": "pywhispercpp",
       "description": "Transcription backend to use"
     },
@@ -288,6 +316,23 @@
       "default": true,
       "description": "Enable built-in Silero VAD to strip silence and reduce hallucination loops"
     },
+    "cohere_transcribe_device": {
+      "type": "string",
+      "enum": ["auto", "cuda", "cpu"],
+      "default": "auto",
+      "description": "Device for the Cohere Transcribe backend. 'auto' detects CUDA and falls back to CPU."
+    },
+    "cohere_transcribe_dtype": {
+      "type": "string",
+      "enum": ["float16", "bfloat16", "float32"],
+      "default": "bfloat16",
+      "description": "Compute dtype for Cohere Transcribe. GPU runs bfloat16 (the model's native precision); true float16 is not usable as it overflows the attention mask, so a 'float16' setting is treated as bfloat16. 'float32' forces full precision and is used on CPU."
+    },
+    "cohere_transcribe_compile": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable torch.compile for Cohere Transcribe (faster throughput; adds warmup on first call)."
+    },
     "audio_feedback": {
       "type": "boolean",
       "default": false,
@@ -297,7 +342,7 @@
       "type": "number",
       "minimum": 0,
       "maximum": 1,
-      "default": 1.0,
+      "default": 0.5,
       "description": "Master audio feedback volume (0.0-1.0)"
     },
     "start_sound_volume": {
@@ -318,7 +363,7 @@
       "type": "number",
       "minimum": 0,
       "maximum": 1,
-      "default": 1.0,
+      "default": 0.5,
       "description": "Volume multiplier for error sound"
     },
     "start_sound_path": {
@@ -339,7 +384,13 @@
     "mic_osd_enabled": {
       "type": "boolean",
       "default": true,
-      "description": "Show microphone visualization overlay during recording"
+      "description": "Show recording status during recording. Shown as the animated overlay on layer-shell compositors (Hyprland, Sway, niri, KDE), or as desktop notifications on GNOME/Mutter (which has no layer-shell support)."
+    },
+    "notification_timeout_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 5000,
+      "description": "How long non-critical desktop notifications stay on screen, in milliseconds. These are also marked transient so they never pile up in the notification center. Critical errors ignore this and persist until dismissed. Note: GNOME Shell ignores notification timeouts and uses its own banner duration."
     },
     "mute_detection": {
       "type": "boolean",

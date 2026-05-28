@@ -35,9 +35,9 @@ except ImportError:
     from provider_registry import get_provider
 
 try:
-    from .backend_utils import normalize_backend
+    from .backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
 except ImportError:
-    from backend_utils import normalize_backend
+    from backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
 
 
 class WhisperManager:
@@ -287,7 +287,7 @@ class WhisperManager:
 
                 model_id = 'CohereLabs/cohere-transcribe-03-2026'
                 device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
-                dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
+                dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
 
                 # Resolve device
                 if device_setting == 'auto':
@@ -792,9 +792,9 @@ class WhisperManager:
                     result = subprocess.run(['vulkaninfo', '--summary'],
                                            capture_output=True,
                                            timeout=2)
-                    if result and result.returncode == 0:
-                        output = result.stdout.lower() if result.stdout else ''
-                        if 'llvmpipe' not in output and 'software' not in output:
+                    if result and result.returncode == 0 and result.stdout:
+                        summary = result.stdout.decode('utf-8', errors='replace') if isinstance(result.stdout, bytes) else result.stdout
+                        if vulkaninfo_has_hardware_gpu(summary):
                             return "Vulkan (AMD/Intel)"
                 except (subprocess.TimeoutExpired, Exception):
                     pass
@@ -1512,7 +1512,7 @@ class WhisperManager:
 
             model_id = 'CohereLabs/cohere-transcribe-03-2026'
             device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
-            dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'float16')
+            dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
 
             device = 'cuda' if (device_setting == 'auto' and torch.cuda.is_available()) else device_setting if device_setting != 'auto' else 'cpu'
             torch_dtype = torch.bfloat16 if (device == 'cuda' and dtype_setting in ('float16', 'bfloat16')) else torch.float32

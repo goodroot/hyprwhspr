@@ -58,16 +58,8 @@ is_hyprwhspr_running() {
     systemctl --user is-active --quiet hyprwhspr.service
 }
 
-# Function to check if ydotoold is running and working
-is_ydotoold_running() {
-    # Check if service is active
-    if systemctl --user is-active --quiet ydotool.service; then
-        # Test if ydotool actually works by using a simple command
-        timeout 1s ydotool help > /dev/null 2>&1
-        return $?
-    fi
-    return 1
-}
+# Note: hyprwhspr runs a *private* ydotoold child from the app itself (no shared
+# daemon, no systemd unit), so the tray no longer starts or monitors ydotoold.
 
 # Function to check PipeWire health comprehensively
 # Uses retry logic to handle startup timing issues (PipeWire may take a moment to initialize)
@@ -325,8 +317,47 @@ show_notification() {
     local message="$2"
     local urgency="${3:-normal}"
 
+    command -v notify-send &> /dev/null || command -v gdbus &> /dev/null || return
+
+    if [[ "$urgency" == "critical" ]]; then
+        # Real error: persist in the notification center, never expire.
+        if command -v notify-send &> /dev/null; then
+            notify-send -i "$ICON_PATH" -u critical -t 0 "$title" "$message"
+        elif command -v gdbus &> /dev/null; then
+            gdbus call --session --dest org.freedesktop.Notifications \
+              --object-path /org/freedesktop/Notifications \
+              --method org.freedesktop.Notifications.Notify \
+              hyprwhspr 0 "$ICON_PATH" "$title" "$message" "[]" \
+              "{'urgency': <byte 2>}" 0 > /dev/null 2>&1
+        fi
+        return
+    fi
+
+    # Informational/status: transient hint (honored by mako/dunst/swaync) plus
+    # an explicit close after a few seconds. GNOME keeps even transient
+    # notifications in its list, so we capture the id and close it; on daemons
+    # that already dropped it the close is a harmless no-op.
+    local nid
     if command -v notify-send &> /dev/null; then
-        notify-send -i "$ICON_PATH" "$title" "$message" -u "$urgency"
+        nid=$(notify-send -p -i "$ICON_PATH" -u "$urgency" -t 5000 \
+            -h boolean:transient:true "$title" "$message")
+    fi
+    if [[ -z "$nid" ]] && command -v gdbus &> /dev/null; then
+        local urgency_byte=1
+        [[ "$urgency" == "low" ]] && urgency_byte=0
+        nid=$(gdbus call --session --dest org.freedesktop.Notifications \
+            --object-path /org/freedesktop/Notifications \
+            --method org.freedesktop.Notifications.Notify \
+            hyprwhspr 0 "$ICON_PATH" "$title" "$message" "[]" \
+            "{'urgency': <byte $urgency_byte>, 'transient': <true>}" 5000 \
+            2>/dev/null | sed -E 's/.*uint32 ([0-9]+).*/\1/')
+    fi
+    if [[ -n "$nid" ]] && command -v gdbus &> /dev/null; then
+        ( sleep 5
+          gdbus call --session --dest org.freedesktop.Notifications \
+            --object-path /org/freedesktop/Notifications \
+            --method org.freedesktop.Notifications.CloseNotification "$nid" \
+            > /dev/null 2>&1 ) &
     fi
 }
 
@@ -529,20 +560,6 @@ control_recording() {
     fi
 }
 
-# Function to start ydotoold if needed
-start_ydotoold() {
-    if ! is_ydotoold_running; then
-        echo "Starting ydotoold..." >&2
-        systemctl --user start ydotool.service  # Using system service
-        sleep 1
-        if is_ydotoold_running; then
-            show_notification "hyprwhspr" "ydotoold started" "low"
-        else
-            show_notification "hyprwhspr" "Failed to start ydotoold" "critical"
-        fi
-    fi
-}
-
 # Function to check service health and recover from stuck states
 check_service_health() {
     if is_hyprwhspr_running; then
@@ -680,11 +697,6 @@ get_current_state() {
         echo "recording"; return
     fi
 
-    # Service running but not recording - check dependencies
-    if ! is_ydotoold_running; then
-        echo "error:ydotoold"; return
-    fi
-
     # Check if mic is present and accessible
     # BUT: if recovery just succeeded (within last 5 seconds), give it grace period
     local recovery_file="$HOME/.config/hyprwhspr/recovery_result"
@@ -788,14 +800,6 @@ case "${1:-status}" in
             emit_json "$s" "$r" "$(mic_tooltip_line)"
         fi
         ;;
-    "ydotoold")
-        start_ydotoold
-        IFS=: read -r s r <<<"$(get_current_state)"
-        # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
-        if [ ! -t 1 ]; then
-            emit_json "$s" "$r" "$(mic_tooltip_line)"
-        fi
-        ;;
     "restart")
         systemctl --user restart hyprwhspr.service
         show_notification "hyprwhspr" "Restarted" "normal"
@@ -819,14 +823,13 @@ case "${1:-status}" in
         fi
         ;;
     *)
-        echo "Usage: $0 [status|toggle|record|start|stop|ydotoold|restart|health]"
+        echo "Usage: $0 [status|toggle|record|start|stop|restart|health]"
         echo ""
         echo "Commands:"
         echo "  status    - Show current status (JSON output)"
         echo "  toggle    - Toggle hyprwhspr on/off"
         echo "  start     - Start hyprwhspr"
         echo "  stop      - Stop hyprwhspr"
-        echo "  ydotoold  - Start ydotoold daemon"
         echo "  restart   - Restart hyprwhspr"
         echo "  health    - Check service health and recover if needed"
         ;;

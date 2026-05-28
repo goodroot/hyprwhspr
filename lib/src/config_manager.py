@@ -75,6 +75,9 @@ class ConfigManager:
             'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
             'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
             'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
+            'task': 'transcribe',  # "transcribe" (source language) or "translate" (to English)
+            'sampling_strategy': 'beam_search',  # "beam_search" or "greedy" for Whisper decoding
+            'beam_size': 5,  # Number of candidates tracked when using beam search
             # Shell command run after preprocessing, before paste. Stdin
             # receives the transcription; non-empty stdout replaces it.
             # Empty stdout leaves text unchanged (observer-only hooks).
@@ -100,6 +103,7 @@ class ConfigManager:
             # "wtype"         = wtype -- <text>  (native Wayland, works in Kitty-protocol terminals)
             # "ydotool_type"  = ydotool type -- <text>  (works in Kitty-protocol terminals)
             'inject_mode': None,
+            'prefer_clipboard_paste': False,  # Force clipboard paste instead of direct typing on GNOME/Mutter
             # Transcription backend settings
             'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"vulkan"/"amd") or "rest-api"
             'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
@@ -132,15 +136,19 @@ class ConfigManager:
             'cohere_transcribe_compile': False,      # torch.compile encoder for faster throughput (adds warmup on first call)
             # Audio feedback settings
             'audio_feedback': False,             # Play sounds on recording start/stop/error
-            'audio_volume': 1.0,                 # Master audio feedback volume (0.0-1.0)
+            'audio_volume': 0.5,                 # Master audio feedback volume (0.0-1.0)
             'start_sound_volume': 1.0,           # Volume multiplier for start sound
             'stop_sound_volume': 1.0,            # Volume multiplier for stop sound
-            'error_sound_volume': 1.0,           # Volume multiplier for error sound
+            'error_sound_volume': 0.5,           # Volume multiplier for error sound
             'start_sound_path': None,            # Custom path for start sound (None = built-in ping-up.ogg)
             'stop_sound_path': None,             # Custom path for stop sound (None = built-in ping-down.ogg)
             'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)
             # Visual feedback settings
             'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
+            # Banner duration (ms) for non-critical desktop notifications. These are also
+            # marked transient so they never accumulate in the notification center;
+            # critical errors ignore this and persist. (GNOME Shell ignores -t entirely.)
+            'notification_timeout_ms': 5000,
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
             # Audio ducking settings
             'audio_ducking': False,              # Reduce system volume during recording

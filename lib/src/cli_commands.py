@@ -10,11 +10,14 @@ import subprocess
 import getpass
 import shutil
 import socket
+import re
 from pathlib import Path
 from typing import Optional
 
 try:
     from rich.prompt import Prompt, Confirm
+    from rich.console import Console
+    from rich.table import Table
 except (ImportError, ModuleNotFoundError) as e:
     # Hard fail – rich is required for the CLI
     print("ERROR: python-rich is not available in this Python environment.", file=sys.stderr)
@@ -107,10 +110,33 @@ SERVICE_NAME = 'hyprwhspr.service'
 RESUME_SERVICE_NAME = 'hyprwhspr-resume.service'  # Deprecated, kept for cleanup in uninstall/status
 PARAKEET_SERVICE_NAME = 'parakeet-tdt-0.6b-v3.service'
 YDOTOOL_UNIT = 'ydotool.service'
+# Older hyprwhspr versions deployed a user-scope ydotool.service carrying one of
+# these markers. hyprwhspr now runs a private ydotoold child instead, so the markers
+# are used only to identify (and safely retire) a unit we authored — never a
+# distro/admin/user-owned one.
+_YDOTOOL_MARKERS = ('Managed by hyprwhspr', 'deployed by hyprwhspr')
 USER_HOME = Path.home()
 USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
 USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
 PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', USER_HOME / '.local' / 'share')) / 'pywhispercpp' / 'models'
+
+# Selectable Whisper models, shared by the setup prompt and `model list`.
+# Single source of truth so the two never drift.
+MULTILINGUAL_MODELS = [
+    ('tiny', 'Fastest, least accurate'),
+    ('base', 'Good balance (recommended)'),
+    ('small', 'Better accuracy'),
+    ('medium', 'High accuracy'),
+    ('large-v3-turbo', 'Fast, near-large-v3 accuracy, requires GPU'),
+    ('large', 'Best accuracy, requires GPU'),
+    ('large-v3', 'Latest large model, requires GPU'),
+]
+ENGLISH_ONLY_MODELS = [
+    ('tiny.en', 'Fastest, least accurate (English only)'),
+    ('base.en', 'Good balance (English only, recommended)'),
+    ('small.en', 'Better accuracy (English only)'),
+    ('medium.en', 'High accuracy (English only)'),
+]
 
 
 def _is_niri_session() -> bool:
@@ -129,6 +155,18 @@ def _is_niri_session() -> bool:
             return True
 
     return False
+
+
+def _is_gnome_or_mutter_session() -> bool:
+    """Return true for GNOME/Mutter/Pop sessions using common desktop env vars."""
+    desktop_values = (
+        os.environ.get('XDG_CURRENT_DESKTOP', ''),
+        os.environ.get('XDG_SESSION_DESKTOP', ''),
+        os.environ.get('DESKTOP_SESSION', ''),
+    )
+    desktop = ':'.join(desktop_values).lower()
+    desktop_tokens = set(filter(None, re.split(r'[^a-z0-9]+', desktop)))
+    return bool(desktop_tokens & {'gnome', 'mutter', 'pop'})
 
 
 def _check_mise_active() -> tuple[bool, str]:
@@ -710,6 +748,38 @@ def _cleanup_backend(backend_type: str) -> bool:
         return True  # Don't fail on cleanup errors
 
 
+def _load_existing_setup_config() -> dict:
+    """Return current config settings (merged over defaults) for seeding setup
+    prompt defaults, or {} when no config exists yet / on any error."""
+    try:
+        if CONFIG_FILE.exists():
+            return ConfigManager().get_all_settings()
+    except Exception:
+        pass
+    return {}
+
+
+def _bool_default(cfg: dict, key: str, fallback: bool) -> bool:
+    """Default for a Confirm prompt: the stored bool, else `fallback`."""
+    val = cfg.get(key, fallback)
+    return val if isinstance(val, bool) else fallback
+
+
+def _choice_default(value, ordered_values, fallback: str) -> str:
+    """1-based choice string for `value` within `ordered_values`, else `fallback`."""
+    try:
+        return str(ordered_values.index(value) + 1)
+    except (ValueError, AttributeError):
+        return fallback
+
+
+# Reverse of the backend_map inside _prompt_backend_selection: name -> choice.
+_BACKEND_CHOICE = {
+    'onnx-asr': '1', 'pywhispercpp': '2', 'cpu': '2', 'nvidia': '3', 'faster-whisper': '4',
+    'vulkan': '5', 'rest-api': '6', 'realtime-ws': '7', 'cohere-transcribe': '8',
+}
+
+
 def _prompt_backend_selection():
     """Prompt user for backend selection with current state detection"""
     current_backend = _detect_current_backend()
@@ -739,9 +809,22 @@ def _prompt_backend_selection():
     print("  [7] Realtime WS           - Low-latency streaming")
     print()
 
+    # Seed the prompt default with the currently configured/installed backend so
+    # a re-run keeps it (Enter = keep). Prefer the verified install; fall back to
+    # the raw config value so a configured backend still preselects even if the
+    # venv check returned None.
+    default_src = current_backend
+    if not default_src:
+        try:
+            default_src = ConfigManager().get_setting('transcription_backend', None)
+        except Exception:
+            default_src = None
+    default_backend_choice = (_BACKEND_CHOICE.get(normalize_backend(default_src), '1')
+                              if default_src else '1')
+
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8'], default='1')
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8'], default=default_backend_choice)
             backend_map = {
                 '1': 'onnx-asr',
                 '2': 'cpu',
@@ -831,44 +914,29 @@ def _prompt_backend_selection():
             continue
 
 
-def _prompt_model_selection():
+def _prompt_model_selection(current_model: Optional[str] = None):
     """Prompt user for model selection"""
-    multilingual_models = [
-        ('tiny', 'Fastest, least accurate'),
-        ('base', 'Good balance (recommended)'),
-        ('small', 'Better accuracy'),
-        ('medium', 'High accuracy'),
-        ('large', 'Best accuracy, requires GPU'),
-        ('large-v3', 'Latest large model, requires GPU')
-    ]
-    
-    english_only_models = [
-        ('tiny.en', 'Fastest, least accurate (English only)'),
-        ('base.en', 'Good balance (English only, recommended)'),
-        ('small.en', 'Better accuracy (English only)'),
-        ('medium.en', 'High accuracy (English only)')
-    ]
-    
     print("\n" + "="*60)
     print("Model Selection")
     print("="*60)
     print("\nChoose your default Whisper model:")
     print()
     print("Multilingual models (support all languages, auto-detect):")
-    for i, (model, desc) in enumerate(multilingual_models, 1):
-        print(f"  [{i}] {model:12} - {desc}")
-    
+    for i, (model, desc) in enumerate(MULTILINGUAL_MODELS, 1):
+        print(f"  [{i}] {model:15} - {desc}")
+
     print("\nEnglish-only models (smaller, faster, English only):")
-    for i, (model, desc) in enumerate(english_only_models, len(multilingual_models) + 1):
-        print(f"  [{i}] {model:12} - {desc}")
+    for i, (model, desc) in enumerate(ENGLISH_ONLY_MODELS, len(MULTILINGUAL_MODELS) + 1):
+        print(f"  [{i}] {model:15} - {desc}")
     print()
-    
-    all_models = [m[0] for m in multilingual_models] + [m[0] for m in english_only_models]
+
+    all_models = [m[0] for m in MULTILINGUAL_MODELS] + [m[0] for m in ENGLISH_ONLY_MODELS]
     choices = [str(i) for i in range(1, len(all_models) + 1)]
     
     while True:
         try:
-            choice = Prompt.ask("Select model", choices=choices, default='2')  # default to base
+            choice = Prompt.ask("Select model", choices=choices,
+                                default=_choice_default(current_model, all_models, '2'))
             selected_model = all_models[int(choice) - 1]
             print(f"\n✓ Selected: {selected_model}")
             return selected_model
@@ -880,7 +948,7 @@ def _prompt_model_selection():
             continue
 
 
-def _prompt_faster_whisper_model_selection() -> str:
+def _prompt_faster_whisper_model_selection(current_model: Optional[str] = None) -> str:
     """Prompt user for faster-whisper model selection"""
     print("\n" + "="*60)
     print("Model Selection")
@@ -894,7 +962,8 @@ def _prompt_faster_whisper_model_selection() -> str:
     choices = [str(i) for i in range(1, len(FASTER_WHISPER_MODELS) + 1)]
     while True:
         try:
-            choice = Prompt.ask("Select model", choices=choices, default='2')  # default to 'base'
+            choice = Prompt.ask("Select model", choices=choices,
+                                default=_choice_default(current_model, [m[0] for m in FASTER_WHISPER_MODELS], '2'))
             selected = FASTER_WHISPER_MODELS[int(choice) - 1][0]
             print(f"\n✓ Selected: {selected}")
             return selected
@@ -1400,6 +1469,10 @@ def setup_command(python_path: Optional[str] = None):
     # Setup command symlink for git clone installs
     _setup_command_symlink()
 
+    # Load the existing config (if any) so each prompt below can default to the
+    # current value — re-running setup then keeps settings on Enter.
+    existing_cfg = _load_existing_setup_config()
+
     # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
     backend_result = _prompt_backend_selection()
     if not backend_result:
@@ -1597,10 +1670,8 @@ def setup_command(python_path: Optional[str] = None):
         
         try:
             from .backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
-            from .output_control import run_command
         except ImportError:
             from backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
-            from output_control import run_command
         
         # Setup venv (creates if needed, updates if exists)
         pip_bin = setup_python_venv()
@@ -1668,9 +1739,9 @@ def setup_command(python_path: Optional[str] = None):
         if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
             # Local backend - prompt for model selection
             # Note: ONNX-ASR, faster-whisper, and cohere-transcribe don't use Whisper.cpp models
-            selected_model = _prompt_model_selection()
+            selected_model = _prompt_model_selection(current_model=existing_cfg.get('model'))
         elif backend_normalized == 'faster-whisper':
-            faster_whisper_model = _prompt_faster_whisper_model_selection()
+            faster_whisper_model = _prompt_faster_whisper_model_selection(current_model=existing_cfg.get('faster_whisper_model'))
             if download_faster_whisper_model(faster_whisper_model):
                 log_success(f"Model {faster_whisper_model} downloaded successfully")
             else:
@@ -1692,32 +1763,78 @@ def setup_command(python_path: Optional[str] = None):
         print("\nWaybar configuration not found.")
         setup_waybar_choice = Confirm.ask("Set up Waybar integration anyway?", default=False)
     
-    # Step 3b: Mic-OSD setup
+    # Step 3b: Recording status indicator setup
     print("\n" + "="*60)
-    print("Mic-OSD Visualization")
+    print("Recording Status Indicator")
     print("="*60)
-    print("\nShows a visual overlay during recording with animated bars")
-    print("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
-    
-    # Check if dependencies are available using service's Python
-    mic_osd_available, mic_osd_reason = _check_mic_osd_availability()
-    if not mic_osd_available:
-        print(f"\nNote: {mic_osd_reason}")
-    
-    if mic_osd_available:
-        setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=True)
+
+    # GNOME/Mutter does not implement the layer-shell protocol the animated
+    # overlay needs. There the overlay degrades to a focus-stealing toplevel
+    # window that swallows the post-dictation paste keystroke, so recording
+    # status is shown as desktop notifications instead (these never take focus).
+    is_mutter_session = _is_gnome_or_mutter_session()
+
+    if is_mutter_session:
+        print("\nGNOME/Mutter detected. The animated overlay needs the layer-shell")
+        print("protocol, which Mutter does not support, so recording status is shown")
+        print("as desktop notifications instead (they never steal keyboard focus).")
+        print("This needs 'notify-send' (libnotify) — no GTK4/gtk4-layer-shell required.")
+        print("Note: ASCII text is typed directly on US layouts; set prefer_clipboard_paste: true")
+        print("to route dictation through clipboard managers such as Cliphist or CopyQ.")
+
+        if shutil.which('notify-send') is None:
+            if Path('/etc/debian_version').exists():
+                notify_pkg = "libnotify-bin"
+            elif Path('/etc/fedora-release').exists():
+                notify_pkg = "libnotify"
+            elif Path('/etc/os-release').exists() and 'suse' in Path('/etc/os-release').read_text(encoding='utf-8').lower():
+                notify_pkg = "libnotify-tools"
+            else:
+                notify_pkg = "libnotify (Arch naming)"
+            print(f"\nNote: 'notify-send' not found. Install: {notify_pkg}")
+
+        setup_mic_osd_choice = Confirm.ask("Show recording status as desktop notifications?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
+
+        # GNOME picks the paste shortcut per app (terminal → Ctrl+Shift+V, GUI → Ctrl+V)
+        # by detecting the focused window via AT-SPI, which needs the GNOME accessibility
+        # bridge enabled. Without it, detection fails and paste falls back to Ctrl+V.
+        print("\nGNOME can auto-pick the paste shortcut per app (terminal vs. GUI) via the")
+        print("accessibility bridge. Without it, paste falls back to Ctrl+V (wrong in terminals).")
+        if shutil.which('gsettings') and Confirm.ask(
+            "Enable the GNOME accessibility bridge for automatic paste-shortcut detection?",
+            default=True,
+        ):
+            run_command(
+                ['gsettings', 'set', 'org.gnome.desktop.interface', 'toolkit-accessibility', 'true'],
+                check=False,
+            )
+            print("Enabled (revert: gsettings set org.gnome.desktop.interface toolkit-accessibility false).")
+            print("Apps started before this may need a restart to be detected.")
     else:
-        # Provide distro-appropriate package names
-        if Path('/etc/debian_version').exists():
-            pkg_hint = "python3-gi python3-cairo gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0"
-        elif Path('/etc/fedora-release').exists():
-            pkg_hint = "python3-gobject python3-cairo gtk4 gtk4-layer-shell"
-        elif Path('/etc/os-release').exists() and 'suse' in Path('/etc/os-release').read_text(encoding='utf-8').lower():
-            pkg_hint = "python3-gobject python3-pycairo typelib-1_0-Gtk-4_0 (gtk4-layer-shell from community repo)"
+        print("\nShows a visual overlay during recording with animated bars")
+        print("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
+        print("(On compositors without layer-shell support — e.g. GNOME/Mutter — the")
+        print("status automatically falls back to desktop notifications instead.)")
+
+        # Check if dependencies are available using service's Python
+        mic_osd_available, mic_osd_reason = _check_mic_osd_availability()
+        if not mic_osd_available:
+            print(f"\nNote: {mic_osd_reason}")
+
+        if mic_osd_available:
+            setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
         else:
-            pkg_hint = "python-gobject python-cairo gtk4 gtk4-layer-shell (Arch naming)"
-        print(f"\nDependencies not found. Install: {pkg_hint}")
-        setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=False)
+            # Provide distro-appropriate package names
+            if Path('/etc/debian_version').exists():
+                pkg_hint = "python3-gi python3-cairo gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0"
+            elif Path('/etc/fedora-release').exists():
+                pkg_hint = "python3-gobject python3-cairo gtk4 gtk4-layer-shell"
+            elif Path('/etc/os-release').exists() and 'suse' in Path('/etc/os-release').read_text(encoding='utf-8').lower():
+                pkg_hint = "python3-gobject python3-pycairo typelib-1_0-Gtk-4_0 (gtk4-layer-shell from community repo)"
+            else:
+                pkg_hint = "python-gobject python-cairo gtk4 gtk4-layer-shell (Arch naming)"
+            print(f"\nDependencies not found. Install: {pkg_hint}")
+            setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=_bool_default(existing_cfg, 'mic_osd_enabled', False))
 
     # Step 3c: Audio ducking setup
     print("\n" + "="*60)
@@ -1726,14 +1843,14 @@ def setup_command(python_path: Optional[str] = None):
     print("\nAutomatically reduces system volume while recording to prevent")
     print("audio interference with your microphone.")
 
-    setup_audio_ducking_choice = Confirm.ask("Enable audio ducking?", default=True)
+    setup_audio_ducking_choice = Confirm.ask("Enable audio ducking?", default=_bool_default(existing_cfg, 'audio_ducking', True))
     audio_ducking_percent = 50  # Default
     if setup_audio_ducking_choice:
         print("\nHow much to reduce volume BY during recording?")
         print("  50 = reduce to 50% of original (recommended)")
         print("  70 = reduce to 30% of original (aggressive)")
         print("  30 = reduce to 70% of original (subtle)")
-        ducking_input = Prompt.ask("Reduction percentage", default="50")
+        ducking_input = Prompt.ask("Reduction percentage", default=str(existing_cfg.get('audio_ducking_percent', 50)))
         try:
             audio_ducking_percent = max(0, min(100, int(ducking_input)))
         except ValueError:
@@ -1758,24 +1875,33 @@ def setup_command(python_path: Optional[str] = None):
 
         if is_hyprland_session:
             print("\nHyprland session detected.")
-            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=True)
+            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=_bool_default(existing_cfg, 'use_hypr_bindings', True))
         elif hypr_config_exists:
             print(f"\nHyprland configuration detected at: {hypr_config_dir}")
-            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=True)
+            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=_bool_default(existing_cfg, 'use_hypr_bindings', True))
         else:
             print("\nHyprland configuration not found.")
-            setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=False)
+            setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=_bool_default(existing_cfg, 'use_hypr_bindings', False))
     else:
         # Not a Hyprland system - skip this section entirely
         setup_hyprland_choice = False
-    
+
+    # Step 3e: Keyboard device allowlist (which keyboards the shortcut listens to).
+    # Gate this so routine setup re-runs do not always show the device table.
+    keyboard_cfg = ConfigManager().get_all_settings()
+    current_allowlist = keyboard_cfg.get('keyboard_device_names') or []
+    keyboard_allowlist_choice = None
+    if Confirm.ask("Configure keyboard allowlist?",
+                   default=not bool(current_allowlist)):
+        # Returns names / [] (auto-detect) / None (unchanged). Prints its own header.
+        keyboard_allowlist_choice = _run_keyboard_selection(keyboard_cfg)
+
     # Step 4: Systemd setup
     print("\n" + "="*60)
     print("Systemd Service")
     print("="*60)
     print("\nSystemd user service will run hyprwhspr in the background.")
     print("This will enable/configure:")
-    print("  • ydotool.service (required dependency, provides paste)")
     print("  • hyprwhspr.service (main application)")
     setup_systemd_choice = Confirm.ask("Set up systemd user service?", default=True)
     
@@ -1836,31 +1962,37 @@ def setup_command(python_path: Optional[str] = None):
     elif backend_normalized == 'cohere-transcribe':
         print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
-    print(f"Mic-OSD visualization: {'Yes' if setup_mic_osd_choice else 'No'}")
+    _status_label = "Recording status (notifications)" if is_mutter_session else "Mic-OSD visualization"
+    print(f"{_status_label}: {'Yes' if setup_mic_osd_choice else 'No'}")
     if setup_audio_ducking_choice:
         print(f"Audio ducking: Yes ({audio_ducking_percent}% reduction)")
     else:
         print("Audio ducking: No")
     print(f"Hyprland compositor bindings: {'Yes' if setup_hyprland_choice else 'No'}")
+    if keyboard_allowlist_choice:
+        print(f"Keyboard allowlist: {', '.join(keyboard_allowlist_choice)}")
+    elif keyboard_allowlist_choice == []:
+        print("Keyboard allowlist: cleared (auto-detect)")
     if setup_systemd_choice:
-        print("Systemd services: Yes (ydotool + hyprwhspr)")
+        print("Systemd service: Yes (hyprwhspr)")
     else:
         print("Systemd service: No")
     print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
 
     # Paste mode detection notice — only shown when auto-detection won't work at runtime.
-    # Hyprland users get hyprctl, Niri sessions expose niri msg through
-    # NIRI_SOCKET, and XWayland users get xdotool. Pure Wayland compositors
-    # without one of those APIs cannot tell terminals from other apps, so
-    # terminal paste (Ctrl+Shift+V) won't be auto-selected.
+    # Per-app paste detection: Hyprland uses hyprctl, Niri uses niri msg
+    # (NIRI_SOCKET), XWayland uses xdotool, and GNOME uses the AT-SPI accessibility
+    # bridge (offered above). A pure-Wayland compositor with none of these can't
+    # tell terminals from other apps, so terminal paste (Ctrl+Shift+V) isn't
+    # auto-selected there.
     _has_hyprctl = bool(shutil.which('hyprctl'))
     _has_niri = bool(shutil.which('niri')) and bool(os.environ.get('NIRI_SOCKET'))
     _has_xdotool = bool(shutil.which('xdotool'))
-    if not _has_hyprctl and not _has_niri and not _has_xdotool:
+    if not is_mutter_session and not _has_hyprctl and not _has_niri and not _has_xdotool:
         print("\nNote: Window detection unavailable on this system (no hyprctl, niri session, or xdotool).")
         print("Paste will default to Ctrl+V, which works in most apps but not terminals.")
-        print("If you primarily dictate into terminals, run after setup:")
-        print("  hyprwhspr config set paste_mode ctrl_shift")
+        print("If a paste ever lands in the wrong place, you can override the key combo")
+        print("with paste_mode — see docs/CONFIGURATION.md (Paste mode).")
 
     print()
 
@@ -1907,6 +2039,18 @@ def setup_command(python_path: Optional[str] = None):
         else:
             log_info("Audio ducking disabled")
         config.save_config()
+
+        # Step 2c-kb: Keyboard device allowlist
+        if keyboard_allowlist_choice is not None:
+            kbcfg = ConfigManager()
+            kbcfg.set_setting('keyboard_device_names', keyboard_allowlist_choice or None)
+            kbcfg.save_config()
+            if keyboard_allowlist_choice:
+                log_success(f"Keyboard allowlist set ({len(keyboard_allowlist_choice)} device(s))")
+            else:
+                log_info("Keyboard allowlist cleared — using auto-detection")
+            if not setup_systemd_choice:
+                log_info("Restart hyprwhspr to apply: systemctl --user restart hyprwhspr.service")
 
         # Step 2d: Hyprland compositor bindings
         if setup_hyprland_choice:
@@ -2385,11 +2529,6 @@ def omarchy_command(args=None):
         systemd_command('install')
 
         try:
-            from .output_control import run_command
-        except ImportError:
-            from output_control import run_command
-
-        try:
             # Use MISE-free environment if MISE was detected
             env = mise_free_env if mise_free_env else None
             run_command(['systemctl', '--user', 'enable', 'hyprwhspr.service'], check=True, env=env)
@@ -2627,6 +2766,41 @@ def systemd_command(action: str):
         log_error(f"Unknown systemd action: {action}")
 
 
+def _migrate_remove_managed_ydotool_unit():
+    """Retire a user-scope ydotool.service that older hyprwhspr versions deployed.
+
+    hyprwhspr now runs a *private* ydotoold child from the app itself
+    (lib/src/ydotoold_session.py) instead of managing a systemd unit. Stop, disable
+    and remove a unit we authored (one carrying a hyprwhspr marker); never touch a
+    distro/admin/user-owned unit at that path.
+    """
+    target = USER_SYSTEMD_DIR / YDOTOOL_UNIT
+    if not _is_hyprwhspr_managed_ydotool_unit(target):
+        if target.exists():
+            log_debug(f"Leaving foreign {YDOTOOL_UNIT} untouched at {target}")
+        return
+    run_command(['systemctl', '--user', 'disable', '--now', YDOTOOL_UNIT], check=False)
+    try:
+        target.unlink(missing_ok=True)
+        (target.parent / (target.name + '.bak')).unlink(missing_ok=True)
+        log_success(f"Retired previously-managed {YDOTOOL_UNIT} (hyprwhspr now runs a private ydotoold)")
+        log_warning("hyprwhspr no longer deploys ydotoold as a service — if you use ydotool in your own keybinds, start ydotoold separately")
+    except OSError as e:
+        log_warning(f"Could not remove {YDOTOOL_UNIT}: {e}")
+    run_command(['systemctl', '--user', 'daemon-reload'], check=False)
+
+
+def _is_hyprwhspr_managed_ydotool_unit(target: Path) -> bool:
+    """True only for ydotool.service files authored by older hyprwhspr setup."""
+    if not target.exists():
+        return False
+    try:
+        text = target.read_text(encoding='utf-8')
+    except OSError:
+        return False
+    return any(marker in text for marker in _YDOTOOL_MARKERS)
+
+
 def setup_systemd(mode: str = 'install'):
     """Setup systemd user service"""
     log_info("Configuring systemd user services...")
@@ -2669,6 +2843,12 @@ def setup_systemd(mode: str = 'install'):
         log_error(f"Failed to read/write service file: {e}")
         return False
 
+    # hyprwhspr no longer deploys/manages a ydotool.service. The paste fallback now
+    # runs a *private* ydotoold child from the app (lib/src/ydotoold_session.py) on
+    # its own socket — no shared daemon, no managed unit. Retire any unit a previous
+    # version of hyprwhspr deployed.
+    _migrate_remove_managed_ydotool_unit()
+
     # Import the compositor environment visible to this setup process into the
     # systemd user manager. Niri's focused-window IPC needs NIRI_SOCKET; Hyprland
     # detection needs HYPRLAND_INSTANCE_SIGNATURE; wtype/wl-clipboard need the
@@ -2683,9 +2863,6 @@ def setup_systemd(mode: str = 'install'):
     run_command(['systemctl', '--user', 'daemon-reload'], check=False)
     
     if mode in ('install', 'enable'):
-        # Enable & start services
-        run_command(['systemctl', '--user', 'enable', '--now', YDOTOOL_UNIT], check=False)
-
         # Check if hyprwhspr service was already running before enabling
         service_was_running = False
         try:
@@ -3296,35 +3473,16 @@ def download_model(model_name: str = 'base'):
 
 def list_models():
     """List available models"""
-    # Multilingual models (support all languages, auto-detect)
-    multilingual_models = [
-        'tiny',      # Fastest, least accurate
-        'base',      # Good balance (recommended)
-        'small',     # Better accuracy
-        'medium',    # High accuracy
-        'large',     # Best accuracy, requires GPU
-        'large-v3'   # Latest large model, requires GPU
-    ]
-    
-    # English-only models (smaller, faster, English only)
-    english_only_models = [
-        'tiny.en',   # Fastest, least accurate
-        'base.en',   # Good balance
-        'small.en',  # Better accuracy
-        'medium.en'  # High accuracy
-    ]
-    
     print("Available models:\n")
-    
+
     print("Multilingual models (support all languages, auto-detect):")
-    for model in multilingual_models:
-        size_note = " (requires GPU)" if model in ('large', 'large-v3') else ""
-        print(f"  - {model}{size_note}")
-    
+    for name, desc in MULTILINGUAL_MODELS:
+        print(f"  - {name} - {desc}")
+
     print("\nEnglish-only models (smaller, faster, English only):")
-    for model in english_only_models:
-        print(f"  - {model}")
-    
+    for name, desc in ENGLISH_ONLY_MODELS:
+        print(f"  - {name} - {desc}")
+
     print("\nNote: Use multilingual models for non-English languages or mixed-language content.")
     print("      Use English-only (.en) models for English-only content (smaller file size).")
 
@@ -3688,7 +3846,12 @@ def setup_permissions():
         import time
         time.sleep(2)
 
-    # Create udev rule
+    # Create udev rule.
+    # On modern systemd the active-session user already gets /dev/uinput via a
+    # `uaccess` ACL (so user-scope ydotoold runs rootless without this). This rule
+    # is a stable fallback: uaccess only covers the *active* session. The `input`
+    # group is needed mainly for the global hotkey, which reads /dev/input/event*
+    # via evdev (no uaccess ACL there) — not for the ydotool paste path.
     udev_rule = Path('/etc/udev/rules.d/99-uinput.rules')
     if not udev_rule.exists():
         log_info("Creating udev rule...")
@@ -4608,8 +4771,372 @@ def keyboard_command(action: str):
         list_keyboards()
     elif action == 'test':
         test_keyboard_access()
+    elif action == 'configure':
+        configure_keyboard_allowlist()
+    elif action == 'detect':
+        detect_keyboard()
     else:
         log_error(f"Unknown keyboard action: {action}")
+
+
+# Virtual input devices are created by hyprwhspr/ydotool, not real hardware —
+# they must never go in the allowlist. Same tokens list_keyboards() marks.
+_VIRTUAL_KEYBOARD_TOKENS = ('hyprwhspr', 'ydotoold', 'uinput')
+
+
+def _classify_input_devices() -> dict:
+    """Map /dev/input/eventN -> {'is_keyboard': bool, 'is_mouse': bool}.
+
+    Uses udev's own ID_INPUT_KEYBOARD / ID_INPUT_MOUSE classification, which is
+    far more reliable than counting key capabilities (a fancy mouse can advertise
+    keyboard keys). Returns {} if pyudev is unavailable or anything fails;
+    callers degrade gracefully.
+    """
+    try:
+        import pyudev
+    except (ImportError, ModuleNotFoundError):
+        return {}
+    result = {}
+    try:
+        ctx = pyudev.Context()
+        for dev in ctx.list_devices(subsystem='input'):
+            node = dev.device_node
+            if not node or not node.startswith('/dev/input/event'):
+                continue
+            props = dev.properties
+            result[node] = {
+                'is_keyboard': props.get('ID_INPUT_KEYBOARD') == '1',
+                'is_mouse': props.get('ID_INPUT_MOUSE') == '1',
+            }
+    except Exception:
+        return {}
+    return result
+
+
+def _gather_keyboard_candidates(shortcut) -> list:
+    """Deduped keyboard candidates that can emit `shortcut`.
+
+    get_available_keyboards() returns one row per /dev/input/eventN, so the same
+    physical keyboard appears several times; we dedup by lowercased name and
+    merge udev classification across the device's event nodes. Each item:
+    {'name', 'is_keyboard', 'is_mouse', 'is_virtual'}. Sorted real-keyboards
+    first, dual-role next, virtual last.
+    """
+    raw = get_available_keyboards(shortcut)
+    classification = _classify_input_devices()
+    by_name = {}
+    for kb in raw:
+        name = kb['name']
+        key = name.lower()
+        cls = classification.get(kb['path'], {})
+        is_virtual = any(tok in key for tok in _VIRTUAL_KEYBOARD_TOKENS)
+        entry = by_name.get(key)
+        if entry is None:
+            by_name[key] = {
+                'name': name,
+                'is_keyboard': cls.get('is_keyboard', False),
+                'is_mouse': cls.get('is_mouse', False),
+                'is_virtual': is_virtual,
+            }
+        else:
+            entry['is_keyboard'] = entry['is_keyboard'] or cls.get('is_keyboard', False)
+            entry['is_mouse'] = entry['is_mouse'] or cls.get('is_mouse', False)
+            entry['is_virtual'] = entry['is_virtual'] or is_virtual
+
+    def _sort_key(c):
+        if c['is_virtual']:
+            group = 2
+        elif c['is_keyboard'] and not c['is_mouse']:
+            group = 0
+        else:
+            group = 1
+        return (group, c['name'].lower())
+
+    candidates = sorted(by_name.values(), key=_sort_key)
+    return candidates
+
+
+def _keyboard_preselection(candidates: list, existing_allowlist: list) -> set:
+    """Names to preselect.
+
+    - Existing allowlist set -> preselect exactly those names.
+    - Otherwise -> preselect pure keyboards (keyboard and not mouse, not virtual).
+    - If udev classification was unavailable (nothing classified) -> preselect
+      all non-virtual candidates, so the user's real keyboard isn't silently
+      dropped (they can deselect mice).
+    """
+    if existing_allowlist:
+        allow_lower = {n.lower() for n in existing_allowlist}
+        return {c['name'] for c in candidates if c['name'].lower() in allow_lower}
+    classified = any(c['is_keyboard'] or c['is_mouse'] for c in candidates)
+    if not classified:
+        return {c['name'] for c in candidates if not c['is_virtual']}
+    return {c['name'] for c in candidates
+            if c['is_keyboard'] and not c['is_mouse'] and not c['is_virtual']}
+
+
+def _flush_input_buffer():
+    """Discard any pending terminal input (best effort).
+
+    During evdev keypress detection the terminal stays in canonical (cooked)
+    mode, so the physical keystrokes the user makes are echoed and queued in
+    stdin's line buffer in addition to being read from the device. Left there,
+    that stray input (e.g. the 'd' typed to enter detect mode, or the keypress
+    used for detection) gets consumed by the next Prompt.ask and misread as a
+    menu command — most visibly re-triggering detect mode when the user only
+    pressed Enter to accept.
+    """
+    try:
+        import termios
+        if sys.stdin.isatty():
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except Exception:
+        pass
+
+
+def _detect_pressed_keyboard(candidates: list, timeout: float = 5.0):
+    """Open candidate devices read-only and return the name of the first to emit
+    a key press within `timeout`, or None.
+
+    Read-only (no grab) is safe: under grab_keys=False the service holds no
+    exclusive grab, so multiple readers coexist.
+    """
+    try:
+        import time
+        import select as _select
+        from evdev import InputDevice, ecodes, list_devices as _list_devices
+    except Exception:
+        return None
+
+    names_lower = {c['name'].lower() for c in candidates}
+    fd_to_dev = {}
+    opened = []
+    try:
+        for path in _list_devices():
+            try:
+                dev = InputDevice(path)
+            except Exception:
+                continue
+            try:
+                if dev.name.lower() in names_lower and dev.fd not in fd_to_dev:
+                    fd_to_dev[dev.fd] = dev
+                    opened.append(dev)
+                else:
+                    dev.close()
+            except Exception:
+                try:
+                    dev.close()
+                except Exception:
+                    pass
+        if not fd_to_dev:
+            return None
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            ready, _, _ = _select.select(list(fd_to_dev), [], [], 0.2)
+            for fd in ready:
+                dev = fd_to_dev.get(fd)
+                if dev is None:
+                    continue
+                try:
+                    for event in dev.read():
+                        if event.type == ecodes.EV_KEY and event.value == 1:
+                            return dev.name
+                except Exception:
+                    continue
+        return None
+    finally:
+        for dev in opened:
+            try:
+                dev.close()
+            except Exception:
+                pass
+
+
+def _run_keyboard_selection(existing_cfg: Optional[dict] = None):
+    """Interactive keyboard-allowlist selection shared by `keyboard configure`
+    and `hyprwhspr setup`.
+
+    Returns a list of device names, [] (chose none -> auto-detect), or None
+    (skipped / not applicable). Does NOT write config or restart the service.
+    """
+    existing_cfg = existing_cfg or {}
+    shortcut = existing_cfg.get('primary_shortcut') or 'Super+Alt+D'
+    existing_allowlist = existing_cfg.get('keyboard_device_names') or []
+
+    print("\n" + "=" * 60)
+    print("Keyboard Devices")
+    print("=" * 60)
+    print(f"\nhyprwhspr listens to specific keyboards to detect your shortcut ({shortcut}).")
+    print("Listening to the right keyboards:")
+    print("  - keeps the shortcut working after unplug/replug, docking and")
+    print("    suspend (enables hotplug re-attach for the listed devices), and")
+    print("  - stops mouse-like devices from being grabbed by accident.")
+    print("\nThe keyboards marked active below are the recommended set — you can")
+    print("accept them as-is or adjust the list.")
+
+    candidates = _gather_keyboard_candidates(shortcut)
+    if not candidates:
+        log_warning("No accessible keyboard devices found.")
+        log_info("Make sure you're in the 'input' group: sudo usermod -aG input $USER")
+        return None
+
+    # Seed synthetic rows for allowlist names not currently present, so a re-run
+    # doesn't silently prune an unplugged/docked keyboard.
+    present_lower = {c['name'].lower() for c in candidates}
+    for name in existing_allowlist:
+        if name.lower() not in present_lower:
+            candidates.append({
+                'name': name, 'is_keyboard': True, 'is_mouse': False,
+                'is_virtual': False, 'absent': True,
+            })
+
+    selected = _keyboard_preselection(candidates, existing_allowlist)
+    # Synthetic absent rows are part of the existing allowlist -> keep selected.
+    selected.update(c['name'] for c in candidates if c.get('absent'))
+
+    interactive = (sys.stdin.isatty() and sys.stdout.isatty()
+                   and not os.environ.get('HYPRWHSPR_NONINTERACTIVE'))
+    if not interactive:
+        print("\nNon-interactive session; leaving keyboard allowlist unchanged.")
+        return None
+
+    _print_keyboard_table(candidates, selected)
+
+    if not selected:
+        # Nothing recommended (e.g. all dual-role/virtual) — there's no sensible
+        # "use the 0 recommended" question, so go straight to the editor.
+        return _edit_keyboard_selection(candidates, selected)
+
+    if Confirm.ask(f"\nListen to the {len(selected)} recommended keyboard(s)?",
+                   default=True):
+        # Preserve candidate order for deterministic, readable config.
+        return [c['name'] for c in candidates if c['name'] in selected]
+    return _edit_keyboard_selection(candidates, selected)
+
+
+def _print_keyboard_table(candidates: list, selected: set):
+    """Show the candidate keyboards and which ones will be listened to."""
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("#", justify="right", no_wrap=True)
+    table.add_column("Device")
+    table.add_column("Status", no_wrap=True)
+    for i, c in enumerate(candidates, 1):
+        name = c['name']
+        if c.get('absent'):
+            status = "[yellow]✓ listen (not connected)[/]"
+        elif name in selected:
+            status = "[green]✓ listen[/]"
+        elif c['is_virtual']:
+            status = "[dim]– virtual[/]"
+        elif c['is_keyboard'] and c['is_mouse']:
+            status = "[dim]– also a mouse[/]"
+        elif c['is_mouse']:
+            status = "[dim]– mouse[/]"
+        else:
+            status = "[dim]– off[/]"
+        table.add_row(str(i), name, status)
+    Console().print(table)
+
+
+def _edit_keyboard_selection(candidates: list, selected: set):
+    """Let the user enter the exact set of keyboards to listen to (by number).
+
+    Replace semantics: the numbers entered become the full set. The default is
+    the current recommendation, so a plain Enter keeps it. '0' = listen to none
+    (auto-detect / legacy mode). Returns names in candidate order, or [].
+    """
+    default_nums = ",".join(str(i) for i, c in enumerate(candidates, 1)
+                            if c['name'] in selected)
+    print("\nEnter the numbers of ALL keyboards to listen to (comma/space-separated).")
+    print("  Enter = keep the recommendation · 0 = none (auto-detect)")
+    while True:
+        raw = Prompt.ask("Numbers", default=default_nums).strip()
+        if raw == "" and default_nums == "":
+            return []
+        if raw == "0":
+            return []
+        chosen = set()
+        for tok in raw.replace(',', ' ').split():
+            if not tok.isdigit():
+                continue
+            idx = int(tok) - 1
+            if 0 <= idx < len(candidates):
+                chosen.add(candidates[idx]['name'])
+        if not chosen:
+            log_warning("Enter valid device numbers, or 0 for none.")
+            continue
+        return [c['name'] for c in candidates if c['name'] in chosen]
+
+
+def detect_keyboard():
+    """`hyprwhspr keyboard detect` — identify which device a keypress comes from.
+
+    Purely informational: it reads devices read-only (no grab, no injection) and
+    reports the device a key was pressed on, plus its number in
+    `keyboard configure`. Handy when device names are cryptic.
+    """
+    config = ConfigManager()
+    shortcut = config.get_setting("primary_shortcut", "Super+Alt+D")
+    candidates = _gather_keyboard_candidates(shortcut)
+    if not candidates:
+        log_warning("No accessible keyboard devices found.")
+        log_info("Make sure you're in the 'input' group: sudo usermod -aG input $USER")
+        return
+
+    print("\nPress a key on the keyboard you use for the shortcut (5s timeout)...")
+    detected = _detect_pressed_keyboard(candidates)
+    # Drop keystrokes echoed into the tty during the detection window so they
+    # don't leak into the shell afterwards.
+    _flush_input_buffer()
+    if not detected:
+        log_warning("No keypress detected (timed out).")
+        return
+
+    log_success(f"Key detected on: {detected}")
+    for i, c in enumerate(candidates, 1):
+        if c['name'] == detected:
+            log_info(f"That's #{i} in 'hyprwhspr keyboard configure'.")
+            break
+
+
+def configure_keyboard_allowlist():
+    """`hyprwhspr keyboard configure` — choose which keyboards hyprwhspr listens
+    to, save the allowlist, and restart the service so it takes effect.
+    """
+    config = ConfigManager()
+    existing_cfg = config.get_all_settings()
+    choice = _run_keyboard_selection(existing_cfg)
+    if choice is None:
+        return
+
+    config.set_setting('keyboard_device_names', choice or None)
+    config.save_config()
+    if choice:
+        log_success(f"Saved keyboard allowlist ({len(choice)} device(s)):")
+        for name in choice:
+            print(f"  - {name}")
+    else:
+        log_info("Cleared keyboard allowlist — using auto-detection.")
+
+    # The allowlist only takes effect when the service (re)starts.
+    if _hyprwhspr_service_active():
+        if Confirm.ask("\nRestart hyprwhspr now to apply?", default=True):
+            try:
+                run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
+                log_success("hyprwhspr restarted — the shortcut now uses the new selection.")
+            except Exception as e:
+                log_error(f"Could not restart service: {e}")
+                log_info("Restart manually: systemctl --user restart hyprwhspr.service")
+        else:
+            log_info("Restart later to apply: systemctl --user restart hyprwhspr.service")
+    else:
+        log_info("Start/restart hyprwhspr to apply: "
+                 "systemctl --user restart hyprwhspr.service")
+
+
+def _hyprwhspr_service_active() -> bool:
+    """True if the hyprwhspr user service is currently active."""
+    return _is_service_running_via_systemd()
 
 
 def list_keyboards():
@@ -4780,6 +5307,9 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         items_to_remove.append(f"Systemd service: {PARAKEET_SERVICE_NAME}")
     if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {RESUME_SERVICE_NAME} (deprecated)")
+    ydotool_unit_path = USER_SYSTEMD_DIR / YDOTOOL_UNIT
+    if _is_hyprwhspr_managed_ydotool_unit(ydotool_unit_path):
+        items_to_remove.append(f"Systemd service: {YDOTOOL_UNIT}")
 
     # Waybar integration
     waybar_module = USER_HOME / '.config' / 'waybar' / 'hyprwhspr-module.jsonc'
@@ -4867,6 +5397,12 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             run_command(['systemctl', '--user', 'disable', RESUME_SERVICE_NAME], check=False)
             (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).unlink(missing_ok=True)
             log_success(f"Removed {RESUME_SERVICE_NAME}")
+
+        if _is_hyprwhspr_managed_ydotool_unit(ydotool_unit_path):
+            run_command(['systemctl', '--user', 'stop', YDOTOOL_UNIT], check=False)
+            run_command(['systemctl', '--user', 'disable', YDOTOOL_UNIT], check=False)
+            ydotool_unit_path.unlink(missing_ok=True)
+            log_success(f"Removed {YDOTOOL_UNIT}")
 
         # Reload systemd daemon
         run_command(['systemctl', '--user', 'daemon-reload'], check=False)

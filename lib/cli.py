@@ -103,7 +103,8 @@ def main():
     config_show_parser = config_subparsers.add_parser('show', help='Display current config')
     config_show_parser.add_argument('--all', action='store_true', dest='show_all', help='Show all settings including defaults')
     config_subparsers.add_parser('edit', help='Open config in editor')
-    
+    config_subparsers.add_parser('secondary-shortcut', help='Configure secondary shortcut and its language')
+
     # waybar command
     waybar_parser = subparsers.add_parser('waybar', help='Waybar integration')
     waybar_subparsers = waybar_parser.add_subparsers(dest='waybar_action', help='Waybar actions')
@@ -155,6 +156,8 @@ def main():
     keyboard_subparsers = keyboard_parser.add_subparsers(dest='keyboard_action', help='Keyboard actions')
     keyboard_subparsers.add_parser('list', help='List available keyboard devices')
     keyboard_subparsers.add_parser('test', help='Test keyboard device accessibility')
+    keyboard_subparsers.add_parser('configure', help='Choose which keyboards hyprwhspr listens to (allowlist)')
+    keyboard_subparsers.add_parser('detect', help='Identify a keyboard by pressing a key on it')
 
     # record command (for external hotkey systems)
     record_parser = subparsers.add_parser('record', help='Control recording (for external hotkeys)')

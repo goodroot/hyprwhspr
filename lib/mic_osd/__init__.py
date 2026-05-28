@@ -8,5 +8,6 @@ integrated into hyprwhspr for recording feedback.
 __version__ = "0.1.0"
 
 from .runner import MicOSDRunner
+from .notification_presenter import NotificationPresenter
 
-__all__ = ["MicOSDRunner"]
+__all__ = ["MicOSDRunner", "NotificationPresenter"]

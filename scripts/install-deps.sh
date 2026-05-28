@@ -360,11 +360,9 @@ install_deps_dnf() {
         cmake \
         make \
         gcc-c++ \
-        python3-sounddevice \
         python3-numpy \
         python3-scipy \
         python3-evdev \
-        python3-pyperclip \
         python3-requests \
         python3-psutil \
         python3-rich \
@@ -379,6 +377,25 @@ install_deps_dnf() {
         pipewire-pulseaudio \
         ydotool \
         wl-clipboard
+
+    # Optional Python packages (not present on all Fedora releases — e.g. python3-sounddevice
+    # was dropped in F43). Anything missing here is picked up by pip in install_pip_packages.
+    local optional_packages=(
+        python3-sounddevice
+        python3-pyperclip
+    )
+    local available_packages=()
+    local pkg
+    for pkg in "${optional_packages[@]}"; do
+        if dnf info "$pkg" &> /dev/null; then
+            available_packages+=("$pkg")
+        else
+            log_warning "Package $pkg not found in dnf repos - will use pip if needed"
+        fi
+    done
+    if [[ ${#available_packages[@]} -gt 0 ]]; then
+        sudo dnf install -y "${available_packages[@]}"
+    fi
 
     log_success "System dependencies installed"
 }

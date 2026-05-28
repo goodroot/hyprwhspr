@@ -87,6 +87,8 @@ hyprwhspr setup
 4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
 5. **Bam!** Text appears in active buffer!
 
+> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay; on GNOME/Mutter the same status shows as desktop notifications instead. See [Themed visualizer](docs/CONFIGURATION.md#themed-visualizer) for details.
+
 Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose).
 
 ### Updating
@@ -128,14 +130,17 @@ hyprwhspr status
 After installation, use the `hyprwhspr` CLI to manage your installation:
 
 - `hyprwhspr setup` - Interactive initial setup
-- `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit`)
-- `hyprwhspr model` - Manage models (`download` / `list` / `unload` / `reload`)
+- `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit` / `secondary-shortcut`)
+- `hyprwhspr model` - Manage models (`download` / `list` / `status` / `unload` / `reload`)
+- `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle` / `cancel` / `capture` / `status`)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation
 - `hyprwhspr test` - Test microphone and transcription end-to-end
+- `hyprwhspr keyboard` - List/test keyboard devices (`list` / `test`)
 - `hyprwhspr waybar` - Manage Waybar integration
+- `hyprwhspr mic-osd` - Enable/disable the mic OSD (`enable` / `disable` / `status`)
 - `hyprwhspr systemd` - Manage systemd services
-- `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle`)
+- `hyprwhspr uninstall` - Remove hyprwhspr and user data
 
 For the full command reference, see the **[Configuration guide](docs/CONFIGURATION.md)**.
 
@@ -156,7 +161,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 
 ## Getting help
 
-1. **Check logs**: `journalctl --user -u hyprwhspr.service` `journalctl --user -u ydotool.service`
+1. **Check logs**: `journalctl --user -u hyprwhspr.service`
 2. **Verify permissions**: Run the permissions fix script
 3. **Test components**: Check ydotool, audio devices, whisper.cpp
 4. **Report issues**: [Create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) - logging info helpful!

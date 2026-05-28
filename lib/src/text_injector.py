@@ -11,6 +11,7 @@ import subprocess
 import time
 import threading
 import json
+import ast
 from typing import Optional, Dict, Any
 
 try:
@@ -18,9 +19,15 @@ try:
 except ImportError:
     from dependencies import require_package
 
+try:
+    from .ydotoold_session import YdotooldSession
+except ImportError:
+    from ydotoold_session import YdotooldSession
+
 pyperclip = require_package('pyperclip')
 
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
+NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'
 
 # AT-SPI is not thread-safe — only one thread may access it at a time.
 # _atspi_available: None = untested, True = working, False = unavailable.
@@ -33,6 +40,8 @@ _atspi_available = None
 class TextInjector:
     """Handles injecting text into focused applications"""
 
+    _LAYOUT_CACHE_TTL_S = 1.0
+
     def __init__(self, config_manager=None):
         # Configuration
         self.config_manager = config_manager
@@ -41,18 +50,41 @@ class TextInjector:
         self.ydotool_available = self._check_ydotool()
         self.wtype_available = shutil.which('wtype') is not None
 
+        # Private ydotoold instance (lazily started on first uinput-fallback use, so
+        # wtype-only sessions never spawn it). Replaces the old shared/managed
+        # ydotool.service: hyprwhspr owns this daemon on its own socket.
+        self._ydotoold = YdotooldSession()
+
         if not self.ydotool_available and not self.wtype_available:
             print("⚠️  No injection backend found (wtype or ydotool). hyprwhspr requires wtype or ydotool for paste injection.")
         elif not self.wtype_available and self.ydotool_available:
             print("ℹ️  wtype not found. Falling back to ydotool for paste hotkey injection.")
 
     def _check_ydotool(self) -> bool:
-        """Check if ydotool is available on the system"""
-        try:
-            result = subprocess.run(['which', 'ydotool'], capture_output=True, text=True, timeout=5)
-            return result.returncode == 0
-        except Exception:
-            return False
+        """Check if ydotool is usable (both the client and the ydotoold daemon)."""
+        return YdotooldSession.is_available()
+
+    def _run_ydotool(self, args, timeout):
+        """Run a ydotool client command against our private ydotoold daemon.
+
+        Ensures the daemon is running and points the client at our private socket
+        via YDOTOOL_SOCKET. Returns the CompletedProcess, or None if the daemon
+        could not be started (callers degrade gracefully).
+        """
+        if not self._ydotoold.ensure_running():
+            return None
+        return subprocess.run(
+            ['ydotool', *args],
+            capture_output=True,
+            timeout=timeout,
+            env=self._ydotoold.socket_env(),
+        )
+
+    def close(self):
+        """Tear down the private ydotoold daemon. Idempotent; safe to call on exit."""
+        ydotoold = getattr(self, '_ydotoold', None)
+        if ydotoold is not None:
+            ydotoold.close()
 
     def _get_paste_keycode(self) -> int:
         """
@@ -102,6 +134,83 @@ class TextInjector:
             return int(paste_keycode) != DEFAULT_PASTE_KEYCODE
         except Exception:
             return True
+
+    def _read_active_layout(self) -> str:
+        """Best-effort active XKB keyboard layout, lowercased (e.g. 'us', 'de').
+
+        Returns '' when undetectable. Returns NON_XKB_INPUT_METHOD_LAYOUT when
+        GNOME's active source is an input method rather than an XKB layout.
+        Tries, in order: GNOME input-sources
+        (the most-recently-used source is the active one), `localectl` (system
+        X11 layout), then the XKB_DEFAULT_LAYOUT environment variable.
+        """
+        try:
+            out = subprocess.run(
+                ['gsettings', 'get', 'org.gnome.desktop.input-sources', 'mru-sources'],
+                capture_output=True, text=True, timeout=2,
+            )
+            if out.returncode == 0:
+                sources = []
+                try:
+                    parsed = ast.literal_eval(out.stdout.strip())
+                    if isinstance(parsed, list):
+                        sources = [
+                            item for item in parsed
+                            if isinstance(item, tuple) and len(item) >= 2
+                        ]
+                except Exception:
+                    sources = re.findall(r"\('([^']+)',\s*'([^']+)'\)", out.stdout)
+                if sources:
+                    source_type, source_id = sources[0][0], sources[0][1]
+                    if source_type == 'xkb':
+                        return source_id.split('+')[0].lower()
+                    return NON_XKB_INPUT_METHOD_LAYOUT
+        except Exception:
+            pass
+        try:
+            out = subprocess.run(['localectl', 'status'], capture_output=True, text=True, timeout=2)
+            if out.returncode == 0:
+                m = re.search(r'X11 Layout:\s*([^\s,]+)', out.stdout)
+                if m:
+                    layout = m.group(1).lower()
+                    if layout not in {'(unset)', 'unset', 'n/a', 'none'}:
+                        return layout
+        except Exception:
+            pass
+        env_layout = os.environ.get('XKB_DEFAULT_LAYOUT', '')
+        if env_layout:
+            return env_layout.split(',')[0].strip().lower()
+        return ''
+
+    def _detect_active_layout(self) -> str:
+        """Return the active layout using a short cache to avoid repeated stalls."""
+        now = time.monotonic()
+        cache_time = getattr(self, '_layout_cache_time', None)
+        if cache_time is not None and now - cache_time < self._LAYOUT_CACHE_TTL_S:
+            return getattr(self, '_layout_cache_value', '')
+
+        layout = self._read_active_layout()
+        self._layout_cache_value = layout
+        self._layout_cache_time = now
+        return layout
+
+    def _layout_is_type_safe(self) -> bool:
+        """True unless we positively detect a non-US keyboard layout.
+
+        `ydotool type` assumes US/QWERTY keycodes and can only emit ASCII, so on
+        non-US layouts (de, fr, ...) it mangles output (z<->y, ?-> _, dropped
+        umlauts). There we must use layout-independent clipboard paste instead.
+        Conservative toward the status quo: an unknown layout keeps direct typing.
+        """
+        layout = self._detect_active_layout()
+        return layout == '' or layout.startswith('us')
+
+    def _force_clipboard_paste(self) -> bool:
+        """User override (config `prefer_clipboard_paste`): always use verbatim
+        clipboard paste, never direct typing."""
+        if not self.config_manager:
+            return False
+        return bool(self.config_manager.get_setting('prefer_clipboard_paste', False))
 
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
         """Get active window info, trying multiple compositor APIs."""
@@ -282,8 +391,12 @@ class TextInjector:
         Required after wtype paste: wtype sends Wayland modifier events, but
         ydotool's uinput layer may still consider those modifiers held, causing
         subsequent physical keypresses to behave incorrectly.
+
+        Only runs when our ydotoold is *already* alive — there is nothing to clear
+        before the daemon's first use, and we must not spawn it on wtype-only
+        (wlroots) sessions just to release modifiers.
         """
-        if not self.ydotool_available:
+        if not self.ydotool_available or not self._ydotoold.is_running():
             return
 
         try:
@@ -293,11 +406,7 @@ class TextInjector:
             # 29  = LeftCtrl,        97  = RightCtrl
             # 42  = LeftShift,       54  = RightShift
             modifiers_to_clear = ['125:0', '126:0', '56:0', '100:0', '29:0', '97:0', '42:0', '54:0']
-            subprocess.run(
-                ['ydotool', 'key'] + modifiers_to_clear,
-                capture_output=True,
-                timeout=1
-            )
+            self._run_ydotool(['key'] + modifiers_to_clear, timeout=1)
         except Exception as e:
             print(f"Warning: Could not clear stuck modifiers: {e}")
 
@@ -350,7 +459,9 @@ class TextInjector:
             return False
 
         def _key(*args):
-            result = subprocess.run(['ydotool', 'key'] + list(args), capture_output=True, timeout=1)
+            result = self._run_ydotool(['key'] + list(args), timeout=1)
+            if result is None:
+                raise RuntimeError("ydotoold unavailable")
             if result.returncode != 0:
                 stderr = (result.stderr or b'').decode('utf-8', 'ignore')
                 raise RuntimeError(f"ydotool key {' '.join(args)} failed: {stderr}")
@@ -383,7 +494,7 @@ class TextInjector:
         ]
         desktop = ':'.join(desktop_values).lower()
         desktop_tokens = set(filter(None, re.split(r'[^a-z0-9]+', desktop)))
-        return bool(desktop_tokens & {'gnome', 'pop'})
+        return bool(desktop_tokens & {'gnome', 'mutter', 'pop'})
 
     def _type_text_ydotool(self, text: str) -> bool:
         """
@@ -397,13 +508,12 @@ class TextInjector:
             return False
 
         try:
-            result = subprocess.run(
-                ['ydotool', 'type', '--key-delay', '5', '--key-hold', '5', '--', text],
-                capture_output=True,
+            result = self._run_ydotool(
+                ['type', '--key-delay', '5', '--key-hold', '5', '--', text],
                 timeout=10,
             )
-            if result.returncode != 0:
-                stderr = (result.stderr or b'').decode('utf-8', 'ignore')
+            if result is None or result.returncode != 0:
+                stderr = (result.stderr or b'').decode('utf-8', 'ignore') if result else 'ydotoold unavailable'
                 print(f"  ydotool type failed: {stderr}")
                 return False
             return True
@@ -429,7 +539,7 @@ class TextInjector:
             pass
         return None
 
-    def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 0.5):
+    def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 5.0):
         """Restore clipboard to saved contents after a delay (background thread).
 
         If `injected` is provided, the restore is skipped if the clipboard no longer
@@ -468,12 +578,9 @@ class TextInjector:
             return
         try:
             if self.ydotool_available:
-                enter_result = subprocess.run(
-                    ['ydotool', 'key', '28:1', '28:0'],  # 28 = Enter key
-                    capture_output=True, timeout=1
-                )
-                if enter_result.returncode != 0:
-                    stderr = (enter_result.stderr or b"").decode("utf-8", "ignore")
+                enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1)  # 28 = Enter
+                if enter_result is None or enter_result.returncode != 0:
+                    stderr = (enter_result.stderr or b"").decode("utf-8", "ignore") if enter_result else "ydotoold unavailable"
                     print(f"  ydotool Enter key failed: {stderr}")
             elif self.wtype_available:
                 enter_result = subprocess.run(
@@ -687,14 +794,21 @@ class TextInjector:
             window_info = self._get_active_window_info()
             gnome_wayland_session = self._is_gnome_wayland_session()
 
-            # On GNOME/Mutter, both wtype and ydotool paste chords are unreliable.
-            # Type directly before touching the clipboard, unless the user has
-            # configured a non-QWERTY paste key workaround that ydotool type
-            # cannot honor.
+            # On GNOME/Mutter the layer-shell overlay is unavailable, so we can
+            # type directly with `ydotool type` to avoid touching the clipboard.
+            # But that is ONLY correct for pure-ASCII text on a US layout:
+            # ydotool type assumes US keycodes and can't emit non-ASCII, so on a
+            # non-US layout (z<->y, ?-> _) or with umlauts/typographic characters
+            # it mangles the output. In those cases — or with a custom paste
+            # keycode / the prefer_clipboard_paste override — fall through to the
+            # layout-independent verbatim clipboard paste below.
             if (
                 gnome_wayland_session
                 and self.ydotool_available
                 and not self._has_custom_paste_keycode()
+                and not self._force_clipboard_paste()
+                and self._layout_is_type_safe()
+                and text.isascii()
             ):
                 self._clear_stuck_modifiers()
                 time.sleep(0.05)
@@ -724,9 +838,11 @@ class TextInjector:
                 else:
                     paste_mode = self._detect_paste_mode(window_info)
 
-            # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back to ydotool.
-            # Mutter/GNOME accepts individual uinput key events but drops modifier
-            # chords, so skip ydotool's paste chord there and use direct typing.
+            # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back
+            # to ydotool's uinput chord. ydotool key chords DO reach Mutter (uinput
+            # is seen as a real device, unlike wtype's virtual-keyboard protocol
+            # which Mutter blocks), so we use them on GNOME too — this is the path
+            # taken when direct typing was skipped for a non-US layout / non-ASCII text.
             pasted = False
             if self.wtype_available:
                 pasted = self._send_paste_keys_wtype(paste_mode)
@@ -735,7 +851,7 @@ class TextInjector:
                     # state so subsequent physical keypresses are not affected.
                     self._clear_stuck_modifiers()
 
-            if not pasted and self.ydotool_available and not gnome_wayland_session:
+            if not pasted and self.ydotool_available:
                 self._clear_stuck_modifiers()
                 time.sleep(0.02)
                 pasted = self._send_paste_keys_slow(paste_mode)
@@ -747,13 +863,18 @@ class TextInjector:
                 return True
 
             # Only restore clipboard after successful injection — if injection failed,
-            # leave dictated text on clipboard so the user can paste manually.
+            # leave dictated text on clipboard so the user can paste manually. GNOME is
+            # the exception: the ydotool chord is an automatic fallback after direct
+            # typing was skipped, and a failed chord should not clobber the user's
+            # previous clipboard.
             if pasted:
-                restore_delay = 0.5
+                restore_delay = 5.0
                 if self.config_manager:
-                    restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 0.5))
+                    restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
                 self._send_enter_if_auto_submit()
+            elif gnome_wayland_session:
+                self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=0)
 
             return pasted
 
