@@ -41,7 +41,8 @@ class ConfigManager:
 
     SCHEMA_URL = "https://raw.githubusercontent.com/goodroot/hyprwhspr/main/share/config.schema.json"
 
-    def __init__(self):
+    def __init__(self, verbose: bool = True):
+        self.verbose = verbose
         # Default configuration values - minimal set for hyprwhspr
         self.default_config = {
             'primary_shortcut': 'SUPER+ALT+D',
@@ -244,11 +245,14 @@ class ConfigManager:
                 # Save migrated config if migration occurred
                 if migrations:
                     self.save_config()
-                    print(f"Migrated config: {', '.join(migrations)}")
+                    if self.verbose:
+                        print(f"Migrated config: {', '.join(migrations)}")
                 
-                print(f"Configuration loaded from {self.config_file}")
+                if self.verbose:
+                    print(f"Configuration loaded from {self.config_file}")
             else:
-                print("No existing configuration found, using defaults")
+                if self.verbose:
+                    print("No existing configuration found, using defaults")
                 # Save default configuration
                 self.save_config()
                 
@@ -265,7 +269,8 @@ class ConfigManager:
                     sparse[key] = value
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(sparse, f, indent=2)
-            print(f"Configuration saved to {self.config_file}")
+            if self.verbose:
+                print(f"Configuration saved to {self.config_file}")
             return True
         except Exception as e:
             print(f"Error: Could not save configuration: {e}")

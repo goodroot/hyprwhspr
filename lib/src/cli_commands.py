@@ -507,7 +507,7 @@ def _validate_hyprwhspr_root() -> bool:
 
 # ==================== Setup Command ====================
 
-def _detect_current_backend() -> Optional[str]:
+def _detect_current_backend(existing_cfg: Optional[dict] = None) -> Optional[str]:
     """
     Detect currently installed backend.
 
@@ -516,8 +516,11 @@ def _detect_current_backend() -> Optional[str]:
     """
     # First check config file
     try:
-        config_manager = ConfigManager()
-        backend = config_manager.get_setting('transcription_backend', None)
+        backend = (
+            existing_cfg.get('transcription_backend')
+            if existing_cfg is not None
+            else ConfigManager(verbose=False).get_setting('transcription_backend', None)
+        )
         
         # Backward compatibility: map old values
         if backend == 'remote':
@@ -780,9 +783,9 @@ _BACKEND_CHOICE = {
 }
 
 
-def _prompt_backend_selection():
+def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
     """Prompt user for backend selection with current state detection"""
-    current_backend = _detect_current_backend()
+    current_backend = _detect_current_backend(existing_cfg)
 
     print("\n" + "="*60)
     print("Backend Selection")
@@ -816,7 +819,11 @@ def _prompt_backend_selection():
     default_src = current_backend
     if not default_src:
         try:
-            default_src = ConfigManager().get_setting('transcription_backend', None)
+            default_src = (
+                existing_cfg.get('transcription_backend')
+                if existing_cfg is not None
+                else ConfigManager(verbose=False).get_setting('transcription_backend', None)
+            )
         except Exception:
             default_src = None
     default_backend_choice = (_BACKEND_CHOICE.get(normalize_backend(default_src), '1')
@@ -1474,7 +1481,7 @@ def setup_command(python_path: Optional[str] = None):
     existing_cfg = _load_existing_setup_config()
 
     # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
-    backend_result = _prompt_backend_selection()
+    backend_result = _prompt_backend_selection(existing_cfg)
     if not backend_result:
         log_error("Backend selection is required. Exiting.")
         return
@@ -1495,7 +1502,7 @@ def setup_command(python_path: Optional[str] = None):
         cleanup_venv = False
         wants_reinstall = False
     
-    current_backend = _detect_current_backend()
+    current_backend = _detect_current_backend(existing_cfg)
     
     # Normalize backends for comparison (handles 'amd' -> 'vulkan' mapping)
     if current_backend:
@@ -1507,8 +1514,7 @@ def setup_command(python_path: Optional[str] = None):
     # (since _detect_current_backend() no longer returns 'parakeet')
     is_parakeet_config = False
     if current_backend == 'rest-api':
-        config_manager = ConfigManager()
-        endpoint = config_manager.get_setting('rest_endpoint_url', '')
+        endpoint = existing_cfg.get('rest_endpoint_url', '')
         if endpoint == 'http://127.0.0.1:8080/transcribe' and PARAKEET_VENV_DIR.exists():
             is_parakeet_config = True
     
@@ -1888,7 +1894,7 @@ def setup_command(python_path: Optional[str] = None):
 
     # Step 3e: Keyboard device allowlist (which keyboards the shortcut listens to).
     # Gate this so routine setup re-runs do not always show the device table.
-    keyboard_cfg = ConfigManager().get_all_settings()
+    keyboard_cfg = existing_cfg
     current_allowlist = keyboard_cfg.get('keyboard_device_names') or []
     keyboard_allowlist_choice = None
     if Confirm.ask("Configure keyboard allowlist?",
