@@ -176,5 +176,31 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
         self.assertNotIn(["systemctl", "--user", "disable", cli_commands.YDOTOOL_UNIT], calls)
 
 
+class HyprlandBindingSetupTests(unittest.TestCase):
+    def test_bindings_use_install_root_and_reload_active_hyprland(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hypr_dir = root / ".config" / "hypr"
+            hypr_dir.mkdir(parents=True)
+            bindings_file = hypr_dir / "bindings.conf"
+            bindings_file.write_text("", encoding="utf-8")
+            calls = []
+
+            def fake_run_command(cmd, **kwargs):
+                calls.append(cmd)
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with mock.patch.object(cli_commands, "USER_HOME", root), \
+                    mock.patch.object(cli_commands, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
+                    mock.patch.object(cli_commands.shutil, "which", return_value="/usr/bin/hyprctl"), \
+                    mock.patch.dict(cli_commands.os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, clear=True), \
+                    mock.patch.object(cli_commands, "run_command", side_effect=fake_run_command):
+                self.assertTrue(cli_commands._setup_hyprland_bindings())
+
+            content = bindings_file.read_text(encoding="utf-8")
+            self.assertIn("/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record", content)
+            self.assertIn(["hyprctl", "reload"], calls)
+
+
 if __name__ == "__main__":
     unittest.main()

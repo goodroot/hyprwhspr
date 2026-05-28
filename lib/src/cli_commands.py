@@ -1963,7 +1963,10 @@ def setup_command(python_path: Optional[str] = None):
         print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     _status_label = "Recording status (notifications)" if is_mutter_session else "Mic-OSD visualization"
-    print(f"{_status_label}: {'Yes' if setup_mic_osd_choice else 'No'}")
+    if setup_mic_osd_choice and not is_mutter_session and not mic_osd_available:
+        print(f"{_status_label}: Yes (enabled, but dependencies missing: {mic_osd_reason})")
+    else:
+        print(f"{_status_label}: {'Yes' if setup_mic_osd_choice else 'No'}")
     if setup_audio_ducking_choice:
         print(f"Audio ducking: Yes ({audio_ducking_percent}% reduction)")
     else:
@@ -2026,6 +2029,8 @@ def setup_command(python_path: Optional[str] = None):
         # Step 2b: Mic-OSD
         if setup_mic_osd_choice:
             mic_osd_enable()
+            if not is_mutter_session and not mic_osd_available:
+                log_warning(f"Mic-OSD is enabled but unavailable until dependencies are installed: {mic_osd_reason}")
         else:
             mic_osd_disable()
             log_info("Mic-OSD visualization disabled")
@@ -2236,9 +2241,13 @@ def _setup_hyprland_bindings() -> bool:
                 with open(target_file, 'a', encoding='utf-8') as f:
                     f.write('\n# hyprwhspr - Toggle mode (added by hyprwhspr setup)\n')
                     f.write('# Press once to start, press again to stop\n')
-                    f.write('bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record\n')
+                    f.write(f'bindd = SUPER ALT, D, Speech-to-text, exec, {HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh record\n')
                 log_success(f"Added Hyprland bindings to {target_file}")
-                log_info("Restart Hyprland or reload config to apply bindings")
+                if shutil.which('hyprctl') and os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
+                    run_command(['hyprctl', 'reload'], check=False)
+                    log_success("Reloaded Hyprland config to apply bindings")
+                else:
+                    log_info("Restart Hyprland or reload config to apply bindings")
                 return True
             except PermissionError:
                 log_warning(f"Permission denied writing to {target_file}")
