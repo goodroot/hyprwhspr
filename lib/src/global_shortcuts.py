@@ -215,6 +215,8 @@ KEY_ALIASES: dict[str, str] = {
 class GlobalShortcuts:
     """Handles global keyboard shortcuts using evdev for hardware-level capture"""
 
+    _warned_allowlist_misses: Set[tuple[str, ...]] = set()
+
     def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None, device_name: Optional[str] = None, grab_keys: bool = True, keyboard_device_names: Optional[List[str]] = None):
         self.primary_key = primary_key
         self.callback = callback
@@ -285,6 +287,17 @@ class GlobalShortcuts:
                         continue
                     filtered.append(device)
                 devices = filtered
+
+                if (self.keyboard_device_names
+                        and not self.selected_device_name
+                        and not self.selected_device_path):
+                    visible_names = {device.name.lower() for device in devices}
+                    if not (visible_names & set(self.keyboard_device_names)):
+                        allowlist_key = tuple(sorted(self.keyboard_device_names))
+                        if allowlist_key not in self._warned_allowlist_misses:
+                            self._warned_allowlist_misses.add(allowlist_key)
+                            print("[WARN] Keyboard allowlist configured but no matching devices found")
+                            print("[WARN] Run 'hyprwhspr keyboard list' or 'hyprwhspr keyboard configure' to refresh device names")
 
                 # Device selection: prefer name over path if both are provided
                 if self.selected_device_name:

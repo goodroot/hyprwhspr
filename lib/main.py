@@ -26,6 +26,20 @@ _HALLUCINATION_MARKERS = {
     'video playback', 'music', 'music playing', 'keyboard clicking',
 }
 
+
+def _looks_like_wlroots_session() -> bool:
+    desktop = ':'.join([
+        os.environ.get('XDG_CURRENT_DESKTOP', ''),
+        os.environ.get('XDG_SESSION_DESKTOP', ''),
+        os.environ.get('DESKTOP_SESSION', ''),
+    ]).lower()
+    tokens = set(filter(None, desktop.replace('-', ':').replace('_', ':').split(':')))
+    return bool(
+        tokens & {'hyprland', 'sway', 'river', 'wayfire', 'labwc'}
+        or os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')
+        or os.environ.get('SWAYSOCK')
+    )
+
 # Ensure unbuffered output for journald logging
 if sys.stdout.isatty():
     # Interactive terminal - keep buffering
@@ -219,6 +233,8 @@ class hyprwhsprApp:
                     # No layer-shell (e.g. GNOME/Mutter): the overlay would steal
                     # keyboard focus and swallow the paste keystroke. Show recording
                     # status via desktop notifications instead.
+                    if _looks_like_wlroots_session():
+                        print("[INIT] layer-shell not supported, falling back to notifications", flush=True)
                     presenter = NotificationPresenter(
                         active_timeout_ms=self.config.get_setting('notification_timeout_ms', 5000))
                     if presenter.is_available():

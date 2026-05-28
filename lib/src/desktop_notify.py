@@ -14,6 +14,15 @@ own; the explicit close is then a harmless no-op.
 import shutil
 import subprocess
 import threading
+import re
+from typing import Optional
+
+
+_URGENCY_BYTE = {
+    'low': 0,
+    'normal': 1,
+    'critical': 2,
+}
 
 
 def close_notification(nid: int):
@@ -36,6 +45,80 @@ def _close_later(nid: int, delay_s: float):
     timer.start()
 
 
+def _parse_notification_id(output) -> Optional[int]:
+    text = (output or b'').decode('utf-8', 'ignore').strip()
+    if not text:
+        return None
+    match = re.search(r'uint32\s+(\d+)', text)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+    match = re.search(r'^\d+$', text)
+    if not match:
+        return None
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return None
+
+
+def send_notification_with_id(
+    title: str,
+    message: str,
+    urgency: str = "normal",
+    timeout_ms: int = 5000,
+    app_name: str = "hyprwhspr",
+    replaces_id: Optional[int] = None,
+    icon: str = "",
+    transient: bool = True,
+) -> Optional[int]:
+    """Show a notification and return its server id when available.
+
+    Modern notify-send supports `-p`; older libnotify 0.7 does not, so fall back
+    to the freedesktop Notifications D-Bus method directly.
+    """
+    if shutil.which('notify-send') is not None:
+        cmd = ['notify-send', '-a', app_name, '-u', urgency, '-t', str(timeout_ms)]
+        if transient:
+            cmd += ['-h', 'boolean:transient:true']
+        if icon:
+            cmd += ['-i', icon]
+        if replaces_id is not None:
+            cmd += ['-r', str(replaces_id)]
+        cmd += ['-p', title, message]
+        try:
+            result = subprocess.run(cmd, timeout=2, check=False, capture_output=True)
+            nid = _parse_notification_id(result.stdout)
+            if nid is not None:
+                return nid
+        except Exception:
+            pass
+
+    if shutil.which('gdbus') is None:
+        return None
+
+    hints = [f"'urgency': <byte {_URGENCY_BYTE.get(urgency, 1)}>"]
+    if transient:
+        hints.append("'transient': <true>")
+    replace = int(replaces_id or 0)
+    try:
+        result = subprocess.run(
+            ['gdbus', 'call', '--session',
+             '--dest', 'org.freedesktop.Notifications',
+             '--object-path', '/org/freedesktop/Notifications',
+             '--method', 'org.freedesktop.Notifications.Notify',
+             app_name, str(replace), icon, title, message, '[]',
+             '{' + ', '.join(hints) + '}', str(timeout_ms)],
+            timeout=2, check=False, capture_output=True)
+        if result.returncode == 0:
+            return _parse_notification_id(result.stdout)
+    except Exception:
+        pass
+    return None
+
+
 def notify(title: str, message: str, urgency: str = "normal",
            timeout_ms: int = 5000):
     """Show a desktop notification.
@@ -43,28 +126,22 @@ def notify(title: str, message: str, urgency: str = "normal",
     Non-critical notifications auto-dismiss after `timeout_ms`; critical ones
     persist in the notification center until the user dismisses them.
     """
-    if shutil.which('notify-send') is None:
+    if shutil.which('notify-send') is None and shutil.which('gdbus') is None:
         return
     try:
         if urgency == "critical":
             # Real error: persist in the center, never expire.
-            subprocess.run(
-                ['notify-send', '-u', 'critical', '-t', '0', title, message],
-                timeout=2, check=False, capture_output=True)
+            send_notification_with_id(
+                title, message, urgency='critical', timeout_ms=0,
+                transient=False)
             return
         # Informational: transient hint (honored by mako/dunst/swaync) plus the
         # printed id so we can actively close it later (GNOME ignores the hint).
-        result = subprocess.run(
-            ['notify-send', '-u', urgency, '-t', str(timeout_ms),
-             '-h', 'boolean:transient:true', '-p', title, message],
-            timeout=2, check=False, capture_output=True)
-        out = (result.stdout or b'').decode('utf-8', 'ignore').strip()
-        if out:
-            try:
-                # Close no sooner than GNOME's own banner duration (~4s) so the
-                # banner is actually seen before it leaves the list.
-                _close_later(int(out), max(timeout_ms, 4000) / 1000.0)
-            except ValueError:
-                pass
+        nid = send_notification_with_id(
+            title, message, urgency=urgency, timeout_ms=timeout_ms)
+        if nid is not None:
+            # Close no sooner than GNOME's own banner duration (~4s) so the
+            # banner is actually seen before it leaves the list.
+            _close_later(nid, max(timeout_ms, 4000) / 1000.0)
     except Exception:
         pass

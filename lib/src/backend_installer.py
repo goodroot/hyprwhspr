@@ -2569,7 +2569,7 @@ print("Models cached successfully", flush=True)
             requested_variant = 'cpu'
 
         stored_installed_backend = get_state("installed_backend")
-        backend_mismatch = stored_installed_backend != requested_variant
+        backend_mismatch = bool(stored_installed_backend) and stored_installed_backend != requested_variant
 
         # Install pywhispercpp if needed
         if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed or backend_mismatch:
@@ -2705,6 +2705,8 @@ print("Models cached successfully", flush=True)
             set_state("requirements_hash", cur_req_hash)
             log_success("Python dependencies installed")
         else:
+            if not stored_installed_backend:
+                set_state("installed_backend", requested_variant)
             log_info("Python dependencies up to date (skipping pip install)")
         
         # Download base model

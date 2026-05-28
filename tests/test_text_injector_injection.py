@@ -294,6 +294,20 @@ class TextInjectorInjectionTests(unittest.TestCase):
         ):
             self.assertFalse(injector._is_gnome_wayland_session())
 
+    def test_mutter_desktop_is_gnome_wayland_session(self):
+        injector = self._injector()
+
+        with mock.patch.dict(
+            "text_injector.os.environ",
+            {
+                "XDG_SESSION_TYPE": "wayland",
+                "XDG_CURRENT_DESKTOP": "Mutter",
+                "WAYLAND_DISPLAY": "wayland-1",
+            },
+            clear=True,
+        ):
+            self.assertTrue(injector._is_gnome_wayland_session())
+
     def test_layout_type_safe_redetects_each_call(self):
         injector = self._injector()
 
@@ -305,6 +319,34 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         self.assertEqual(detect.call_count, 2)
 
+    def test_clipboard_restore_default_delay_is_config_default(self):
+        injector = self._injector()
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True),
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True),
+            mock.patch.object(injector, "_restore_clipboard") as restore_clipboard,
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "sway",
+                    "WAYLAND_DISPLAY": "wayland-1",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        restore_clipboard.assert_called_once_with(
+            b"old clipboard", injected=b"hello", delay=5.0
+        )
+
     def test_localectl_unset_layout_is_unknown_not_non_us(self):
         injector = self._injector()
         calls = [
@@ -314,6 +356,33 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         with mock.patch("text_injector.subprocess.run", side_effect=calls):
             self.assertEqual(injector._detect_active_layout(), "")
+
+    def test_gnome_non_xkb_mru_source_is_not_type_safe(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(
+            returncode=0,
+            stdout="[('ibus', 'mozc-jp'), ('xkb', 'us')]",
+        )
+
+        with mock.patch("text_injector.subprocess.run", return_value=completed):
+            self.assertFalse(injector._layout_is_type_safe())
+
+    def test_layout_detection_uses_short_ttl_cache(self):
+        injector = self._injector()
+        calls = [
+            types.SimpleNamespace(returncode=0, stdout="[('xkb', 'us')]"),
+            types.SimpleNamespace(returncode=0, stdout="[('xkb', 'de')]"),
+        ]
+
+        with (
+            mock.patch("text_injector.subprocess.run", side_effect=calls) as run,
+            mock.patch("text_injector.time.monotonic", side_effect=[10.0, 10.5, 11.2]),
+        ):
+            self.assertEqual(injector._detect_active_layout(), "us")
+            self.assertEqual(injector._detect_active_layout(), "us")
+            self.assertEqual(injector._detect_active_layout(), "de")
+
+        self.assertEqual(run.call_count, 2)
 
 
 if __name__ == "__main__":

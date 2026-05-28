@@ -317,11 +317,19 @@ show_notification() {
     local message="$2"
     local urgency="${3:-normal}"
 
-    command -v notify-send &> /dev/null || return
+    command -v notify-send &> /dev/null || command -v gdbus &> /dev/null || return
 
     if [[ "$urgency" == "critical" ]]; then
         # Real error: persist in the notification center, never expire.
-        notify-send -i "$ICON_PATH" -u critical -t 0 "$title" "$message"
+        if command -v notify-send &> /dev/null; then
+            notify-send -i "$ICON_PATH" -u critical -t 0 "$title" "$message"
+        elif command -v gdbus &> /dev/null; then
+            gdbus call --session --dest org.freedesktop.Notifications \
+              --object-path /org/freedesktop/Notifications \
+              --method org.freedesktop.Notifications.Notify \
+              hyprwhspr 0 "$ICON_PATH" "$title" "$message" "[]" \
+              "{'urgency': <byte 2>}" 0 > /dev/null 2>&1
+        fi
         return
     fi
 
@@ -330,8 +338,20 @@ show_notification() {
     # notifications in its list, so we capture the id and close it; on daemons
     # that already dropped it the close is a harmless no-op.
     local nid
-    nid=$(notify-send -p -i "$ICON_PATH" -u "$urgency" -t 5000 \
-        -h boolean:transient:true "$title" "$message")
+    if command -v notify-send &> /dev/null; then
+        nid=$(notify-send -p -i "$ICON_PATH" -u "$urgency" -t 5000 \
+            -h boolean:transient:true "$title" "$message")
+    fi
+    if [[ -z "$nid" ]] && command -v gdbus &> /dev/null; then
+        local urgency_byte=1
+        [[ "$urgency" == "low" ]] && urgency_byte=0
+        nid=$(gdbus call --session --dest org.freedesktop.Notifications \
+            --object-path /org/freedesktop/Notifications \
+            --method org.freedesktop.Notifications.Notify \
+            hyprwhspr 0 "$ICON_PATH" "$title" "$message" "[]" \
+            "{'urgency': <byte $urgency_byte>, 'transient': <true>}" 5000 \
+            2>/dev/null | sed -E 's/.*uint32 ([0-9]+).*/\1/')
+    fi
     if [[ -n "$nid" ]] && command -v gdbus &> /dev/null; then
         ( sleep 5
           gdbus call --session --dest org.freedesktop.Notifications \

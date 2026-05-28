@@ -775,7 +775,7 @@ def _choice_default(value, ordered_values, fallback: str) -> str:
 
 # Reverse of the backend_map inside _prompt_backend_selection: name -> choice.
 _BACKEND_CHOICE = {
-    'onnx-asr': '1', 'cpu': '2', 'nvidia': '3', 'faster-whisper': '4',
+    'onnx-asr': '1', 'pywhispercpp': '2', 'cpu': '2', 'nvidia': '3', 'faster-whisper': '4',
     'vulkan': '5', 'rest-api': '6', 'realtime-ws': '7', 'cohere-transcribe': '8',
 }
 
@@ -1779,6 +1779,8 @@ def setup_command(python_path: Optional[str] = None):
         print("protocol, which Mutter does not support, so recording status is shown")
         print("as desktop notifications instead (they never steal keyboard focus).")
         print("This needs 'notify-send' (libnotify) — no GTK4/gtk4-layer-shell required.")
+        print("Note: ASCII text is typed directly on US layouts; set prefer_clipboard_paste: true")
+        print("to route dictation through clipboard managers such as Cliphist or CopyQ.")
 
         if shutil.which('notify-send') is None:
             if Path('/etc/debian_version').exists():
@@ -2782,6 +2784,7 @@ def _migrate_remove_managed_ydotool_unit():
         target.unlink(missing_ok=True)
         (target.parent / (target.name + '.bak')).unlink(missing_ok=True)
         log_success(f"Retired previously-managed {YDOTOOL_UNIT} (hyprwhspr now runs a private ydotoold)")
+        log_warning("hyprwhspr no longer deploys ydotoold as a service — if you use ydotool in your own keybinds, start ydotoold separately")
     except OSError as e:
         log_warning(f"Could not remove {YDOTOOL_UNIT}: {e}")
     run_command(['systemctl', '--user', 'daemon-reload'], check=False)

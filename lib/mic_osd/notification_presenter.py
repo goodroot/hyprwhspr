@@ -12,12 +12,8 @@ assigned to self._mic_osd_runner unchanged.
 """
 
 import shutil
-import subprocess
 
-try:
-    from src.desktop_notify import close_notification
-except ImportError:
-    from desktop_notify import close_notification
+from desktop_notify import close_notification, send_notification_with_id
 
 
 class NotificationPresenter:
@@ -42,32 +38,22 @@ class NotificationPresenter:
     def __init__(self, active_timeout_ms: int = None):
         self._nid = None  # active notification id (for in-place replace)
         # Banner duration for active states; falls back to the class default.
-        self._active_timeout_ms = active_timeout_ms or self._ACTIVE_TIMEOUT_MS
+        self._active_timeout_ms = self._ACTIVE_TIMEOUT_MS if active_timeout_ms is None else active_timeout_ms
 
     @staticmethod
     def is_available() -> bool:
-        return shutil.which('notify-send') is not None
+        return shutil.which('notify-send') is not None or shutil.which('gdbus') is not None
 
     def _send(self, body: str, timeout_ms: int):
         """Show or replace the status notification. Captures/keeps the id so
         subsequent calls replace the same bubble instead of stacking."""
         # transient: bypass the server's persistence so status bubbles never
         # accumulate in the notification center (mirrors the ephemeral overlay).
-        cmd = ['notify-send', '-a', self._APP_NAME, '-u', 'normal',
-               '-t', str(timeout_ms), '-h', 'boolean:transient:true', '-p']
-        if self._nid is not None:
-            cmd += ['-r', str(self._nid)]
-        cmd += [self._APP_NAME, body]
-        try:
-            result = subprocess.run(cmd, capture_output=True, timeout=2)
-            out = (result.stdout or b'').decode('utf-8', 'ignore').strip()
-            if out:
-                try:
-                    self._nid = int(out)
-                except ValueError:
-                    pass
-        except Exception:
-            pass
+        nid = send_notification_with_id(
+            self._APP_NAME, body, urgency='normal', timeout_ms=timeout_ms,
+            app_name=self._APP_NAME, replaces_id=self._nid, transient=True)
+        if nid is not None:
+            self._nid = nid
 
     def _close(self, nid: int):
         """Actively dismiss the notification so it doesn't linger in the

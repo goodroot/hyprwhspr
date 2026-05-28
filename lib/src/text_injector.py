@@ -11,6 +11,7 @@ import subprocess
 import time
 import threading
 import json
+import ast
 from typing import Optional, Dict, Any
 
 try:
@@ -26,6 +27,7 @@ except ImportError:
 pyperclip = require_package('pyperclip')
 
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
+NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'
 
 # AT-SPI is not thread-safe — only one thread may access it at a time.
 # _atspi_available: None = untested, True = working, False = unavailable.
@@ -37,6 +39,8 @@ _atspi_available = None
 
 class TextInjector:
     """Handles injecting text into focused applications"""
+
+    _LAYOUT_CACHE_TTL_S = 1.0
 
     def __init__(self, config_manager=None):
         # Configuration
@@ -131,10 +135,12 @@ class TextInjector:
         except Exception:
             return True
 
-    def _detect_active_layout(self) -> str:
+    def _read_active_layout(self) -> str:
         """Best-effort active XKB keyboard layout, lowercased (e.g. 'us', 'de').
 
-        Returns '' when undetectable. Tries, in order: GNOME input-sources
+        Returns '' when undetectable. Returns NON_XKB_INPUT_METHOD_LAYOUT when
+        GNOME's active source is an input method rather than an XKB layout.
+        Tries, in order: GNOME input-sources
         (the most-recently-used source is the active one), `localectl` (system
         X11 layout), then the XKB_DEFAULT_LAYOUT environment variable.
         """
@@ -144,9 +150,21 @@ class TextInjector:
                 capture_output=True, text=True, timeout=2,
             )
             if out.returncode == 0:
-                m = re.search(r"\('xkb',\s*'([^']+)'\)", out.stdout)
-                if m:
-                    return m.group(1).split('+')[0].lower()
+                sources = []
+                try:
+                    parsed = ast.literal_eval(out.stdout.strip())
+                    if isinstance(parsed, list):
+                        sources = [
+                            item for item in parsed
+                            if isinstance(item, tuple) and len(item) >= 2
+                        ]
+                except Exception:
+                    sources = re.findall(r"\('([^']+)',\s*'([^']+)'\)", out.stdout)
+                if sources:
+                    source_type, source_id = sources[0][0], sources[0][1]
+                    if source_type == 'xkb':
+                        return source_id.split('+')[0].lower()
+                    return NON_XKB_INPUT_METHOD_LAYOUT
         except Exception:
             pass
         try:
@@ -163,6 +181,18 @@ class TextInjector:
         if env_layout:
             return env_layout.split(',')[0].strip().lower()
         return ''
+
+    def _detect_active_layout(self) -> str:
+        """Return the active layout using a short cache to avoid repeated stalls."""
+        now = time.monotonic()
+        cache_time = getattr(self, '_layout_cache_time', None)
+        if cache_time is not None and now - cache_time < self._LAYOUT_CACHE_TTL_S:
+            return getattr(self, '_layout_cache_value', '')
+
+        layout = self._read_active_layout()
+        self._layout_cache_value = layout
+        self._layout_cache_time = now
+        return layout
 
     def _layout_is_type_safe(self) -> bool:
         """True unless we positively detect a non-US keyboard layout.
@@ -464,7 +494,7 @@ class TextInjector:
         ]
         desktop = ':'.join(desktop_values).lower()
         desktop_tokens = set(filter(None, re.split(r'[^a-z0-9]+', desktop)))
-        return bool(desktop_tokens & {'gnome', 'pop'})
+        return bool(desktop_tokens & {'gnome', 'mutter', 'pop'})
 
     def _type_text_ydotool(self, text: str) -> bool:
         """
@@ -509,7 +539,7 @@ class TextInjector:
             pass
         return None
 
-    def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 0.5):
+    def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 5.0):
         """Restore clipboard to saved contents after a delay (background thread).
 
         If `injected` is provided, the restore is skipped if the clipboard no longer
@@ -838,9 +868,9 @@ class TextInjector:
             # typing was skipped, and a failed chord should not clobber the user's
             # previous clipboard.
             if pasted:
-                restore_delay = 0.5
+                restore_delay = 5.0
                 if self.config_manager:
-                    restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 0.5))
+                    restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
                 self._send_enter_if_auto_submit()
             elif gnome_wayland_session:
