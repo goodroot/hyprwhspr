@@ -2,6 +2,7 @@ import sys
 import tempfile
 import types
 import unittest
+import importlib
 from pathlib import Path
 from unittest import mock
 
@@ -16,6 +17,27 @@ import backend_installer  # noqa: E402
 
 
 class NotificationCompatibilityTests(unittest.TestCase):
+    def test_notification_presenter_imports_from_lib_only_path(self):
+        module_names = ["mic_osd.notification_presenter", "desktop_notify"]
+        saved_modules = {
+            name: sys.modules.pop(name)
+            for name in module_names
+            if name in sys.modules
+        }
+        lib_path = str(ROOT / "lib")
+        stripped_path = [
+            path for path in sys.path
+            if path != str(ROOT / "lib" / "src") and path != ""
+        ]
+        try:
+            with mock.patch.object(sys, "path", [lib_path] + stripped_path):
+                module = importlib.import_module("mic_osd.notification_presenter")
+            self.assertTrue(hasattr(module, "NotificationPresenter"))
+        finally:
+            for name in module_names:
+                sys.modules.pop(name, None)
+            sys.modules.update(saved_modules)
+
     def test_presenter_preserves_zero_active_timeout(self):
         presenter = NotificationPresenter(active_timeout_ms=0)
         self.assertEqual(presenter._active_timeout_ms, 0)

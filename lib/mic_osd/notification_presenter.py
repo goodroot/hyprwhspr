@@ -12,8 +12,15 @@ assigned to self._mic_osd_runner unchanged.
 """
 
 import shutil
+import sys
+from pathlib import Path
 
-from desktop_notify import close_notification, send_notification_with_id
+try:
+    from desktop_notify import close_notification, send_notification_with_id
+except ImportError:
+    src_dir = Path(__file__).resolve().parents[1] / 'src'
+    sys.path.insert(0, str(src_dir))
+    from desktop_notify import close_notification, send_notification_with_id
 
 
 class NotificationPresenter:
