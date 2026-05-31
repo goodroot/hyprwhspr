@@ -93,12 +93,11 @@ class AudioCapture:
                     # Validate that the device exists and has input channels
                     device_info = sd.query_devices(device=self.preferred_device_id, kind='input')
                     if device_info['max_input_channels'] > 0:
-                        sd.default.device[0] = self.preferred_device_id
+                        self._set_sd_default_input(self.preferred_device_id)
                         print(f"Using configured audio device: {device_info['name']} (ID: {self.preferred_device_id})")
                         device_found = True
                     else:
                         print(f"⚠ Configured device {self.preferred_device_id} has no input channels")
-                        self.preferred_device_id = None
                 except Exception as e:
                     print(f"⚠ Configured audio device ID {self.preferred_device_id} not available: {e}")
                     # Try fallback to system default
@@ -106,16 +105,12 @@ class AudioCapture:
                     if pulse_default_id is not None:
                         try:
                             device_info = sd.query_devices(device=pulse_default_id, kind='input')
-                            sd.default.device[0] = pulse_default_id
-                            self.preferred_device_id = pulse_default_id
+                            self._set_sd_default_input(pulse_default_id)
                             device_found = True
                             print(f"[FALLBACK] Using system default: {device_info['name']} (ID: {pulse_default_id})")
                             self._notify_device_fallback(device_info['name'])
                         except Exception:
                             pass
-
-                    if not device_found:
-                        self.preferred_device_id = None
 
             # If device ID failed, try to find by name (more stable across reboots)
             if not device_found and self.config:
@@ -125,8 +120,7 @@ class AudioCapture:
                     devices = sd.query_devices()
                     for i, device in enumerate(devices):
                         if device['max_input_channels'] > 0 and configured_name in device['name']:
-                            self.preferred_device_id = i
-                            sd.default.device[0] = i
+                            self._set_sd_default_input(i)
                             print(f"Found device by name: {device['name']} (ID: {i})")
                             device_found = True
                             break
@@ -137,8 +131,7 @@ class AudioCapture:
                         if pulse_default_id is not None:
                             try:
                                 device_info = sd.query_devices(device=pulse_default_id, kind='input')
-                                sd.default.device[0] = pulse_default_id
-                                self.preferred_device_id = pulse_default_id
+                                self._set_sd_default_input(pulse_default_id)
                                 device_found = True
                                 print(f"[FALLBACK] Using system default: {device_info['name']} (ID: {pulse_default_id})")
                                 self._notify_device_fallback(device_info['name'])
@@ -155,8 +148,7 @@ class AudioCapture:
                 if pulse_default_id is not None:
                     try:
                         device_info = sd.query_devices(device=pulse_default_id, kind='input')
-                        sd.default.device[0] = pulse_default_id
-                        self.preferred_device_id = pulse_default_id
+                        self._set_sd_default_input(pulse_default_id)
                         device_found = True
                     except Exception:
                         pass
@@ -168,7 +160,7 @@ class AudioCapture:
                 # Extract input device ID (sd.default.device is tuple (input, output) or None)
                 if sd.default.device is None:
                     current_device_id = None
-                elif isinstance(sd.default.device, tuple):
+                elif isinstance(sd.default.device, (tuple, list)):
                     current_device_id = sd.default.device[0]
                 else:
                     # Legacy: single integer
@@ -176,8 +168,12 @@ class AudioCapture:
                 
                 if current_device_id is not None:
                     device_info = sd.query_devices(device=current_device_id, kind='input')
-                    self.device_info = device_info
-                    self.device_id = current_device_id
+                    if device_info['max_input_channels'] > 0:
+                        self.device_info = device_info
+                        self.device_id = current_device_id
+                    else:
+                        self.device_info = None
+                        self.device_id = None
                 else:
                     self.device_info = None
                     self.device_id = None
@@ -193,6 +189,104 @@ class AudioCapture:
             self.device_id = None
 
         self._start_keepalive()
+
+    def _has_configured_audio_device(self) -> bool:
+        """Return True when config expresses implemented explicit audio intent."""
+        # Keep explicit ID intent even while the device is absent; it may return
+        # after reboot/reconnect, and should not silently become default-following.
+        if self.preferred_device_id is not None:
+            return True
+        if self.config is None:
+            return False
+        return (
+            self.config.get_setting('audio_device_id', None) is not None or
+            bool(self.config.get_setting('audio_device_name', None))
+        )
+
+    def _current_sd_default_input(self):
+        """Return sounddevice's current default input device id."""
+        if sd.default.device is None:
+            return None
+        if isinstance(sd.default.device, (tuple, list)):
+            return sd.default.device[0]
+        return sd.default.device
+
+    def _set_sd_default_input(self, device_id):
+        """Set sounddevice's default input device without touching output."""
+        if sd.default.device is None:
+            sd.default.device = (device_id, None)
+        elif isinstance(sd.default.device, tuple):
+            sd.default.device = (device_id, sd.default.device[1])
+        elif isinstance(sd.default.device, list):
+            sd.default.device[0] = device_id
+        else:
+            sd.default.device = (device_id, None)
+
+    def _update_current_device_from_sounddevice(self):
+        """Refresh self.device_id/self.device_info from sounddevice defaults."""
+        current_device_id = self._current_sd_default_input()
+        if current_device_id is not None:
+            device_info = sd.query_devices(device=current_device_id, kind='input')
+            if device_info['max_input_channels'] <= 0:
+                self.device_info = None
+                self.device_id = None
+                return False
+            self.device_info = device_info
+            self.device_id = current_device_id
+            return True
+        else:
+            self.device_info = None
+            self.device_id = None
+            return False
+
+    def _refresh_default_input_unlocked(self, reason: str) -> bool:
+        """Refresh runtime device binding from the current Pulse/PipeWire default.
+
+        device_id/device_info are coordination state rather than callback data:
+        the callback snapshots device_id before opening a stream, and keepalive
+        has its own lock. Avoid taking self.lock here so recovery and stream
+        callbacks cannot deadlock each other.
+        """
+        if self._has_configured_audio_device():
+            return False
+
+        old_device_id = self.device_id
+        pulse_default_id = self._get_pulse_default_source_device_id()
+        if pulse_default_id is not None:
+            try:
+                device_info = sd.query_devices(device=pulse_default_id, kind='input')
+                if device_info['max_input_channels'] <= 0:
+                    raise ValueError(f"Default source device {pulse_default_id} has no input channels")
+                self._set_sd_default_input(pulse_default_id)
+                self.device_info = device_info
+                self.device_id = pulse_default_id
+                if old_device_id != pulse_default_id:
+                    self._stop_keepalive()
+                    print(f"[PULSE] Default input refreshed ({reason}): {device_info['name']} (ID: {pulse_default_id})", flush=True)
+                    self._start_keepalive()
+                return True
+            except Exception as e:
+                print(f"[PULSE] Failed to bind default input ({reason}): {e}", flush=True)
+
+        try:
+            self._set_system_default_device()
+            if not self._update_current_device_from_sounddevice():
+                return False
+            if old_device_id != self.device_id:
+                self._stop_keepalive()
+                self._start_keepalive()
+            return True
+        except Exception as e:
+            print(f"[PULSE] Failed to refresh system default input ({reason}): {e}", flush=True)
+            return False
+
+    def refresh_default_input(self, reason: str) -> bool:
+        """Re-query and bind the current system default input when using default mode."""
+        with self.recovery_lock:
+            if self.recovery_in_progress:
+                print(f"[PULSE] Default input refresh skipped during recovery ({reason})", flush=True)
+                return False
+            return self._refresh_default_input_unlocked(reason)
 
     def _is_multiplexed_audio_server(self) -> bool:
         """Return True if the device is routed through PipeWire or PulseAudio.
@@ -296,15 +390,12 @@ class AudioCapture:
         try:
             # Ensure we have a valid default input device
             # sd.default.device is tuple (input, output) or None
-            if sd.default.device is None or (isinstance(sd.default.device, tuple) and sd.default.device[0] is None):
+            if sd.default.device is None or (isinstance(sd.default.device, (tuple, list)) and sd.default.device[0] is None):
                 # Find first available input device
                 devices = sd.query_devices()
                 for i, device in enumerate(devices):
                     if device['max_input_channels'] > 0:
-                        if sd.default.device is None:
-                            sd.default.device = (i, None)
-                        else:
-                            sd.default.device = (i, sd.default.device[1] if isinstance(sd.default.device, tuple) else None)
+                        self._set_sd_default_input(i)
                         break
         except Exception as e:
             print(f"⚠ Could not set system default device: {e}")
@@ -360,7 +451,7 @@ class AudioCapture:
                 device_info = sd.query_devices(device=device_id, kind='input')
                 if device_info['max_input_channels'] > 0:
                     self.preferred_device_id = device_id
-                    sd.default.device[0] = device_id
+                    self._set_sd_default_input(device_id)
                     self.device_info = device_info
                     self.device_id = device_id
                     print(f"Audio device changed to: {device_info['name']} (ID: {device_id})")
@@ -483,10 +574,12 @@ class AudioCapture:
                 sd.query_devices(device=self.device_id, kind='input')
             except Exception:
                 print(f"[INFO] Device ID {self.device_id} no longer available, re-initializing")
-                self.preferred_device_id = None
                 self.device_id = None
                 self.device_info = None
-                self._initialize_sounddevice()
+                if self._has_configured_audio_device():
+                    self._initialize_sounddevice()
+                else:
+                    self.refresh_default_input("missing_device_before_record")
                 # Verify re-initialization succeeded
                 if self.device_id is None:
                     print("[WARN] Re-initialization failed - no device available")
@@ -688,8 +781,11 @@ class AudioCapture:
                         
                         chunk_count += 1
             
-            # Determine device to use for recording (use validated device_id)
-            device_to_use = self.device_id
+            # Re-resolve the desktop default as close as possible to stream open.
+            # recover_audio_capture sets recovery_in_progress before releasing
+            # recovery_lock, so this either refreshes before recovery starts or
+            # returns immediately instead of blocking while recovery joins us.
+            self.refresh_default_input("record_start")
 
             # Open and start the stream, retrying on transient failures.
             # PortAudio may time out (PaErrorCode -9987) or hit an unanticipated
@@ -700,8 +796,10 @@ class AudioCapture:
             # multiplexed servers (PipeWire/PulseAudio) the device node stays warm
             # throughout — closing it first was the cause of the cold-start timeout.
             _max_start_attempts = 3
+            refreshed_after_failure = False
             for _attempt in range(_max_start_attempts):
                 try:
+                    device_to_use = self.device_id
                     self.stream = sd.InputStream(
                         device=device_to_use,
                         samplerate=self.sample_rate,
@@ -727,6 +825,9 @@ class AudioCapture:
                             except Exception:
                                 pass
                             self.stream = None
+                        if not refreshed_after_failure and not self._has_configured_audio_device():
+                            refreshed_after_failure = True
+                            self.refresh_default_input("record_start_retry")
                         retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
                         time.sleep(retry_delay)
                     else:

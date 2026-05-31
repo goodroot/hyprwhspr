@@ -4,7 +4,8 @@ Uses pyudev to detect when audio devices are plugged/unplugged
 """
 
 import threading
-import time
+import queue
+from typing import Optional
 
 try:
     import pyudev
@@ -23,9 +24,25 @@ class DeviceMonitor:
         self.monitor = None
         self.context = None
         self.is_running = False
+        self._event_queue: queue.Queue = queue.Queue()
+        self._worker: Optional[threading.Thread] = None
 
         if not PYUDEV_AVAILABLE:
             print("[DEVICE_MONITOR] pyudev not available, hotplug detection disabled")
+
+    def _dispatch_loop(self):
+        while True:
+            item = self._event_queue.get()
+            if item is None:
+                break
+            action, device = item
+            try:
+                if action == 'add' and self.on_audio_add:
+                    self.on_audio_add(device)
+                elif action == 'remove' and self.on_audio_remove:
+                    self.on_audio_remove(device)
+            except Exception as e:
+                print(f"[DEVICE_MONITOR] Error handling event: {e}")
 
     def start(self):
         """Start monitoring for device events"""
@@ -42,32 +59,33 @@ class DeviceMonitor:
 
             def handle_event(action, device):
                 try:
-                    if action == 'add':
-                        if self.on_audio_add:
-                            # Run callback in separate thread to avoid blocking observer
-                            threading.Thread(
-                                target=self.on_audio_add,
-                                args=(device,),
-                                daemon=True
-                            ).start()
-                    elif action == 'remove':
-                        if self.on_audio_remove:
-                            threading.Thread(
-                                target=self.on_audio_remove,
-                                args=(device,),
-                                daemon=True
-                            ).start()
+                    if action in ('add', 'remove'):
+                        self._event_queue.put((action, device))
                 except Exception as e:
                     print(f"[DEVICE_MONITOR] Error handling event: {e}")
 
             self.observer = pyudev.MonitorObserver(self.monitor, handle_event)
             self.observer.start()
+            self._worker = threading.Thread(target=self._dispatch_loop, daemon=True)
+            self._worker.start()
             self.is_running = True
             print("[DEVICE_MONITOR] Started monitoring for audio device hotplug events")
             return True
 
         except Exception as e:
             print(f"[DEVICE_MONITOR] Failed to start: {e}")
+            if self.observer:
+                try:
+                    self.observer.stop()
+                except Exception:
+                    pass
+                self.observer = None
+            if self._worker is not None:
+                self._event_queue.put(None)
+                self._worker.join(timeout=2.0)
+                self._worker = None
+            self.monitor = None
+            self.context = None
             self.is_running = False
             return False
 
@@ -87,6 +105,10 @@ class DeviceMonitor:
                 self.monitor = None
                 self.context = None
                 self.is_running = False
+        if self._worker is not None:
+            self._event_queue.put(None)
+            self._worker.join(timeout=2.0)
+            self._worker = None
 
     @staticmethod
     def get_device_properties(device):
