@@ -66,6 +66,7 @@ class WhisperManager:
 
         # ONNX-ASR model (CPU-optimized)
         self._onnx_asr_model = None
+        self._onnx_asr_vad_model = None
 
         # faster-whisper model (CTranslate2)
         self._faster_whisper_model = None
@@ -132,6 +133,7 @@ class WhisperManager:
                 model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
                 quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
                 use_vad = self.config.get_setting('onnx_asr_use_vad', True)
+                vad_min_duration = self._get_onnx_asr_vad_min_duration()
 
                 print(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})', flush=True)
 
@@ -146,13 +148,16 @@ class WhisperManager:
                         else:
                             self._onnx_asr_model = onnx_asr.load_model(model_name)
 
-                    # Add VAD for long audio handling (>30s)
+                    self._onnx_asr_vad_model = None
+                    # Add VAD for long audio handling without putting short
+                    # dictations through an aggressive speech-boundary trimmer.
                     if use_vad:
                         print('[BACKEND] Loading Silero VAD for long audio support', flush=True)
                         vad = onnx_asr.load_vad('silero')
-                        self._onnx_asr_model = self._onnx_asr_model.with_vad(vad)
+                        self._onnx_asr_vad_model = self._onnx_asr_model.with_vad(vad)
 
-                    print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}, gpu={use_gpu})', flush=True)
+                    vad_info = f', vad_min_duration={vad_min_duration}s' if use_vad else ''
+                    print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})', flush=True)
 
                 except Exception as e:
                     print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)
@@ -1241,6 +1246,14 @@ class WhisperManager:
             print(f'[REALTIME] Transcription failed: {e}')
             return ""
 
+    def _get_onnx_asr_vad_min_duration(self) -> float:
+        """Return the duration threshold for routing ONNX-ASR audio through VAD."""
+        try:
+            threshold = float(self.config.get_setting('onnx_asr_vad_min_duration', 30))
+        except (TypeError, ValueError):
+            threshold = 30.0
+        return max(0.0, threshold)
+
     def _transcribe_onnx_asr(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
         """
         Transcribe audio using onnx-asr backend (CPU-optimized).
@@ -1262,8 +1275,17 @@ class WhisperManager:
 
             # onnx-asr accepts numpy arrays directly (float32)
             # It handles resampling internally if needed
+            vad_min_duration = self._get_onnx_asr_vad_min_duration()
+            use_vad_model = (
+                self._onnx_asr_vad_model is not None
+                and audio_duration >= vad_min_duration
+            )
+            model = self._onnx_asr_vad_model if use_vad_model else self._onnx_asr_model
+            if self._onnx_asr_vad_model is not None:
+                mode = 'vad' if use_vad_model else 'direct'
+                print(f'[ONNX-ASR] Mode: {mode} (vad_min_duration={vad_min_duration}s)', flush=True)
             start_time = time.time()
-            result = self._onnx_asr_model.recognize(audio_data)
+            result = model.recognize(audio_data)
             elapsed = time.time() - start_time
 
             # When VAD is enabled, recognize() returns a generator of segments
@@ -1933,6 +1955,7 @@ class WhisperManager:
                 self._cleanup_model()
                 self._faster_whisper_model = None
                 self._onnx_asr_model = None
+                self._onnx_asr_vad_model = None
                 self._cohere_model = None
                 self._cohere_processor = None
 

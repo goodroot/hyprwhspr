@@ -292,7 +292,13 @@
     "onnx_asr_use_vad": {
       "type": "boolean",
       "default": true,
-      "description": "Use Voice Activity Detection for long recordings (>30s)"
+      "description": "Use Voice Activity Detection for recordings at or above onnx_asr_vad_min_duration"
+    },
+    "onnx_asr_vad_min_duration": {
+      "type": "number",
+      "minimum": 0,
+      "default": 30,
+      "description": "Minimum recording duration in seconds before ONNX ASR routes audio through VAD"
     },
     "faster_whisper_model": {
       "type": "string",

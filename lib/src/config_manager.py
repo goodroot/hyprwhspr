@@ -126,6 +126,7 @@ class ConfigManager:
             'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
             'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
             'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
+            'onnx_asr_vad_min_duration': 30,             # Only use ONNX VAD for recordings at least this many seconds long
             # faster-whisper backend settings (CTranslate2, NVIDIA CUDA)
             'faster_whisper_model': 'base',          # Model name (e.g., 'base', 'small', 'large-v3-turbo')
             'faster_whisper_device': 'auto',         # 'auto' | 'cuda' | 'cpu'
