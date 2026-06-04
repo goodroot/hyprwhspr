@@ -46,6 +46,8 @@ class FakeStream:
 
 
 class FakeSoundDevice(types.ModuleType):
+    NO_FAIL_DEVICE = object()
+
     def __init__(self):
         super().__init__("sounddevice")
         self.default = types.SimpleNamespace(
@@ -82,7 +84,7 @@ class FakeSoundDevice(types.ModuleType):
         ]
         self.streams = []
         self.started_devices = []
-        self.fail_once_for_device = None
+        self.fail_once_for_device = self.NO_FAIL_DEVICE
         self.on_stream_start = None
 
     def query_devices(self, device=None, kind=None):
@@ -245,6 +247,22 @@ class AudioDeviceRefreshTests(unittest.TestCase):
 
         self.assertEqual(fake_sd.started_devices[:2], [0, 1])
         self.assertEqual(capture.device_id, 1)
+
+    def test_unmatched_pulse_default_clears_stale_concrete_device(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic", "bluez_input.68:F2:1F:03:3F:C9"])):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            self.assertEqual(capture.device_id, 0)
+            fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=1.0)
+
+        self.assertIsNone(capture.device_id)
+        self.assertIsNone(capture.device_info)
+        self.assertEqual(fake_sd.default.device[0], None)
+        self.assertIn(None, fake_sd.started_devices)
 
     def test_refresh_default_input_skips_during_recovery(self):
         fake_sd = FakeSoundDevice()

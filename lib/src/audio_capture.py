@@ -222,6 +222,12 @@ class AudioCapture:
         else:
             sd.default.device = (device_id, None)
 
+    def _clear_sd_default_input(self):
+        """Let PortAudio resolve the current default input at stream-open time."""
+        self._set_sd_default_input(None)
+        self.device_info = None
+        self.device_id = None
+
     def _update_current_device_from_sounddevice(self):
         """Refresh self.device_id/self.device_info from sounddevice defaults."""
         current_device_id = self._current_sd_default_input()
@@ -267,10 +273,19 @@ class AudioCapture:
                 return True
             except Exception as e:
                 print(f"[PULSE] Failed to bind default input ({reason}): {e}", flush=True)
+        elif old_device_id is not None:
+            self._stop_keepalive()
+            self._clear_sd_default_input()
+            print(f"[PULSE] No concrete PortAudio match for default input ({reason}); using PortAudio default", flush=True)
+            return True
 
         try:
             self._set_system_default_device()
             if not self._update_current_device_from_sounddevice():
+                if old_device_id is not None:
+                    self._stop_keepalive()
+                self._clear_sd_default_input()
+                print(f"[PULSE] No concrete PortAudio match for default input ({reason}); using PortAudio default", flush=True)
                 return False
             if old_device_id != self.device_id:
                 self._stop_keepalive()
