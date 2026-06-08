@@ -27,3 +27,6 @@ pycairo>=1.25.0
 
 # ElevenLabs integration
 elevenlabs>=2.40.0
+
+# 60db integration (realtime STT + TTS) reuses websocket-client and requests above;
+# no additional dependency required.

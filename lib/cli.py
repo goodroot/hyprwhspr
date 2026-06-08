@@ -37,6 +37,7 @@ from cli_commands import (
     keyboard_command,
     record_command,
     record_capture_command,
+    sixtydb_command,
 )
 
 
@@ -178,6 +179,22 @@ def main():
                                        help='Language code for transcription (e.g., en, it, de)')
     record_subparsers.add_parser('status', help='Show current recording status')
     
+    # 60db command (text-to-speech utilities)
+    sixtydb_parser = subparsers.add_parser('60db', help='60db text-to-speech utilities')
+    sixtydb_subparsers = sixtydb_parser.add_subparsers(dest='sixtydb_action', help='60db actions')
+    sixtydb_subparsers.add_parser('voices', help='List voices available to your 60db account')
+    sixtydb_tts_parser = sixtydb_subparsers.add_parser('tts', help='Synthesize text to a WAV file')
+    sixtydb_tts_parser.add_argument('--text', required=True, help='Text to synthesize')
+    sixtydb_tts_parser.add_argument('--voice', dest='voice', metavar='VOICE_ID',
+                                    help='Voice ID (default: sixtydb_tts_voice_id from config)')
+    sixtydb_tts_parser.add_argument('--out', metavar='PATH', default='tts-output.wav',
+                                    help='Output WAV path (default: tts-output.wav)')
+    sixtydb_tts_parser.add_argument('--sample-rate', dest='sample_rate', type=int, default=24000,
+                                    choices=[8000, 16000, 24000, 48000],
+                                    help='Output sample rate in Hz (default: 24000)')
+    sixtydb_tts_parser.add_argument('--speed', type=float, default=1.0,
+                                    help='Speech speed multiplier 0.5-2.0 (default: 1.0)')
+
     # backend command
     backend_parser = subparsers.add_parser('backend', help='Backend management')
     backend_subparsers = backend_parser.add_subparsers(dest='backend_action', help='Backend actions')
@@ -312,6 +329,11 @@ def main():
                 record_capture_command(language=getattr(args, 'language', None))
             else:
                 record_command(args.record_action, language=getattr(args, 'language', None))
+        elif args.command == '60db':
+            if not getattr(args, 'sixtydb_action', None):
+                sixtydb_parser.print_help()
+                sys.exit(1)
+            sixtydb_command(args.sixtydb_action, args=args)
         elif args.command == 'uninstall':
             uninstall_command(
                 keep_models=getattr(args, 'keep_models', False),

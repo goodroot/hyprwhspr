@@ -5788,3 +5788,124 @@ def record_capture_command(language: str = None):
     except OSError as e:
         log_error(f"Capture socket error: {e}")
         sys.exit(1)
+
+
+def sixtydb_command(action: str, args=None):
+    """
+    60db text-to-speech utilities (independent of the dictation pipeline).
+
+    Actions:
+        voices  - list the voices available to your 60db account
+        tts     - synthesize text to a WAV file
+
+    Args:
+        action: Sub-action ('voices' or 'tts')
+        args:   Parsed argparse namespace (used by 'tts')
+    """
+    api_key = get_credential('60db')
+    if not api_key:
+        log_error("No 60db API key found.")
+        log_info("Add one with the realtime setup, or store it directly:")
+        log_info("  hyprwhspr setup   (choose realtime-ws -> 60db)")
+        sys.exit(1)
+
+    if action == 'voices':
+        _sixtydb_voices(api_key)
+    elif action == 'tts':
+        _sixtydb_tts(api_key, args)
+    else:
+        log_error(f"Unknown 60db action: {action}")
+        sys.exit(1)
+
+
+def _sixtydb_voices(api_key: str):
+    """List the caller's 60db voices in a table."""
+    try:
+        from .sixtydb_tts_client import list_my_voices, SixtyDbTTSError
+    except ImportError:
+        from sixtydb_tts_client import list_my_voices, SixtyDbTTSError
+
+    try:
+        voices = list_my_voices(api_key)
+    except SixtyDbTTSError as e:
+        log_error(f"Failed to list voices: {e}")
+        sys.exit(1)
+    except Exception as e:
+        log_error(f"Failed to list voices: {e}")
+        sys.exit(1)
+
+    if not voices:
+        log_warning("No voices found for this 60db account.")
+        return
+
+    console = Console()
+    table = Table(title="60db Voices")
+    table.add_column("Voice ID", style="cyan", no_wrap=True)
+    table.add_column("Name", style="green")
+    table.add_column("Category")
+    table.add_column("Model")
+    table.add_column("Language")
+    table.add_column("Gender")
+
+    for v in voices:
+        labels = v.get('labels') or {}
+        table.add_row(
+            str(v.get('voice_id', '')),
+            str(v.get('name', '')),
+            str(v.get('category', '')),
+            str(v.get('model', '')),
+            str(labels.get('language_name') or labels.get('language') or ''),
+            str(labels.get('gender', '')),
+        )
+
+    console.print(table)
+
+
+def _sixtydb_tts(api_key: str, args):
+    """Synthesize text to a WAV file via the 60db WebSocket TTS API."""
+    try:
+        from .sixtydb_tts_client import SixtyDbTTSClient, pcm16_to_wav, SixtyDbTTSError
+    except ImportError:
+        from sixtydb_tts_client import SixtyDbTTSClient, pcm16_to_wav, SixtyDbTTSError
+
+    text = getattr(args, 'text', None)
+    voice_id = getattr(args, 'voice', None)
+    out_path = getattr(args, 'out', None) or 'tts-output.wav'
+    sample_rate = int(getattr(args, 'sample_rate', None) or 24000)
+    speed = float(getattr(args, 'speed', None) or 1.0)
+
+    if not text:
+        log_error("--text is required")
+        sys.exit(1)
+
+    # Fall back to a configured default voice if one isn't supplied.
+    if not voice_id:
+        try:
+            voice_id = ConfigManager().get_setting('sixtydb_tts_voice_id', None)
+        except Exception:
+            voice_id = None
+    if not voice_id:
+        log_error("--voice is required (no sixtydb_tts_voice_id configured).")
+        log_info("List available voices with: hyprwhspr 60db voices")
+        sys.exit(1)
+
+    client = SixtyDbTTSClient(api_key)
+    try:
+        log_info(f"Synthesizing {len(text)} chars with voice {voice_id}...")
+        pcm = client.synthesize(text, voice_id, sample_rate=sample_rate, speed=speed)
+    except SixtyDbTTSError as e:
+        log_error(f"TTS failed: {e}")
+        sys.exit(1)
+    except Exception as e:
+        log_error(f"TTS failed: {e}")
+        sys.exit(1)
+
+    wav_bytes = pcm16_to_wav(pcm, sample_rate=sample_rate)
+    try:
+        Path(out_path).write_bytes(wav_bytes)
+    except OSError as e:
+        log_error(f"Failed to write {out_path}: {e}")
+        sys.exit(1)
+
+    duration = len(pcm) / 2 / sample_rate  # 16-bit mono
+    log_success(f"Wrote {out_path} ({len(wav_bytes)} bytes, ~{duration:.1f}s audio)")

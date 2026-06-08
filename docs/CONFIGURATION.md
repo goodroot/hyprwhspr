@@ -172,7 +172,7 @@ Use a different hotkey for a specific language:
 
 > **Note**: Works with backends that support language parameters:
 > - **REST API**: Works if the endpoint accepts `language` in the request body
-> - **Realtime WebSocket**: Fully supported (OpenAI, Google, ElevenLabs)
+> - **Realtime WebSocket**: Fully supported (OpenAI, Google, ElevenLabs, 60db)
 > - **Local whisper models**: Fully supported (all pywhispercpp models)
 > - **Custom REST endpoints**: May not work if the endpoint doesn't accept a language parameter
 
@@ -289,7 +289,7 @@ For up-to-date accuracy rankings across open-source models, see the [Open ASR Le
 | faster-whisper | Local | NVIDIA or CPU | Fast | 99 | Very good | — |
 | whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Very fast | 99 | Very good | — |
 | REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
-| Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs |
+| Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs, 60db |
 
 ---
 
@@ -688,6 +688,54 @@ Uses native 16kHz audio (no resampling) and auto-reconnects on connection drops.
     "websocket_model": "scribe_v2_realtime",
     "realtime_timeout": 30,              // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
+}
+```
+
+#### 60db Realtime STT
+
+Realtime streaming transcription via [60db](https://60db.ai/), 39 languages with optional speaker diarization.
+
+Bring an API key from your 60db account (sent as `?apiKey=` on the socket; keys start with `sk_live_`).
+
+Uses native 16kHz audio (no resampling) and auto-reconnects on connection drops.
+
+- **transcribe** (default) - speech-to-text
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "60db",
+    "websocket_model": "60db-stt-realtime",
+    "realtime_timeout": 30,                  // Advanced: seconds to wait after stop for final transcript
+    "realtime_buffer_max_seconds": 5,        // Advanced: max unsent audio backlog (seconds) before dropping old chunks
+    "sixtydb_diarize": false,                // Advanced: enable speaker diarization (adds cost)
+    "sixtydb_utterance_end_ms": 500,         // Advanced: silence (ms) before an utterance is finalized (>=300)
+    "sixtydb_audio_enhancement": "adaptive"  // Advanced: "off", "light", or "adaptive"
+}
+```
+
+#### 60db Text-to-Speech (CLI)
+
+60db also provides text-to-speech. This is a standalone utility — it is **not** wired into the dictation pipeline (hyprwhspr never speaks on its own). It reuses the `60db` API key stored above.
+
+List the voices available to your account:
+
+```bash
+hyprwhspr 60db voices
+```
+
+Synthesize text to a WAV file:
+
+```bash
+hyprwhspr 60db tts --text "Hello from hyprwhspr" --voice <VOICE_ID> --out hello.wav
+# Options: --sample-rate {8000,16000,24000,48000} (default 24000), --speed 0.5-2.0 (default 1.0)
+```
+
+Set a default voice so `--voice` can be omitted:
+
+```jsonc
+{
+    "sixtydb_tts_voice_id": "<VOICE_ID>"  // Default voice for `hyprwhspr 60db tts`
 }
 ```
 

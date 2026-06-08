@@ -480,9 +480,72 @@ class WhisperManager:
                             self._realtime_client.append_audio(audio_chunk)
                         except Exception as e:
                             print(f'[ELEVENLABS] Streaming error: {e}', flush=True)
-                    
+
                     self._realtime_streaming_callback = _send_direct
-                
+
+                elif provider_id == '60db':
+                    # Use 60db-specific realtime STT client
+                    try:
+                        from .sixtydb_realtime_client import SixtyDbRealtimeClient
+                    except ImportError:
+                        from sixtydb_realtime_client import SixtyDbRealtimeClient
+
+                    self._realtime_client = SixtyDbRealtimeClient()
+
+                    # Get WebSocket URL
+                    websocket_url = self.config.get_setting('websocket_url')
+                    if not websocket_url:
+                        provider = get_provider(provider_id)
+                        if provider and 'websocket_endpoint' in provider:
+                            websocket_url = provider['websocket_endpoint']
+                        else:
+                            websocket_url = 'wss://api.60db.ai/ws/stt'
+
+                    # Set language (sent in the `start`/`config` message)
+                    language = self.config.get_setting('language', None)
+                    self._realtime_client.language = language
+
+                    # 60db-specific tuning (all optional; sane defaults in the client)
+                    self._realtime_client.diarize = bool(
+                        self.config.get_setting('sixtydb_diarize', False)
+                    )
+                    self._realtime_client.utterance_end_ms = self.config.get_setting(
+                        'sixtydb_utterance_end_ms', 500
+                    )
+                    self._realtime_client.audio_enhancement = self.config.get_setting(
+                        'sixtydb_audio_enhancement', 'adaptive'
+                    )
+
+                    # Set buffer max seconds
+                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+                    self._realtime_client.set_max_buffer_seconds(buffer_max)
+
+                    # Connect (60db doesn't use instructions; API key goes in URL query param)
+                    self._realtime_connect_params = {
+                        'websocket_url': websocket_url,
+                        'api_key': api_key,
+                        'model_id': model_id,
+                        'instructions': None,
+                    }
+                    if not self._realtime_client.connect(websocket_url, api_key, model_id, None):
+                        print('ERROR: Failed to connect to 60db Realtime WebSocket')
+                        try:
+                            self._realtime_client.close()
+                        except Exception:
+                            pass
+                        self._realtime_client = None
+                        return False
+
+                    # 60db uses 16kHz audio - no resampling needed!
+                    def _send_direct(audio_chunk: np.ndarray):
+                        """Send audio directly to 60db (16kHz, no resampling)"""
+                        try:
+                            self._realtime_client.append_audio(audio_chunk)
+                        except Exception as e:
+                            print(f'[60DB] Streaming error: {e}', flush=True)
+
+                    self._realtime_streaming_callback = _send_direct
+
                 else:
                     # Use OpenAI-compatible client (default)
                     try:
