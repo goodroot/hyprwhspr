@@ -74,6 +74,7 @@ class AudioCapture:
         # of silence and PortAudio's PaUnixThread_New times out on the next open.
         self._keepalive_stream = None
         self._keepalive_lock = threading.Lock()  # Protects _keepalive_stream across threads
+        self._last_pulse_default_source_name = None
 
         # Initialize sounddevice
         self._initialize_sounddevice()
@@ -257,7 +258,9 @@ class AudioCapture:
             return False
 
         old_device_id = self.device_id
+        old_pulse_source = self._last_pulse_default_source_name
         pulse_default_id = self._get_pulse_default_source_device_id()
+        new_pulse_source = self._last_pulse_default_source_name
         if pulse_default_id is not None:
             try:
                 device_info = sd.query_devices(device=pulse_default_id, kind='input')
@@ -266,9 +269,15 @@ class AudioCapture:
                 self._set_sd_default_input(pulse_default_id)
                 self.device_info = device_info
                 self.device_id = pulse_default_id
-                if old_device_id != pulse_default_id:
+                source_changed = bool(
+                    old_pulse_source and
+                    new_pulse_source and
+                    old_pulse_source != new_pulse_source
+                )
+                if old_device_id != pulse_default_id or source_changed:
                     self._stop_keepalive()
-                    print(f"[PULSE] Default input refreshed ({reason}): {device_info['name']} (ID: {pulse_default_id})", flush=True)
+                    source_note = f", source={new_pulse_source}" if source_changed else ""
+                    print(f"[PULSE] Default input refreshed ({reason}): {device_info['name']} (ID: {pulse_default_id}{source_note})", flush=True)
                     self._start_keepalive()
                 return True
             except Exception as e:
@@ -491,6 +500,7 @@ class AudioCapture:
                 return None
 
             pulse_source_name = result.stdout.strip()
+            self._last_pulse_default_source_name = pulse_source_name
             print(f"[PULSE] System default source: {pulse_source_name}")
 
             # Match pulse source name to PortAudio device

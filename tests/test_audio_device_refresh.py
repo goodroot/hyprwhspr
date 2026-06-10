@@ -234,6 +234,31 @@ class AudioDeviceRefreshTests(unittest.TestCase):
         self.assertTrue(old_stream.closed)
         self.assertEqual(capture._keepalive_stream.device, 1)
 
+    def test_keepalive_cycles_when_pulse_source_changes_on_same_portaudio_device(self):
+        fake_sd = FakeSoundDevice()
+        fake_sd.devices.append({
+            "name": "pulse",
+            "max_input_channels": 32,
+            "default_samplerate": 44100,
+            "hostapi": 0,
+        })
+        module = self._load_audio_capture(fake_sd)
+        config = FakeConfig({"keepalive_stream": True})
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources([
+            "alsa_input.pci-0000_00_1f.3.analog-stereo",
+            "bluez_input.68:F2:1F:03:3F:C9",
+        ])):
+            capture = module.AudioCapture(config_manager=config)
+            old_stream = capture._keepalive_stream
+            self.assertEqual(capture.device_id, 4)
+            self.assertTrue(capture.refresh_default_input("test"))
+
+        self.assertTrue(old_stream.stopped)
+        self.assertTrue(old_stream.closed)
+        self.assertEqual(capture.device_id, 4)
+        self.assertEqual(capture._keepalive_stream.device, 4)
+
     def test_retriable_open_failure_reresolves_default_before_retry(self):
         fake_sd = FakeSoundDevice()
         fake_sd.fail_once_for_device = 0
