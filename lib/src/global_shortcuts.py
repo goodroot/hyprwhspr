@@ -973,6 +973,44 @@ class GlobalShortcuts:
             print(f"[HOTPLUG] Failed to start keyboard monitor: {e}")
             self.keyboard_monitor = None
 
+    def resync_devices(self, reason: str = "manual") -> int:
+        """Re-attach expected keyboards missing from the live monitor.
+
+        Suspend/resume can drop a keyboard without a udev 'add' event on resume,
+        so the hotplug monitor never re-grabs it. Rescans and feeds any unmonitored
+        path through the same add/grab logic as hotplug. Idempotent; returns the
+        number of devices newly attached.
+        """
+        if not self.is_running or self.stop_event.is_set():
+            return 0
+        if self.grab_keys and not self.devices_grabbed:
+            return 0
+        try:
+            candidate_paths = evdev.list_devices()
+        except Exception as e:
+            print(f"[RESYNC] Could not list input devices ({reason}): {e}", flush=True)
+            return 0
+
+        with self._device_lock:
+            known_paths = {d.path for d in self.devices}
+        before = len(self.devices)
+        for path in candidate_paths:
+            if path not in known_paths:
+                self._try_hotplug_add(path)
+        attached = len(self.devices) - before
+
+        # A key held when a device dropped never gets its release event, so its
+        # code stays stuck in pressed_keys and can wedge combination_active. Held
+        # state is meaningless across a suspend anyway, so clear it on resync.
+        with self._device_lock:
+            self.pressed_keys.clear()
+            self.suppressed_keys.clear()
+            self.combination_active = False
+
+        if attached > 0:
+            print(f"[RESYNC] Re-attached {attached} keyboard device(s) ({reason})", flush=True)
+        return attached
+
     def _setup_key_grabbing(self) -> bool:
         """Set up UInput virtual keyboard and grab physical devices
         

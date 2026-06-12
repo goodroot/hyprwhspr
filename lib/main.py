@@ -2443,11 +2443,46 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[SUSPEND] Error handling suspend: {e}", flush=True)
 
+    def _resync_shortcut_keyboards(self, reason: str):
+        """Re-attach dropped keyboards across all shortcut handlers after resume.
+
+        Each handler (primary, secondary, cancel, long-form submit) runs its own
+        device list and independently loses the keyboard on suspend, so all of
+        them need resyncing. The device node may reappear a second or two after
+        resume, so a single immediate pass can miss it; a delayed pass follows.
+        Best-effort; never raises into the caller.
+        """
+        def _resync_all(suffix: str):
+            handlers = (
+                self.global_shortcuts,
+                self.secondary_shortcuts,
+                self._cancel_shortcuts,
+                self._longform_submit_shortcuts,
+            )
+            for handler in handlers:
+                if handler is None:
+                    continue
+                try:
+                    handler.resync_devices(f"{reason}{suffix}")
+                except Exception as e:
+                    print(f"[SUSPEND] Keyboard resync failed: {e}", flush=True)
+
+        _resync_all("")
+
+        def _delayed():
+            time.sleep(2.0)
+            _resync_all("_delayed")
+        threading.Thread(target=_delayed, daemon=True).start()
+
     def _on_system_resume(self):
         """Called when system resumes from suspend (D-Bus PrepareForSleep signal)"""
         try:
             print("[SUSPEND] System resumed - recovering audio and backends...", flush=True)
             time.sleep(2)  # Give audio/GPU drivers time to reinitialize
+
+            # Re-attach the shortcut keyboard if suspend dropped it without a udev
+            # 'add' event on resume. A delayed second pass catches a late reappear.
+            self._resync_shortcut_keyboards("post_suspend_resume")
 
             if self.audio_capture.recover_audio_capture('post_suspend_resume'):
                 # Reinitialize backend based on type
