@@ -140,6 +140,27 @@ PROVIDERS: Dict[str, Dict] = {
                 'hidden': True
             }
         }
+    },
+    '60db': {
+        'name': '60db',
+        'endpoint': 'https://api.60db.ai/stt',
+        'websocket_endpoint': 'wss://api.60db.ai/ws/stt',
+        # 60db authenticates the WebSocket via an ?apiKey= query param (REST uses
+        # an Authorization: Bearer header). Keys are prefixed 'sk_live_' / 'sk_test_',
+        # but we don't enforce a prefix to stay permissive across key types.
+        'api_key_prefix': None,
+        'api_key_description': '60db API key (from app.60db.ai, starts with sk_live_)',
+        'models': {
+            '60db-stt-realtime': {
+                'name': '60db Realtime STT',
+                'description': 'Realtime streaming transcription, 39 languages, optional diarization',
+                # 60db's STT WebSocket selects models server-side from languages/config,
+                # so there is no model_id to send. Kept for the REST batch endpoint.
+                'body': {},
+                'realtime_model': True,
+                'hidden': True
+            }
+        }
     }
 }
 
