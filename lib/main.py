@@ -74,6 +74,7 @@ _lock_file_path = None
 from config_manager import ConfigManager
 from audio_capture import AudioCapture
 from whisper_manager import WhisperManager
+from session_environment import ensure_wayland_display
 from text_injector import TextInjector
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
@@ -91,6 +92,8 @@ class hyprwhsprApp:
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
 
     def __init__(self):
+        ensure_wayland_display()
+
         # Initialize core components
         self.config = ConfigManager()
 

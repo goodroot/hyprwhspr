@@ -1263,6 +1263,12 @@ If `WAYLAND_DISPLAY` is missing, add to `~/.config/hypr/hyprland.conf`:
 exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE
 ```
 
+hyprwhspr also has a startup fallback: if `WAYLAND_DISPLAY` is unset but a
+Wayland socket exists in `XDG_RUNTIME_DIR`, it will use the newest `wayland-*`
+socket for its own process and children. The compositor environment export above
+is still the recommended fix because it makes the correct display available to
+all systemd user services.
+
 **Niri:**
 
 hyprwhspr uses `niri msg --json focused-window` to detect the focused app and choose the correct paste shortcut. That requires `NIRI_SOCKET` to be available in the systemd user environment used by `hyprwhspr.service`.
