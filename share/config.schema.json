@@ -242,7 +242,7 @@
     "websocket_provider": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai', 'google', 'elevenlabs')"
+      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai', 'google', 'elevenlabs', '60db')"
     },
     "websocket_model": {
       "type": ["string", "null"],
@@ -277,6 +277,28 @@
       "enum": ["minimal", "low", "medium", "high", "xhigh"],
       "default": "low",
       "description": "Latency/accuracy delay setting for OpenAI gpt-realtime-whisper transcription"
+    },
+    "sixtydb_diarize": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable speaker diarization for the 60db realtime STT backend (adds cost)"
+    },
+    "sixtydb_utterance_end_ms": {
+      "type": "integer",
+      "minimum": 300,
+      "default": 500,
+      "description": "Silence threshold in ms before 60db finalizes an utterance (>=300)"
+    },
+    "sixtydb_audio_enhancement": {
+      "type": "string",
+      "enum": ["off", "light", "adaptive"],
+      "default": "adaptive",
+      "description": "Audio enhancement mode for the 60db realtime STT backend"
+    },
+    "sixtydb_tts_voice_id": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Default 60db voice ID used by 'hyprwhspr 60db tts' when --voice is omitted"
     },
     "onnx_asr_model": {
       "type": "string",
