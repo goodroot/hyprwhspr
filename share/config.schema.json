@@ -56,11 +56,16 @@
       "default": null,
       "description": "Specific keyboard device name (e.g., 'USB Keyboard'). Takes priority over path if both set."
     },
+    "keyboard_hotplug": {
+      "type": "boolean",
+      "default": true,
+      "description": "Watch for keyboards plugged in after startup (pyudev) and attach them live, so docked/Bluetooth/USB keyboards work without restarting the service. True (default) enables this for any keyboard that passes the same checks as startup discovery (must emit every shortcut key). Set false to restore startup-only discovery."
+    },
     "keyboard_device_names": {
       "type": ["array", "null"],
       "items": { "type": "string" },
       "default": null,
-      "description": "Optional allowlist of keyboard device names. When set: (1) only listed devices are grabbed at startup; (2) pyudev-based hotplug detection is enabled so listed devices plugged in later (e.g. docking a laptop) are attached without restarting the service. Ignored if selected_device_name or selected_device_path is set. Null (default) = legacy startup-only discovery."
+      "description": "Optional allowlist of keyboard device names. When set, only listed devices are grabbed at startup AND on hotplug. Ignored if selected_device_name or selected_device_path is set. Null (default) = no name filter."
     },
     "audio_device_id": {
       "type": ["integer", "null"],
