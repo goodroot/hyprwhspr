@@ -1249,10 +1249,13 @@ def setup_python_venv(force_rebuild: bool = False, custom_python: Optional[str] 
     if not pip_bin.exists():
         log_error(f"pip not found in venv at {VENV_DIR}")
         raise FileNotFoundError(f"pip not found in venv")
-    
+
     # Upgrade pip and wheel (mise-free env applied automatically via run_command)
     run_command([str(pip_bin), 'install', '--upgrade', 'pip', 'wheel'], check=True)
-    
+
+    # Optional visualizer GUI deps — best-effort, never fatal (see helper docstring).
+    install_visualizer_deps(pip_bin)
+
     return pip_bin
 
 
@@ -1266,6 +1269,34 @@ def _should_skip_pygobject() -> bool:
         log_info("PyGObject already available (system package), skipping pip install")
         return True
     except ImportError:
+        return False
+
+
+def install_visualizer_deps(pip_bin) -> bool:
+    """Best-effort install of the optional mic-osd visualizer GUI deps.
+
+    These GUI bindings (PyGObject, pycairo) build against system libraries and can
+    fail on some distros — e.g. PyGObject >= 3.50 needs girepository-2.0, which is
+    not packaged on Ubuntu 24.04. They live in requirements-visualizer.txt (not the
+    core requirements.txt) and are installed here separately and non-fatally, so a
+    GUI build failure only disables the animated overlay and never blocks the core
+    dictation runtime. Skipped when PyGObject is already importable from system
+    packages (the venv uses --system-site-packages).
+    """
+    if _should_skip_pygobject():
+        return True
+    req = Path(HYPRWHSPR_ROOT) / 'requirements-visualizer.txt'
+    if not req.exists():
+        return True
+    log_info("Installing optional mic-osd visualizer deps (best-effort)…")
+    try:
+        run_command([str(pip_bin), 'install', '-r', str(req)], check=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        log_warning(
+            "mic-osd visualizer deps could not be built — the animated overlay "
+            f"will be unavailable (core dictation is unaffected): {e}"
+        )
         return False
 
 

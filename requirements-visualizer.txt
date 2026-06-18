@@ -1,0 +1,12 @@
+# Optional dependencies for the mic-osd visualizer (animated overlay).
+#
+# These are GUI bindings that build against system libraries (gobject-introspection,
+# cairo) and can fail to build on some distros — e.g. PyGObject >= 3.50 needs
+# girepository-2.0, which is not packaged on Ubuntu 24.04. They are therefore
+# installed best-effort and separately from requirements.txt: a failure here only
+# disables the visualizer overlay, never the core dictation runtime.
+#
+# Skipped entirely when PyGObject is already importable from system packages
+# (the venv is created with --system-site-packages).
+PyGObject>=3.50.0
+pycairo>=1.25.0
