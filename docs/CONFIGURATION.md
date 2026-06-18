@@ -1035,11 +1035,19 @@ Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see
 
 ### Keyboard hotplug (docks, Bluetooth)
 
-By default, hyprwhspr only discovers keyboards at startup. If you dock a laptop, reconnect a Bluetooth/USB keyboard, or resume from suspend, the service won't re-attach that keyboard until it is restarted — so the shortcut silently stops working on it.
+By default (`keyboard_hotplug: true`) hyprwhspr watches for keyboards plugged in after startup and attaches them automatically.  This is controlled by the `keyboard_hotplug` flag:
 
-The fix is to set a `keyboard_device_names` allowlist. Listed devices are attached at startup **and** automatically re-attached when they reappear later, which keeps the shortcut alive across disconnect/reconnect, docking and suspend. Devices not on the list (mice, media controllers) are ignored even if they advertise keyboard-like capabilities.
+```jsonc
+{
+  "keyboard_hotplug": true   // default; set false for startup-only discovery
+}
+```
 
-**Recommended — interactive configurator:**
+Set it to `false` if you want hyprwhspr to only ever use keyboards present when the service starts.
+
+**Restricting which keyboards are used (optional):** setting a `keyboard_device_names` allowlist limits attachment — at startup *and* on hot-plug — to just the listed devices. Use it if auto-discovery picks up a device you don't want grabbed, or to pin behavior to a known set of keyboards. Leave it unset to keep the default "attach any keyboard" behavior.
+
+**Interactive configurator (to set the optional allowlist):**
 
 ```bash
 hyprwhspr keyboard configure

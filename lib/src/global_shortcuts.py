@@ -217,7 +217,7 @@ class GlobalShortcuts:
 
     _warned_allowlist_misses: Set[tuple[str, ...]] = set()
 
-    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None, device_name: Optional[str] = None, grab_keys: bool = True, keyboard_device_names: Optional[List[str]] = None):
+    def __init__(self, primary_key: str = '<f12>', callback: Optional[Callable] = None, release_callback: Optional[Callable] = None, device_path: Optional[str] = None, device_name: Optional[str] = None, grab_keys: bool = True, keyboard_device_names: Optional[List[str]] = None, keyboard_hotplug: bool = True):
         self.primary_key = primary_key
         self.callback = callback
         self.selected_device_path = device_path
@@ -228,9 +228,10 @@ class GlobalShortcuts:
         # Ignored when selected_device_name/path is set (those are single-device overrides).
         self.keyboard_device_names = ([n.lower() for n in keyboard_device_names]
                                        if keyboard_device_names else None)
+        self.keyboard_hotplug = keyboard_hotplug
 
         # Hotplug monitor: detects keyboards plugged in after startup (e.g. docking).
-        # Started in start(); stopped in stop(). Gated on a non-nil allowlist.
+        # Started in start(); stopped in stop().
         self.keyboard_monitor: Optional[KeyboardMonitor] = None
 
         # Device and event handling
@@ -945,16 +946,9 @@ class GlobalShortcuts:
     def _start_hotplug_monitor(self):
         """Start pyudev-based hotplug monitor for input devices.
 
-        Gated on a non-nil `keyboard_device_names` allowlist: by listing
-        real keyboards the user has consented to runtime device discovery
-        for those devices. Without an allowlist, aggressive hotplug can
-        grab mice and media controllers whose EV_KEY capabilities look
-        keyboard-shaped (e.g. Logitech multi-device mice), so we keep the
-        legacy startup-only discovery path.
-
         Non-fatal if pyudev is unavailable or the monitor fails to start.
         """
-        if not self.keyboard_device_names:
+        if not self.keyboard_hotplug:
             return
         if not PYUDEV_AVAILABLE:
             print("[HOTPLUG] pyudev not available; keyboards plugged in after "
