@@ -521,6 +521,63 @@ class TextInjector:
             print(f"ydotool type injection failed: {e}")
             return False
 
+    def _gnome_force_latin_layout(self):
+        """Temporarily switch the GNOME input source to a Latin (ASCII) layout so
+        the raw-keycode paste chord (Ctrl+V) resolves to keysym 'v'.
+
+        The clipboard chord is sent as physical keycodes via ydotool, and Mutter
+        translates them through the *active* XKB layout. On a non-Latin layout
+        (Thai, Russian, Arabic, Greek, Hebrew, …) KEY_V has no 'v' keysym at all,
+        so Ctrl+KEY_V never triggers paste and the dictated text silently fails to
+        land. (This is distinct from the `paste_keycode` workaround, which only
+        helps Latin layouts like Dvorak where 'v' merely moves to another key.)
+
+        Returns the previous input-source index to restore, or None when no switch
+        is needed/possible (not GNOME, no Latin source configured, already Latin).
+        """
+        if not self._is_gnome_wayland_session():
+            return None
+        try:
+            import ast
+            schema = 'org.gnome.desktop.input-sources'
+            srcs_raw = subprocess.run(['gsettings', 'get', schema, 'sources'],
+                                      capture_output=True, text=True, timeout=1).stdout.strip()
+            cur_raw = subprocess.run(['gsettings', 'get', schema, 'current'],
+                                     capture_output=True, text=True, timeout=1).stdout.strip()
+            cur_idx = int(cur_raw.split()[-1])
+            sources = ast.literal_eval(srcs_raw)  # e.g. [('xkb', 'us'), ('xkb', 'th')]
+            latin = {'us', 'gb', 'dvorak', 'colemak', 'workman', 'de', 'fr', 'es',
+                     'it', 'pt', 'latam', 'no', 'se', 'dk', 'fi'}
+            latin_idx = None
+            for i, (stype, name) in enumerate(sources):  # prefer plain 'us'
+                if stype == 'xkb' and name.split('+')[0] == 'us':
+                    latin_idx = i
+                    break
+            if latin_idx is None:
+                for i, (stype, name) in enumerate(sources):
+                    if stype == 'xkb' and name.split('+')[0] in latin:
+                        latin_idx = i
+                        break
+            if latin_idx is None or latin_idx == cur_idx:
+                return None
+            subprocess.run(['gsettings', 'set', schema, 'current', f'uint32 {latin_idx}'], timeout=1)
+            time.sleep(0.12)  # let gnome-shell apply the layout before the chord
+            return cur_idx
+        except Exception as e:
+            print(f"  paste layout switch skipped: {e}")
+            return None
+
+    def _gnome_restore_layout(self, prev_idx):
+        """Restore the input source saved by _gnome_force_latin_layout(). No-op
+        when prev_idx is None."""
+        if prev_idx is None:
+            return
+        try:
+            subprocess.run(['gsettings', 'set', 'org.gnome.desktop.input-sources',
+                            'current', f'uint32 {prev_idx}'], timeout=1)
+        except Exception:
+            pass
+
     def _save_clipboard(self) -> Optional[bytes]:
         """Save current clipboard contents. Returns raw bytes or None."""
         if shutil.which("wl-paste"):
@@ -854,7 +911,15 @@ class TextInjector:
             if not pasted and self.ydotool_available:
                 self._clear_stuck_modifiers()
                 time.sleep(0.02)
-                pasted = self._send_paste_keys_slow(paste_mode)
+                # Non-Latin layouts (Thai, Russian, …) remap KEY_V, so the raw-keycode
+                # Ctrl+V chord lands as the wrong keysym and paste silently fails. Force
+                # a Latin layout just for the chord, then restore — the clipboard text is
+                # Unicode and pastes correctly regardless of the active layout.
+                _prev_layout = self._gnome_force_latin_layout()
+                try:
+                    pasted = self._send_paste_keys_slow(paste_mode)
+                finally:
+                    self._gnome_restore_layout(_prev_layout)
 
             if not pasted and not self.wtype_available and not self.ydotool_available:
                 print("No key-injection tool available; text is on the clipboard.")

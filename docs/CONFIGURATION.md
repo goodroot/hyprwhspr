@@ -913,6 +913,15 @@ Quick way to fix it on Wayland (no arithmetic):
 
 Advanced (if you already know the Linux evdev keycode): set `paste_keycode` directly.
 
+> **Non-Latin layouts (Thai, Russian, Arabic, Greek, Hebrew, …):** `paste_keycode`
+> can't help here — there is no physical key that produces a `v` keysym, so the
+> Ctrl+V chord can never paste while that layout is active. On **GNOME/Mutter**,
+> hyprwhspr handles this automatically: it briefly switches the active input
+> source to a configured Latin layout (e.g. `us`) for the paste chord, then
+> restores your previous layout. Just keep a Latin source in
+> Settings → Keyboard → Input Sources. (The clipboard text itself is Unicode and
+> pastes verbatim regardless of layout.)
+
 ### Auto-submit
 
 Automatically press Enter after pasting.
