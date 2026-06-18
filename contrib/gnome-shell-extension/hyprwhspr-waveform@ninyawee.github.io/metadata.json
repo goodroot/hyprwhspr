@@ -1,0 +1,8 @@
+{
+  "uuid": "hyprwhspr-waveform@ninyawee.github.io",
+  "name": "hyprwhspr Waveform OSD",
+  "description": "Floating, audio-reactive waveform overlay for hyprwhspr dictation on GNOME/Mutter, where the built-in layer-shell mic-osd is unavailable. Focus-safe (drawn inside gnome-shell), driven by ~/.config/hyprwhspr/{recording_status,audio_level}.",
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/goodroot/hyprwhspr",
+  "version": 1
+}
