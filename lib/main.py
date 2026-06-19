@@ -240,6 +240,14 @@ class hyprwhsprApp:
                     runner = MicOSDRunner()
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
+                        # Force the overlay hidden at startup. If we reused an
+                        # orphaned daemon that a previous (crashed/SIGKILLed)
+                        # session left visible mid-recording, it would otherwise
+                        # stay stuck on screen until the first new recording.
+                        try:
+                            runner.hide()
+                        except Exception:
+                            pass
                         print("[INIT] Mic-OSD daemon started", flush=True)
                     else:
                         print("[WARN] Failed to start mic-osd daemon", flush=True)
