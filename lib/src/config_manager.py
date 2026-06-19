@@ -67,8 +67,8 @@ class ConfigManager:
             # skipped.  Null (default) = no filter.
             'keyboard_device_names': None,
             # Audio device persistence (for reliable device matching across reboots)
-            'audio_device_id': None,        # PortAudio device index (can change on reboot)
-            'audio_device_name': None,      # Human-readable device name (more stable)
+            'audio_device_id': None,        # PortAudio index, or a PulseAudio/PipeWire source name (pactl list short sources)
+            'audio_device_name': None,      # PortAudio/PulseAudio device-name substring (more stable across reboots)
             'audio_device_vendor_id': None, # USB vendor ID (most stable, from udev)
             'audio_device_model_id': None,  # USB model ID (most stable, from udev)
             'model': 'base',

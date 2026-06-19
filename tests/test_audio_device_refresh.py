@@ -333,5 +333,146 @@ class AudioDeviceRefreshTests(unittest.TestCase):
         self.assertIsNone(capture.device_info)
 
 
+    def test_configured_pulse_source_name_resolves_to_portaudio_device(self):
+        fake_sd = FakeSoundDevice()
+        # PortAudio exposes the USB webcam under its ALSA-style display name,
+        # which differs from the pactl source name the user configures.
+        fake_sd.devices.append({
+            "name": "C922 Pro Stream Webcam: USB Audio (hw:1,0)",
+            "max_input_channels": 2,
+            "default_samplerate": 48000,
+            "hostapi": 0,
+        })
+        module = self._load_audio_capture(fake_sd)
+
+        source = "alsa_input.usb-046d_C922_Pro_Stream_Webcam_D487FE4F-02.iec958-stereo"
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"])):
+            capture = module.AudioCapture(
+                device_id=source,
+                config_manager=FakeConfig({"audio_device_id": source}),
+            )
+
+        self.assertEqual(capture.device_id, 4)
+        self.assertEqual(capture.preferred_device_id, source)
+        self.assertEqual(fake_sd.default.device[0], 4)
+
+    def test_configured_pulse_source_does_not_follow_default_change(self):
+        fake_sd = FakeSoundDevice()
+        fake_sd.devices.append({
+            "name": "C922 Pro Stream Webcam: USB Audio (hw:1,0)",
+            "max_input_channels": 2,
+            "default_samplerate": 48000,
+            "hostapi": 0,
+        })
+        module = self._load_audio_capture(fake_sd)
+
+        source = "alsa_input.usb-046d_C922_Pro_Stream_Webcam_D487FE4F-02.iec958-stereo"
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"])):
+            capture = module.AudioCapture(
+                device_id=source,
+                config_manager=FakeConfig({"audio_device_id": source, "stream_start_retry_delay": 0}),
+            )
+            self.assertEqual(capture.device_id, 4)
+            # Explicit intent must not be overridden by a default-source refresh.
+            with mock.patch.object(capture, "_get_pulse_default_source_device_id") as get_default:
+                self.assertFalse(capture.refresh_default_input("test"))
+            get_default.assert_not_called()
+
+    def test_unmatched_pulse_source_falls_back_to_default(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+
+        source = "alsa_input.usb-1234_Nonexistent_Mic-00.analog-stereo"
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"])):
+            capture = module.AudioCapture(
+                device_id=source,
+                config_manager=FakeConfig({"audio_device_id": source}),
+            )
+
+        # No PortAudio device matches the configured source, so init falls back
+        # to the Pulse default rather than crashing.
+        self.assertEqual(capture.device_id, 0)
+
+    def test_fuzzy_match_requires_two_tokens(self):
+        fake_sd = FakeSoundDevice()
+        fake_sd.devices.append({
+            "name": "C922 Pro Stream Webcam: USB Audio (hw:1,0)",
+            "max_input_channels": 2,
+            "default_samplerate": 48000,
+            "hostapi": 0,
+        })
+        module = self._load_audio_capture(fake_sd)
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"])):
+            capture = module.AudioCapture(config_manager=FakeConfig())
+
+        # Only one distinctive token ("webcam") overlaps — below the >=2 bar.
+        self.assertIsNone(
+            capture._match_pulse_source_to_portaudio("alsa_input.usb-Acme_Webcam", fuzzy=True)
+        )
+
+    def test_fuzzy_match_refuses_ambiguous_tie(self):
+        fake_sd = FakeSoundDevice()
+        # Two identical webcams expose distinct PortAudio names (different hw
+        # index) but share every model token, so the source can't disambiguate.
+        for hw in (1, 2):
+            fake_sd.devices.append({
+                "name": f"C922 Pro Stream Webcam: USB Audio (hw:{hw},0)",
+                "max_input_channels": 2,
+                "default_samplerate": 48000,
+                "hostapi": 0,
+            })
+        module = self._load_audio_capture(fake_sd)
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"])):
+            capture = module.AudioCapture(config_manager=FakeConfig())
+
+        source = "alsa_input.usb-046d_C922_Pro_Stream_Webcam_D487FE4F-02.iec958-stereo"
+        # Tie at the top score → refuse to guess rather than bind the wrong twin.
+        self.assertIsNone(capture._match_pulse_source_to_portaudio(source, fuzzy=True))
+
+    def test_default_path_does_not_fuzzy_match_concrete_device(self):
+        fake_sd = FakeSoundDevice()
+        # A "pulse" aggregate plus a concrete USB webcam. The default source is a
+        # rich USB name that fuzzy matching WOULD bind to the concrete device,
+        # but the default path must stay conservative and pick the aggregate.
+        fake_sd.devices.append({
+            "name": "pulse",
+            "max_input_channels": 32,
+            "default_samplerate": 44100,
+            "hostapi": 0,
+        })
+        fake_sd.devices.append({
+            "name": "C922 Pro Stream Webcam: USB Audio (hw:1,0)",
+            "max_input_channels": 2,
+            "default_samplerate": 48000,
+            "hostapi": 0,
+        })
+        module = self._load_audio_capture(fake_sd)
+
+        source = "alsa_input.usb-046d_C922_Pro_Stream_Webcam_D487FE4F-02.iec958-stereo"
+        with mock.patch("subprocess.run", side_effect=self._run_sources([source])):
+            capture = module.AudioCapture(config_manager=FakeConfig())
+
+        # Index 4 is "pulse"; index 5 is the concrete C922.
+        self.assertEqual(capture.device_id, 4)
+
+    def test_configured_source_name_resolves_via_audio_device_name(self):
+        fake_sd = FakeSoundDevice()
+        fake_sd.devices.append({
+            "name": "C922 Pro Stream Webcam: USB Audio (hw:1,0)",
+            "max_input_channels": 2,
+            "default_samplerate": 48000,
+            "hostapi": 0,
+        })
+        module = self._load_audio_capture(fake_sd)
+
+        source = "alsa_input.usb-046d_C922_Pro_Stream_Webcam_D487FE4F-02.iec958-stereo"
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"])):
+            capture = module.AudioCapture(config_manager=FakeConfig({"audio_device_name": source}))
+
+        self.assertEqual(capture.device_id, 4)
+
+
 if __name__ == "__main__":
     unittest.main()
