@@ -68,14 +68,14 @@
       "description": "Optional allowlist of keyboard device names. When set, only listed devices are grabbed at startup AND on hotplug. Ignored if selected_device_name or selected_device_path is set. Null (default) = no name filter."
     },
     "audio_device_id": {
-      "type": ["integer", "null"],
+      "type": ["integer", "string", "null"],
       "default": null,
-      "description": "PortAudio device index (can change on reboot)"
+      "description": "PortAudio device index, or a PulseAudio/PipeWire source name (from `pactl list short sources`). The index can change on reboot; the source name is matched against PortAudio devices."
     },
     "audio_device_name": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Human-readable audio device name (more stable across reboots)"
+      "description": "PortAudio/PulseAudio device-name substring (more stable across reboots). A PulseAudio/PipeWire source name is also accepted."
     },
     "audio_device_vendor_id": {
       "type": ["string", "null"],
