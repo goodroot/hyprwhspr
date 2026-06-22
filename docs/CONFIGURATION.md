@@ -647,8 +647,6 @@ Two modes available (set `realtime_mode` in your config):
 }
 ```
 
-With OpenAI `gpt-realtime-whisper`, the mic OSD can show a live partial transcript while recording. Only the completed final transcript is pasted after you stop.
-
 #### Google Gemini
 
 Realtime streaming transcription via Google's Gemini Live API.
@@ -710,7 +708,7 @@ The recording-status indicator — the **mic OSD** — gives visual feedback whi
 `mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup based on your compositor:
 
 - **Overlay mode** — on compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland), you get the animated overlay: pulsing bars rendered as an always-on-top layer. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
-- **Notification mode** — GNOME/Mutter does **not** implement the layer-shell protocol. There the overlay would degrade to a focus-stealing toplevel window that swallows the post-dictation paste keystroke, so status is shown as desktop notifications instead (recording / transcribing / inserted). Notifications never take keyboard focus, so injection still works. This path only needs `notify-send` (libnotify) — the GTK4/`gtk4-layer-shell` packages are not required.
+- **Notification mode** — GNOME/Mutter does **not** implement the layer-shell protocol. The built-in overlay would degrade to a focus-stealing toplevel window that swallows the post-dictation paste keystroke, so hyprwhspr shows status as desktop notifications instead (recording / transcribing / inserted). Notifications never take keyboard focus, so injection still works. This path only needs `notify-send` (libnotify) — the GTK4/`gtk4-layer-shell` packages are not required.
 
 You don't choose the mode; `hyprwhspr setup` detects GNOME/Mutter and the service picks the right one at runtime. Set `mic_osd_enabled: false` to turn off both. The service log records which one was selected:
 
@@ -718,7 +716,16 @@ You don't choose the mode; `hyprwhspr setup` detects GNOME/Mutter and the servic
 journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status via notifications'
 ```
 
-When OpenAI `gpt-realtime-whisper` live preview is enabled, partial transcript text is written to a restrictive runtime IPC file under `$XDG_RUNTIME_DIR/hyprwhspr/` so the OSD daemon can render it. The file is `0600`, cleared on normal hide/shutdown and scrubbed on service startup; if the machine loses power or the service is killed, the last partial may remain until the next startup/runtime-directory cleanup. (Live preview applies to the overlay only; the notification path shows status text without partial transcripts.)
+#### GNOME/Mutter waveform overlay
+
+GNOME users who want an animated waveform instead of notifications can install the opt-in GNOME Shell extension in `contrib/gnome-shell-extension/`. It draws inside gnome-shell, so it stays always-on-top without stealing focus from the application receiving the dictated text.
+
+```bash
+cd contrib/gnome-shell-extension
+./install.sh
+```
+
+Log out and back in if GNOME cannot enable the new extension immediately. The extension is a status consumer only: it reads hyprwhspr's recording state and audio level files. It does not capture audio or replace the built-in notification fallback; uninstall or disable the extension and GNOME continues to use notifications.
 
 ### Audio feedback
 
