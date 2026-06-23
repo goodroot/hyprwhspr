@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
-**Why hyprwhspr?** There are a lotta dictation apps. This one is designed to work great for most people, and in particular those with highest end machines. If you've a recent Nvidia card, hyprwhspr is designed from the ground up for **best possible accuracy and speed**. Other setups will run as well as they can on the hardware you bring. It's also actively maintained, and fully featured. Works on  anything with Wayland.
+**Why hyprwhspr?** There are a lotta dictation apps. This one is designed to work great for most people, and in particular those with highest end machines. If you've a recent Nvidia card, hyprwhspr is designed from the ground up for the **best possible accuracy and speed**. Other setups will run as well as they can on the hardware you bring. It's also actively maintained, and fully featured. Works on  anything with Wayland.
 
 ---
 
