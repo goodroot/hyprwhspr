@@ -449,16 +449,20 @@ import "../styles/global.css";
                         <details class="faq-item">
                             <summary>Why hyprwhspr over other Linux speech tools?</summary>
                             <p>
-                                Model breadth and performance. hyprwhspr supports more local
-                                backends than any comparable tool — Cohere Transcribe,
-                                pywhispercpp, faster-whisper, onnx-asr, and Parakeet TDT V3 —
-                                plus a full range of cloud APIs. The model stays hot in memory,
-                                so transcription is instant rather than gated behind a
-                                multi-second load on every invocation. It's also the most fully
-                                featured: toggle, push-to-talk, and auto modes; Waybar
-                                integration; live model unload for VRAM management; and
-                                evdev-based hotkeys that work on any Wayland compositor —
-                                Hyprland, GNOME, KDE, Sway.
+                                Pair it with a capable GPU and this is the absolute top end of
+                                Linux dictation — and it's excellent without one, too. hyprwhspr
+                                is built for accuracy and speed: it runs the top local models —
+                                Parakeet TDT V3, Cohere Transcribe, the full Whisper family,
+                                faster-whisper, onnx-asr — held hot in memory, so transcription
+                                is instant rather than gated behind a multi-second load. GPU
+                                acceleration (NVIDIA CUDA, AMD/Intel Vulkan) is auto-detected;
+                                on CPU, onnx-asr is genuinely fast and accurate — a first-class
+                                path, not a fallback. It supports more local backends than any
+                                comparable tool, plus a full range of cloud APIs, and it's well
+                                featured: five recording modes, per-app paste rules, Waybar
+                                integration, live model unload for VRAM, and evdev hotkeys on
+                                any Wayland compositor — Hyprland, GNOME, KDE, Sway. Actively
+                                maintained.
                             </p>
                         </details>
 
