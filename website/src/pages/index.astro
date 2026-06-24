@@ -450,19 +450,23 @@ import "../styles/global.css";
                             <summary>Why hyprwhspr over other Linux speech tools?</summary>
                             <p>
                                 Pair it with a capable GPU and this is the absolute top end of
-                                Linux dictation — and it's excellent without one, too. hyprwhspr
-                                is built for accuracy and speed: it runs the top local models —
-                                Parakeet TDT V3, Cohere Transcribe, the full Whisper family,
-                                faster-whisper, onnx-asr — held hot in memory, so transcription
-                                is instant rather than gated behind a multi-second load. GPU
-                                acceleration (NVIDIA CUDA, AMD/Intel Vulkan) is auto-detected;
-                                on CPU, onnx-asr is genuinely fast and accurate — a first-class
-                                path, not a fallback. It supports more local backends than any
-                                comparable tool, plus a full range of cloud APIs, and it's well
-                                featured: five recording modes, per-app paste rules, Waybar
-                                integration, live model unload for VRAM, and evdev hotkeys on
-                                any Wayland compositor — Hyprland, GNOME, KDE, Sway. Actively
-                                maintained.
+                                Linux dictation — and it's excellent without one, too.
+                            </p>
+                            <p>
+                                hyprwhspr is built for accuracy and speed: it runs the top local
+                                models — Parakeet TDT V3, Cohere Transcribe, the full Whisper
+                                family, faster-whisper, onnx-asr — held hot in memory, so
+                                transcription is instant rather than gated behind a multi-second
+                                load. GPU acceleration (NVIDIA CUDA, AMD/Intel Vulkan) is
+                                auto-detected; on CPU, onnx-asr is genuinely fast and accurate —
+                                a first-class path, not a fallback.
+                            </p>
+                            <p>
+                                It supports more local backends than any comparable tool, plus a
+                                full range of cloud APIs, and it's well featured: five recording
+                                modes, per-app paste rules, Waybar integration, live model unload
+                                for VRAM, and evdev hotkeys on any Wayland compositor — Hyprland,
+                                GNOME, KDE, Sway. Actively maintained.
                             </p>
                         </details>
 
@@ -1048,6 +1052,13 @@ import "../styles/global.css";
         color: var(--fg-dim);
         line-height: 1.75;
         border-top: 1px solid var(--border);
+    }
+
+    /* Multi-paragraph answers: only the first paragraph carries the divider;
+       the rest flow as plain paragraphs with no rule or top padding. */
+    .faq-item p + p {
+        padding-top: 0;
+        border-top: none;
     }
 
     /* ── Footer ───────────────────────────────────────────────────── */
