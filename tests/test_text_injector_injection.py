@@ -1,6 +1,8 @@
+import io
 import sys
 import types
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -564,6 +566,117 @@ class TextInjectorInjectionTests(unittest.TestCase):
             self.assertEqual(injector._detect_active_layout(), "de")
 
         self.assertEqual(run.call_count, 2)
+
+
+    # ---- Fix 1: skip the active-window lookup when its result is unused ----
+
+    def test_active_window_lookup_needed_predicate(self):
+        injector = self._injector()
+
+        # Default (auto-detect): paste_mode/shift_paste unset → window class is
+        # needed for terminal detection.
+        injector.config_manager = ConfigStub()
+        self.assertTrue(injector._active_window_lookup_needed())
+
+        # Explicit paste_mode, no app rules → lookup result is unused.
+        injector.config_manager = ConfigStub({"paste_mode": "ctrl"})
+        self.assertFalse(injector._active_window_lookup_needed())
+
+        # Legacy explicit override → also no auto-detect needed.
+        injector.config_manager = ConfigStub({"shift_paste": True})
+        self.assertFalse(injector._active_window_lookup_needed())
+
+        # App rules present → window identity is needed even with explicit paste_mode.
+        injector.config_manager = ConfigStub(
+            {"paste_mode": "ctrl", "applications": {"emacs": {"auto_paste": "ctrl+y"}}}
+        )
+        self.assertTrue(injector._active_window_lookup_needed())
+
+    def test_inject_skips_window_lookup_with_explicit_paste_mode(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"paste_mode": "ctrl_shift"})
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info") as get_window,
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "sway",
+                    "WAYLAND_DISPLAY": "wayland-1",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        # The expensive lookup (AT-SPI subprocess on GNOME/KDE) is never reached
+        # because nothing consumes the window identity here.
+        get_window.assert_not_called()
+        paste_chord.assert_called_once_with("ctrl+shift+v")
+        direct_type.assert_not_called()
+
+    # ---- Fix 2: chord parsing handles both separators and symbol keys ----
+
+    def test_parse_key_chord_accepts_separators_and_symbol_keys(self):
+        injector = self._injector()
+
+        self.assertEqual(injector._parse_key_chord("ctrl+shift+v"), (["ctrl", "shift"], "v"))
+        self.assertEqual(injector._parse_key_chord("ctrl-shift-v"), (["ctrl", "shift"], "v"))
+        self.assertEqual(injector._parse_key_chord("super+minus"), (["super"], "minus"))
+        # The literal dash key survives instead of being mangled into a separator.
+        self.assertEqual(injector._parse_key_chord("super+-"), (["super"], "minus"))
+        self.assertEqual(injector._parse_key_chord("ctrl+y"), (["ctrl"], "y"))
+        self.assertEqual(injector._parse_key_chord("f5"), ([], "f5"))
+        self.assertEqual(injector._parse_key_chord("cmd+v"), (["super"], "v"))
+
+    def test_parse_key_chord_rejects_empty_and_modifier_only(self):
+        injector = self._injector()
+
+        self.assertIsNone(injector._parse_key_chord(""))
+        self.assertIsNone(injector._parse_key_chord("ctrl+shift"))
+        self.assertIsNone(injector._parse_key_chord("ctrl"))
+        self.assertIsNone(injector._parse_key_chord(None))
+
+    # ---- Fix 3: an unusable configured chord warns instead of failing silently ----
+
+    def test_unusable_application_chord_warns_and_returns_chord(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"applications": {"emacs": {"auto_paste": "ctrl+nope"}}}
+        )
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            chord, app = injector._resolve_paste_chord({"class": "emacs"})
+
+        # Chord returned unchanged (text still lands on clipboard for manual paste),
+        # but the user is told why their config did nothing.
+        self.assertEqual(chord, "ctrl+nope")
+        self.assertEqual(app, "emacs")
+        output = buf.getvalue()
+        self.assertIn("ctrl+nope", output)
+        self.assertIn("emacs", output)
+
+    def test_valid_application_chord_does_not_warn(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"applications": {"emacs": {"auto_paste": "ctrl+y"}}}
+        )
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            chord, app = injector._resolve_paste_chord({"class": "emacs"})
+
+        self.assertEqual(chord, "ctrl+y")
+        self.assertEqual(buf.getvalue(), "")
 
 
 if __name__ == "__main__":

@@ -46,8 +46,6 @@ Tokens are stored as-is on disk and expanded at read time
 }
 ```
 
----
-
 ## Recording modes
 
 ### Toggle mode
@@ -96,11 +94,9 @@ Press to start, speak naturally, and when you pause for a couple seconds the tex
 ```
 
 - Recording continues after each auto-paste, so you can keep dictating
-- To make it "faster", lower continous silence threshold
 - The final press stops recording and pastes any remaining audio
-- The silence threshold is auto-calibrated from your mic's noise floor at the start of each session.
-- If detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value)
-- Please report any issues you might experience with this functionality so it can be polished.
+- Lower `continuous_silence_seconds` to trigger paste after shorter pauses
+- The silence threshold is auto-calibrated from your mic's noise floor at the start of each session; if detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value)
 
 ### Long-form mode
 
@@ -171,10 +167,9 @@ Use a different hotkey for a specific language:
 ```
 
 > **Note**: Works with backends that support language parameters:
-> - **REST API**: Works if the endpoint accepts `language` in the request body
-> - **Realtime WebSocket**: Fully supported (OpenAI, Google, ElevenLabs)
 > - **Local whisper models**: Fully supported (all pywhispercpp models)
-> - **Custom REST endpoints**: May not work if the endpoint doesn't accept a language parameter
+> - **Realtime WebSocket**: Fully supported (OpenAI, Google, ElevenLabs)
+> - **REST API**: Only if the endpoint accepts a `language` parameter (varies by provider/custom endpoint)
 
 The primary shortcut continues to use the `language` setting from your config (or auto-detect if set to `null`).
 
@@ -291,8 +286,6 @@ For up-to-date accuracy rankings across open-source models, see the [Open ASR Le
 | REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
 | Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs |
 
----
-
 ### Model commands
 
 `hyprwhspr model` commands route automatically to the configured backend:
@@ -307,30 +300,9 @@ hyprwhspr model reload            # Reload the model after an unload
 
 Models are downloaded automatically during `hyprwhspr setup`; use `model download` to re-download if needed. For `unload`/`reload` details, see [GPU resource management](#gpu-resource-management).
 
----
-
 ### Cohere Transcribe
 
-**#1 on the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)**
-
-_5.42 average WER across 9 benchmarks, outperforms Whisper large-v3 (7.44 WER) at 3× the throughput._
-
-[![Cohere Transcribe benchmark results](https://cdn-uploads.huggingface.co/production/uploads/6867ac274d8d690302fd0378/VtvUqMr9ibvv47Wj3gvI3.png)](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release)
-
-| Benchmark | Cohere Transcribe | Whisper large-v3 |
-|-----------|:-----------------:|:----------------:|
-| LibriSpeech clean | **1.25** | 2.7 |
-| LibriSpeech other | **2.37** | 5.2 |
-| TedLium | **2.49** | 4.2 |
-| SPGISpeech | **3.08** | 4.7 |
-| VoxPopuli | **5.87** | 9.1 |
-| Gigaspeech | **9.33** | 10.3 |
-| Earnings22 | **10.84** | 12.7 |
-| **Average WER** | **5.42** | 7.44 |
-
-Lower is better.
-
-Full benchmark details: [Cohere Transcribe release blog](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release).
+**#1 on the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard)** — 5.42 average WER across 9 benchmarks vs. Whisper large-v3's 7.44, at ~3× the throughput. [Benchmark details](https://huggingface.co/blog/CohereLabs/cohere-transcribe-03-2026-release).
 
 **Supported languages:** English, German, French, Italian, Spanish, Portuguese, Greek, Dutch, Polish, Arabic, Vietnamese, Chinese, Japanese, Korean
 
@@ -361,8 +333,6 @@ On GPU the model always runs in **bfloat16** (its native precision). A `float16`
 
 Model stored in: `~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe-03-2026/`
 
----
-
 ### Parakeet
 
 Parakeet TDT V3 via [onnx-asr](https://github.com/istupakov/onnx-asr).
@@ -390,8 +360,6 @@ Run `hyprwhspr setup` and select **[1] Parakeet**. The model (~1 GB) is download
 ```
 
 Model stored in: `~/.cache/huggingface/hub/`
-
----
 
 ### faster-whisper
 
@@ -432,8 +400,6 @@ Built-in Silero VAD strips silence before inference — the most effective mitig
 | `distil-large-v3` | ~1.5 GB | Distilled, CPU/GPU balance |
 
 Models stored in: `~/.cache/huggingface/hub/`
-
----
 
 ### whisper.cpp
 
@@ -565,8 +531,6 @@ Controls how Whisper searches for the best transcription. Applies to `pywhisperc
 
 > **Note**: `sampling_strategy` is locked in at model load time for `pywhispercpp`. Changing it requires a service restart.
 
----
-
 ### REST API
 
 Use any ASR backend via HTTP API (local or cloud).
@@ -621,8 +585,6 @@ Connect to any backend, local or cloud, via your own custom configuration:
     "rest_audio_format": "wav"            // optional audio format sent to the endpoint: "wav" (default) | "mp3"
 }
 ```
-
----
 
 ### Realtime WebSocket
 
@@ -893,8 +855,6 @@ Override with `paste_mode` if needed:
 }
 ```
 
-> **Legacy:** older configs may use the boolean `shift_paste` (`true` = Ctrl+Shift+V, `false` = Ctrl+V). It is consulted only when `paste_mode` is absent — prefer `paste_mode`.
-
 ### App-specific paste keys
 
 Some apps use non-standard paste shortcuts — GUI Emacs, for example, uses Ctrl+Y while Ctrl+V scrolls. Set per-app behavior with `applications`, keyed by window identifier:
@@ -949,7 +909,7 @@ hyprwhspr saves your clipboard before injection and restores it afterward — di
 
 GNOME/Mutter lacks layer-shell and blocks `wtype`, so hyprwhspr behaves differently there:
 
-- **Window detection** uses the **accessibility bridge** (AT-SPI). `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). Without it, GNOME can't tell terminals apart and paste falls back to Ctrl+V (wrong in terminals).
+- **Window detection** uses the **accessibility bridge** (AT-SPI) — a `gsettings` toggle, not the optional waveform GNOME Shell extension. `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). Without it, GNOME can't tell terminals apart and paste falls back to Ctrl+V (wrong in terminals). Setting an explicit `paste_mode` (with no `applications` rules) skips this probe entirely — handy if you don't need per-terminal detection.
 - **Direct typing:** for ASCII text on a US layout, hyprwhspr types directly with `ydotool type` instead of touching the clipboard. Non-US layouts or non-ASCII text fall back to verbatim clipboard paste automatically. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
 - **Non-Latin layouts** (Thai, Russian, Arabic, Greek, Hebrew, …): no physical key produces a `v` keysym, so `paste_keycode` can't help. hyprwhspr briefly switches to a Latin input source (e.g. `us`) for the paste chord, then restores your layout — just keep a Latin source in Settings → Keyboard → Input Sources. The pasted text is Unicode and reproduces verbatim regardless.
 
@@ -1233,27 +1193,16 @@ pgrep -af 'ydotoold .*hyprwhspr-ydotool.sock'
 
 #### Why no ydotool service? (private ydotoold)
 
-hyprwhspr uses `ydotoold` (ydotool's daemon) as a **fallback** paste backend on
-compositors that reject the Wayland virtual-keyboard protocol (notably GNOME/Mutter);
-the primary path is `wtype`. Rather than enabling a shared, system-wide
-`ydotool.service`, hyprwhspr starts its **own private `ydotoold`** as a child process on
-a dedicated socket (`$XDG_RUNTIME_DIR/hyprwhspr-ydotool.sock`, reached via
-`YDOTOOL_SOCKET`). It is launched lazily — only when the uinput fallback is actually
-needed, so `wtype`-only sessions (wlroots/Hyprland/niri) never spawn it — and torn down
-with hyprwhspr. Nothing to enable, no shared daemon to manage, and any system/other-tool
-`ydotoold` is left untouched. (Earlier versions deployed a
-`~/.config/systemd/user/ydotool.service`; `hyprwhspr setup` now retires a unit it
-previously authored.)
+`wtype` is the primary paste path. On compositors that reject the Wayland
+virtual-keyboard protocol (notably GNOME/Mutter), hyprwhspr falls back to its
+**own private `ydotoold`** — a child process on a dedicated socket
+(`$XDG_RUNTIME_DIR/hyprwhspr-ydotool.sock`), launched lazily and torn down with the
+service.
 
-**Access vs. the daemon — two separate layers.** Running the daemon is one thing;
-*access* to `/dev/uinput` is another. On modern systemd the active-session user is
-granted `/dev/uinput` automatically through a `uaccess` ACL (visible as the `+` in
-`getfacl /dev/uinput`), which is why `ydotoold` runs rootless. The `input` group and the
-`/etc/udev/rules.d/99-uinput.rules` rule that `hyprwhspr setup` adds are a stable
-fallback for that access — a `uaccess` ACL only covers the *active* session and is
-dropped once it goes inactive. The `input` group is mainly required for the global
-hotkey, which reads `/dev/input/event*` via evdev (those devices carry no `uaccess`
-ACL), not for the paste path.
+`ydotoold` runs rootless because the active-session user gets `/dev/uinput` via a
+`uaccess` ACL. The `input` group and the udev rule `hyprwhspr setup` adds are a fallback
+for when that ACL isn't present (it only covers the active session). The `input` group's
+main job is the global hotkey, which reads `/dev/input/event*` via evdev.
 
 #### Service starts but doesn't work until restarted
 

@@ -43,6 +43,14 @@ WTYPE_MODIFIERS = {
     'alt': 'alt',
 }
 
+# Accepted modifier spellings -> canonical token (a key of WTYPE_MODIFIERS).
+MODIFIER_ALIASES = {
+    'ctrl': 'ctrl', 'control': 'ctrl',
+    'shift': 'shift',
+    'super': 'super', 'cmd': 'super', 'meta': 'super', 'logo': 'super',
+    'alt': 'alt',
+}
+
 # wtype's `-k` resolves keys through libxkbcommon, whose keysym names are
 # case-sensitive and differ from our normalized lowercase tokens (e.g. our
 # "enter"/"backspace"/"pageup" are xkb "Return"/"BackSpace"/"Page_Up").
@@ -529,6 +537,40 @@ except Exception:
             return 'ctrl_shift'
         return 'ctrl'
 
+    def _active_window_lookup_needed(self) -> bool:
+        """True when injection actually consumes the focused-window identity.
+
+        The window class feeds (a) per-application paste rules and (b) paste-mode
+        auto-detection (terminal → Ctrl+Shift+V). When neither applies, the lookup
+        result is unused — skipping it avoids spawning the AT-SPI probe subprocess
+        on GNOME/KDE native-Wayland windows (no cost on Hyprland, which never
+        reaches that branch).
+        """
+        if not self.config_manager:
+            return True
+        applications = self.config_manager.get_setting('applications', {})
+        if isinstance(applications, dict) and applications:
+            return True
+        if self.config_manager.get_setting('paste_mode', None):
+            return False  # explicit paste_mode — no auto-detect, no class needed
+        if self.config_manager.get_setting('shift_paste', None) is not None:
+            return False  # legacy explicit override — no auto-detect
+        return True  # auto-detect path needs the window class
+
+    def _chord_is_usable(self, chord: str) -> bool:
+        """True if `chord` resolves to keys for at least one available backend."""
+        parsed = self._parse_key_chord(PASTE_MODE_CHORDS.get(chord, chord))
+        if not parsed:
+            return False
+        _modifiers, key = parsed
+        if self.wtype_available and self._wtype_key_name(key) is not None:
+            return True
+        if self.ydotool_available and self._keycode_for_chord_key(key) is not None:
+            return True
+        # No injection backend at all → can't paste regardless; a parseable chord
+        # shouldn't trigger a spurious misconfiguration warning.
+        return not self.wtype_available and not self.ydotool_available
+
     def _resolve_paste_chord(self, window_info: Optional[Dict[str, Any]] = None):
         """Resolve application rule / explicit paste_mode / legacy / auto into a chord.
 
@@ -542,7 +584,12 @@ except Exception:
             if auto_paste is False:
                 return False, matched_identifier
             if isinstance(auto_paste, str) and auto_paste.strip():
-                return auto_paste.strip(), matched_identifier
+                chord = auto_paste.strip()
+                if not self._chord_is_usable(chord):
+                    print(f"⚠️  Ignoring unusable auto_paste chord {chord!r} for app "
+                          f"'{matched_identifier}'. Use a form like 'ctrl+v' or 'ctrl+y'; "
+                          f"text will be left on the clipboard.", flush=True)
+                return chord, matched_identifier
 
         paste_mode = None
         if self.config_manager:
@@ -553,7 +600,13 @@ except Exception:
                 paste_mode = 'ctrl_shift' if shift_paste else 'ctrl'
             else:
                 paste_mode = self._detect_paste_mode(window_info)
-        return PASTE_MODE_CHORDS.get(paste_mode, paste_mode), matched_identifier
+        chord = PASTE_MODE_CHORDS.get(paste_mode, paste_mode)
+        # Auto-detected modes ('ctrl'/'ctrl_shift') always resolve; only an
+        # explicitly-configured paste_mode can be unusable here.
+        if not self._chord_is_usable(chord):
+            print(f"⚠️  Configured paste_mode {paste_mode!r} is not a usable chord; "
+                  f"text will be left on the clipboard.", flush=True)
+        return chord, matched_identifier
 
     def _clear_stuck_modifiers(self):
         """
@@ -581,27 +634,36 @@ except Exception:
             print(f"Warning: Could not clear stuck modifiers: {e}")
 
     def _parse_key_chord(self, chord: str) -> Optional[Tuple[List[str], str]]:
-        """Parse a single-key chord such as ctrl+shift+v."""
+        """Parse a single-key chord such as ctrl+shift+v.
+
+        Modifiers are peeled off the front (separated by '+' or '-'); whatever
+        remains is the key and is never split. This keeps the convenient
+        'ctrl-shift-v' spelling working while still allowing a chord whose key
+        is the literal '-' (e.g. 'super+-', normalized to 'minus').
+        """
         if not isinstance(chord, str):
             return None
-        parts = [
-            part.strip().lower().replace('control', 'ctrl').replace('cmd', 'super').replace('meta', 'super')
-            for part in chord.replace('-', '+').split('+')
-            if part.strip()
-        ]
-        if not parts:
+        remainder = chord.strip().lower()
+        if not remainder:
             return None
-        modifiers = []
-        key = None
-        for part in parts:
-            if part in WTYPE_MODIFIERS:
-                if part not in modifiers:
-                    modifiers.append(part)
-            elif key is None:
-                key = part
-            else:
-                return None
-        if key is None:
+
+        modifiers: List[str] = []
+        while True:
+            m = re.match(r'([a-z]+)\s*[+-]\s*(.+)$', remainder)
+            if not m:
+                break
+            canonical = MODIFIER_ALIASES.get(m.group(1))
+            if canonical is None:
+                break  # leading token isn't a modifier — the rest is the key
+            if canonical not in modifiers:
+                modifiers.append(canonical)
+            remainder = m.group(2).strip()
+
+        key = 'minus' if remainder == '-' else remainder
+        if not key:
+            return None
+        # A chord must terminate in a key, not a dangling modifier (e.g. 'ctrl+shift').
+        if MODIFIER_ALIASES.get(key) in WTYPE_MODIFIERS:
             return None
         return modifiers, key
 
@@ -1069,7 +1131,11 @@ except Exception:
     def _inject_via_clipboard_and_hotkey(self, text: str) -> bool:
         """Copy text to clipboard, then trigger paste via wtype (or ydotool fallback)."""
         try:
-            window_info = self._get_active_window_info()
+            window_info = (
+                self._get_active_window_info()
+                if self._active_window_lookup_needed()
+                else None
+            )
             gnome_wayland_session = self._is_gnome_wayland_session()
             paste_chord, app_match = self._resolve_paste_chord(window_info)
             if paste_chord is False:
