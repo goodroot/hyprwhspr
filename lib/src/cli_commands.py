@@ -778,8 +778,9 @@ def _choice_default(value, ordered_values, fallback: str) -> str:
 
 # Reverse of the backend_map inside _prompt_backend_selection: name -> choice.
 _BACKEND_CHOICE = {
-    'onnx-asr': '1', 'pywhispercpp': '2', 'cpu': '2', 'nvidia': '3', 'faster-whisper': '4',
-    'vulkan': '5', 'rest-api': '6', 'realtime-ws': '7', 'cohere-transcribe': '8',
+    'onnx-asr': '1', 'faster-whisper': '2', 'pywhispercpp': '3', 'cpu': '3',
+    'nvidia': '4', 'vulkan': '5', 'cohere-transcribe': '6', 'rest-api': '7',
+    'realtime-ws': '8',
 }
 
 
@@ -800,16 +801,16 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
     print("\nChoose your transcription backend:")
     print()
     print("Local In-Memory Backends:")
-    print("  [1] Parakeet TDT V3       - Leading accuracy, no GPU required (autodetects CPU/GPU)")
-    print("  [2] Whisper (CPU)         - whisper.cpp, works everywhere")
-    print("  [3] Whisper (NVIDIA)      - whisper.cpp + CUDA, fastest local transcription (NVIDIA GPUs)")
-    print("  [4] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
-    print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, fastest local transcription (AMD/Intel GPUs)")
-    print("  [8] Cohere Transcribe     - #1 Open ASR leaderboard, 14 languages, ~4-5 GB VRAM (fp16) [BETA]")
+    print("  [1] Parakeet TDT V3       - Optimized for light hardware (autodetects CPU/GPU)")
+    print("  [2] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
+    print("  [3] Whisper (CPU)         - whisper.cpp, works everywhere")
+    print("  [4] Whisper (NVIDIA)      - whisper.cpp + CUDA, premium local transcription for NVIDIA GPUs")
+    print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, ideal for AMD/Intel GPUs")
+    print("  [6] Cohere Transcribe     - #1 Open ASR leaderboard, 14 languages, ~4-5 GB VRAM (fp16)")
     print()
     print("Cloud/REST Backends:")
-    print("  [6] REST API              - OpenAI, Groq, or custom endpoint")
-    print("  [7] Realtime WS           - Low-latency streaming")
+    print("  [7] REST API              - OpenAI, Groq, or custom endpoint")
+    print("  [8] Realtime WS           - Low-latency streaming")
     print()
 
     # Seed the prompt default with the currently configured/installed backend so
@@ -834,13 +835,13 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
             choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8'], default=default_backend_choice)
             backend_map = {
                 '1': 'onnx-asr',
-                '2': 'cpu',
-                '3': 'nvidia',
-                '4': 'faster-whisper',
+                '2': 'faster-whisper',
+                '3': 'cpu',
+                '4': 'nvidia',
                 '5': 'vulkan',
-                '6': 'rest-api',
-                '7': 'realtime-ws',
-                '8': 'cohere-transcribe',
+                '6': 'cohere-transcribe',
+                '7': 'rest-api',
+                '8': 'realtime-ws',
             }
             selected = backend_map[choice]
 

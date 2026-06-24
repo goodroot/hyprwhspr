@@ -152,7 +152,9 @@ class SetupDefaultTests(unittest.TestCase):
         self.assertEqual(
             cli_commands._BACKEND_CHOICE.get(cli_commands.normalize_backend('amd'), '1'), '5')
         self.assertEqual(cli_commands._BACKEND_CHOICE['onnx-asr'], '1')
-        self.assertEqual(cli_commands._BACKEND_CHOICE['pywhispercpp'], '2')
+        self.assertEqual(cli_commands._BACKEND_CHOICE['faster-whisper'], '2')
+        self.assertEqual(cli_commands._BACKEND_CHOICE['pywhispercpp'], '3')
+        self.assertEqual(cli_commands._BACKEND_CHOICE['cohere-transcribe'], '6')
 
 
 if __name__ == '__main__':

@@ -314,7 +314,7 @@ Cohere Transcribe is a **gated model** on HuggingFace — you must accept the li
 
 1. Accept the license agreement at: [huggingface.co/CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
 2. Generate a read token at: [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-3. Run `hyprwhspr setup` and select **[8] Cohere Transcribe** — you will be prompted for your token
+3. Run `hyprwhspr setup` and select **[6] Cohere Transcribe** — you will be prompted for your token
 
 The model (~4 GB) is downloaded during setup. Your token is securely stored locally in `~/.config/hyprwhspr/credentials.json` and never shared.
 
@@ -365,7 +365,7 @@ Model stored in: `~/.cache/huggingface/hub/`
 
 Local Whisper via [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
 
-Run `hyprwhspr setup` and select **[4] faster-whisper** to install.
+Run `hyprwhspr setup` and select **[2] faster-whisper** to install.
 
 **Best for:**
 
@@ -405,7 +405,7 @@ Models stored in: `~/.cache/huggingface/hub/`
 
 Local Whisper via [pywhispercpp](https://github.com/abdeladim-s/pywhispercpp).
 
-Run `hyprwhspr setup` and select **[2] Whisper CPU**, **[3] Whisper NVIDIA**, or **[5] Whisper AMD/Intel (Vulkan)**.
+Run `hyprwhspr setup` and select **[3] Whisper CPU**, **[4] Whisper NVIDIA**, or **[5] Whisper AMD/Intel (Vulkan)**.
 
 **Best for:**
 
