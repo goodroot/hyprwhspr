@@ -62,6 +62,7 @@ jobs:
 
       - name: Install additional CUDA libraries
         run: |
+          sudo apt-get update
           CUDA_VER_DASH="${CUDA_BUILD_VERSION//./-}"
           sudo apt-get install -y libcublas-dev-${CUDA_VER_DASH}
 
@@ -158,6 +159,20 @@ jobs:
           cp "dist/${EXPECTED_WHEEL}" "dist/${WHEEL_PIP_NAME}"
           # --no-deps: validate cp tag only; import needs a GPU absent on CI.
           pip install --no-deps "dist/${WHEEL_PIP_NAME}"
+
+      - name: Smoke-check native lib linkage
+        run: |
+          site=$(python -c "import sysconfig; print(sysconfig.get_paths()['platlib'])")
+          sos=$(find "$site" -maxdepth 2 \( -name '*.so' -o -name '*.so.*' \) | grep -iE 'pywhispercpp|whisper|ggml' || true)
+          [ -n "$sos" ] || { echo "::error::no pywhispercpp native libs found in $site"; exit 1; }
+          # CUDA driver/runtime libs are legitimately absent on GPU-less CI; anything else unresolved means a broken wheel.
+          missing=$(ldd $sos 2>/dev/null | grep 'not found' | grep -viE 'libcuda|libnvidia|libcublas|libcudart|libnvrtc' | sort -u || true)
+          if [ -n "$missing" ]; then
+            echo "::error::Non-CUDA shared libs unresolved (wheel likely unusable):"
+            echo "$missing"
+            exit 1
+          fi
+          echo "OK: only CUDA libs unresolved (expected without a GPU)"
 
   publish-wheels:
     name: Publish wheels to release

@@ -768,6 +768,8 @@ Customize transcriptions:
 
 Use empty string `""` to delete words entirely.
 
+`{"hyper whisper": "hyprwhspr"}` ships as the default (the product name is spoken "hyper whisper").
+
 Single-character overrides match anywhere in a word (not just at word boundaries):
 
 ```jsonc

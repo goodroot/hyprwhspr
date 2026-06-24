@@ -355,29 +355,13 @@ def _get_system_python() -> str:
 # ==================== Pre-built Wheel Support ====================
 
 def _detect_venv_python_version() -> str:
-    """Detect Python version in the venv (e.g., '3.11')"""
+    """Detect Python version in the venv (e.g., '3.11')."""
     venv_python = VENV_DIR / 'bin' / 'python'
-    if not venv_python.exists():
-        # Fallback to system Python version
-        import re
-        version = f"{sys.version_info.major}.{sys.version_info.minor}"
-        return version
-
-    try:
-        result = run_command(
-            [str(venv_python), '--version'],
-            check=False,
-            capture_output=True
-        )
-        output = _safe_decode(result.stdout)
-        # Parse "Python 3.11.5" -> "3.11"
-        import re
-        match = re.search(r'(\d+)\.(\d+)', output)
-        if match:
-            return f"{match.group(1)}.{match.group(2)}"
-    except Exception:
-        pass
-
+    if venv_python.exists():
+        # _get_python_version handles interpreters that print --version to stderr.
+        version = _get_python_version(str(venv_python))
+        if version:
+            return f"{version[0]}.{version[1]}"
     return f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
@@ -1358,7 +1342,18 @@ def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
         else:
             install_file = requirements_file
 
-        run_command([str(pip_bin), 'install', '-r', str(install_file)], check=True)
+        # --only-binary for pywhispercpp: fail loudly if PyPI lacks a wheel for
+        # this interpreter rather than silently attempting a source build.
+        run_command([str(pip_bin), 'install', '--only-binary=pywhispercpp', '-r', str(install_file)], check=True)
+
+        # pip can exit 0 without pywhispercpp present (e.g. filtered out of
+        # requirements); confirm the backend is importable before claiming success.
+        venv_python = pip_bin.parent / 'python'
+        verify = run_command([str(venv_python), '-c', 'import pywhispercpp'], check=False, capture_output=True)
+        if verify.returncode != 0:
+            log_error("pip succeeded but 'import pywhispercpp' failed — backend not installed")
+            return False
+
         log_success("pywhispercpp installed (CPU-only mode)")
         set_state("installed_backend", "cpu")
         return True
