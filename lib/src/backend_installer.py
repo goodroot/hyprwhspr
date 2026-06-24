@@ -77,7 +77,7 @@ PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
 PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
 
 # Pre-built wheel configuration
-WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v1"
+WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v2"
 WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
 PYWHISPERCPP_VERSION = "1.4.1"
 
@@ -355,29 +355,13 @@ def _get_system_python() -> str:
 # ==================== Pre-built Wheel Support ====================
 
 def _detect_venv_python_version() -> str:
-    """Detect Python version in the venv (e.g., '3.11')"""
+    """Detect Python version in the venv (e.g., '3.11')."""
     venv_python = VENV_DIR / 'bin' / 'python'
-    if not venv_python.exists():
-        # Fallback to system Python version
-        import re
-        version = f"{sys.version_info.major}.{sys.version_info.minor}"
-        return version
-
-    try:
-        result = run_command(
-            [str(venv_python), '--version'],
-            check=False,
-            capture_output=True
-        )
-        output = _safe_decode(result.stdout)
-        # Parse "Python 3.11.5" -> "3.11"
-        import re
-        match = re.search(r'(\d+)\.(\d+)', output)
-        if match:
-            return f"{match.group(1)}.{match.group(2)}"
-    except Exception:
-        pass
-
+    if venv_python.exists():
+        # _get_python_version handles interpreters that print --version to stderr.
+        version = _get_python_version(str(venv_python))
+        if version:
+            return f"{version[0]}.{version[1]}"
     return f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
@@ -417,28 +401,20 @@ def _detect_cuda_version() -> Optional[str]:
 
 
 def _get_wheel_variant(cuda_version: Optional[str]) -> Optional[str]:
-    """Get wheel variant suffix based on CUDA version.
+    """CUDA wheel variant for the detected CUDA version, or None to source-build.
 
-    Returns None if no compatible pre-built wheel exists (triggers source build).
+    We self-host CUDA wheels only; CPU installs come from PyPI.
     """
     if not cuda_version:
-        return "cpu"
-
-    major, minor = cuda_version.split('.')[:2]
-    major = int(major)
-
-    # Map CUDA versions to our pre-built wheel variants
-    # Only return variants we actually have pre-built wheels for
-    if major == 11:
-        return "cuda118"  # All CUDA 11.x uses 11.8 build
-    elif major == 12:
-        return "cuda122"  # All CUDA 12.x uses 12.2 build
-    elif major >= 13:
-        # CUDA 13+ not yet available in GitHub Actions - fall back to source build
-        log_info(f"CUDA {cuda_version} detected - no pre-built wheel available, building from source")
         return None
-    else:
-        return "cpu"  # Very old CUDA, fallback to CPU
+
+    major = int(cuda_version.split('.')[0])
+    if major == 12:  # one 12.x wheel serves all CUDA 12
+        return "cuda12"
+
+    # CUDA 11 (EOL) and 13 (not yet CI-buildable) fall back to source.
+    log_info(f"CUDA {cuda_version} detected - no pre-built wheel available, building from source")
+    return None
 
 
 def _get_wheel_filename(python_version: str, variant: str, for_download: bool = True) -> str:
@@ -446,14 +422,14 @@ def _get_wheel_filename(python_version: str, variant: str, for_download: bool = 
 
     Args:
         python_version: e.g., '3.11'
-        variant: 'cpu', 'cuda118', 'cuda122'
+        variant: 'cuda12' (CUDA wheels are the only variant we self-host)
         for_download: If True, include variant suffix (for GitHub). If False, standard pip format.
     """
     # Python 3.11 -> cp311
     py_tag = f"cp{python_version.replace('.', '')}"
     base = f"pywhispercpp-{PYWHISPERCPP_VERSION}-{py_tag}-{py_tag}-linux_x86_64"
     if for_download:
-        # GitHub release filename: pywhispercpp-<version>-cp311-cp311-linux_x86_64+cuda122.whl
+        # GitHub release filename: pywhispercpp-<version>-cp311-cp311-linux_x86_64+cuda12.whl
         return f"{base}+{variant}.whl"
     else:
         # Standard pip-compatible filename: pywhispercpp-<version>-cp311-cp311-linux_x86_64.whl
@@ -465,8 +441,8 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
     Download pre-built pywhispercpp wheel if available.
 
     Args:
-        variant: Optional variant override ('cpu', 'cuda118', 'cuda122').
-                 If None, auto-detects based on system CUDA.
+        variant: Optional variant override ('cuda12'). If None, auto-detects
+                 based on system CUDA. CPU installs come from PyPI, not here.
 
     Returns:
         Path to downloaded wheel file (with pip-compatible name), or None if unavailable/failed.
@@ -1350,40 +1326,11 @@ def _filter_requirements(requirements_file: Path, skip_packages: list) -> Path:
 
 
 def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
-    """Install CPU-only pywhispercpp"""
+    """Install CPU-only pywhispercpp from PyPI (PyPI ships CPU wheels for all
+    supported Pythons; we self-host CUDA only)."""
     log_info("Installing pywhispercpp (CPU-only)...")
 
-    # Track if wheel was successfully installed (to avoid overwriting with PyPI version)
-    wheel_installed = False
-
-    # Try pre-built wheel first (faster than pip resolving from PyPI)
-    wheel_path = download_pywhispercpp_wheel(variant='cpu')
-    if wheel_path:
-        if install_pywhispercpp_from_wheel(pip_bin, wheel_path):
-            wheel_installed = True
-            # Still need to install other requirements
-            skip_packages = ['pywhispercpp']
-            if _should_skip_pygobject():
-                skip_packages.append('PyGObject')
-            temp_req_path = None
-            try:
-                temp_req_path = _filter_requirements(requirements_file, skip_packages)
-                run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
-                set_state("installed_backend", "cpu")
-                return True
-            except subprocess.CalledProcessError as e:
-                log_warning(f"Wheel installed but remaining deps failed: {e}")
-                log_warning("Falling back to full pip install...")
-            finally:
-                if temp_req_path and temp_req_path.exists():
-                    temp_req_path.unlink()
-        else:
-            log_warning("Pre-built wheel failed, falling back to pip install...")
-
-    # Build skip list - always skip pywhispercpp if wheel was already installed
     skip_packages = []
-    if wheel_installed:
-        skip_packages.append('pywhispercpp')
     if _should_skip_pygobject():
         skip_packages.append('PyGObject')
 
@@ -1395,7 +1342,18 @@ def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
         else:
             install_file = requirements_file
 
-        run_command([str(pip_bin), 'install', '-r', str(install_file)], check=True)
+        # --only-binary for pywhispercpp: fail loudly if PyPI lacks a wheel for
+        # this interpreter rather than silently attempting a source build.
+        run_command([str(pip_bin), 'install', '--only-binary=pywhispercpp', '-r', str(install_file)], check=True)
+
+        # pip can exit 0 without pywhispercpp present (e.g. filtered out of
+        # requirements); confirm the backend is importable before claiming success.
+        venv_python = pip_bin.parent / 'python'
+        verify = run_command([str(venv_python), '-c', 'import pywhispercpp'], check=False, capture_output=True)
+        if verify.returncode != 0:
+            log_error("pip succeeded but 'import pywhispercpp' failed — backend not installed")
+            return False
+
         log_success("pywhispercpp installed (CPU-only mode)")
         set_state("installed_backend", "cpu")
         return True
@@ -2163,68 +2121,6 @@ def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False,
             log_warning(error)
 
     return gpu_status, pip_bin
-
-
-def _parallel_deps_and_wheel(pip_bin: Path, requirements_file: Path, variant: str) -> Tuple[bool, Optional[Path]]:
-    """
-    Download wheel and install base dependencies in parallel.
-
-    Args:
-        pip_bin: Path to pip in venv
-        requirements_file: Path to requirements.txt
-        variant: Wheel variant ('cpu', 'cuda118', 'cuda122')
-
-    Returns:
-        Tuple of (deps_installed bool, wheel_path or None)
-    """
-    deps_ok = False
-    wheel_path = None
-    errors = []
-
-    def install_deps():
-        """Install base dependencies (excluding pywhispercpp)"""
-        nonlocal deps_ok
-        try:
-            # Filter out pywhispercpp from requirements
-            skip_packages = ['pywhispercpp']
-            if _should_skip_pygobject():
-                skip_packages.append('PyGObject')
-
-            temp_req_path = None
-            try:
-                temp_req_path = _filter_requirements(requirements_file, skip_packages)
-                run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
-                deps_ok = True
-            finally:
-                if temp_req_path and temp_req_path.exists():
-                    temp_req_path.unlink()
-        except Exception as e:
-            errors.append(f"Deps install error: {e}")
-
-    def download_wheel():
-        """Download pre-built wheel"""
-        nonlocal wheel_path
-        try:
-            wheel_path = download_pywhispercpp_wheel(variant=variant)
-        except Exception as e:
-            errors.append(f"Wheel download error: {e}")
-
-    # Run both in parallel
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        deps_future = executor.submit(install_deps)
-        wheel_future = executor.submit(download_wheel)
-
-        for future in as_completed([deps_future, wheel_future]):
-            try:
-                future.result()
-            except Exception as e:
-                errors.append(str(e))
-
-    if errors:
-        for error in errors:
-            log_debug(error)
-
-    return deps_ok, wheel_path
 
 
 # ==================== Main Installation Function ====================
