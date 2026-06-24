@@ -868,7 +868,13 @@ Some apps use non-standard paste shortcuts — GUI Emacs, for example, uses Ctrl
 }
 ```
 
-Run `hyprwhspr config focused-window` to see the identifiers for the active window. Prefer stable app classes over window titles, which change with the open document.
+Run `hyprwhspr config focused-window` to see the identifiers for the active window. Run straight from a terminal it just reports the terminal, so add a delay and focus the target window before it fires — the output still lands in your terminal:
+
+```bash
+sleep 3; hyprwhspr config focused-window   # then click into the app you want
+```
+
+Prefer stable app classes over window titles, which change with the open document.
 
 > **Terminal Emacs** (`emacs -nw`, `emacsclient -t`): hyprwhspr sees the terminal, not Emacs, so terminal paste (Ctrl+Shift+V) is normally correct.
 
