@@ -73,7 +73,7 @@ class ConfigManager:
             'audio_device_model_id': None,  # USB model ID (most stable, from udev)
             'model': 'base',
             'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
-            'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
+            'word_overrides': {'hyper whisper': 'hyprwhspr'},  # {"original": "replacement"}
             'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
             'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
             'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
@@ -81,6 +81,7 @@ class ConfigManager:
             'task': 'transcribe',  # "transcribe" (source language) or "translate" (to English)
             'sampling_strategy': 'beam_search',  # "beam_search" or "greedy" for Whisper decoding
             'beam_size': 5,  # Number of candidates tracked when using beam search
+            'threads': min(8, os.cpu_count() or 4),  # whisper.cpp worker threads
             # Shell command run after preprocessing, before paste. Stdin
             # receives the transcription; non-empty stdout replaces it.
             # Empty stdout leaves text unchanged (observer-only hooks).

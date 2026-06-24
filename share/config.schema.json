@@ -100,8 +100,7 @@
     "threads": {
       "type": "integer",
       "minimum": 1,
-      "default": 4,
-      "description": "Thread count for whisper processing"
+      "description": "Thread count for whisper processing; omit for auto = min(8, CPU count)"
     },
     "language": {
       "type": ["string", "null"],
@@ -113,7 +112,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "default": {},
+      "default": {"hyper whisper": "hyprwhspr"},
       "description": "Dictionary of word replacements applied after transcription: {\"original\": \"replacement\"}"
     },
     "filter_filler_words": {

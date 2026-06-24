@@ -440,7 +440,7 @@ Set model in config (pywhispercpp only — faster-whisper uses `faster_whisper_m
 ```jsonc
 {
     "model": "small.en",  // .en = English-only; omit suffix for multilingual
-    "threads": 4          // CPU threads for whisper processing (default: 4)
+    // "threads": 6       // optional; omit for auto = min(8, CPU count)
 }
 ```
 
@@ -455,6 +455,8 @@ For multi-language detection, ensure you select a model which does not say `.en`
     "language": null // null = auto-detect (default), or specify language code
 }
 ```
+
+Auto-detect runs an extra detection pass per utterance. Setting `language` explicitly skips it and lowers latency.
 
 Language options:
 
