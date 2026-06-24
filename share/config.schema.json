@@ -189,6 +189,29 @@
       "default": 47,
       "description": "Linux evdev keycode for the paste key. Default 47 = KEY_V (QWERTY). Set to the keycode for the physical key that produces 'v' on your layout."
     },
+    "applications": {
+      "type": "object",
+      "default": {},
+      "description": "Per-application injection behavior keyed by normalized focused-window identifiers. Set auto_paste to a key chord like 'ctrl+y', or false to disable injection entirely for that app (nothing pasted, clipboard left untouched).",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "auto_paste": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Paste key chord to send for this app, e.g. 'ctrl+y' or 'ctrl+shift+v'."
+              },
+              {
+                "const": false,
+                "description": "Disable injection while this app is focused: nothing is pasted and the clipboard is left untouched."
+              }
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
     "shift_paste": {
       "type": "boolean",
       "default": true,

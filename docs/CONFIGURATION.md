@@ -876,41 +876,45 @@ Toggle this behavior in `~/.config/hyprwhspr/config.json`:
 
 ## Paste and clipboard behavior
 
+hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. The hotkey goes out via `wtype` (Wayland virtual-keyboard), falling back to `ydotool key`. Most setups need no configuration. GNOME/Mutter has a few extras — see [GNOME/Mutter notes](#gnomemutter-notes).
+
 ### Paste mode
 
-hyprwhspr auto-detects the correct paste shortcut based on the focused window:
+The paste shortcut is auto-detected from the focused window:
 
-- **Terminals** (Ghostty, Kitty, WezTerm, Alacritty, foot, etc.) → Ctrl+Shift+V
+- **Terminals** (Ghostty, Kitty, WezTerm, Alacritty, foot, …) → Ctrl+Shift+V
 - **Everything else** (editors, browsers, chat apps) → Ctrl+V
 
-Detection uses your compositor's window API (Hyprland `hyprctl`, niri, or XWayland `xdotool`). On **GNOME/Mutter** it uses the **accessibility bridge** (AT-SPI); `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). If the bridge is off, GNOME can't distinguish terminals from other apps and paste falls back to Ctrl+V (wrong in terminals) — re-run setup or enable it manually.
-
-No configuration needed for most setups. Override with `paste_mode` if your app needs something different:
+Override with `paste_mode` if needed:
 
 ```jsonc
 {
-    "paste_mode": "ctrl_shift"  // "ctrl_shift" | "ctrl" | "super" | "alt"
+    "paste_mode": "ctrl_shift"  // "ctrl_shift" (terminal paste) | "ctrl" (GUI paste) | "super" | "alt"
 }
 ```
 
-Options:
+> **Legacy:** older configs may use the boolean `shift_paste` (`true` = Ctrl+Shift+V, `false` = Ctrl+V). It is consulted only when `paste_mode` is absent — prefer `paste_mode`.
 
-- **`"ctrl_shift"`** — Sends Ctrl+Shift+V. Standard terminal paste.
-- **`"ctrl"`** — Sends Ctrl+V. Standard GUI paste.
-- **`"super"`** — Sends Super+V.
-- **`"alt"`** — Sends Alt+V.
+### App-specific paste keys
 
-> **Legacy:** older configs may use the boolean `shift_paste` (`true` = Ctrl+Shift+V, `false` = Ctrl+V). It is only consulted when `paste_mode` is absent — prefer `paste_mode`.
+Some apps use non-standard paste shortcuts — GUI Emacs, for example, uses Ctrl+Y while Ctrl+V scrolls. Set per-app behavior with `applications`, keyed by window identifier:
+
+```jsonc
+{
+    "applications": {
+        "emacs": { "auto_paste": "ctrl+y" },  // custom paste chord
+        "some-app": { "auto_paste": false }    // disable: nothing pasted, clipboard untouched
+    }
+}
+```
+
+Run `hyprwhspr config focused-window` to see the identifiers for the active window. Prefer stable app classes over window titles, which change with the open document.
+
+> **Terminal Emacs** (`emacs -nw`, `emacsclient -t`): hyprwhspr sees the terminal, not Emacs, so terminal paste (Ctrl+Shift+V) is normally correct.
 
 ### Non-QWERTY layouts
 
-`ydotool` sends physical Linux keycodes, so `Ctrl+KEY_V` might not be `Ctrl+v` on your layout (bepo, dvorak, etc.).
-
-Quick way to fix it on Wayland (no arithmetic):
-
-- Run `wev` in terminal
-- Press the key that types `v` on your layout
-- Copy the printed `keycode` into `paste_keycode_wev`
+`ydotool` sends physical Linux keycodes, so `Ctrl+KEY_V` may not be `Ctrl+v` on layouts like bepo or dvorak. To fix on Wayland: run `wev`, press the key that types `v`, and copy the printed keycode into `paste_keycode_wev`:
 
 ```jsonc
 {
@@ -918,22 +922,11 @@ Quick way to fix it on Wayland (no arithmetic):
 }
 ```
 
-Advanced (if you already know the Linux evdev keycode): set `paste_keycode` directly.
-
-> **Non-Latin layouts (Thai, Russian, Arabic, Greek, Hebrew, …):** `paste_keycode`
-> can't help here — there is no physical key that produces a `v` keysym, so the
-> Ctrl+V chord can never paste while that layout is active. On **GNOME/Mutter**,
-> hyprwhspr handles this automatically: it briefly switches the active input
-> source to a configured Latin layout (e.g. `us`) for the paste chord, then
-> restores your previous layout. Just keep a Latin source in
-> Settings → Keyboard → Input Sources. (The clipboard text itself is Unicode and
-> pastes verbatim regardless of layout.)
+If you already know the Linux evdev keycode, set `paste_keycode` directly. Non-Latin layouts (Thai, Russian, Arabic, …) are a special case handled on GNOME/Mutter — see [GNOME/Mutter notes](#gnomemutter-notes).
 
 ### Auto-submit
 
-Automatically press Enter after pasting.
-
-> aka Dictation YOLO
+Automatically press Enter after pasting — aka Dictation YOLO. Handy for chat boxes and search fields; careful elsewhere.
 
 ```jsonc
 {
@@ -941,26 +934,24 @@ Automatically press Enter after pasting.
 }
 ```
 
-Useful for chat applications, search boxes, or any input where you want to submit immediately after dictation.
-
-... Be careful!
-
 ### Clipboard behavior
 
-For clipboard-based paste injection, hyprwhspr saves your clipboard before injection and restores it automatically afterward -- your clipboard contents are never permanently overwritten by dictated text.
-
-The paste hotkey is sent via `wtype` (Wayland virtual-keyboard protocol), which works correctly in all applications including Kitty-protocol terminals (Ghostty, Kitty, WezTerm). `ydotool key` is used as a fallback when `wtype` is not installed or cannot paste.
-
-On GNOME/Mutter Wayland (no layer-shell), hyprwhspr may type text directly with `ydotool type` instead of pasting. Direct typing assumes a US/QWERTY layout and can only emit ASCII, so it is used **only for ASCII text on a US layout**. On non-US layouts (e.g. German QWERTZ, where it would mangle `z`/`y` and `?`) or for text containing umlauts/accents/typographic characters, hyprwhspr automatically switches to verbatim clipboard paste, which reproduces any character exactly regardless of layout. Set `"prefer_clipboard_paste": true` to force clipboard paste in all cases.
-
-To instead clear the clipboard a few seconds after pasting (rather than restoring your previous contents):
+hyprwhspr saves your clipboard before injection and restores it afterward — dictated text never permanently overwrites it. To instead clear the clipboard a few seconds after pasting:
 
 ```jsonc
 {
     "clipboard_behavior": true,         // true = clear clipboard after a delay (default: false = restore previous contents)
-    "clipboard_clear_delay": 5.0        // seconds to wait before clearing (only used when clipboard_behavior is true)
+    "clipboard_clear_delay": 5.0        // seconds to wait before clearing (only when clipboard_behavior is true)
 }
 ```
+
+### GNOME/Mutter notes
+
+GNOME/Mutter lacks layer-shell and blocks `wtype`, so hyprwhspr behaves differently there:
+
+- **Window detection** uses the **accessibility bridge** (AT-SPI). `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). Without it, GNOME can't tell terminals apart and paste falls back to Ctrl+V (wrong in terminals).
+- **Direct typing:** for ASCII text on a US layout, hyprwhspr types directly with `ydotool type` instead of touching the clipboard. Non-US layouts or non-ASCII text fall back to verbatim clipboard paste automatically. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
+- **Non-Latin layouts** (Thai, Russian, Arabic, Greek, Hebrew, …): no physical key produces a `v` keysym, so `paste_keycode` can't help. hyprwhspr briefly switches to a Latin input source (e.g. `us`) for the paste chord, then restores your layout — just keep a Latin source in Settings → Keyboard → Input Sources. The pasted text is Unicode and reproduces verbatim regardless.
 
 ### Post-transcription hook
 

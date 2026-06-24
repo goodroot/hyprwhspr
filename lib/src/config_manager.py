@@ -99,6 +99,11 @@ class ConfigManager:
             # Default 47 = KEY_V (works on QWERTY; on other layouts set this to the keycode
             # for the physical key that produces 'v' on your layout).
             'paste_keycode': 47,
+            # Per-application injection behavior. Keys match normalized focused
+            # window identifiers. Example: {"emacs": {"auto_paste": "ctrl+y"}}
+            # or {"some-app": {"auto_paste": False}} to disable injection entirely
+            # (nothing pasted, clipboard left untouched).
+            'applications': {},
             # Back-compat for older configs (used only if paste_mode is absent):
             'shift_paste': None,  # true = Ctrl+Shift+V, false = Ctrl+V; None = use auto-detect
             # Direct-type injection mode (bypasses clipboard entirely)

@@ -79,6 +79,13 @@ class ConfigDefaultTests(unittest.TestCase):
         self.assertEqual(defaults["sampling_strategy"], "beam_search")
         self.assertEqual(defaults["beam_size"], 5)
         self.assertFalse(defaults["prefer_clipboard_paste"])
+        self.assertEqual(defaults["applications"], {})
+
+    def test_config_command_routes_focused_window_helper(self):
+        with mock.patch.object(cli_commands, "show_focused_window_config_identifiers") as helper:
+            cli_commands.config_command("focused-window")
+
+        helper.assert_called_once_with()
 
 
 class UninstallYdotoolOwnershipTests(unittest.TestCase):

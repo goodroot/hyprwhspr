@@ -1810,12 +1810,16 @@ def setup_command(python_path: Optional[str] = None):
             "Enable the GNOME accessibility bridge for automatic paste-shortcut detection?",
             default=True,
         ):
-            run_command(
+            result = run_command(
                 ['gsettings', 'set', 'org.gnome.desktop.interface', 'toolkit-accessibility', 'true'],
                 check=False,
             )
-            print("Enabled (revert: gsettings set org.gnome.desktop.interface toolkit-accessibility false).")
-            print("Apps started before this may need a restart to be detected.")
+            if result.returncode == 0:
+                print("Enabled (revert: gsettings set org.gnome.desktop.interface toolkit-accessibility false).")
+                print("Apps started before this may need a restart to be detected.")
+            else:
+                print("Could not enable it automatically — run this manually:")
+                print("  gsettings set org.gnome.desktop.interface toolkit-accessibility true")
     else:
         print("\nShows a visual overlay during recording with animated bars")
         print("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
@@ -2606,8 +2610,46 @@ def config_command(action: str, show_all: bool = False):
         edit_config()
     elif action == 'secondary-shortcut':
         configure_secondary_shortcut()
+    elif action == 'focused-window':
+        show_focused_window_config_identifiers()
     else:
         log_error(f"Unknown config action: {action}")
+
+
+def show_focused_window_config_identifiers():
+    """Print identifiers that can be used in the applications config object."""
+    try:
+        try:
+            from .text_injector import TextInjector
+        except ImportError:
+            from text_injector import TextInjector
+
+        injector = TextInjector(config_manager=ConfigManager(verbose=False))
+        try:
+            window_info = injector._get_active_window_info()
+            identifiers = TextInjector.focused_window_identifiers(window_info)
+        finally:
+            injector.close()
+
+        print("\nFocused window:")
+        if not window_info:
+            print("  not detected")
+            print("\nNo identifiers available.")
+            return
+
+        for key in ('source', 'class', 'app_id', 'title'):
+            value = window_info.get(key)
+            if value:
+                print(f"  {key}: {value}")
+
+        print("\nConfig identifiers:")
+        if identifiers:
+            for identifier in identifiers:
+                print(f"  {identifier}")
+        else:
+            print("  none")
+    except Exception as e:
+        log_error(f"Failed to inspect focused window: {e}")
 
 
 def setup_config(backend: Optional[str] = None, model: Optional[str] = None, remote_config: Optional[dict] = None):
