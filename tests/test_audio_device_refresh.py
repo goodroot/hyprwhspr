@@ -84,6 +84,7 @@ class FakeSoundDevice(types.ModuleType):
         ]
         self.streams = []
         self.started_devices = []
+        self.opened_samplerates = []
         self.fail_once_for_device = self.NO_FAIL_DEVICE
         self.on_stream_start = None
 
@@ -97,6 +98,7 @@ class FakeSoundDevice(types.ModuleType):
 
     def InputStream(self, device=None, samplerate=None, channels=None,
                     dtype=None, blocksize=None, callback=None):
+        self.opened_samplerates.append(samplerate)
         stream = FakeStream(self, device, callback=callback)
         self.streams.append(stream)
         return stream
@@ -131,6 +133,17 @@ class FakeNumpy(types.ModuleType):
 
     def ascontiguousarray(self, values, dtype=None):
         return values
+
+
+class FakeStreamingCallback:
+    def __init__(self):
+        self.input_sample_rate = None
+
+    def __call__(self, audio_chunk):
+        pass
+
+    def set_input_sample_rate(self, sample_rate):
+        self.input_sample_rate = sample_rate
 
 
 class AudioDeviceRefreshTests(unittest.TestCase):
@@ -178,6 +191,37 @@ class AudioDeviceRefreshTests(unittest.TestCase):
 
         self.assertIsNone(capture.preferred_device_id)
         self.assertEqual(capture.device_id, 0)
+
+    def test_init_uses_resolved_device_default_sample_rate(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic", "alsa_input.old mic"])):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=1.0)
+
+        self.assertEqual(capture.sample_rate, 48000)
+        self.assertEqual(fake_sd.default.samplerate, 48000)
+        self.assertIn(48000, fake_sd.opened_samplerates)
+
+    def test_streaming_callback_gets_refreshed_record_start_sample_rate(self):
+        fake_sd = FakeSoundDevice()
+        fake_sd.devices[1]["default_samplerate"] = 44100
+        module = self._load_audio_capture(fake_sd)
+        callback = FakeStreamingCallback()
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic", "alsa_input.new mic"])):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
+            self.assertTrue(capture.start_recording(streaming_callback=callback))
+            capture.record_thread.join(timeout=1.0)
+
+        self.assertEqual(capture.device_id, 1)
+        self.assertEqual(capture.sample_rate, 44100)
+        self.assertEqual(callback.input_sample_rate, 44100)
+        self.assertIn(44100, fake_sd.opened_samplerates)
 
     def test_record_start_reresolves_default_even_when_old_device_exists(self):
         fake_sd = FakeSoundDevice()
@@ -262,16 +306,19 @@ class AudioDeviceRefreshTests(unittest.TestCase):
     def test_retriable_open_failure_reresolves_default_before_retry(self):
         fake_sd = FakeSoundDevice()
         fake_sd.fail_once_for_device = 0
+        fake_sd.devices[1]["default_samplerate"] = 44100
         module = self._load_audio_capture(fake_sd)
+        callback = FakeStreamingCallback()
 
         with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic", "alsa_input.old mic", "alsa_input.new mic"])):
             capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
             fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
-            self.assertTrue(capture.start_recording())
+            self.assertTrue(capture.start_recording(streaming_callback=callback))
             capture.record_thread.join(timeout=1.0)
 
         self.assertEqual(fake_sd.started_devices[:2], [0, 1])
         self.assertEqual(capture.device_id, 1)
+        self.assertEqual(callback.input_sample_rate, 44100)
 
     def test_unmatched_pulse_default_clears_stale_concrete_device(self):
         fake_sd = FakeSoundDevice()

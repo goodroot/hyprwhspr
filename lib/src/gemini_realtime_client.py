@@ -82,7 +82,7 @@ class GeminiRealtimeClient:
         self.audio_buffer_seconds = 0.0
         self.max_buffer_seconds = 5.0
         self.input_sample_rate = 16000
-        self.sample_rate = 16000  # Gemini accepts 16kHz natively
+        self.sample_rate = 16000  # Gemini output stream rate
 
         self._sender_thread = None
         self._sender_running = False
@@ -120,6 +120,11 @@ class GeminiRealtimeClient:
 
     def _sender_loop(self):
         """Background thread: drain queued audio and send over WebSocket."""
+        try:
+            from scipy import signal as _signal
+        except Exception:
+            _signal = None
+
         while True:
             with self.lock:
                 self._queue_cond.wait_for(
@@ -141,6 +146,7 @@ class GeminiRealtimeClient:
                     self._queue_cond.notify_all()
 
             try:
+                audio_chunk = self._resample_for_output(audio_chunk, _signal)
                 pcm_bytes = self._float32_to_pcm16(audio_chunk)
                 base64_audio = base64.b64encode(pcm_bytes).decode('utf-8')
 
@@ -156,6 +162,37 @@ class GeminiRealtimeClient:
                 ws.send(json.dumps(event))
             except Exception as e:
                 print(f'[GEMINI] Failed to send queued audio: {e}', flush=True)
+
+    def set_input_sample_rate(self, sample_rate: int):
+        """Set the capture rate for incoming AudioCapture chunks."""
+        try:
+            sample_rate = int(sample_rate)
+        except (TypeError, ValueError):
+            return
+        if sample_rate > 0:
+            self.input_sample_rate = sample_rate
+
+    def _resample_for_output(self, audio_chunk: np.ndarray, signal_module=None) -> np.ndarray:
+        """Resample queued capture audio to Gemini's configured output rate."""
+        if self.input_sample_rate == self.sample_rate:
+            return audio_chunk
+        if signal_module is None:
+            try:
+                from scipy import signal as signal_module
+            except Exception:
+                return audio_chunk
+        try:
+            from math import gcd
+            divisor = gcd(int(self.input_sample_rate), int(self.sample_rate))
+            resampled = signal_module.resample_poly(
+                audio_chunk,
+                up=int(self.sample_rate) // divisor,
+                down=int(self.input_sample_rate) // divisor,
+            )
+            return resampled.astype(np.float32, copy=False)
+        except Exception as e:
+            print(f'[GEMINI] Failed to resample audio {self.input_sample_rate}Hz -> {self.sample_rate}Hz: {e}', flush=True)
+            return audio_chunk
 
     def connect(self, url: str, api_key: str, model: str, instructions: Optional[str] = None) -> bool:
         """
@@ -505,7 +542,7 @@ class GeminiRealtimeClient:
         Append audio chunk to stream.
 
         Args:
-            audio_chunk: NumPy array of audio samples (float32, mono, 16kHz)
+            audio_chunk: NumPy array of native-rate audio samples (float32, mono)
         """
         if not self.connected or not self.ws:
             return

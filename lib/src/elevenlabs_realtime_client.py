@@ -32,6 +32,7 @@ class ElevenLabsRealtimeClient:
         self.api_key = None
         self.model = 'scribe_v2_realtime'
         self.language = None
+        self.input_sample_rate = self.DEFAULT_SAMPLE_RATE
         self.sample_rate = self.DEFAULT_SAMPLE_RATE
 
         # Connection state
@@ -155,6 +156,11 @@ class ElevenLabsRealtimeClient:
 
     def _sender_loop(self):
         """Background thread: drain queued audio and send over the connection."""
+        try:
+            from scipy import signal as _signal
+        except Exception:
+            _signal = None
+
         while True:
             with self.lock:
                 # Wait until we have work, are connected, or are shutting down
@@ -172,7 +178,7 @@ class ElevenLabsRealtimeClient:
 
                 # Pop one chunk to send (oldest first)
                 audio_chunk = self._audio_queue.popleft()
-                chunk_duration = len(audio_chunk) / self.sample_rate
+                chunk_duration = len(audio_chunk) / self.input_sample_rate
                 self.audio_buffer_seconds = max(0.0, self.audio_buffer_seconds - chunk_duration)
                 connection = self._connection
 
@@ -181,6 +187,7 @@ class ElevenLabsRealtimeClient:
                     self._queue_cond.notify_all()
 
             try:
+                audio_chunk = self._resample_for_output(audio_chunk, _signal)
                 base64_audio = self._float32_to_pcm16_base64(audio_chunk)
 
                 async def _send():
@@ -193,6 +200,37 @@ class ElevenLabsRealtimeClient:
             except Exception as e:
                 # Drop chunk on send failure (backpressure is best-effort)
                 print(f'[ELEVENLABS] Failed to send queued audio: {e}', flush=True)
+
+    def set_input_sample_rate(self, sample_rate: int):
+        """Set the capture rate for incoming AudioCapture chunks."""
+        try:
+            sample_rate = int(sample_rate)
+        except (TypeError, ValueError):
+            return
+        if sample_rate > 0:
+            self.input_sample_rate = sample_rate
+
+    def _resample_for_output(self, audio_chunk: np.ndarray, signal_module=None) -> np.ndarray:
+        """Resample queued capture audio to ElevenLabs' configured output rate."""
+        if self.input_sample_rate == self.sample_rate:
+            return audio_chunk
+        if signal_module is None:
+            try:
+                from scipy import signal as signal_module
+            except Exception:
+                return audio_chunk
+        try:
+            from math import gcd
+            divisor = gcd(int(self.input_sample_rate), int(self.sample_rate))
+            resampled = signal_module.resample_poly(
+                audio_chunk,
+                up=int(self.sample_rate) // divisor,
+                down=int(self.input_sample_rate) // divisor,
+            )
+            return resampled.astype(np.float32, copy=False)
+        except Exception as e:
+            print(f'[ELEVENLABS] Failed to resample audio {self.input_sample_rate}Hz -> {self.sample_rate}Hz: {e}', flush=True)
+            return audio_chunk
 
     def _start_event_loop(self):
         """Start the asyncio event loop in a background thread"""
@@ -498,7 +536,7 @@ class ElevenLabsRealtimeClient:
         Append audio chunk to stream.
 
         Args:
-            audio_chunk: NumPy array of audio samples (float32, mono, 16kHz)
+            audio_chunk: NumPy array of native-rate audio samples (float32, mono)
         """
         # IMPORTANT: this is called from the sounddevice callback thread.
         # It must be fast and non-blocking.
@@ -507,14 +545,14 @@ class ElevenLabsRealtimeClient:
             if not self.connected or not self._connection:
                 return
 
-            chunk_duration = len(audio_chunk) / self.sample_rate
+            chunk_duration = len(audio_chunk) / self.input_sample_rate
             self._last_audio_chunk_time = time.time()
 
             # Drop OLDEST queued chunks until the new chunk fits.
             # This caps worst-case latency while still allowing arbitrarily long recordings.
             while (self.audio_buffer_seconds + chunk_duration) > self.max_buffer_seconds and self._audio_queue:
                 dropped = self._audio_queue.popleft()
-                dropped_duration = len(dropped) / self.sample_rate
+                dropped_duration = len(dropped) / self.input_sample_rate
                 self.audio_buffer_seconds = max(0.0, self.audio_buffer_seconds - dropped_duration)
                 self._dropped_chunks += 1
 

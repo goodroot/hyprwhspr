@@ -82,7 +82,7 @@ class RealtimeClient:
         self._audio_queue = deque()
         self.audio_buffer_seconds = 0.0
         self.max_buffer_seconds = 5.0
-        self.input_sample_rate = 16000  # AudioCapture provides 16kHz
+        self.input_sample_rate = 16000
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
 
         self._queue_cond = None
@@ -156,16 +156,7 @@ class RealtimeClient:
                     self._queue_cond.notify_all()
 
             try:
-                # Resample 16kHz -> 24kHz (ratio 3/2) outside the audio callback thread.
-                if self.input_sample_rate == 16000 and self.sample_rate == 24000:
-                    if _signal is None:
-                        # scipy should be present on Arch install; if not, fall back to best-effort
-                        resampled = audio_chunk
-                    else:
-                        resampled = _signal.resample_poly(audio_chunk, up=3, down=2)
-                        resampled = resampled.astype(np.float32, copy=False)
-                else:
-                    resampled = audio_chunk
+                resampled = self._resample_for_output(audio_chunk, _signal)
 
                 pcm_bytes = self._float32_to_pcm16(resampled)
                 base64_audio = base64.b64encode(pcm_bytes).decode('utf-8')
@@ -175,6 +166,37 @@ class RealtimeClient:
 
             except Exception as e:
                 print(f'[REALTIME] Failed to send queued audio: {e}', flush=True)
+
+    def set_input_sample_rate(self, sample_rate: int):
+        """Set the capture rate for incoming AudioCapture chunks."""
+        try:
+            sample_rate = int(sample_rate)
+        except (TypeError, ValueError):
+            return
+        if sample_rate > 0:
+            self.input_sample_rate = sample_rate
+
+    def _resample_for_output(self, audio_chunk: np.ndarray, signal_module=None) -> np.ndarray:
+        """Resample queued capture audio to the provider's configured output rate."""
+        if self.input_sample_rate == self.sample_rate:
+            return audio_chunk
+        if signal_module is None:
+            try:
+                from scipy import signal as signal_module
+            except Exception:
+                return audio_chunk
+        try:
+            from math import gcd
+            divisor = gcd(int(self.input_sample_rate), int(self.sample_rate))
+            resampled = signal_module.resample_poly(
+                audio_chunk,
+                up=int(self.sample_rate) // divisor,
+                down=int(self.input_sample_rate) // divisor,
+            )
+            return resampled.astype(np.float32, copy=False)
+        except Exception as e:
+            print(f'[REALTIME] Failed to resample audio {self.input_sample_rate}Hz -> {self.sample_rate}Hz: {e}', flush=True)
+            return audio_chunk
         
     def connect(self, url: str, api_key: str, model: str, instructions: Optional[str] = None) -> bool:
         """
@@ -576,7 +598,7 @@ class RealtimeClient:
         Append audio chunk to WebSocket stream.
         
         Args:
-            audio_chunk: NumPy array of audio samples (float32, mono, 16kHz)
+            audio_chunk: NumPy array of native-rate audio samples (float32, mono)
         """
         if not self.connected or not self.ws:
             return

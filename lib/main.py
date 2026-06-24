@@ -824,7 +824,9 @@ class hyprwhsprApp:
         def process():
             try:
                 transcription = self.whisper_manager.transcribe_audio(
-                    audio_data, language_override=self._current_language_override
+                    audio_data,
+                    sample_rate=self.audio_capture.sample_rate,
+                    language_override=self._current_language_override,
                 )
                 if transcription and transcription.strip():
                     text = transcription.strip()
@@ -1049,7 +1051,9 @@ class hyprwhsprApp:
 
             # Transcribe with language override if set
             transcription = self.whisper_manager.transcribe_audio(
-                audio_data, language_override=self._longform_language_override
+                audio_data,
+                sample_rate=self.audio_capture.sample_rate,
+                language_override=self._longform_language_override,
             )
 
             if transcription and transcription.strip():
@@ -1555,7 +1559,11 @@ class hyprwhsprApp:
             self.is_processing = True
 
             # Transcribe audio with language override if set
-            transcription = self.whisper_manager.transcribe_audio(audio_data, language_override=self._current_language_override)
+            transcription = self.whisper_manager.transcribe_audio(
+                audio_data,
+                sample_rate=self.audio_capture.sample_rate,
+                language_override=self._current_language_override,
+            )
 
             if transcription and transcription.strip():
                 text = transcription.strip()

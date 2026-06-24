@@ -26,7 +26,7 @@ class AudioCapture:
     """Handles audio recording and real-time level monitoring"""
     
     def __init__(self, device_id=None, config_manager=None):
-        # Audio configuration - whisper.cpp prefers 16kHz mono
+        # Audio configuration; sample_rate is synced to the resolved input device.
         self.sample_rate = 16000
         self.channels = 1
         self.chunk_size = 1024
@@ -41,7 +41,7 @@ class AudioCapture:
         self.is_monitoring = False
         self.audio_data = []
         self.current_level = 0.0
-        # Rolling window of recent RMS values (~0.5s at 16kHz/1024 chunk)
+        # Rolling window of recent RMS values.
         self._level_history = deque(maxlen=8)
         
         # Threading
@@ -197,6 +197,7 @@ class AudioCapture:
                     if device_info['max_input_channels'] > 0:
                         self.device_info = device_info
                         self.device_id = current_device_id
+                        self._sync_sample_rate_to_device(device_info)
                     else:
                         self.device_info = None
                         self.device_id = None
@@ -265,11 +266,32 @@ class AudioCapture:
                 return False
             self.device_info = device_info
             self.device_id = current_device_id
+            self._sync_sample_rate_to_device(device_info)
             return True
         else:
             self.device_info = None
             self.device_id = None
             return False
+
+    def _sync_sample_rate_to_device(self, device_info) -> None:
+        """Use the resolved device's native input rate for PortAudio streams."""
+        try:
+            sample_rate = int(device_info['default_samplerate'])
+        except (KeyError, TypeError, ValueError):
+            return
+        if sample_rate <= 0:
+            return
+        self.sample_rate = sample_rate
+        sd.default.samplerate = self.sample_rate
+
+    def _notify_streaming_sample_rate(self) -> None:
+        """Tell realtime callbacks the rate of chunks this capture stream emits."""
+        if not self.streaming_callback or not hasattr(self.streaming_callback, "set_input_sample_rate"):
+            return
+        try:
+            self.streaming_callback.set_input_sample_rate(self.sample_rate)
+        except Exception as e:
+            print(f"[WARN] Failed to set streaming sample rate: {e}", flush=True)
 
     def _refresh_default_input_unlocked(self, reason: str) -> bool:
         """Refresh runtime device binding from the current Pulse/PipeWire default.
@@ -294,6 +316,8 @@ class AudioCapture:
                 self._set_sd_default_input(pulse_default_id)
                 self.device_info = device_info
                 self.device_id = pulse_default_id
+                self._sync_sample_rate_to_device(device_info)
+                self._notify_streaming_sample_rate()
                 source_changed = bool(
                     old_pulse_source and
                     new_pulse_source and
@@ -925,6 +949,7 @@ class AudioCapture:
             # recovery_lock, so this either refreshes before recovery starts or
             # returns immediately instead of blocking while recovery joins us.
             self.refresh_default_input("record_start")
+            self._notify_streaming_sample_rate()
 
             # Open and start the stream, retrying on transient failures.
             # PortAudio may time out (PaErrorCode -9987) or hit an unanticipated
@@ -967,6 +992,7 @@ class AudioCapture:
                         if not refreshed_after_failure and not self._has_configured_audio_device():
                             refreshed_after_failure = True
                             self.refresh_default_input("record_start_retry")
+                            self._notify_streaming_sample_rate()
                         retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
                         time.sleep(retry_delay)
                     else:
