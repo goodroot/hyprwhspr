@@ -165,8 +165,10 @@ jobs:
           site=$(python -c "import sysconfig; print(sysconfig.get_paths()['platlib'])")
           sos=$(find "$site" -maxdepth 2 \( -name '*.so' -o -name '*.so.*' \) | grep -iE 'pywhispercpp|whisper|ggml' || true)
           [ -n "$sos" ] || { echo "::error::no pywhispercpp native libs found in $site"; exit 1; }
-          # CUDA driver/runtime libs are legitimately absent on GPU-less CI; anything else unresolved means a broken wheel.
-          missing=$(ldd $sos 2>/dev/null | grep 'not found' | grep -viE 'libcuda|libnvidia|libcublas|libcudart|libnvrtc' | sort -u || true)
+          # Point the loader at the bundle dirs so the wheel's own libs (libggml*, libwhisper)
+          # resolve each other; only genuinely-absent CUDA libs (no GPU on CI) should remain.
+          libdirs=$(printf '%s\n' $sos | xargs -n1 dirname | sort -u | paste -sd: -)
+          missing=$(LD_LIBRARY_PATH="$libdirs" ldd $sos 2>/dev/null | grep 'not found' | grep -viE 'libcu|libnv' | sort -u || true)
           if [ -n "$missing" ]; then
             echo "::error::Non-CUDA shared libs unresolved (wheel likely unusable):"
             echo "$missing"
