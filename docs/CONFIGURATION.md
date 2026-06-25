@@ -280,9 +280,9 @@ For up-to-date accuracy rankings across open-source models, see the [Open ASR Le
 | Backend | Privacy | GPU | Speed | Languages | Accuracy | Notes |
 |---------|---------|-----|-------|-----------|----------|-------|
 | Cohere Transcribe | Local | NVIDIA or CPU | Fast | 14 | Best | Gated model, HF token required |
-| Parakeet | Local | NVIDIA or CPU | Fast | Multi | Excellent | — |
-| faster-whisper | Local | NVIDIA or CPU | Fast | 99 | Very good | — |
-| whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Very fast | 99 | Very good | — |
+| Parakeet | Local | NVIDIA or CPU | Fast | Multi | Very good | — |
+| faster-whisper | Local | NVIDIA or CPU | Very fast | 99 | Very good | — |
+| whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Fast | 99 | Very good | — |
 | REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
 | Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs |
 
