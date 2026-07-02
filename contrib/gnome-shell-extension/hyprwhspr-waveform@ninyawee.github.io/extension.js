@@ -6,7 +6,8 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const N_BARS = 27;          // number of equalizer bars
-const TICK_MS = 55;         // poll/animate interval
+const TICK_ACTIVE_MS = 55;  // poll/animate interval while recording
+const TICK_IDLE_MS = 200;   // slower poll while idle — fewer wakeups, still <200ms to show
 const BAR_MIN = 4;          // px, idle bar height
 const BAR_MAX = 56;         // px, loudest bar height
 const C1 = [34, 211, 238];  // cyan  (left)
@@ -95,15 +96,25 @@ export default class HyprwhsprWaveformExtension extends Extension {
         this._preview.clutter_text.ellipsize = 3; // PANGO_ELLIPSIZE_END
         this._osd.add_child(this._preview);
 
-        Main.layoutManager.addChrome(this._osd, {affectsInputRegion: false});
+        // trackFullscreen:false keeps the pill visible when dictating into a
+        // fullscreen window (browser video, fullscreen editor) — the common case.
+        Main.layoutManager.addChrome(this._osd, {
+            affectsInputRegion: false,
+            trackFullscreen: false,
+        });
 
         this._reposition();
         this._monitorsId = Main.layoutManager.connect('monitors-changed', () => this._reposition());
 
-        this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TICK_MS, () => {
-            this._tick();
-            return GLib.SOURCE_CONTINUE;
-        });
+        this._tickMs = null;
+        this._scheduleTick(TICK_IDLE_MS);
+    }
+
+    // (Re)arm the poll timer at the given interval. Called once from enable() and
+    // again from _tick() when switching between idle and active rates.
+    _scheduleTick(intervalMs) {
+        this._tickMs = intervalMs;
+        this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, intervalMs, () => this._tick());
     }
 
     _reposition() {
@@ -152,13 +163,21 @@ export default class HyprwhsprWaveformExtension extends Extension {
         else
             this._hide();
 
-        if (!this._visible) return;
+        // Poll fast while the pill is up, slow while idle. When the rate needs to
+        // change, re-arm at the new interval and let this (old) source expire.
+        const wantMs = this._visible ? TICK_ACTIVE_MS : TICK_IDLE_MS;
+        if (wantMs !== this._tickMs) {
+            this._scheduleTick(wantMs);
+            return GLib.SOURCE_REMOVE;
+        }
+
+        if (!this._visible) return GLib.SOURCE_CONTINUE;
         this._reposition();
 
         const level = readLevel();
 
         // Pulsing record dot.
-        this._phase += 0.32;
+        this._phase = (this._phase + 0.32) % (2 * Math.PI);
         this._dot.opacity = Math.round(150 + 105 * (0.5 + 0.5 * Math.sin(this._phase)));
 
         // Center-weighted, lively bar envelope driven by the live level.
@@ -168,7 +187,7 @@ export default class HyprwhsprWaveformExtension extends Extension {
             const target = BAR_MIN + (BAR_MAX - BAR_MIN) * level * env * jitter;
             this._bars[i].ease({
                 height: Math.max(BAR_MIN, Math.round(target)),
-                duration: TICK_MS + 25,
+                duration: TICK_ACTIVE_MS + 25,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
         }
@@ -176,6 +195,8 @@ export default class HyprwhsprWaveformExtension extends Extension {
         const preview = readPreview();
         if (preview && preview !== this._preview.text)
             this._preview.text = preview;
+
+        return GLib.SOURCE_CONTINUE;
     }
 
     disable() {

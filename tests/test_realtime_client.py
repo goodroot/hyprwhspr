@@ -4,6 +4,8 @@ import types
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
@@ -149,6 +151,26 @@ class RealtimeClientTests(unittest.TestCase):
 
         self.assertEqual(delay_schema["default"], "low")
         self.assertEqual(delay_schema["enum"], ["minimal", "low", "medium", "high", "xhigh"])
+
+    def test_append_audio_uses_configured_input_sample_rate_for_duration(self):
+        client = self._client_with_ws()
+        client.set_input_sample_rate(48000)
+        client.max_buffer_seconds = 2.0
+
+        client.append_audio(np.zeros(4800, dtype=np.float32))
+
+        self.assertAlmostEqual(client.audio_buffer_seconds, 0.1)
+
+    def test_resample_for_output_handles_48khz_capture_to_24khz_provider_rate(self):
+        client = self._client_with_ws()
+        client.set_input_sample_rate(48000)
+        client.sample_rate = 24000
+        audio = np.zeros(4800, dtype=np.float32)
+
+        resampled = client._resample_for_output(audio)
+
+        self.assertEqual(len(resampled), 2400)
+        self.assertEqual(resampled.dtype, np.float32)
 
 
 if __name__ == "__main__":

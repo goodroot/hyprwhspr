@@ -50,8 +50,23 @@ cmd_cached() {
 
 _date_ms(){ date +%s%3N 2>/dev/null || date +%s; }
 
-# Tiny helper for fast, safe command execution
-try() { timeout 0.2s bash -lc "$*" 2>/dev/null; }
+# Non-login shell: -l sourcing profiles can blow the timeout
+try() { timeout 0.5s bash -c "$*" 2>/dev/null; }
+
+ERR_THRESHOLD=2
+# Debounce errors: a lone slow/timed-out tick shouldn't flip the tray
+stabilize() {
+    local cand="$1" f="$HOME/.config/hyprwhspr/tray_state" last streak
+    read -r last streak < "$f" 2>/dev/null || { last=ready; streak=0; }
+    if [[ "$cand" == error:* ]]; then
+        streak=$((streak + 1))
+        (( streak >= ERR_THRESHOLD )) && last="$cand"
+    else
+        last="$cand"; streak=0
+    fi
+    printf '%s %s\n' "$last" "$streak" > "$f"
+    printf '%s' "$last"
+}
 
 # Function to check if hyprwhspr is running
 is_hyprwhspr_running() {
@@ -129,8 +144,8 @@ PY
         # Fast timeout check - verify onnx_asr is importable
         # Uses absolute path to venv Python (resilient to MISE/PATH issues)
         if [[ -f "$venv_python" ]]; then
-            # Only return success if import actually succeeds
-            if timeout 0.5s "$venv_python" -c 'import onnx_asr' >/dev/null 2>&1; then
+            # find_spec avoids importing the heavy ASR stack (~250ms+ under load)
+            if timeout 3s "$venv_python" -c 'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("onnx_asr") else 1)' >/dev/null 2>&1; then
                 return 0
             fi
         fi
@@ -141,7 +156,7 @@ PY
     # faster-whisper uses the HuggingFace cache, not the pywhispercpp models dir
     if [[ "$backend" == "faster-whisper" ]]; then
         local venv_python="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
-        if [[ -f "$venv_python" ]] && timeout 0.5s "$venv_python" -c 'import faster_whisper' >/dev/null 2>&1; then
+        if [[ -f "$venv_python" ]] && timeout 3s "$venv_python" -c 'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("faster_whisper") else 1)' >/dev/null 2>&1; then
             return 0
         fi
         return 1
@@ -755,7 +770,7 @@ case "${1:-status}" in
     "status")
         # Check for recovery results and show notifications
         check_recovery_result
-        IFS=: read -r s r <<<"$(get_current_state)"
+        IFS=: read -r s r <<<"$(stabilize "$(get_current_state)")"
         emit_json "$s" "$r" "$(mic_tooltip_line)"
         ;;
     "toggle")

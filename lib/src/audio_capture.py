@@ -4,6 +4,7 @@ Handles real-time audio capture for speech recognition
 """
 
 import os
+import re
 import sys
 import wave
 import threading
@@ -25,7 +26,7 @@ class AudioCapture:
     """Handles audio recording and real-time level monitoring"""
     
     def __init__(self, device_id=None, config_manager=None):
-        # Audio configuration - whisper.cpp prefers 16kHz mono
+        # Audio configuration; sample_rate is synced to the resolved input device.
         self.sample_rate = 16000
         self.channels = 1
         self.chunk_size = 1024
@@ -40,7 +41,7 @@ class AudioCapture:
         self.is_monitoring = False
         self.audio_data = []
         self.current_level = 0.0
-        # Rolling window of recent RMS values (~0.5s at 16kHz/1024 chunk)
+        # Rolling window of recent RMS values.
         self._level_history = deque(maxlen=8)
         
         # Threading
@@ -90,12 +91,22 @@ class AudioCapture:
             # Set the preferred device if specified
             device_found = False
             if self.preferred_device_id is not None:
+                # PortAudio can't resolve PulseAudio/PipeWire source names (e.g.
+                # "alsa_input.usb-...") — the form PipeWire users get from
+                # `pactl list short sources`. Map those to a concrete PortAudio
+                # index before handing the value to PortAudio, which only
+                # understands integer indices or PortAudio device-name substrings.
+                resolved_device_id = self.preferred_device_id
+                if isinstance(self.preferred_device_id, str):
+                    matched = self._match_pulse_source_to_portaudio(self.preferred_device_id, fuzzy=True)
+                    if matched is not None:
+                        resolved_device_id = matched
                 try:
                     # Validate that the device exists and has input channels
-                    device_info = sd.query_devices(device=self.preferred_device_id, kind='input')
+                    device_info = sd.query_devices(device=resolved_device_id, kind='input')
                     if device_info['max_input_channels'] > 0:
-                        self._set_sd_default_input(self.preferred_device_id)
-                        print(f"Using configured audio device: {device_info['name']} (ID: {self.preferred_device_id})")
+                        self._set_sd_default_input(resolved_device_id)
+                        print(f"Using configured audio device: {device_info['name']} (ID: {resolved_device_id})")
                         device_found = True
                     else:
                         print(f"⚠ Configured device {self.preferred_device_id} has no input channels")
@@ -125,6 +136,20 @@ class AudioCapture:
                             print(f"Found device by name: {device['name']} (ID: {i})")
                             device_found = True
                             break
+
+                    # Also accept a PulseAudio/PipeWire source name here, mapping
+                    # it to a PortAudio device the same way audio_device_id does.
+                    if not device_found:
+                        matched = self._match_pulse_source_to_portaudio(configured_name, fuzzy=True)
+                        if matched is not None:
+                            try:
+                                device_info = sd.query_devices(device=matched, kind='input')
+                                if device_info['max_input_channels'] > 0:
+                                    self._set_sd_default_input(matched)
+                                    print(f"Found device by source name: {device_info['name']} (ID: {matched})")
+                                    device_found = True
+                            except Exception:
+                                pass
 
                     # If name search failed, try fallback to system default
                     if not device_found:
@@ -172,6 +197,7 @@ class AudioCapture:
                     if device_info['max_input_channels'] > 0:
                         self.device_info = device_info
                         self.device_id = current_device_id
+                        self._sync_sample_rate_to_device(device_info)
                     else:
                         self.device_info = None
                         self.device_id = None
@@ -240,11 +266,32 @@ class AudioCapture:
                 return False
             self.device_info = device_info
             self.device_id = current_device_id
+            self._sync_sample_rate_to_device(device_info)
             return True
         else:
             self.device_info = None
             self.device_id = None
             return False
+
+    def _sync_sample_rate_to_device(self, device_info) -> None:
+        """Use the resolved device's native input rate for PortAudio streams."""
+        try:
+            sample_rate = int(device_info['default_samplerate'])
+        except (KeyError, TypeError, ValueError):
+            return
+        if sample_rate <= 0:
+            return
+        self.sample_rate = sample_rate
+        sd.default.samplerate = self.sample_rate
+
+    def _notify_streaming_sample_rate(self) -> None:
+        """Tell realtime callbacks the rate of chunks this capture stream emits."""
+        if not self.streaming_callback or not hasattr(self.streaming_callback, "set_input_sample_rate"):
+            return
+        try:
+            self.streaming_callback.set_input_sample_rate(self.sample_rate)
+        except Exception as e:
+            print(f"[WARN] Failed to set streaming sample rate: {e}", flush=True)
 
     def _refresh_default_input_unlocked(self, reason: str) -> bool:
         """Refresh runtime device binding from the current Pulse/PipeWire default.
@@ -269,6 +316,8 @@ class AudioCapture:
                 self._set_sd_default_input(pulse_default_id)
                 self.device_info = device_info
                 self.device_id = pulse_default_id
+                self._sync_sample_rate_to_device(device_info)
+                self._notify_streaming_sample_rate()
                 source_changed = bool(
                     old_pulse_source and
                     new_pulse_source and
@@ -488,6 +537,107 @@ class AudioCapture:
             print(f"Error setting audio device: {e}")
             return False
     
+    # Generic routing words common to many source/device names — useless for
+    # discriminating between devices, so excluded from token matching.
+    _SOURCE_STOPWORDS = frozenset({
+        'alsa', 'input', 'output', 'source', 'sink', 'usb', 'pci', 'bluez',
+        'audio', 'analog', 'digital', 'stereo', 'mono', 'iec958', 'hdmi',
+        'spdif', 'monitor', 'device', 'sound', 'card', 'built', 'mic',
+    })
+
+    @classmethod
+    def _extract_source_tokens(cls, source_name: str) -> list:
+        """Pull distinctive model tokens out of a PulseAudio source name.
+
+        Drops generic routing words, very short fragments, and serial-like hex
+        blobs (e.g. "d487fe4f") that won't appear in a PortAudio device name,
+        leaving model identifiers like "c922", "stream", "webcam".
+        """
+        tokens = []
+        for tok in re.split(r'[^a-z0-9]+', source_name.lower()):
+            if len(tok) < 3 or tok in cls._SOURCE_STOPWORDS:
+                continue
+            # Skip serial/UUID-like hex blobs but keep short model ids (e.g. c922)
+            if len(tok) >= 8 and all(c in '0123456789abcdef' for c in tok):
+                continue
+            tokens.append(tok)
+        return tokens
+
+    def _match_pulse_source_to_portaudio(self, pulse_source_name: str,
+                                         fuzzy: bool = False,
+                                         devices=None) -> Optional[int]:
+        """Map a PulseAudio/PipeWire source name to a PortAudio input device index.
+
+        PortAudio cannot resolve pactl source names directly: their names
+        (e.g. "alsa_input.usb-046d_C922_Pro_Stream_Webcam_...") differ from
+        PortAudio device names ("C922 Pro Stream Webcam: USB Audio (hw:1,0)").
+
+        Two matching tiers:
+          1. Conservative (always): the source name (or its de-prefixed model
+             string) appears verbatim in a device name. Lowest index wins.
+          2. Fuzzy (only when fuzzy=True): score devices by shared distinctive
+             model tokens and accept the *unambiguous* best (a single device
+             with >=2 shared tokens). This is only safe for an explicitly
+             configured device, where the user asked for a specific mic. The
+             system-default path passes fuzzy=False so it never *guesses* a
+             device via token scoring — but note tier 1 can still bind a
+             concrete device on an exact/model hit (legacy behaviour).
+
+        Does NOT fall back to the first available Pulse device: an unmatched
+        explicit source should fail rather than silently bind elsewhere.
+        """
+        if not pulse_source_name:
+            return None
+        if devices is None:
+            try:
+                devices = sd.query_devices()
+            except Exception:
+                return None
+
+        source_name = pulse_source_name.lower()
+        model_part = None
+        if 'alsa_input' in source_name:
+            # "alsa_input.usb-Blue_Microphones" → "blue microphones"
+            model_part = source_name.split('alsa_input.')[-1].replace('usb-', '').replace('_', ' ')
+
+        # Tier 1: verbatim / model substring match (legacy behaviour).
+        for idx, device in enumerate(devices):
+            if device['max_input_channels'] <= 0:
+                continue
+            device_name = device['name'].lower()
+            if source_name in device_name:
+                print(f"[PULSE] Matched device {idx}: {device['name']}")
+                return idx
+            if model_part and model_part in device_name:
+                print(f"[PULSE] Matched device {idx} via model: {device['name']}")
+                return idx
+
+        if not fuzzy:
+            return None
+
+        # Tier 2: token scoring, gated on an unambiguous winner.
+        tokens = self._extract_source_tokens(source_name)
+        if not tokens:
+            return None
+        scores = []
+        for idx, device in enumerate(devices):
+            if device['max_input_channels'] <= 0:
+                continue
+            device_name = device['name'].lower()
+            scores.append((idx, sum(1 for tok in tokens if tok in device_name)))
+        if not scores:
+            return None
+        best_score = max(score for _, score in scores)
+        winners = [idx for idx, score in scores if score == best_score]
+        if best_score < 2:
+            return None
+        if len(winners) > 1:
+            print(f"[PULSE] Ambiguous token match for '{pulse_source_name}': "
+                  f"{len(winners)} devices tie at score {best_score}; not guessing")
+            return None
+        print(f"[PULSE] Matched device {winners[0]} via model tokens: {devices[winners[0]]['name']}")
+        return winners[0]
+
     def _get_pulse_default_source_device_id(self) -> Optional[int]:
         """Get PortAudio device ID for PulseAudio/PipeWire default source"""
         import subprocess
@@ -503,33 +653,21 @@ class AudioCapture:
             self._last_pulse_default_source_name = pulse_source_name
             print(f"[PULSE] System default source: {pulse_source_name}")
 
-            # Match pulse source name to PortAudio device
-            devices = sd.query_devices()
-            for idx, device in enumerate(devices):
-                if device['max_input_channels'] > 0:
-                    # PulseAudio source names appear in PortAudio device names
-                    # Example: pulse source "alsa_input.usb-Blue_Microphones" matches
-                    # PortAudio device name "Blue Microphones: USB Audio (hw:2,0)"
-                    device_name = device['name'].lower()
-                    source_name = pulse_source_name.lower()
+            try:
+                devices = sd.query_devices()
+            except Exception:
+                devices = None
 
-                    # Direct match (source name in device name)
-                    if source_name in device_name:
-                        print(f"[PULSE] Matched device {idx}: {device['name']}")
-                        return idx
-
-                    # Partial match (extract model from source name)
-                    # Example: "alsa_input.usb-Blue_Microphones" → "blue_microphones"
-                    if 'alsa_input' in source_name:
-                        model_part = source_name.split('alsa_input.')[-1]
-                        # Remove USB- prefix if present
-                        model_part = model_part.replace('usb-', '').replace('_', ' ')
-                        if model_part in device_name:
-                            print(f"[PULSE] Matched device {idx} via model: {device['name']}")
-                            return idx
+            # fuzzy=False: no token guessing on the default path. An exact or
+            # model-substring hit still binds that concrete device (unchanged
+            # from before this change); the "pulse" aggregate fallback below is
+            # only reached when nothing matches.
+            matched = self._match_pulse_source_to_portaudio(pulse_source_name, devices=devices)
+            if matched is not None:
+                return matched
 
             # Fallback: return first PulseAudio device with input channels
-            for idx, device in enumerate(devices):
+            for idx, device in enumerate(devices or []):
                 if device['max_input_channels'] > 0 and 'pulse' in device['name'].lower():
                     print(f"[PULSE] Fallback to first PulseAudio device {idx}: {device['name']}")
                     return idx
@@ -811,6 +949,7 @@ class AudioCapture:
             # recovery_lock, so this either refreshes before recovery starts or
             # returns immediately instead of blocking while recovery joins us.
             self.refresh_default_input("record_start")
+            self._notify_streaming_sample_rate()
 
             # Open and start the stream, retrying on transient failures.
             # PortAudio may time out (PaErrorCode -9987) or hit an unanticipated
@@ -853,6 +992,7 @@ class AudioCapture:
                         if not refreshed_after_failure and not self._has_configured_audio_device():
                             refreshed_after_failure = True
                             self.refresh_default_input("record_start_retry")
+                            self._notify_streaming_sample_rate()
                         retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
                         time.sleep(retry_delay)
                     else:

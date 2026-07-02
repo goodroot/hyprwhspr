@@ -36,6 +36,12 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Auto-paste anywhere** - Instant paste into any active buffer, or even auto enter (optional)
 - **Audio ducking 🦆** - Reduces system volume on record (optional)
 
+---
+
+**Why hyprwhspr?** There are a lotta dictation apps. This one is designed to work great for most people, and in particular those with highest end machines. If you've a recent Nvidia card, hyprwhspr is designed from the ground up for the **best possible accuracy and speed**. Other setups will run as well as they can on the hardware you bring. It's also actively maintained, and fully featured. Works on  anything with Wayland.
+
+---
+
 ## Quick start
 
 ### Prerequisites
@@ -87,7 +93,7 @@ hyprwhspr setup
 4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
 5. **Bam!** Text appears in active buffer!
 
-> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay; on GNOME/Mutter the same status shows as desktop notifications instead. See [Themed visualizer](docs/CONFIGURATION.md#themed-visualizer) for details.
+> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay; on GNOME/Mutter you may need to make additional changes. See [Themed visualizer](docs/CONFIGURATION.md#themed-visualizer) for details.
 
 Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose).
 
@@ -155,7 +161,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 - [GPU resource management](docs/CONFIGURATION.md#gpu-resource-management) -- unload/reload model to free VRAM
 - [Audio and visual feedback](docs/CONFIGURATION.md#audio-and-visual-feedback) -- visualizer, audio feedback, ducking
 - [Text processing](docs/CONFIGURATION.md#text-processing) -- word overrides, filler words, symbol replacements
-- [Paste and clipboard behavior](docs/CONFIGURATION.md#paste-and-clipboard-behavior) -- paste mode, non-QWERTY, auto-submit
+- [Paste and clipboard behavior](docs/CONFIGURATION.md#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit
 - [Integrations](docs/CONFIGURATION.md#integrations) -- Waybar, Hyprland bindings, external hotkey systems
 - [Troubleshooting](docs/CONFIGURATION.md#troubleshooting)
 

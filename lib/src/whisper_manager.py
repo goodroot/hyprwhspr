@@ -421,14 +421,14 @@ class WhisperManager:
                         self._realtime_client = None
                         return False
 
-                    # Gemini accepts 16kHz audio natively - no resampling needed
                     def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio directly to Gemini (16kHz, no resampling)"""
+                        """Send audio directly to Gemini; client resamples if needed."""
                         try:
                             self._realtime_client.append_audio(audio_chunk)
                         except Exception as e:
                             print(f'[GEMINI] Streaming error: {e}', flush=True)
 
+                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
                     self._realtime_streaming_callback = _send_direct
 
                 elif provider_id == 'elevenlabs':
@@ -473,14 +473,14 @@ class WhisperManager:
                         self._realtime_client = None
                         return False
                     
-                    # ElevenLabs uses 16kHz audio - no resampling needed!
                     def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio directly to ElevenLabs (16kHz, no resampling)"""
+                        """Send audio directly to ElevenLabs; client resamples if needed."""
                         try:
                             self._realtime_client.append_audio(audio_chunk)
                         except Exception as e:
                             print(f'[ELEVENLABS] Streaming error: {e}', flush=True)
                     
+                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
                     self._realtime_streaming_callback = _send_direct
                 
                 else:
@@ -556,14 +556,14 @@ class WhisperManager:
                         self._realtime_client = None
                         return False
                     
-                    # OpenAI requires 24kHz audio - resample from 16kHz
                     def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio to realtime client (16kHz; client handles resampling/queueing)."""
+                        """Send audio to realtime client; client handles resampling/queueing."""
                         try:
                             self._realtime_client.append_audio(audio_chunk)
                         except Exception as e:
                             print(f'[REALTIME] Streaming error: {e}', flush=True)
                     
+                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
                     self._realtime_streaming_callback = _send_direct
                 
                 print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
@@ -1285,7 +1285,7 @@ class WhisperManager:
                 mode = 'vad' if use_vad_model else 'direct'
                 print(f'[ONNX-ASR] Mode: {mode} (vad_min_duration={vad_min_duration}s)', flush=True)
             start_time = time.time()
-            result = model.recognize(audio_data)
+            result = model.recognize(audio_data, sample_rate=sample_rate)
             elapsed = time.time() - start_time
 
             # When VAD is enabled, recognize() returns a generator of segments
@@ -1331,6 +1331,7 @@ class WhisperManager:
         if self._faster_whisper_model is None:
             print('[ERROR] faster-whisper model not initialized', flush=True)
             return ''
+        audio_data = self._resample_audio(audio_data, sample_rate, 16000)
 
         language = language_override if language_override is not None else self.config.get_setting('language', None)
         whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
@@ -1589,6 +1590,25 @@ class WhisperManager:
             return self._realtime_streaming_callback
         return None
 
+    def _resample_audio(self, audio_data: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
+        """Resample float32 mono audio when a backend requires a fixed sample rate."""
+        if source_rate == target_rate:
+            return audio_data
+        try:
+            from math import gcd
+            from scipy import signal
+
+            divisor = gcd(int(source_rate), int(target_rate))
+            resampled = signal.resample_poly(
+                audio_data,
+                up=int(target_rate) // divisor,
+                down=int(source_rate) // divisor,
+            )
+            return resampled.astype(np.float32, copy=False)
+        except Exception as e:
+            print(f"[WARN] Failed to resample audio {source_rate}Hz -> {target_rate}Hz: {e}", flush=True)
+            return audio_data
+
     def set_realtime_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         """Set callback for realtime partial transcript previews."""
         self._realtime_partial_callback = callback
@@ -1783,6 +1803,8 @@ class WhisperManager:
                     return ""
 
             try:
+                audio_data = self._resample_audio(audio_data, sample_rate, 16000)
+
                 # Use language_override if provided, otherwise get from config (None = auto-detect)
                 language = language_override if language_override is not None else self.config.get_setting('language', None)
 

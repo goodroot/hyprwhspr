@@ -1,6 +1,8 @@
+import io
 import sys
 import types
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -69,6 +71,187 @@ class TextInjectorInjectionTests(unittest.TestCase):
         copy.assert_not_called()
         restore_clipboard.assert_not_called()
 
+    def test_application_rule_uses_custom_chord_for_emacs(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({
+            "applications": {
+                "emacs": {
+                    "auto_paste": "ctrl+y",
+                },
+            },
+        })
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy") as copy,
+            mock.patch.object(injector, "_get_active_window_info", return_value={"class": "Emacs", "title": "main.py - GNU Emacs"}),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=True),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        copy.assert_called_once_with("hello")
+        paste_chord.assert_called_once_with("ctrl+y")
+        direct_type.assert_not_called()
+
+    def test_application_rule_can_disable_injection(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({
+            "applications": {
+                "other-app": {
+                    "auto_paste": False,
+                },
+            },
+        })
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy") as copy,
+            mock.patch.object(injector, "_get_active_window_info", return_value={"class": "Other App"}),
+            mock.patch.object(injector, "_save_clipboard") as save_clipboard,
+            mock.patch.object(injector, "_send_paste_keys_slow") as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool") as direct_type,
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        # "Disabled" is a true no-op: no paste, and crucially no clipboard write
+        # (so dictated text can't leak onto the clipboard for a disabled app).
+        copy.assert_not_called()
+        save_clipboard.assert_not_called()
+        paste_chord.assert_not_called()
+        direct_type.assert_not_called()
+
+    def test_invalid_application_rule_still_suppresses_gnome_direct_typing(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({
+            "applications": {
+                "emacs": {
+                    "auto_paste": True,
+                },
+            },
+        })
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info", return_value={"class": "emacs"}),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=True),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        direct_type.assert_not_called()
+        paste_chord.assert_called_once_with("ctrl+v")
+
+    def test_focused_window_identifiers_include_title_segments(self):
+        identifiers = TextInjector.focused_window_identifiers({
+            "class": "org.gnu.Emacs.desktop",
+            "title": "main.py - GNU Emacs",
+        })
+
+        self.assertIn("org-gnu-emacs", identifiers)
+        self.assertIn("emacs", identifiers)
+        self.assertIn("gnu-emacs", identifiers)
+
+    def test_wtype_sends_arbitrary_single_key_chord(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+
+        with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
+            self.assertTrue(injector._send_paste_keys_wtype("ctrl+y"))
+
+        run.assert_called_once_with(
+            ["wtype", "-M", "ctrl", "-k", "y", "-m", "ctrl"],
+            capture_output=True,
+            timeout=5,
+        )
+
+    def test_wtype_translates_named_keys_to_xkb_keysym_names(self):
+        # wtype's -k resolves through libxkbcommon: case-sensitive names that
+        # differ from our lowercase tokens (enter -> Return, f11 -> F11).
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+
+        cases = {
+            "ctrl+enter": "Return",
+            "ctrl+f11": "F11",
+            "super+pageup": "Page_Up",
+        }
+        for chord, expected_key in cases.items():
+            with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
+                self.assertTrue(injector._send_paste_keys_wtype(chord))
+            sent = run.call_args.args[0]
+            self.assertEqual(sent[sent.index("-k") + 1], expected_key)
+
+    def test_ydotool_sends_arbitrary_single_key_chord(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+
+        with mock.patch.object(injector, "_run_ydotool", return_value=completed) as run:
+            self.assertTrue(injector._send_paste_keys_slow("ctrl+y"))
+
+        run.assert_has_calls([
+            mock.call(["key", "29:1"], timeout=1),
+            mock.call(["key", "21:1", "21:0"], timeout=1),
+            mock.call(["key", "29:0"], timeout=1),
+        ])
+
+    def test_ydotool_function_key_chords_use_non_contiguous_evdev_codes(self):
+        injector = self._injector()
+
+        self.assertEqual(injector._keycode_for_chord_key("f10"), 68)
+        self.assertEqual(injector._keycode_for_chord_key("f11"), 87)
+        self.assertEqual(injector._keycode_for_chord_key("f12"), 88)
+        self.assertEqual(injector._keycode_for_chord_key("f13"), 183)
+        self.assertEqual(injector._keycode_for_chord_key("f24"), 194)
+
+    def test_failed_atspi_probe_is_negative_cached(self):
+        injector = self._injector()
+        failed = types.SimpleNamespace(returncode=1, stdout="", stderr="")
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.subprocess.run", return_value=failed) as run,
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertIsNone(injector._get_active_window_info())
+            self.assertIsNone(injector._get_active_window_info())
+
+        # First call probes niri, hyprctl, and AT-SPI. Second call skips AT-SPI.
+        self.assertEqual(run.call_count, 5)
+
     def test_gnome_wayland_with_custom_paste_keycode_uses_ydotool_chord(self):
         # A custom paste keycode means direct typing can't honour the layout, so
         # we use verbatim clipboard paste. The ydotool key chord DOES reach Mutter,
@@ -100,7 +283,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
             self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
 
         copy.assert_called_once_with("hello")
-        paste_chord.assert_called_once_with("ctrl")
+        paste_chord.assert_called_once_with("ctrl+v")
         direct_type.assert_not_called()
         restore_clipboard.assert_called_once()
         auto_submit.assert_called_once_with()
@@ -136,7 +319,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         direct_type.assert_not_called()
         copy.assert_called_once_with("hello")
-        paste_chord.assert_called_once_with("ctrl")
+        paste_chord.assert_called_once_with("ctrl+v")
         auto_submit.assert_called_once_with()
 
     def test_gnome_non_ascii_text_uses_clipboard_paste_not_direct_typing(self):
@@ -170,7 +353,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         direct_type.assert_not_called()
         copy.assert_called_once_with("Größe")
-        paste_chord.assert_called_once_with("ctrl")
+        paste_chord.assert_called_once_with("ctrl+v")
 
     def test_prefer_clipboard_paste_override_skips_direct_typing_on_gnome(self):
         # Explicit user override: never type directly, even for ASCII on a US layout.
@@ -202,7 +385,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
             self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
 
         direct_type.assert_not_called()
-        paste_chord.assert_called_once_with("ctrl")
+        paste_chord.assert_called_once_with("ctrl+v")
 
     def test_non_gnome_leaves_clipboard_on_failed_paste_chord(self):
         injector = self._injector()
@@ -230,7 +413,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
         ):
             self.assertFalse(injector._inject_via_clipboard_and_hotkey("hello"))
 
-        paste_chord.assert_called_once_with("ctrl")
+        paste_chord.assert_called_once_with("ctrl+v")
         direct_type.assert_not_called()
 
     def test_gnome_failed_paste_restores_previous_clipboard(self):
@@ -383,6 +566,117 @@ class TextInjectorInjectionTests(unittest.TestCase):
             self.assertEqual(injector._detect_active_layout(), "de")
 
         self.assertEqual(run.call_count, 2)
+
+
+    # ---- Fix 1: skip the active-window lookup when its result is unused ----
+
+    def test_active_window_lookup_needed_predicate(self):
+        injector = self._injector()
+
+        # Default (auto-detect): paste_mode/shift_paste unset → window class is
+        # needed for terminal detection.
+        injector.config_manager = ConfigStub()
+        self.assertTrue(injector._active_window_lookup_needed())
+
+        # Explicit paste_mode, no app rules → lookup result is unused.
+        injector.config_manager = ConfigStub({"paste_mode": "ctrl"})
+        self.assertFalse(injector._active_window_lookup_needed())
+
+        # Legacy explicit override → also no auto-detect needed.
+        injector.config_manager = ConfigStub({"shift_paste": True})
+        self.assertFalse(injector._active_window_lookup_needed())
+
+        # App rules present → window identity is needed even with explicit paste_mode.
+        injector.config_manager = ConfigStub(
+            {"paste_mode": "ctrl", "applications": {"emacs": {"auto_paste": "ctrl+y"}}}
+        )
+        self.assertTrue(injector._active_window_lookup_needed())
+
+    def test_inject_skips_window_lookup_with_explicit_paste_mode(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"paste_mode": "ctrl_shift"})
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info") as get_window,
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "sway",
+                    "WAYLAND_DISPLAY": "wayland-1",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        # The expensive lookup (AT-SPI subprocess on GNOME/KDE) is never reached
+        # because nothing consumes the window identity here.
+        get_window.assert_not_called()
+        paste_chord.assert_called_once_with("ctrl+shift+v")
+        direct_type.assert_not_called()
+
+    # ---- Fix 2: chord parsing handles both separators and symbol keys ----
+
+    def test_parse_key_chord_accepts_separators_and_symbol_keys(self):
+        injector = self._injector()
+
+        self.assertEqual(injector._parse_key_chord("ctrl+shift+v"), (["ctrl", "shift"], "v"))
+        self.assertEqual(injector._parse_key_chord("ctrl-shift-v"), (["ctrl", "shift"], "v"))
+        self.assertEqual(injector._parse_key_chord("super+minus"), (["super"], "minus"))
+        # The literal dash key survives instead of being mangled into a separator.
+        self.assertEqual(injector._parse_key_chord("super+-"), (["super"], "minus"))
+        self.assertEqual(injector._parse_key_chord("ctrl+y"), (["ctrl"], "y"))
+        self.assertEqual(injector._parse_key_chord("f5"), ([], "f5"))
+        self.assertEqual(injector._parse_key_chord("cmd+v"), (["super"], "v"))
+
+    def test_parse_key_chord_rejects_empty_and_modifier_only(self):
+        injector = self._injector()
+
+        self.assertIsNone(injector._parse_key_chord(""))
+        self.assertIsNone(injector._parse_key_chord("ctrl+shift"))
+        self.assertIsNone(injector._parse_key_chord("ctrl"))
+        self.assertIsNone(injector._parse_key_chord(None))
+
+    # ---- Fix 3: an unusable configured chord warns instead of failing silently ----
+
+    def test_unusable_application_chord_warns_and_returns_chord(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"applications": {"emacs": {"auto_paste": "ctrl+nope"}}}
+        )
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            chord, app = injector._resolve_paste_chord({"class": "emacs"})
+
+        # Chord returned unchanged (text still lands on clipboard for manual paste),
+        # but the user is told why their config did nothing.
+        self.assertEqual(chord, "ctrl+nope")
+        self.assertEqual(app, "emacs")
+        output = buf.getvalue()
+        self.assertIn("ctrl+nope", output)
+        self.assertIn("emacs", output)
+
+    def test_valid_application_chord_does_not_warn(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"applications": {"emacs": {"auto_paste": "ctrl+y"}}}
+        )
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            chord, app = injector._resolve_paste_chord({"class": "emacs"})
+
+        self.assertEqual(chord, "ctrl+y")
+        self.assertEqual(buf.getvalue(), "")
 
 
 if __name__ == "__main__":

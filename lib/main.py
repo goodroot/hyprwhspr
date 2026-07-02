@@ -286,6 +286,7 @@ class hyprwhsprApp:
             selected_device_path = self.config.get_setting("selected_device_path", None)
             selected_device_name = self.config.get_setting("selected_device_name", None)
             keyboard_device_names = self.config.get_setting("keyboard_device_names", None)
+            keyboard_hotplug = self.config.get_setting("keyboard_hotplug", True)
 
             # Register callbacks based on recording mode
             # Validate recording_mode and only register release callback for modes that need it
@@ -299,6 +300,7 @@ class hyprwhsprApp:
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
                     keyboard_device_names=keyboard_device_names,
+                    keyboard_hotplug=keyboard_hotplug,
                 )
             elif recording_mode in ('push_to_talk', 'auto'):
                 # Push-to-talk and auto modes: register both press and release callbacks
@@ -310,6 +312,7 @@ class hyprwhsprApp:
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
                     keyboard_device_names=keyboard_device_names,
+                    keyboard_hotplug=keyboard_hotplug,
                 )
             elif recording_mode == 'long_form':
                 # Long-form mode: primary key toggles recording/paused, no release callback
@@ -321,6 +324,7 @@ class hyprwhsprApp:
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
                     keyboard_device_names=keyboard_device_names,
+                    keyboard_hotplug=keyboard_hotplug,
                 )
                 # Initialize segment manager for long-form mode
                 max_size_mb = self.config.get_setting('long_form_temp_limit_mb', 500)
@@ -339,6 +343,7 @@ class hyprwhsprApp:
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
                     keyboard_device_names=keyboard_device_names,
+                    keyboard_hotplug=keyboard_hotplug,
                 )
         except Exception as e:
             print(f"[ERROR] Failed to initialize global shortcuts: {e}", flush=True)
@@ -360,6 +365,7 @@ class hyprwhsprApp:
                             device_name=selected_device_name,
                             grab_keys=grab_keys,
                             keyboard_device_names=keyboard_device_names,
+                            keyboard_hotplug=keyboard_hotplug,
                         )
                     elif recording_mode in ('push_to_talk', 'auto'):
                         self.secondary_shortcuts = GlobalShortcuts(
@@ -370,6 +376,7 @@ class hyprwhsprApp:
                             device_name=selected_device_name,
                             grab_keys=grab_keys,
                             keyboard_device_names=keyboard_device_names,
+                            keyboard_hotplug=keyboard_hotplug,
                         )
                     else:
                         # Invalid mode: default to toggle behavior
@@ -381,6 +388,7 @@ class hyprwhsprApp:
                             device_name=selected_device_name,
                             grab_keys=grab_keys,
                             keyboard_device_names=keyboard_device_names,
+                            keyboard_hotplug=keyboard_hotplug,
                         )
                     
                     # Start the secondary shortcuts
@@ -407,6 +415,7 @@ class hyprwhsprApp:
                     device_name=selected_device_name,
                     grab_keys=grab_keys,
                     keyboard_device_names=keyboard_device_names,
+                    keyboard_hotplug=keyboard_hotplug,
                 )
                 if self._cancel_shortcuts.start():
                     print(f"[INFO] Cancel shortcut registered: {cancel_shortcut_key}", flush=True)
@@ -430,6 +439,7 @@ class hyprwhsprApp:
                         device_name=selected_device_name,
                         grab_keys=grab_keys,
                         keyboard_device_names=keyboard_device_names,
+                        keyboard_hotplug=keyboard_hotplug,
                     )
                     if self._longform_submit_shortcuts.start():
                         print(f"[INFO] Long-form submit shortcut registered: {submit_shortcut_key}", flush=True)
@@ -822,7 +832,9 @@ class hyprwhsprApp:
         def process():
             try:
                 transcription = self.whisper_manager.transcribe_audio(
-                    audio_data, language_override=self._current_language_override
+                    audio_data,
+                    sample_rate=self.audio_capture.sample_rate,
+                    language_override=self._current_language_override,
                 )
                 if transcription and transcription.strip():
                     text = transcription.strip()
@@ -1047,7 +1059,9 @@ class hyprwhsprApp:
 
             # Transcribe with language override if set
             transcription = self.whisper_manager.transcribe_audio(
-                audio_data, language_override=self._longform_language_override
+                audio_data,
+                sample_rate=self.audio_capture.sample_rate,
+                language_override=self._longform_language_override,
             )
 
             if transcription and transcription.strip():
@@ -1553,7 +1567,11 @@ class hyprwhsprApp:
             self.is_processing = True
 
             # Transcribe audio with language override if set
-            transcription = self.whisper_manager.transcribe_audio(audio_data, language_override=self._current_language_override)
+            transcription = self.whisper_manager.transcribe_audio(
+                audio_data,
+                sample_rate=self.audio_capture.sample_rate,
+                language_override=self._current_language_override,
+            )
 
             if transcription and transcription.strip():
                 text = transcription.strip()

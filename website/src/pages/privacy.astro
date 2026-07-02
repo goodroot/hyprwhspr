@@ -30,8 +30,8 @@ import "../styles/global.css";
                     <span class="page-tag">privacy</span>
                     <h1>Zero shenanigans.</h1>
                     <p class="lede">
-                        hyprwhspr is built on a simple premise: a tool that
-                        listens to you should never report back about you.
+                        Local and open source. A tool that listens to you should
+                        never report back about you.
                     </p>
                 </div>
 
@@ -44,15 +44,12 @@ import "../styles/global.css";
                         <p>
                             hyprwhspr is fully open source under the MIT
                             license. Every line that touches your microphone,
-                            processes your audio, and injects text into your
-                            applications is public and auditable. There are no
-                            compiled blobs, no obfuscated routines, no black
-                            boxes.
+                            audio, and keystrokes is public and auditable —
+                            nothing compiled, obfuscated, or hidden away.
                         </p>
                         <p>
-                            If you want to verify exactly what happens to your
-                            audio — from the moment you press the hotkey to the
-                            moment text appears — you can.
+                            Want to verify exactly what happens to your audio,
+                            from hotkey to text? You can.
                         </p>
                         <a
                             class="pillar-link"
@@ -70,16 +67,13 @@ import "../styles/global.css";
                         <p>
                             hyprwhspr is built and maintained by a <a
                                 href="https://goodroot.ca">single developer</a
-                            >. There is no company behind it. No investors. No
-                            growth targets. No business model that depends on
-                            your data.
+                            >. There's no company behind it, no investors, and no
+                            business model that depends on your data.
                         </p>
                         <p>
-                            The tool exists because it's useful and because
-                            building it was interesting. That's the whole story.
-                            There is no roadmap item that reads "monetise user
-                            data" because there is no one to write that roadmap
-                            and nothing to gain from it.
+                            It exists because it's useful and building it was
+                            interesting. Nobody stands to gain from your data, so
+                            nobody ever will.
                         </p>
                     </div>
 
@@ -89,19 +83,17 @@ import "../styles/global.css";
                             <h2>Local means local.</h2>
                         </div>
                         <p>
-                            When you use a local backend — Parakeet, Whisper,
-                            onnx-asr, Cohere Transcribe — your audio is
-                            processed entirely on your own hardware. It is never
-                            sent to a server. It is never stored unless you
-                            explicitly set it to save. It does not leave your
-                            machine.
+                            With a local backend — Parakeet, Whisper, onnx-asr,
+                            Cohere Transcribe — your audio is processed entirely
+                            on your own hardware. It is never sent to a server,
+                            never stored unless you ask it to be, and never
+                            leaves your machine.
                         </p>
                         <p>
-                            hyprwhspr has no telemetry, no analytics, no crash
-                            reporting, and no network calls of any kind during
-                            normal operation. The service runs as a local
-                            systemd process. It has no reason to phone home and
-                            no place to phone home to.
+                            There's no telemetry, analytics, or crash reporting,
+                            and during normal operation it makes no network calls
+                            at all. The service is a local systemd process with
+                            no reason to phone home and nowhere to phone home to.
                         </p>
                     </div>
                 </div>
@@ -111,17 +103,16 @@ import "../styles/global.css";
                     <p>
                         hyprwhspr optionally supports cloud transcription APIs —
                         Google Gemini, OpenAI, Groq, Cohere, ElevenLabs, and any
-                        OpenAI-compatible endpoint. When you use a cloud
-                        backend, your audio is sent to that provider's servers
-                        and subject to their privacy policies.
+                        OpenAI-compatible endpoint. With a cloud backend, your
+                        audio is sent to that provider's servers and subject to
+                        their privacy policies.
                     </p>
                     <p>
-                        Cloud backends are simple REST APIs and are strictly
-                        opt-in. They require you to manually configure an API
-                        key. The default installation uses local models only. If
-                        you choose to use a cloud backend, you are making a
-                        deliberate choice with full knowledge of what that means
-                        — not being silently enrolled in anything.
+                        These are strictly opt-in: the default installation uses
+                        local models only, and a cloud backend won't work until
+                        you configure an API key yourself. It's a deliberate
+                        choice you make — not something you're silently enrolled
+                        in.
                     </p>
                 </div>
             </main>

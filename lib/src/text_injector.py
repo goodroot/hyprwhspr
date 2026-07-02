@@ -12,7 +12,7 @@ import time
 import threading
 import json
 import ast
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 
 try:
     from .dependencies import require_package
@@ -29,13 +29,113 @@ pyperclip = require_package('pyperclip')
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
 NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'
 
-# AT-SPI is not thread-safe — only one thread may access it at a time.
-# _atspi_available: None = untested, True = working, False = unavailable.
-# The module reference is cached after successful init so init runs only once.
-_atspi_lock: threading.Lock = threading.Lock()
-_atspi_module = None
-_atspi_available = None
+PASTE_MODE_CHORDS = {
+    'ctrl_shift': 'ctrl+shift+v',
+    'ctrl': 'ctrl+v',
+    'super': 'super+v',
+    'alt': 'alt+v',
+}
 
+WTYPE_MODIFIERS = {
+    'ctrl': 'ctrl',
+    'shift': 'shift',
+    'super': 'logo',
+    'alt': 'alt',
+}
+
+# Accepted modifier spellings -> canonical token (a key of WTYPE_MODIFIERS).
+MODIFIER_ALIASES = {
+    'ctrl': 'ctrl', 'control': 'ctrl',
+    'shift': 'shift',
+    'super': 'super', 'cmd': 'super', 'meta': 'super', 'logo': 'super',
+    'alt': 'alt',
+}
+
+# wtype's `-k` resolves keys through libxkbcommon, whose keysym names are
+# case-sensitive and differ from our normalized lowercase tokens (e.g. our
+# "enter"/"backspace"/"pageup" are xkb "Return"/"BackSpace"/"Page_Up").
+# Map the named keys; single letters and digits already match xkb keysym names.
+# Function keys (f1..f24 -> F1..F24) are handled in _wtype_key_name().
+WTYPE_KEY_NAMES = {
+    'space': 'space',
+    'tab': 'Tab',
+    'enter': 'Return',
+    'return': 'Return',
+    'esc': 'Escape',
+    'escape': 'Escape',
+    'backspace': 'BackSpace',
+    'delete': 'Delete',
+    'home': 'Home',
+    'end': 'End',
+    'pageup': 'Page_Up',
+    'pagedown': 'Page_Down',
+    'up': 'Up',
+    'down': 'Down',
+    'left': 'Left',
+    'right': 'Right',
+    'minus': 'minus',
+    'equal': 'equal',
+    'comma': 'comma',
+    'dot': 'period',
+    'period': 'period',
+    'slash': 'slash',
+    'semicolon': 'semicolon',
+    'apostrophe': 'apostrophe',
+    'grave': 'grave',
+    'leftbrace': 'bracketleft',
+    'rightbrace': 'bracketright',
+    'backslash': 'backslash',
+}
+
+YDOTOOL_MODIFIERS = {
+    'ctrl': 29,
+    'shift': 42,
+    'super': 125,
+    'alt': 56,
+}
+
+YDOTOOL_KEYCODES = {
+    **{chr(ord('a') + i): code for i, code in enumerate([
+        30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
+        49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44,
+    ])},
+    **{str(i): code for i, code in enumerate([11, 2, 3, 4, 5, 6, 7, 8, 9, 10])},
+    'space': 57,
+    'tab': 15,
+    'enter': 28,
+    'return': 28,
+    'esc': 1,
+    'escape': 1,
+    'backspace': 14,
+    'delete': 111,
+    'home': 102,
+    'end': 107,
+    'pageup': 104,
+    'pagedown': 109,
+    'up': 103,
+    'down': 108,
+    'left': 105,
+    'right': 106,
+    'minus': 12,
+    'equal': 13,
+    'comma': 51,
+    'dot': 52,
+    'period': 52,
+    'slash': 53,
+    'semicolon': 39,
+    'apostrophe': 40,
+    'grave': 41,
+    'leftbrace': 26,
+    'rightbrace': 27,
+    'backslash': 43,
+}
+
+FKEY_CODES = {
+    **{f'f{i}': 58 + i for i in range(1, 11)},
+    'f11': 87,
+    'f12': 88,
+    **{f'f{i}': 183 + (i - 13) for i in range(13, 25)},
+}
 
 class TextInjector:
     """Handles injecting text into focused applications"""
@@ -54,6 +154,7 @@ class TextInjector:
         # wtype-only sessions never spawn it). Replaces the old shared/managed
         # ydotool.service: hyprwhspr owns this daemon on its own socket.
         self._ydotoold = YdotooldSession()
+        self._atspi_unavailable = False
 
         if not self.ydotool_available and not self.wtype_available:
             print("⚠️  No injection backend found (wtype or ydotool). hyprwhspr requires wtype or ydotool for paste injection.")
@@ -239,7 +340,10 @@ class TextInjector:
                 capture_output=True, text=True, timeout=0.5
             )
             if result.returncode == 0:
-                return json.loads(result.stdout)
+                window = json.loads(result.stdout)
+                if isinstance(window, dict):
+                    window.setdefault('source', 'hyprland')
+                return window
         except Exception:
             pass
 
@@ -262,81 +366,129 @@ class TextInjector:
                         matches = re.findall(r'"([^"]+)"', prop_result.stdout)
                         if matches:
                             wm_class = matches[-1] if len(matches) >= 2 else matches[0]
-                            return {'class': wm_class}
+                            return {'class': wm_class, 'source': 'xwayland'}
             except Exception:
                 pass
 
-        # AT-SPI fallback for native Wayland compositors (GNOME, KDE, etc.)
-        # gi.repository ships with python3-gi, part of the GNOME/GTK stack —
-        # no additional packages needed on systems where this problem exists.
-        global _atspi_module, _atspi_available
-
-        # Acquire the lock before reading _atspi_available so concurrent first-callers
-        # cannot each pass the None check and spawn parallel Atspi.init() calls.
-        if not _atspi_lock.acquire(timeout=0.5):
+        # Do not probe AT-SPI outside a graphical session.
+        if not os.environ.get('WAYLAND_DISPLAY') and not os.environ.get('DISPLAY'):
             return None
+
+        # AT-SPI fallback for native Wayland compositors (GNOME, KDE, etc.)
+        # Run this in a child process: dbind/AT-SPI can abort the interpreter when
+        # the accessibility bus is unavailable, bypassing Python exception handling.
+        if getattr(self, '_atspi_unavailable', False):
+            return None
+
         try:
-            if _atspi_available is None:
-                # First call: probe in a thread with a timeout to guard against a
-                # missing or slow AT-SPI bus. Caches the result for all future calls.
-                _probe_result: list = [None]
+            code = r'''
+import json
+import sys
 
-                def _probe():
-                    try:
-                        import gi
-                        gi.require_version('Atspi', '2.0')
-                        from gi.repository import Atspi
-                        Atspi.init()
-                        _probe_result[0] = Atspi
-                    except Exception:
-                        pass
-
-                t = threading.Thread(target=_probe, daemon=True)
-                t.start()
-                t.join(timeout=0.5)
-
-                if _probe_result[0] is not None:
-                    _atspi_module = _probe_result[0]
-                    _atspi_available = True
-                else:
-                    _atspi_available = False
-
-            if not _atspi_available:
-                return None
-
-            # Query under the same lock — AT-SPI is not thread-safe.
-            Atspi = _atspi_module
-            desktop = Atspi.get_desktop(0)
-            for i in range(desktop.get_child_count()):
-                app = desktop.get_child_at_index(i)
-                if app is None:
-                    continue
-                for j in range(app.get_child_count()):
-                    window = app.get_child_at_index(j)
-                    if window is None:
-                        continue
-                    if window.get_state_set().contains(Atspi.StateType.ACTIVE):
-                        # Prefer the process name from /proc (matches WM_CLASS-style
-                        # identifiers like "gnome-terminal", "ptyxis", "kitty").
-                        # Fall back to the AT-SPI app display name if unavailable.
-                        name = None
-                        try:
-                            pid = app.get_process_id()
-                            if pid > 0:
-                                with open(f'/proc/{pid}/comm') as f:
-                                    name = f.read().strip().lower()
-                        except Exception:
-                            pass
-                        if not name:
-                            name = (app.get_name() or '').lower()
-                        if name:
-                            return {'class': name}
+try:
+    import gi
+    gi.require_version('Atspi', '2.0')
+    from gi.repository import Atspi
+    Atspi.init()
+    desktop = Atspi.get_desktop(0)
+    for i in range(desktop.get_child_count()):
+        app = desktop.get_child_at_index(i)
+        if app is None:
+            continue
+        for j in range(app.get_child_count()):
+            window = app.get_child_at_index(j)
+            if window is None:
+                continue
+            if window.get_state_set().contains(Atspi.StateType.ACTIVE):
+                name = None
+                try:
+                    pid = app.get_process_id()
+                    if pid > 0:
+                        with open(f'/proc/{pid}/comm') as f:
+                            name = f.read().strip().lower()
+                except Exception:
+                    pass
+                if not name:
+                    name = (app.get_name() or '').lower()
+                if name:
+                    print(json.dumps({'class': name, 'source': 'at-spi'}))
+                    sys.exit(0)
+    sys.exit(2)
+except Exception:
+    sys.exit(1)
+'''
+            result = subprocess.run(
+                [sys.executable, '-c', code],
+                capture_output=True, text=True, timeout=0.7,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return json.loads(result.stdout)
+            if result.returncode != 2:
+                self._atspi_unavailable = True
         except Exception:
+            self._atspi_unavailable = True
             pass
-        finally:
-            _atspi_lock.release()
 
         return None
+
+    @staticmethod
+    def _normalize_window_identifier(value: Any) -> str:
+        """Normalize app/window identifiers for config matching."""
+        text = str(value or '').strip().lower()
+        if text.endswith('.desktop'):
+            text = text[:-len('.desktop')]
+        text = re.sub(r'[^a-z0-9]+', '-', text).strip('-')
+        return text
+
+    @classmethod
+    def focused_window_identifiers(cls, window_info: Optional[Dict[str, Any]]) -> List[str]:
+        """Return stable-ish identifiers that application config rules can match."""
+        if not window_info:
+            return []
+
+        raw_values = []
+        for key in ('class', 'app_id', 'initialClass', 'initialTitle'):
+            value = window_info.get(key)
+            if value:
+                raw_values.append(value)
+                if isinstance(value, str):
+                    stable_value = value[:-len('.desktop')] if value.endswith('.desktop') else value
+                    if '.' in stable_value:
+                        raw_values.append(stable_value.rsplit('.', 1)[-1])
+
+        title = window_info.get('title')
+        if title:
+            raw_values.append(title)
+            for part in re.split(r'\s+[-–—]\s+', str(title)):
+                raw_values.append(part)
+
+        identifiers = []
+        seen = set()
+        for value in raw_values:
+            ident = cls._normalize_window_identifier(value)
+            if ident and ident not in seen:
+                identifiers.append(ident)
+                seen.add(ident)
+        return identifiers
+
+    def _get_application_rule(self, window_info: Optional[Dict[str, Any]]):
+        """Return (identifier, rule) for the first matching application rule."""
+        if not self.config_manager:
+            return None, None
+        applications = self.config_manager.get_setting('applications', {})
+        if not isinstance(applications, dict) or not applications:
+            return None, None
+
+        normalized_rules = {}
+        for key, rule in applications.items():
+            ident = self._normalize_window_identifier(key)
+            if ident:
+                normalized_rules[ident] = rule
+
+        for ident in self.focused_window_identifiers(window_info):
+            if ident in normalized_rules:
+                return ident, normalized_rules[ident]
+        return None, None
 
     def _is_terminal(self, window_info: Optional[Dict[str, Any]] = None) -> bool:
         """Check if focused window is a terminal emulator."""
@@ -385,6 +537,77 @@ class TextInjector:
             return 'ctrl_shift'
         return 'ctrl'
 
+    def _active_window_lookup_needed(self) -> bool:
+        """True when injection actually consumes the focused-window identity.
+
+        The window class feeds (a) per-application paste rules and (b) paste-mode
+        auto-detection (terminal → Ctrl+Shift+V). When neither applies, the lookup
+        result is unused — skipping it avoids spawning the AT-SPI probe subprocess
+        on GNOME/KDE native-Wayland windows (no cost on Hyprland, which never
+        reaches that branch).
+        """
+        if not self.config_manager:
+            return True
+        applications = self.config_manager.get_setting('applications', {})
+        if isinstance(applications, dict) and applications:
+            return True
+        if self.config_manager.get_setting('paste_mode', None):
+            return False  # explicit paste_mode — no auto-detect, no class needed
+        if self.config_manager.get_setting('shift_paste', None) is not None:
+            return False  # legacy explicit override — no auto-detect
+        return True  # auto-detect path needs the window class
+
+    def _chord_is_usable(self, chord: str) -> bool:
+        """True if `chord` resolves to keys for at least one available backend."""
+        parsed = self._parse_key_chord(PASTE_MODE_CHORDS.get(chord, chord))
+        if not parsed:
+            return False
+        _modifiers, key = parsed
+        if self.wtype_available and self._wtype_key_name(key) is not None:
+            return True
+        if self.ydotool_available and self._keycode_for_chord_key(key) is not None:
+            return True
+        # No injection backend at all → can't paste regardless; a parseable chord
+        # shouldn't trigger a spurious misconfiguration warning.
+        return not self.wtype_available and not self.ydotool_available
+
+    def _resolve_paste_chord(self, window_info: Optional[Dict[str, Any]] = None):
+        """Resolve application rule / explicit paste_mode / legacy / auto into a chord.
+
+        Returns:
+            (False, matched_identifier) when injection is disabled for the app.
+            (chord_string, matched_identifier_or_None) otherwise.
+        """
+        matched_identifier, rule = self._get_application_rule(window_info)
+        if isinstance(rule, dict) and 'auto_paste' in rule:
+            auto_paste = rule.get('auto_paste')
+            if auto_paste is False:
+                return False, matched_identifier
+            if isinstance(auto_paste, str) and auto_paste.strip():
+                chord = auto_paste.strip()
+                if not self._chord_is_usable(chord):
+                    print(f"⚠️  Ignoring unusable auto_paste chord {chord!r} for app "
+                          f"'{matched_identifier}'. Use a form like 'ctrl+v' or 'ctrl+y'; "
+                          f"text will be left on the clipboard.", flush=True)
+                return chord, matched_identifier
+
+        paste_mode = None
+        if self.config_manager:
+            paste_mode = self.config_manager.get_setting('paste_mode', None)
+        if not paste_mode:
+            shift_paste = self.config_manager.get_setting('shift_paste', None) if self.config_manager else None
+            if shift_paste is not None:
+                paste_mode = 'ctrl_shift' if shift_paste else 'ctrl'
+            else:
+                paste_mode = self._detect_paste_mode(window_info)
+        chord = PASTE_MODE_CHORDS.get(paste_mode, paste_mode)
+        # Auto-detected modes ('ctrl'/'ctrl_shift') always resolve; only an
+        # explicitly-configured paste_mode can be unusable here.
+        if not self._chord_is_usable(chord):
+            print(f"⚠️  Configured paste_mode {paste_mode!r} is not a usable chord; "
+                  f"text will be left on the clipboard.", flush=True)
+        return chord, matched_identifier
+
     def _clear_stuck_modifiers(self):
         """
         Clear any stuck modifier keys via ydotool uinput.
@@ -410,17 +633,56 @@ class TextInjector:
         except Exception as e:
             print(f"Warning: Could not clear stuck modifiers: {e}")
 
-    def _send_paste_keys_wtype(self, paste_mode: str) -> bool:
+    def _parse_key_chord(self, chord: str) -> Optional[Tuple[List[str], str]]:
+        """Parse a single-key chord such as ctrl+shift+v.
+
+        Modifiers are peeled off the front (separated by '+' or '-'); whatever
+        remains is the key and is never split. This keeps the convenient
+        'ctrl-shift-v' spelling working while still allowing a chord whose key
+        is the literal '-' (e.g. 'super+-', normalized to 'minus').
+        """
+        if not isinstance(chord, str):
+            return None
+        remainder = chord.strip().lower()
+        if not remainder:
+            return None
+
+        modifiers: List[str] = []
+        while True:
+            m = re.match(r'([a-z]+)\s*[+-]\s*(.+)$', remainder)
+            if not m:
+                break
+            canonical = MODIFIER_ALIASES.get(m.group(1))
+            if canonical is None:
+                break  # leading token isn't a modifier — the rest is the key
+            if canonical not in modifiers:
+                modifiers.append(canonical)
+            remainder = m.group(2).strip()
+
+        key = 'minus' if remainder == '-' else remainder
+        if not key:
+            return None
+        # A chord must terminate in a key, not a dangling modifier (e.g. 'ctrl+shift').
+        if MODIFIER_ALIASES.get(key) in WTYPE_MODIFIERS:
+            return None
+        return modifiers, key
+
+    def _send_paste_keys_wtype(self, paste_chord: str) -> bool:
         """Send paste hotkey via wtype's Wayland virtual-keyboard protocol."""
-        mode_map = {
-            'ctrl_shift': ['-M', 'ctrl', '-M', 'shift', '-k', 'v', '-m', 'shift', '-m', 'ctrl'],
-            'ctrl':       ['-M', 'ctrl', '-k', 'v', '-m', 'ctrl'],
-            'super':      ['-M', 'logo', '-k', 'v', '-m', 'logo'],
-            'alt':        ['-M', 'alt', '-k', 'v', '-m', 'alt'],
-        }
-        args = mode_map.get(paste_mode)
-        if not args:
+        paste_chord = PASTE_MODE_CHORDS.get(paste_chord, paste_chord)
+        parsed = self._parse_key_chord(paste_chord)
+        if not parsed:
             return False
+        modifiers, key = parsed
+        key_name = self._wtype_key_name(key)
+        if key_name is None:
+            return False
+        args = []
+        for modifier in modifiers:
+            args.extend(['-M', WTYPE_MODIFIERS[modifier]])
+        args.extend(['-k', key_name])
+        for modifier in reversed(modifiers):
+            args.extend(['-m', WTYPE_MODIFIERS[modifier]])
         try:
             result = subprocess.run(['wtype'] + args, capture_output=True, timeout=5)
             if result.returncode != 0:
@@ -432,31 +694,39 @@ class TextInjector:
             print(f"wtype paste failed: {e}")
             return False
 
-    # ydotool evdev keycodes for modifier press/release per paste mode.
-    # Keys within each list are sent as a single ydotool command (simultaneous).
-    # Release order is reversed so chord unwinds cleanly.
-    _YDOTOOL_MOD_PRESS = {
-        'ctrl_shift': ['29:1', '42:1'],  # Ctrl + Shift
-        'ctrl':       ['29:1'],
-        'super':      ['125:1'],
-        'alt':        ['56:1'],
-    }
-    _YDOTOOL_MOD_RELEASE = {
-        'ctrl_shift': ['42:0', '29:0'],  # reverse order
-        'ctrl':       ['29:0'],
-        'super':      ['125:0'],
-        'alt':        ['56:0'],
-    }
+    @staticmethod
+    def _wtype_key_name(key: str) -> Optional[str]:
+        """Translate a normalized chord key into the xkb keysym name wtype expects."""
+        if key in WTYPE_KEY_NAMES:
+            return WTYPE_KEY_NAMES[key]
+        if key in FKEY_CODES:  # f1..f24 -> F1..F24
+            return 'F' + key[1:]
+        if len(key) == 1 and (key.isalpha() or key.isdigit()):
+            return key  # single letters/digits match xkb keysym names directly
+        return None
 
-    def _send_paste_keys_slow(self, paste_mode: str) -> bool:
+    def _keycode_for_chord_key(self, key: str) -> Optional[int]:
+        if key == 'v':
+            return self._get_paste_keycode()
+        if key in FKEY_CODES:
+            return FKEY_CODES[key]
+        return YDOTOOL_KEYCODES.get(key)
+
+    def _send_paste_keys_slow(self, paste_chord: str) -> bool:
         """
         Send paste keystroke with delays between events via ydotool.
         Used as fallback when wtype is unavailable.
         """
-        press_args = self._YDOTOOL_MOD_PRESS.get(paste_mode)
-        release_args = self._YDOTOOL_MOD_RELEASE.get(paste_mode)
-        if press_args is None:
+        paste_chord = PASTE_MODE_CHORDS.get(paste_chord, paste_chord)
+        parsed = self._parse_key_chord(paste_chord)
+        if not parsed:
             return False
+        modifiers, key = parsed
+        keycode = self._keycode_for_chord_key(key)
+        if keycode is None:
+            return False
+        press_args = [f'{YDOTOOL_MODIFIERS[modifier]}:1' for modifier in modifiers]
+        release_args = [f'{YDOTOOL_MODIFIERS[modifier]}:0' for modifier in reversed(modifiers)]
 
         def _key(*args):
             result = self._run_ydotool(['key'] + list(args), timeout=1)
@@ -467,12 +737,13 @@ class TextInjector:
                 raise RuntimeError(f"ydotool key {' '.join(args)} failed: {stderr}")
 
         try:
-            paste_keycode = self._get_paste_keycode()
-            _key(*press_args)
+            if press_args:
+                _key(*press_args)
             time.sleep(0.015)
-            _key(f'{paste_keycode}:1', f'{paste_keycode}:0')
+            _key(f'{keycode}:1', f'{keycode}:0')
             time.sleep(0.010)
-            _key(*release_args)
+            if release_args:
+                _key(*release_args)
             return True
 
         except Exception as e:
@@ -595,6 +866,18 @@ class TextInjector:
         except Exception:
             pass
         return None
+
+    def _copy_text_to_clipboard(self, text: str) -> bool:
+        """Copy text to the clipboard without triggering paste."""
+        try:
+            if shutil.which("wl-copy"):
+                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=2)
+            else:
+                pyperclip.copy(text)
+            return True
+        except Exception as e:
+            print(f"ERROR: Clipboard copy failed: {e}")
+            return False
 
     def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 5.0):
         """Restore clipboard to saved contents after a delay (background thread).
@@ -848,8 +1131,20 @@ class TextInjector:
     def _inject_via_clipboard_and_hotkey(self, text: str) -> bool:
         """Copy text to clipboard, then trigger paste via wtype (or ydotool fallback)."""
         try:
-            window_info = self._get_active_window_info()
+            window_info = (
+                self._get_active_window_info()
+                if self._active_window_lookup_needed()
+                else None
+            )
             gnome_wayland_session = self._is_gnome_wayland_session()
+            paste_chord, app_match = self._resolve_paste_chord(window_info)
+            if paste_chord is False:
+                # Injection is explicitly disabled for this app. Do nothing at all —
+                # no paste, no clipboard write. "Disabled" means hands off, which also
+                # avoids leaking dictated text (e.g. into a password field) onto the
+                # clipboard where other apps could read it.
+                print(f"Injection disabled for focused app ({app_match}); leaving it untouched.")
+                return True
 
             # On GNOME/Mutter the layer-shell overlay is unavailable, so we can
             # type directly with `ydotool type` to avoid touching the clipboard.
@@ -862,6 +1157,7 @@ class TextInjector:
             if (
                 gnome_wayland_session
                 and self.ydotool_available
+                and app_match is None
                 and not self._has_custom_paste_keycode()
                 and not self._force_clipboard_paste()
                 and self._layout_is_type_safe()
@@ -877,23 +1173,9 @@ class TextInjector:
             saved_clipboard = self._save_clipboard()
 
             # Copy text to clipboard
-            if shutil.which("wl-copy"):
-                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=2)
-            else:
-                pyperclip.copy(text)
+            if not self._copy_text_to_clipboard(text):
+                return False
             time.sleep(0.15)
-
-            # Resolve paste mode: explicit config override → shift_paste back-compat → auto-detect
-            paste_mode = None
-            if self.config_manager:
-                paste_mode = self.config_manager.get_setting('paste_mode', None)
-            if not paste_mode:
-                # Back-compat: honour shift_paste boolean if set in config
-                shift_paste = self.config_manager.get_setting('shift_paste', None) if self.config_manager else None
-                if shift_paste is not None:
-                    paste_mode = 'ctrl_shift' if shift_paste else 'ctrl'
-                else:
-                    paste_mode = self._detect_paste_mode(window_info)
 
             # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back
             # to ydotool's uinput chord. ydotool key chords DO reach Mutter (uinput
@@ -902,7 +1184,7 @@ class TextInjector:
             # taken when direct typing was skipped for a non-US layout / non-ASCII text.
             pasted = False
             if self.wtype_available:
-                pasted = self._send_paste_keys_wtype(paste_mode)
+                pasted = self._send_paste_keys_wtype(paste_chord)
                 if pasted:
                     # wtype sends Wayland modifier events; clear ydotool's uinput modifier
                     # state so subsequent physical keypresses are not affected.
@@ -917,7 +1199,7 @@ class TextInjector:
                 # Unicode and pastes correctly regardless of the active layout.
                 _prev_layout = self._gnome_force_latin_layout()
                 try:
-                    pasted = self._send_paste_keys_slow(paste_mode)
+                    pasted = self._send_paste_keys_slow(paste_chord)
                 finally:
                     self._gnome_restore_layout(_prev_layout)
 
@@ -949,14 +1231,7 @@ class TextInjector:
 
     def _inject_via_clipboard(self, text: str) -> bool:
         """Fallback: copy text to clipboard when no paste tool is available."""
-        try:
-            if shutil.which("wl-copy"):
-                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=2)
-            else:
-                pyperclip.copy(text)
-
+        if self._copy_text_to_clipboard(text):
             print("Text copied to clipboard (no paste tool available)")
             return True
-        except Exception as e:
-            print(f"ERROR: Clipboard fallback failed: {e}")
-            return False
+        return False

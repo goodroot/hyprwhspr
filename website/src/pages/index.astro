@@ -12,7 +12,7 @@ import "../styles/global.css";
         <title>hyprwhspr — system speech-to-text for Linux</title>
         <meta
             name="description"
-            content="Fast, accurate, system-wide dictation for Linux and Wayland. Local Whisper models, cloud APIs, zero latency."
+            content="Fast, accurate, system-wide dictation for Linux and Wayland. Local Whisper models, cloud APIs, instant transcription."
         />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -36,7 +36,7 @@ import "../styles/global.css";
                     </h1>
                     <p class="subtitle">
                         System-wide speech&#8209;to&#8209;text.<br />
-                        Local models. Secure Cloud providers. Fully featured. Top
+                        Local models. Secure cloud providers. Fully featured. Top
                         performance.
                     </p>
 
@@ -124,8 +124,8 @@ import "../styles/global.css";
                             <p>
                                 Local inference means <strong
                                     >nothing leaves your machine</strong
-                                >. Cloud provider — Gemini,
-                                OpenAI, ElevenLabs, and more — credentials are stored
+                                >. Cloud provider credentials — Gemini,
+                                OpenAI, ElevenLabs, and more — are stored
                                 securely and never touch config files.
                             </p>
                         </div>
@@ -161,10 +161,11 @@ import "../styles/global.css";
                                 class="feature-icon"
                                 style="color: var(--magenta)">⏺</span
                             >
-                            <h3>Four recording modes</h3>
+                            <h3>Five recording modes</h3>
                             <p>
-                                Toggle, push-to-talk, auto (tap vs. hold), and
-                                long-form with pause and save.
+                                Toggle, push-to-talk, auto (tap vs. hold),
+                                continuous (auto-flush on silence), and long-form
+                                with pause and save.
                             </p>
                         </div>
 
@@ -175,8 +176,9 @@ import "../styles/global.css";
                             >
                             <h3>Paste anywhere</h3>
                             <p>
-                                Text injects into any active buffer via ydotool.
-                                Auto-submit optional.
+                                Injects text into any active buffer via wtype
+                                or ydotool. Per-app paste rules and optional
+                                auto-submit.
                             </p>
                         </div>
 
@@ -210,7 +212,7 @@ import "../styles/global.css";
                                 class="feature-icon"
                                 style="color: var(--cyan)">◈</span
                             >
-                            <h3>Multi-lingual</h3>
+                            <h3>Multilingual</h3>
                             <p>
                                 Strong performance across many languages.
                                 Optional translate-to-English mode.
@@ -237,7 +239,7 @@ import "../styles/global.css";
                             <h3>WebSocket streaming</h3>
                             <p>
                                 Stream in near realtime via Google Gemini,
-                                11Labs, OpenAI or similar services.
+                                ElevenLabs, OpenAI, or similar services.
                             </p>
                         </div>
 
@@ -250,6 +252,45 @@ import "../styles/global.css";
                             <p>
                                 Hyprland, GNOME, KDE Plasma, Sway — any Wayland
                                 compositor with systemd.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--green)">⟳</span
+                            >
+                            <h3>Self-healing</h3>
+                            <p>
+                                Recovers automatically from suspend/resume, USB
+                                mic unplug, and keyboard hotplug — and warns when
+                                the mic is muted.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--yellow)">❯</span
+                            >
+                            <h3>Post-transcription hook</h3>
+                            <p>
+                                Pipe every transcription through your own shell
+                                command before it pastes — reformat, route, or
+                                log it.
+                            </p>
+                        </div>
+
+                        <div class="feature">
+                            <span
+                                class="feature-icon"
+                                style="color: var(--cyan)">$</span
+                            >
+                            <h3>Scriptable control</h3>
+                            <p>
+                                CLI start/stop/toggle/cancel — wire it to KDE,
+                                GNOME, sxhkd, or Espanso, beyond the built-in
+                                evdev hotkeys.
                             </p>
                         </div>
                     </div>
@@ -408,16 +449,24 @@ import "../styles/global.css";
                         <details class="faq-item">
                             <summary>Why hyprwhspr over other Linux speech tools?</summary>
                             <p>
-                                Model breadth and performance. hyprwhspr supports more local
-                                backends than any comparable tool — Cohere Transcribe,
-                                pywhispercpp, faster-whisper, onnx-asr, and Parakeet TDT V3 —
-                                plus a full range of cloud APIs. The model stays hot in memory,
-                                so transcription is instant rather than gated behind a
-                                multi-second load on every invocation. It's also the most fully
-                                featured: toggle, push-to-talk, and auto modes; Waybar
-                                integration; live model unload for VRAM management; and
-                                evdev-based hotkeys that work on any Wayland compositor —
-                                Hyprland, GNOME, KDE, Sway.
+                                Pair it with a capable GPU and this is the absolute top end of
+                                Linux dictation — and it's excellent without one, too.
+                            </p>
+                            <p>
+                                hyprwhspr is built for accuracy and speed: it runs the top local
+                                models — Parakeet TDT V3, Cohere Transcribe, the full Whisper
+                                family, faster-whisper, onnx-asr — held hot in memory, so
+                                transcription is instant rather than gated behind a multi-second
+                                load. GPU acceleration (NVIDIA CUDA, AMD/Intel Vulkan) is
+                                auto-detected; on CPU, onnx-asr is genuinely fast and accurate —
+                                a first-class path, not a fallback.
+                            </p>
+                            <p>
+                                It supports more local backends than any comparable tool, plus a
+                                full range of cloud APIs, and it's well featured: five recording
+                                modes, per-app paste rules, Waybar integration, live model unload
+                                for VRAM, and evdev hotkeys on any Wayland compositor — Hyprland,
+                                GNOME, KDE, Sway. Actively maintained.
                             </p>
                         </details>
 
@@ -1003,6 +1052,13 @@ import "../styles/global.css";
         color: var(--fg-dim);
         line-height: 1.75;
         border-top: 1px solid var(--border);
+    }
+
+    /* Multi-paragraph answers: only the first paragraph carries the divider;
+       the rest flow as plain paragraphs with no rule or top padding. */
+    .faq-item p + p {
+        padding-top: 0;
+        border-top: none;
     }
 
     /* ── Footer ───────────────────────────────────────────────────── */

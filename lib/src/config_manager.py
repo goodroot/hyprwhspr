@@ -56,22 +56,24 @@ class ConfigManager:
             'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
             'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
             'selected_device_name': None,  # Specific keyboard device name (e.g., 'USB Keyboard') - takes priority over path if both set
-            # Optional allowlist of keyboard device names. Two effects:
-            # (1) restricts which devices are grabbed at startup — mice/media
-            #     controllers that advertise keyboard-shaped capabilities are
-            #     skipped; (2) enables pyudev-based hotplug detection for the
-            #     listed devices (docked keyboards work without service restart).
-            # Ignored when selected_device_name / selected_device_path is set.
-            # Null (default) = legacy behavior: startup-only discovery, no filter.
+            # Watch for keyboards plugged in after startup (pyudev) and attach
+            # them live, so docked/Bluetooth/USB keyboards work without a service
+            # restart. True (default) enables this for any keyboard that passes
+            # the same checks as startup discovery.
+            'keyboard_hotplug': True,
+            # Optional allowlist of keyboard device names. Restricts which
+            # devices are grabbed at startup AND on hotplug — mice/media
+            # controllers that advertise keyboard-shaped capabilities are
+            # skipped.  Null (default) = no filter.
             'keyboard_device_names': None,
             # Audio device persistence (for reliable device matching across reboots)
-            'audio_device_id': None,        # PortAudio device index (can change on reboot)
-            'audio_device_name': None,      # Human-readable device name (more stable)
+            'audio_device_id': None,        # PortAudio index, or a PulseAudio/PipeWire source name (pactl list short sources)
+            'audio_device_name': None,      # PortAudio/PulseAudio device-name substring (more stable across reboots)
             'audio_device_vendor_id': None, # USB vendor ID (most stable, from udev)
             'audio_device_model_id': None,  # USB model ID (most stable, from udev)
             'model': 'base',
             'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
-            'word_overrides': {},  # Dictionary of word replacements: {"original": "replacement"}
+            'word_overrides': {'hyper whisper': 'hyprwhspr'},  # {"original": "replacement"}
             'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
             'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
             'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
@@ -79,6 +81,7 @@ class ConfigManager:
             'task': 'transcribe',  # "transcribe" (source language) or "translate" (to English)
             'sampling_strategy': 'beam_search',  # "beam_search" or "greedy" for Whisper decoding
             'beam_size': 5,  # Number of candidates tracked when using beam search
+            'threads': min(8, os.cpu_count() or 4),  # whisper.cpp worker threads
             # Shell command run after preprocessing, before paste. Stdin
             # receives the transcription; non-empty stdout replaces it.
             # Empty stdout leaves text unchanged (observer-only hooks).
@@ -97,6 +100,11 @@ class ConfigManager:
             # Default 47 = KEY_V (works on QWERTY; on other layouts set this to the keycode
             # for the physical key that produces 'v' on your layout).
             'paste_keycode': 47,
+            # Per-application injection behavior. Keys match normalized focused
+            # window identifiers. Example: {"emacs": {"auto_paste": "ctrl+y"}}
+            # or {"some-app": {"auto_paste": False}} to disable injection entirely
+            # (nothing pasted, clipboard left untouched).
+            'applications': {},
             # Back-compat for older configs (used only if paste_mode is absent):
             'shift_paste': None,  # true = Ctrl+Shift+V, false = Ctrl+V; None = use auto-detect
             # Direct-type injection mode (bypasses clipboard entirely)

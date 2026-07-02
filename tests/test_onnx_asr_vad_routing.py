@@ -87,6 +87,32 @@ class OnnxAsrVadRoutingTests(unittest.TestCase):
         )
         self.assertTrue(reads_config_key)
 
+    def test_onnx_recognize_receives_capture_sample_rate(self):
+        tree = self._parse_whisper_manager()
+        transcribe_onnx = self._find_function(tree, "_transcribe_onnx_asr")
+        self.assertIsNotNone(transcribe_onnx)
+
+        recognize_calls = [
+            node for node in ast.walk(transcribe_onnx)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "recognize"
+            )
+        ]
+
+        self.assertTrue(
+            any(
+                any(
+                    keyword.arg == "sample_rate"
+                    and isinstance(keyword.value, ast.Name)
+                    and keyword.value.id == "sample_rate"
+                    for keyword in call.keywords
+                )
+                for call in recognize_calls
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

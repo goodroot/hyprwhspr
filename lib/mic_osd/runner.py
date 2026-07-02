@@ -59,6 +59,7 @@ class MicOSDRunner:
         for pattern in [
             '/usr/lib64/libgtk4-layer-shell.so*',
             '/usr/lib/libgtk4-layer-shell.so*',
+            '/usr/lib/*/libgtk4-layer-shell.so*',
             '/usr/local/lib64/libgtk4-layer-shell.so*',
             '/usr/local/lib/libgtk4-layer-shell.so*',
         ]:
@@ -195,6 +196,7 @@ sys.exit(main())
         for pattern in [
             '/usr/lib64/libgtk4-layer-shell.so*',
             '/usr/lib/libgtk4-layer-shell.so*',
+            '/usr/lib/*/libgtk4-layer-shell.so*',
             '/usr/local/lib64/libgtk4-layer-shell.so*',
             '/usr/local/lib/libgtk4-layer-shell.so*',
         ]:
