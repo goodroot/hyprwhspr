@@ -39,6 +39,11 @@ try:
 except ImportError:
     from backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
 
+try:
+    from .backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
+except ImportError:
+    from backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
+
 
 class WhisperManager:
     """Manages whisper transcription with dual backend support"""
@@ -643,8 +648,7 @@ class WhisperManager:
 
             try:
                 # Validate model file exists before attempting to load
-                from pathlib import Path
-                models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
+                models_dir = PYWHISPERCPP_MODELS_DIR
                 model_file = models_dir / f"ggml-{self.current_model}.bin"
                 
                 if not model_file.exists():
@@ -721,11 +725,6 @@ class WhisperManager:
 
     def _resolve_vad_model(self):
         """Path to the Silero VAD model, auto-downloading if missing; None on failure"""
-        try:
-            from .backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
-        except ImportError:
-            from backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
-
         vad_file = PYWHISPERCPP_MODELS_DIR / VAD_MODEL_FILENAME
         if not vad_file.exists():
             print("[BACKEND] Downloading Silero VAD model (~1MB)", flush=True)
@@ -1892,8 +1891,7 @@ class WhisperManager:
 
     def _validate_model_file(self, model_name: str) -> bool:
         """Validate that model file exists and is not corrupted"""
-        from pathlib import Path
-        models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
+        models_dir = PYWHISPERCPP_MODELS_DIR
 
         # Check for both multilingual and English-only versions
         model_files = [
@@ -2110,7 +2108,7 @@ class WhisperManager:
                 # Validate model file exists before attempting to load
                 if not self._validate_model_file(model_name):
                     print(f"ERROR: Model file not found or corrupted: {model_name}")
-                    print("Please download the model to ~/.local/share/pywhispercpp/models/")
+                    print(f"Please download the model to {PYWHISPERCPP_MODELS_DIR}/")
                     return False
 
                 # Clean up existing model (GPU-safe)
@@ -2150,8 +2148,7 @@ class WhisperManager:
 
     def get_available_models(self) -> list:
         """Get list of available whisper models"""
-        from pathlib import Path
-        models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
+        models_dir = PYWHISPERCPP_MODELS_DIR
         available_models = []
 
         # Look for the supported model files

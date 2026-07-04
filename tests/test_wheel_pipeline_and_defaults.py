@@ -124,7 +124,7 @@ class PywhisperVadKwargsTests(unittest.TestCase):
             vad_file = Path(tmp) / backend_installer.VAD_MODEL_FILENAME
             vad_file.write_bytes(b"x")
             with mock.patch.object(
-                backend_installer, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ):
                 wm = self._manager(use_vad=True)
                 wm._create_pywhisper_model("base", 4)
@@ -134,9 +134,9 @@ class PywhisperVadKwargsTests(unittest.TestCase):
     def test_failed_download_falls_back_without_vad(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(
-                backend_installer, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ), mock.patch.object(
-                backend_installer, "download_vad_model", return_value=False
+                whisper_manager, "download_vad_model", return_value=False
             ):
                 wm = self._manager(use_vad=True)
                 wm._create_pywhisper_model("base", 4)
@@ -148,7 +148,7 @@ class PywhisperVadKwargsTests(unittest.TestCase):
             vad_file = Path(tmp) / backend_installer.VAD_MODEL_FILENAME
             vad_file.write_bytes(b"x")
             with mock.patch.object(
-                backend_installer, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ):
                 wm = self._manager(use_vad=True)
                 wm._create_pywhisper_model("base", 4)
