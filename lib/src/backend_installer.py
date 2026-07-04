@@ -70,7 +70,7 @@ PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.l
 STATE_DIR = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'state')) / 'hyprwhspr'
 STATE_FILE = STATE_DIR / 'install-state.json'
 PYWHISPERCPP_SRC_DIR = USER_BASE / 'pywhispercpp-src'
-PYWHISPERCPP_PINNED_COMMIT = "d8f202f4435cf3e5e0bf735723eaacbe84c6853c"
+PYWHISPERCPP_PINNED_COMMIT = "294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f"
 PARAKEET_VENV_DIR = USER_BASE / 'parakeet-venv'
 PARAKEET_DIR = Path(HYPRWHSPR_ROOT) / 'lib' / 'backends' / 'parakeet'
 PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
@@ -79,7 +79,7 @@ PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
 # Pre-built wheel configuration
 WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v2"
 WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
-PYWHISPERCPP_VERSION = "1.4.1"
+PYWHISPERCPP_VERSION = "1.5.0"
 
 
 def _safe_decode(output) -> str:
