@@ -56,7 +56,7 @@ try:
         get_install_state, set_install_state, get_all_state,
         init_state, _cleanup_partial_installation,
         PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR,
-        MAX_COMPATIBLE_PYTHON, _get_python_version
+        PYWHISPERCPP_MODELS_DIR, MAX_COMPATIBLE_PYTHON, _get_python_version
     )
 except ImportError:
     from backend_installer import (
@@ -64,7 +64,7 @@ except ImportError:
         get_install_state, set_install_state, get_all_state,
         init_state, _cleanup_partial_installation,
         PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR,
-        MAX_COMPATIBLE_PYTHON, _get_python_version
+        PYWHISPERCPP_MODELS_DIR, MAX_COMPATIBLE_PYTHON, _get_python_version
     )
 
 try:
@@ -118,7 +118,6 @@ _YDOTOOL_MARKERS = ('Managed by hyprwhspr', 'deployed by hyprwhspr')
 USER_HOME = Path.home()
 USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
 USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
-PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', USER_HOME / '.local' / 'share')) / 'pywhispercpp' / 'models'
 
 # Selectable Whisper models, shared by the setup prompt and `model list`.
 # Single source of truth so the two never drift.
