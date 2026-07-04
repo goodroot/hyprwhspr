@@ -3484,49 +3484,12 @@ def model_command(action: str, model_name: str = 'base'):
 
 def download_model(model_name: str = 'base'):
     """Download pywhispercpp model with progress feedback"""
-    log_info(f"Downloading pywhispercpp model: {model_name}")
-    
-    PYWHISPERCPP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    
-    model_file = PYWHISPERCPP_MODELS_DIR / f'ggml-{model_name}.bin'
-    model_url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{model_name}.bin"
-    
-    if model_file.exists():
-        file_size = model_file.stat().st_size
-        if file_size > 100000000:  # > 100MB, probably valid
-            log_success(f"Model already exists: {model_file}")
-            return True
-        else:
-            log_warning("Existing model appears invalid, re-downloading...")
-            model_file.unlink()
-    
-    log_info(f"Fetching {model_url}")
     try:
-        import urllib.request
-        
-        def show_progress(block_num, block_size, total_size):
-            """Callback to show download progress"""
-            if not OutputController.is_progress_enabled():
-                return
-            
-            downloaded = block_num * block_size
-            percent = min(100, (downloaded * 100) // total_size) if total_size > 0 else 0
-            size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
-            downloaded_mb = downloaded / (1024 * 1024)
-            
-            # Show progress on same line
-            progress_msg = f"\r[INFO] Downloading: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)"
-            OutputController.write(progress_msg, VerbosityLevel.NORMAL, flush=True)
-            
-            if downloaded >= total_size and total_size > 0:
-                OutputController.write("\n", VerbosityLevel.NORMAL, flush=True)  # New line when complete
-        
-        urllib.request.urlretrieve(model_url, model_file, reporthook=show_progress)
-        log_success(f"Model downloaded: {model_file}")
-        return True
-    except (urllib.error.URLError, IOError) as e:
-        log_error(f"Failed to download model: {e}")
-        return False
+        from .backend_installer import download_pywhispercpp_model
+    except ImportError:
+        from backend_installer import download_pywhispercpp_model
+
+    return download_pywhispercpp_model(model_name)
 
 
 def list_models():

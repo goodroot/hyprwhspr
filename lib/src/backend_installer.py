@@ -654,20 +654,14 @@ def check_model_validity(model_file: Path) -> bool:
     """Check if model file is valid"""
     if not model_file.exists():
         return False
-    
-    file_size = model_file.stat().st_size
-    stored_hash = get_state("model_base_en_hash")
-    current_hash = compute_file_hash(model_file)
-    
-    # If we have a stored hash and it matches, it's valid
-    if stored_hash and current_hash == stored_hash:
+
+    stored_hash = get_state(f"model_hash_{model_file.name}")
+    if stored_hash and compute_file_hash(model_file) == stored_hash:
         return True
-    
-    # If file is reasonable size (>100MB), it's probably valid
-    if file_size > 100000000:
-        return True
-    
-    return False
+
+    # No stored hash: size floor catches truncated downloads and HF error
+    # pages (smallest real model, quantized tiny, is ~31MB)
+    return model_file.stat().st_size > 20_000_000
 
 
 # ==================== Helper Functions ====================
@@ -1758,11 +1752,11 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
     model_url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{model_name}.bin"
     
     if check_model_validity(model_file):
-        log_success("pywhispercpp base model present")
+        log_success(f"pywhispercpp model present: {model_name}")
         return True
-    
+
     if model_file.exists():
-        log_warning("Existing base model appears invalid; re-downloading")
+        log_warning(f"Existing {model_name} model appears invalid; re-downloading")
         model_file.unlink()
     
     log_info(f"Fetching {model_url}")
@@ -1788,12 +1782,12 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
         
         # Store hash for future validation
         model_hash = compute_file_hash(model_file)
-        set_state("model_base_en_hash", model_hash)
-        
-        log_success("pywhispercpp base model downloaded")
+        set_state(f"model_hash_{model_file.name}", model_hash)
+
+        log_success(f"pywhispercpp model downloaded: {model_name}")
         return True
     except Exception as e:
-        log_error(f"Failed to download pywhispercpp base model: {e}")
+        log_error(f"Failed to download pywhispercpp model {model_name}: {e}")
         return False
 
 

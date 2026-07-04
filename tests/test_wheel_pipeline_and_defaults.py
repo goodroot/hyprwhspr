@@ -81,6 +81,31 @@ class ConfigDefaultsTests(unittest.TestCase):
             self.assertIs(cm.get_setting("pywhispercpp_use_vad"), False)
 
 
+class ModelValidityTests(unittest.TestCase):
+    def test_hash_key_is_per_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "ggml-tiny.bin"
+            f.write_bytes(b"tiny model bytes")
+            h = backend_installer.compute_file_hash(f)
+            own = {f"model_hash_{f.name}": h}
+            with mock.patch.object(backend_installer, "get_state", side_effect=own.get):
+                self.assertTrue(backend_installer.check_model_validity(f))
+            # another model's stored hash must not validate this file
+            other = {"model_hash_ggml-base.bin": h}
+            with mock.patch.object(backend_installer, "get_state", side_effect=other.get):
+                self.assertFalse(backend_installer.check_model_validity(f))
+
+    def test_size_floor_without_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "ggml-tiny.bin"
+            f.write_bytes(b"x")
+            with mock.patch.object(backend_installer, "get_state", return_value=None):
+                self.assertFalse(backend_installer.check_model_validity(f))
+                with open(f, "wb") as fh:
+                    fh.truncate(75_000_000)  # sparse; ~tiny model size
+                self.assertTrue(backend_installer.check_model_validity(f))
+
+
 class PywhisperVadKwargsTests(unittest.TestCase):
     class _FakeModel:
         last_kwargs = None
