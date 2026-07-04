@@ -444,6 +444,18 @@ Set model in config (pywhispercpp only — faster-whisper uses `faster_whisper_m
 }
 ```
 
+#### Voice activity detection
+
+Optional native Silero VAD strips silence before inference — the same hallucination mitigation faster-whisper ships, off by default here because it needs an extra ~1 MB model (`ggml-silero-v5.1.2.bin`, auto-downloaded to the models directory on first use):
+
+```jsonc
+{
+    "pywhispercpp_use_vad": true   // default: false
+}
+```
+
+If the download fails (e.g. offline), the service logs a warning and continues without VAD.
+
 #### Language detection
 
 English only speakers use `.en` models which are smaller.

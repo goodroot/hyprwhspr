@@ -1717,6 +1717,38 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
 
 # ==================== Model Download ====================
 
+VAD_MODEL_FILENAME = 'ggml-silero-v5.1.2.bin'
+VAD_MODEL_URL = f"https://huggingface.co/ggml-org/whisper-vad/resolve/main/{VAD_MODEL_FILENAME}"
+
+
+def download_vad_model() -> bool:
+    """Download the Silero VAD model for whisper.cpp native VAD. Never raises."""
+    try:
+        PYWHISPERCPP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        vad_file = PYWHISPERCPP_MODELS_DIR / VAD_MODEL_FILENAME
+
+        # ~2MB model; anything tiny is a failed/partial download
+        if vad_file.exists():
+            if vad_file.stat().st_size > 500_000:
+                return True
+            log_warning("Existing VAD model appears invalid; re-downloading")
+            vad_file.unlink()
+
+        log_info(f"Fetching {VAD_MODEL_URL}")
+        urllib.request.urlretrieve(VAD_MODEL_URL, vad_file)
+
+        if vad_file.stat().st_size <= 500_000:
+            log_error("Downloaded VAD model appears invalid")
+            vad_file.unlink()
+            return False
+
+        log_success("Silero VAD model downloaded")
+        return True
+    except Exception as e:
+        log_error(f"Failed to download Silero VAD model: {e}")
+        return False
+
+
 def download_pywhispercpp_model(model_name: str = 'base') -> bool:
     """Download pywhispercpp model with progress feedback"""
     log_info(f"Downloading pywhispercpp model: {model_name}…")
