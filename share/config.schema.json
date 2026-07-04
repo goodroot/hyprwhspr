@@ -482,6 +482,13 @@
       "maximum": 1,
       "default": 0,
       "description": "RMS level below which audio is considered silence in continuous mode. 0 (default) = auto-calibrate from noise floor at session start. Set manually if auto-calibration misbehaves on your mic."
+    },
+    "silence_timeout": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 30,
+      "default": 0,
+      "description": "Auto-stop recording after this many seconds of silence in toggle/auto modes. 0 (default) = disabled. The timer only arms after speech is detected, so it won't fire while you compose your first sentence."
     }
   }
 }
