@@ -130,6 +130,8 @@ class ConfigManager:
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
             'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
             'realtime_transcription_delay': 'low',  # gpt-realtime-whisper delay: minimal|low|medium|high|xhigh
+            # whisper.cpp (pywhispercpp) backend settings
+            'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
             # ONNX-ASR backend settings (CPU-optimized)
             'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
             'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)

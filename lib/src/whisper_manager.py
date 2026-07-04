@@ -642,13 +642,6 @@ class WhisperManager:
             gpu_backend = self._detect_gpu_backend()
 
             try:
-                # Try modern layout first
-                try:
-                    from pywhispercpp.model import Model
-                except ImportError:
-                    # Fallback for flat layout (or older versions)
-                    from pywhispercpp import Model
-
                 # Validate model file exists before attempting to load
                 from pathlib import Path
                 models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
@@ -664,12 +657,9 @@ class WhisperManager:
                     print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
                     return False
 
-                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-                self._pywhisper_model = Model(
-                    model=self.current_model,
-                    n_threads=self.config.get_setting('threads', 4),
-                    params_sampling_strategy=strategy_int,
-                    redirect_whispercpp_logs_to=None
+                self._pywhisper_model = self._create_pywhisper_model(
+                    self.current_model,
+                    self.config.get_setting('threads', 4)
                 )
 
                 print(f"[BACKEND] pywhispercpp ({gpu_backend}) - model: {self.current_model}")
@@ -695,6 +685,54 @@ class WhisperManager:
         except Exception as e:
             print(f"ERROR: Failed to initialize Whisper manager: {e}")
             return False
+
+    def _create_pywhisper_model(self, model_name: str, n_threads: int):
+        """Construct a pywhispercpp Model with configured sampling and optional native VAD"""
+        # Try modern layout first
+        try:
+            from pywhispercpp.model import Model
+        except ImportError:
+            # Fallback for flat layout (or older versions)
+            from pywhispercpp import Model
+
+        strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
+        kwargs = {
+            'model': model_name,
+            'n_threads': n_threads,
+            'params_sampling_strategy': strategy_int,
+            'redirect_whispercpp_logs_to': None,
+        }
+
+        if self.config.get_setting('pywhispercpp_use_vad', False):
+            vad_path = self._resolve_vad_model()
+            if vad_path is not None:
+                kwargs['vad'] = True
+                kwargs['vad_model_path'] = str(vad_path)
+
+        try:
+            return Model(**kwargs)
+        except TypeError:
+            if 'vad' not in kwargs:
+                raise
+            # Installed pywhispercpp predates VAD support (< 1.5.0)
+            print("[BACKEND] WARNING: installed pywhispercpp has no VAD support - re-run 'hyprwhspr setup' to upgrade; continuing without VAD", flush=True)
+            del kwargs['vad'], kwargs['vad_model_path']
+            return Model(**kwargs)
+
+    def _resolve_vad_model(self):
+        """Path to the Silero VAD model, auto-downloading if missing; None on failure"""
+        try:
+            from .backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
+        except ImportError:
+            from backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
+
+        vad_file = PYWHISPERCPP_MODELS_DIR / VAD_MODEL_FILENAME
+        if not vad_file.exists():
+            print("[BACKEND] Downloading Silero VAD model (~1MB)", flush=True)
+            if not download_vad_model():
+                print("[BACKEND] WARNING: VAD model download failed - continuing without VAD", flush=True)
+                return None
+        return vad_file
 
     def _detect_gpu_backend(self) -> str:
         """Detect available GPU backend for logging purposes
@@ -1916,18 +1954,7 @@ class WhisperManager:
             time.sleep(0.1)
             
             # Reload model
-            try:
-                from pywhispercpp.model import Model
-            except ImportError:
-                from pywhispercpp import Model
-            
-            strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-            self._pywhisper_model = Model(
-                model=model_name,
-                n_threads=threads,
-                params_sampling_strategy=strategy_int,
-                redirect_whispercpp_logs_to=None
-            )
+            self._pywhisper_model = self._create_pywhisper_model(model_name, threads)
             
             self.ready = True
             # Update last use time to mark successful reinitialization
@@ -2041,18 +2068,8 @@ class WhisperManager:
                 self._cleanup_model()
 
                 # Load model with new thread count
-                # Try modern layout first
-                try:
-                    from pywhispercpp.model import Model
-                except ImportError:
-                    # Fallback for flat layout (or older versions)
-                    from pywhispercpp import Model
-                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-                self._pywhisper_model = Model(
-                    model=self.current_model,
-                    n_threads=int(num_threads),
-                    params_sampling_strategy=strategy_int,
-                    redirect_whispercpp_logs_to=None
+                self._pywhisper_model = self._create_pywhisper_model(
+                    self.current_model, int(num_threads)
                 )
 
                 # Only persist to config if successful
@@ -2100,18 +2117,8 @@ class WhisperManager:
                 self._cleanup_model()
 
                 # Load new model
-                # Try modern layout first
-                try:
-                    from pywhispercpp.model import Model
-                except ImportError:
-                    # Fallback for flat layout (or older versions)
-                    from pywhispercpp import Model
-                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-                self._pywhisper_model = Model(
-                    model=model_name,
-                    n_threads=self.config.get_setting('threads', 4),
-                    params_sampling_strategy=strategy_int,
-                    redirect_whispercpp_logs_to=None
+                self._pywhisper_model = self._create_pywhisper_model(
+                    model_name, self.config.get_setting('threads', 4)
                 )
 
                 # Only update state if model loading succeeded

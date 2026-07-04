@@ -9,12 +9,12 @@ on:
       pywhispercpp_commit:
         description: 'PyWhisperCPP commit (defaults to backend_installer.PYWHISPERCPP_PINNED_COMMIT)'
         required: false
-        default: 'd8f202f4435cf3e5e0bf735723eaacbe84c6853c'  # v1.4.1
+        default: '294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f'  # v1.5.0
   release:
     types: [published]
 
 env:
-  PYWHISPERCPP_COMMIT: ${{ github.event.inputs.pywhispercpp_commit || 'd8f202f4435cf3e5e0bf735723eaacbe84c6853c' }}
+  PYWHISPERCPP_COMMIT: ${{ github.event.inputs.pywhispercpp_commit || '294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f' }}
   CUDA_BUILD_VERSION: '12.6'  # one 12.x build serves all CUDA 12
 
 jobs:
