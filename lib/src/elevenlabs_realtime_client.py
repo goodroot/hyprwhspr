@@ -3,40 +3,34 @@ ElevenLabs Scribe v2 Realtime client using official SDK.
 Provides streaming speech-to-text using ElevenLabs' realtime API.
 """
 
-import sys
 import base64
 import asyncio
 import threading
 import time
 from typing import Optional
-from collections import deque
 
 try:
-    import numpy as np
-except (ImportError, ModuleNotFoundError) as e:
-    print(
-        'ERROR: python-numpy is not available in this Python environment.',
-        file=sys.stderr,
-    )
-    print(f'ImportError: {e}', file=sys.stderr)
-    sys.exit(1)
+    from .realtime_base import RealtimeAudioClientBase
+except ImportError:
+    from realtime_base import RealtimeAudioClientBase
+
+import numpy as np
 
 
-class ElevenLabsRealtimeClient:
+class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
     """Client for ElevenLabs Scribe v2 Realtime transcription using official SDK"""
 
+    LOG_TAG = '[ELEVENLABS]'
     DEFAULT_SAMPLE_RATE = 16000
 
     def __init__(self):
         """Initialize ElevenLabs realtime client"""
-        self.api_key = None
+        super().__init__()
         self.model = 'scribe_v2_realtime'
-        self.language = None
         self.input_sample_rate = self.DEFAULT_SAMPLE_RATE
         self.sample_rate = self.DEFAULT_SAMPLE_RATE
 
         # Connection state
-        self.connected = False
         self._connection = None
         self._elevenlabs = None
         self._connecting = False
@@ -52,17 +46,6 @@ class ElevenLabsRealtimeClient:
         self._transcript_generation = 0
         self._committed_segments = []
 
-        # Track whether new audio has been queued since last committed transcript.
-        # This helps avoid returning a stale mid-stream transcript on stop.
-        self._audio_activity_id = 0
-        self._last_transcript_audio_activity_id = 0
-
-        # Threading
-        self.lock = threading.Lock()
-        self._queue_cond = threading.Condition(self.lock)
-        self._sender_thread = None
-        self._sender_running = False
-
         # Auto-commit helper:
         # ElevenLabs punctuation often improves on committed transcripts.
         # VAD commit can be too "slow" for continuous dictation, so we also
@@ -75,23 +58,16 @@ class ElevenLabsRealtimeClient:
         self._auto_commit_min_interval_secs = 2.0
         self._last_audio_chunk_time = 0.0
 
-        # Reconnection
+        # Reconnection (base holds attempt counters/delays)
         self._should_stay_alive = False  # Set True after connect, False on close()
         self._reconnecting = False
         self._reconnect_lock = threading.Lock()
-        self.reconnect_attempts = 0
-        self.max_reconnect_attempts = 5
-        self.reconnect_delays = [1, 2, 4, 8, 16]  # Exponential backoff
 
-        # Buffer tracking
-        # NOTE: For ElevenLabs, this tracks UNSENT backlog in seconds (queue depth),
-        # not "total recorded since last commit". This allows arbitrarily long recordings
-        # while still capping worst-case latency/backpressure.
-        self._audio_queue = deque()
-        self.audio_buffer_seconds = 0.0
-        self.max_buffer_seconds = 5.0
-        self._last_drop_log_time = 0.0
-        self._dropped_chunks = 0
+    def _transport_ready(self) -> bool:
+        return bool(self.connected and self._connection)
+
+    def _on_audio_chunk_locked(self):
+        self._last_audio_chunk_time = time.time()
 
     def _start_sender_thread(self):
         """Start background sender thread (once)"""
@@ -200,37 +176,6 @@ class ElevenLabsRealtimeClient:
             except Exception as e:
                 # Drop chunk on send failure (backpressure is best-effort)
                 print(f'[ELEVENLABS] Failed to send queued audio: {e}', flush=True)
-
-    def set_input_sample_rate(self, sample_rate: int):
-        """Set the capture rate for incoming AudioCapture chunks."""
-        try:
-            sample_rate = int(sample_rate)
-        except (TypeError, ValueError):
-            return
-        if sample_rate > 0:
-            self.input_sample_rate = sample_rate
-
-    def _resample_for_output(self, audio_chunk: np.ndarray, signal_module=None) -> np.ndarray:
-        """Resample queued capture audio to ElevenLabs' configured output rate."""
-        if self.input_sample_rate == self.sample_rate:
-            return audio_chunk
-        if signal_module is None:
-            try:
-                from scipy import signal as signal_module
-            except Exception:
-                return audio_chunk
-        try:
-            from math import gcd
-            divisor = gcd(int(self.input_sample_rate), int(self.sample_rate))
-            resampled = signal_module.resample_poly(
-                audio_chunk,
-                up=int(self.sample_rate) // divisor,
-                down=int(self.input_sample_rate) // divisor,
-            )
-            return resampled.astype(np.float32, copy=False)
-        except Exception as e:
-            print(f'[ELEVENLABS] Failed to resample audio {self.input_sample_rate}Hz -> {self.sample_rate}Hz: {e}', flush=True)
-            return audio_chunk
 
     def _start_event_loop(self):
         """Start the asyncio event loop in a background thread"""
@@ -505,9 +450,7 @@ class ElevenLabsRealtimeClient:
 
     def _float32_to_pcm16_base64(self, audio_data: np.ndarray) -> str:
         """Convert float32 numpy array to base64-encoded PCM16"""
-        audio_clipped = np.clip(audio_data, -1.0, 1.0)
-        audio_int16 = (audio_clipped * 32767).astype(np.int16)
-        return base64.b64encode(audio_int16.tobytes()).decode('utf-8')
+        return base64.b64encode(self._float32_to_pcm16(audio_data)).decode('utf-8')
 
     def update_language(self, language: Optional[str]):
         """Update the language for transcription (applies on next connection)"""
@@ -530,51 +473,6 @@ class ElevenLabsRealtimeClient:
             self._last_drop_log_time = 0.0
             self._queue_cond.notify_all()
         self._transcript_event.clear()
-
-    def append_audio(self, audio_chunk: np.ndarray):
-        """
-        Append audio chunk to stream.
-
-        Args:
-            audio_chunk: NumPy array of native-rate audio samples (float32, mono)
-        """
-        # IMPORTANT: this is called from the sounddevice callback thread.
-        # It must be fast and non-blocking.
-        drop_msg = None
-        with self.lock:
-            if not self.connected or not self._connection:
-                return
-
-            chunk_duration = len(audio_chunk) / self.input_sample_rate
-            self._last_audio_chunk_time = time.time()
-
-            # Drop OLDEST queued chunks until the new chunk fits.
-            # This caps worst-case latency while still allowing arbitrarily long recordings.
-            while (self.audio_buffer_seconds + chunk_duration) > self.max_buffer_seconds and self._audio_queue:
-                dropped = self._audio_queue.popleft()
-                dropped_duration = len(dropped) / self.input_sample_rate
-                self.audio_buffer_seconds = max(0.0, self.audio_buffer_seconds - dropped_duration)
-                self._dropped_chunks += 1
-
-            # If we still can't fit (e.g., max_buffer_seconds too small for one chunk), drop this chunk.
-            if (self.audio_buffer_seconds + chunk_duration) > self.max_buffer_seconds:
-                self._dropped_chunks += 1
-            else:
-                self._audio_queue.append(audio_chunk)
-                self.audio_buffer_seconds += chunk_duration
-                self._audio_activity_id += 1
-                self._queue_cond.notify_all()
-
-            now = time.time()
-            if self._dropped_chunks and (now - self._last_drop_log_time) > 2.0:
-                drop_msg = (
-                    f'[ELEVENLABS] Dropping audio chunk(s) (queued>{self.max_buffer_seconds:.1f}s). '
-                    f'dropped_chunks={self._dropped_chunks}'
-                )
-                self._last_drop_log_time = now
-
-        if drop_msg:
-            print(drop_msg, flush=True)
 
     def commit_and_get_text(self, timeout: float = 30.0) -> str:
         """
@@ -765,7 +663,3 @@ class ElevenLabsRealtimeClient:
             self._loop_thread = None
 
         print('[ELEVENLABS] Connection closed', flush=True)
-
-    def set_max_buffer_seconds(self, seconds: float):
-        """Set maximum buffer size in seconds"""
-        self.max_buffer_seconds = max(1.0, seconds)
