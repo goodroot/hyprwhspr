@@ -3252,8 +3252,10 @@ def waybar_status():
 # ==================== Noctalia Commands ====================
 
 # Plugin id must match config/noctalia/plugin/plugin.toml
-NOCTALIA_PLUGIN_ID = 'goodroot/hyprwhspr'
-NOCTALIA_TEMPLATE_ID = 'hyprwhspr_mic_osd'
+NOCTALIA_PLUGIN_ID = 'goodroot/noctwhspr'
+NOCTALIA_LEGACY_PLUGIN_ID = 'goodroot/hyprwhspr'
+NOCTALIA_TEMPLATE_ID = 'noctwhspr_mic_osd'
+NOCTALIA_LEGACY_TEMPLATE_ID = 'hyprwhspr_mic_osd'
 
 
 def _noctalia_paths():
@@ -3262,9 +3264,11 @@ def _noctalia_paths():
     xdg_state = Path(os.environ.get('XDG_STATE_HOME', USER_HOME / '.local' / 'state'))
     xdg_config = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config'))
     return {
-        'plugin_dir': xdg_data / 'noctalia' / 'plugins' / 'hyprwhspr',
+        'plugin_dir': xdg_data / 'noctalia' / 'plugins' / 'noctwhspr',
+        'legacy_plugin_dir': xdg_data / 'noctalia' / 'plugins' / 'hyprwhspr',
         'settings': xdg_state / 'noctalia' / 'settings.toml',
-        'template_input': xdg_config / 'noctalia' / 'templates' / 'hyprwhspr-mic-osd.css',
+        'template_input': xdg_config / 'noctalia' / 'templates' / 'noctwhspr-mic-osd.css',
+        'legacy_template_input': xdg_config / 'noctalia' / 'templates' / 'hyprwhspr-mic-osd.css',
         'template_output': xdg_config / 'hyprwhspr' / 'theme' / 'mic-osd.css',
     }
 
@@ -3322,6 +3326,46 @@ def _noctalia_register_template(settings_path: Path, template_input: Path,
     return True
 
 
+def _noctalia_migrate_legacy_settings(settings_path: Path, dst: dict) -> bool:
+    """Rename the first hyprwhspr Noctalia integration to noctwhspr."""
+    try:
+        content = settings_path.read_text(encoding='utf-8')
+    except OSError:
+        return False
+
+    updated = content
+    replacements = {
+        NOCTALIA_LEGACY_PLUGIN_ID: NOCTALIA_PLUGIN_ID,
+        NOCTALIA_LEGACY_TEMPLATE_ID: NOCTALIA_TEMPLATE_ID,
+        str(dst['legacy_template_input']): str(dst['template_input']),
+        '$XDG_CONFIG_HOME/noctalia/templates/hyprwhspr-mic-osd.css':
+            '$XDG_CONFIG_HOME/noctalia/templates/noctwhspr-mic-osd.css',
+    }
+    for old, new in replacements.items():
+        updated = updated.replace(old, new)
+
+    if updated == content:
+        return True
+
+    backup = content
+    try:
+        settings_path.write_text(updated, encoding='utf-8')
+    except OSError:
+        return False
+
+    if shutil.which('noctalia') is not None:
+        try:
+            result = subprocess.run(
+                ['noctalia', 'config', 'validate', str(settings_path)],
+                capture_output=True, timeout=10, check=False)
+            if result.returncode != 0:
+                settings_path.write_text(backup, encoding='utf-8')
+                return False
+        except Exception:
+            pass
+    return True
+
+
 def noctalia_command(action: str):
     """Handle noctalia subcommands"""
     if action == 'install':
@@ -3361,7 +3405,11 @@ def setup_noctalia(mode: str = 'install'):
         for name in ('plugin.toml', 'widget.luau'):
             shutil.copy2(src_plugin / name, dst['plugin_dir'] / name)
         log_success(f"Plugin installed to {dst['plugin_dir']}")
+        if dst['legacy_plugin_dir'].is_dir():
+            shutil.rmtree(dst['legacy_plugin_dir'], ignore_errors=True)
+            log_success("Legacy hyprwhspr plugin directory removed")
 
+        _noctalia_msg('plugins', 'disable', NOCTALIA_LEGACY_PLUGIN_ID)
         if _noctalia_msg('plugins', 'enable', NOCTALIA_PLUGIN_ID):
             log_success(f"Plugin '{NOCTALIA_PLUGIN_ID}' enabled")
         else:
@@ -3372,8 +3420,15 @@ def setup_noctalia(mode: str = 'install'):
         dst['template_input'].parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src_template, dst['template_input'])
         log_success(f"Theme template installed to {dst['template_input']}")
+        if dst['legacy_template_input'].exists():
+            dst['legacy_template_input'].unlink()
+            log_success("Legacy hyprwhspr theme template removed")
 
         if dst['settings'].exists():
+            if _noctalia_migrate_legacy_settings(dst['settings'], dst):
+                log_success("Noctalia settings use noctwhspr identifiers")
+            else:
+                log_warning("Could not migrate old hyprwhspr Noctalia identifiers automatically")
             if _noctalia_register_template(dst['settings'], dst['template_input'],
                                            dst['template_output']):
                 log_success("Theme template registered in Noctalia settings")
@@ -3397,18 +3452,24 @@ def setup_noctalia(mode: str = 'install'):
         log_info("Removing Noctalia integration...")
 
         _noctalia_msg('plugins', 'disable', NOCTALIA_PLUGIN_ID)
+        _noctalia_msg('plugins', 'disable', NOCTALIA_LEGACY_PLUGIN_ID)
         if dst['plugin_dir'].is_dir():
             shutil.rmtree(dst['plugin_dir'], ignore_errors=True)
             log_success("Plugin removed")
+        if dst['legacy_plugin_dir'].is_dir():
+            shutil.rmtree(dst['legacy_plugin_dir'], ignore_errors=True)
+            log_success("Legacy plugin removed")
 
-        for key in ('template_input', 'template_output'):
+        for key in ('template_input', 'legacy_template_input', 'template_output'):
             if dst[key].exists():
                 dst[key].unlink()
         log_success("Theme template files removed")
 
         log_info("If present, also remove from Noctalia's settings.toml:")
         log_info(f"  - the [theme.templates.user.{NOCTALIA_TEMPLATE_ID}] section")
+        log_info(f"  - the [theme.templates.user.{NOCTALIA_LEGACY_TEMPLATE_ID}] section")
         log_info(f"  - \"{NOCTALIA_PLUGIN_ID}:status\" from the bar's widget list")
+        log_info(f"  - \"{NOCTALIA_LEGACY_PLUGIN_ID}:status\" from the bar's widget list")
         return True
 
 
@@ -3454,6 +3515,9 @@ def noctalia_status():
                 log_success("Bar widget present in a bar widget list")
             else:
                 log_warning("Bar widget not in any bar widget list (add via Noctalia Settings -> Bar)")
+                ok = False
+            if f'{NOCTALIA_LEGACY_PLUGIN_ID}:status' in content:
+                log_warning(f"Legacy widget id still present: {NOCTALIA_LEGACY_PLUGIN_ID}:status")
                 ok = False
         except OSError:
             log_warning(f"Could not read {dst['settings']}")

@@ -1014,8 +1014,10 @@ hyprwhspr noctalia install
 
 This installs two pieces:
 
-- **Bar widget** — a plugin at `~/.local/share/noctalia/plugins/hyprwhspr/` that polls the same tray script the Waybar module uses and shows service/recording state as a bar glyph. Left-click starts/stops recording, right-click restarts the service. After install, add it to your bar: Noctalia Settings → Bar → add widget (or add `"goodroot/hyprwhspr:status"` to a bar's widget list in Noctalia's `settings.toml`).
-- **Visualizer theme sync** — a Noctalia user template (`[theme.templates.user.hyprwhspr_mic_osd]` in Noctalia's `settings.toml`) that renders the live palette to `~/.config/hyprwhspr/theme/mic-osd.css`. The recording overlay picks it up automatically — including live, when you switch Noctalia themes.
+- **Bar widget** — the `noctwhspr` plugin at `~/.local/share/noctalia/plugins/noctwhspr/` polls the same tray script the Waybar module uses and shows service/recording state as a bar glyph. Left-click starts/stops recording, right-click restarts the service. After install, add it to your bar: Noctalia Settings → Bar → add widget (or add `"goodroot/noctwhspr:status"` to a bar's widget list in Noctalia's `settings.toml`).
+- **Visualizer theme sync** — a Noctalia user template (`[theme.templates.user.noctwhspr_mic_osd]` in Noctalia's `settings.toml`) that renders the live palette to `~/.config/hyprwhspr/theme/mic-osd.css`. The recording overlay picks it up automatically — including live, when you switch Noctalia themes.
+
+Reinstalling migrates any earlier `goodroot/hyprwhspr` plugin ids and template names in Noctalia's settings to the `noctwhspr` names automatically.
 
 Check or remove with:
 
