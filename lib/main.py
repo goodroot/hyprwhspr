@@ -678,9 +678,10 @@ class hyprwhsprApp:
                     should_start = False
 
             # Call _start_recording() outside the lock to avoid blocking release callback
+            # NOTE: auto-stop-on-silence is armed on RELEASE (tap-confirm path), not here, so a
+            # >=400ms hold stays pure push-to-talk and is never cut off mid-hold.
             if should_start:
                 self._start_recording(language_override=language_override)
-                self._autostop_start_silence_monitor()
         else:
             # Invalid mode, default to toggle behavior
             if self.is_recording:
@@ -727,7 +728,10 @@ class hyprwhsprApp:
                 # Tap (< 400ms): only stop if we didn't start recording on this press (toggle off)
                 if not started_this_press:
                     self._stop_recording()
-                # Otherwise, keep recording (tap started it, let it continue)
+                else:
+                    # Tap started the session and we're keeping it: arm auto-stop-on-silence now
+                    # (deferred from press so a >=400ms hold stays pure push-to-talk).
+                    self._autostop_start_silence_monitor()
 
     def _on_secondary_shortcut_triggered(self):
         """Handle secondary shortcut trigger (key press) with language override"""
