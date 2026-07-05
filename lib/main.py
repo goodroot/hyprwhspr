@@ -5,6 +5,7 @@ hyprwhspr - stt
 
 import sys
 import time
+import math
 import threading
 import os
 import socket
@@ -191,9 +192,11 @@ class hyprwhsprApp:
         self._continuous_transcription_done.set()  # no transcription in flight
         self._continuous_cancelled = False  # set on cancel to suppress in-flight injection
 
-        # Auto-stop-on-silence state (toggle/auto modes)
+        # Auto-stop-on-silence state (toggle/auto modes). The stop Event is created fresh
+        # per session (not reused) so a stale monitor generation can never signal a newer one.
         self._autostop_silence_thread = None
-        self._autostop_silence_stop = threading.Event()
+        self._autostop_silence_stop = None
+        self._autostop_lock = threading.Lock()  # guards thread/event bookkeeping across threads
 
         # Long-form recording mode state
         self._longform_state = 'IDLE'  # IDLE, RECORDING, PAUSED, PROCESSING, ERROR
@@ -744,15 +747,35 @@ class hyprwhsprApp:
     # Continuous mode: auto-paste on speech pause
     _POLL_INTERVAL = 0.1  # seconds between silence checks
 
+    def _get_float_setting(self, key, default=0.0):
+        """Coerce a config value to float; falls back to `default` if missing, invalid, or non-finite (NaN/Infinity)."""
+        value = self.config.get_setting(key, default)
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return default
+        return value if math.isfinite(value) else default
+
+    def _calibrate_noise_floor(self, stop_event):
+        """Sample the mic's noise floor over ~0.6s. Returns None if stopped/recording ended early."""
+        samples = []
+        for _ in range(6):
+            stop_event.wait(0.1)
+            if stop_event.is_set() or not self.is_recording:
+                return None
+            samples.append(self.audio_capture.rolling_avg_level)
+        noise_floor = min(samples)
+        return max(noise_floor * 2, 2e-4)
+
     def _continuous_start_silence_monitor(self):
         """Start monitoring for silence to trigger auto-paste in continuous mode"""
         self._continuous_cancelled = False
         self._continuous_stop_silence_monitor()
         self._continuous_silence_stop.clear()
 
-        silence_seconds = self.config.get_setting('continuous_silence_seconds', 2.0)
-        configured_threshold = self.config.get_setting('continuous_silence_threshold', 0)
-        samples_needed = int(silence_seconds / self._POLL_INTERVAL)
+        silence_seconds = self._get_float_setting('continuous_silence_seconds', 2.0)
+        configured_threshold = self._get_float_setting('continuous_silence_threshold', 0)
+        samples_needed = max(1, int(silence_seconds / self._POLL_INTERVAL))
 
         def monitor():
             silent_count = 0
@@ -760,17 +783,10 @@ class hyprwhsprApp:
                 # Auto-calibrate threshold from noise floor if not manually configured
                 threshold = configured_threshold
                 if threshold <= 0:
-                    # Sample level 6 times over 0.6s; use minimum to get noise floor
-                    # even if the user starts speaking immediately after pressing record
-                    samples = []
-                    for _ in range(6):
-                        self._continuous_silence_stop.wait(0.1)
-                        if self._continuous_silence_stop.is_set() or not self.is_recording:
-                            return
-                        samples.append(self.audio_capture.rolling_avg_level)
-                    noise_floor = min(samples)
-                    threshold = max(noise_floor * 2, 2e-4)
-                    print(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f} (noise floor={noise_floor:.5f})", flush=True)
+                    threshold = self._calibrate_noise_floor(self._continuous_silence_stop)
+                    if threshold is None:
+                        return
+                    print(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f}", flush=True)
 
                 while self.is_recording and not self._continuous_silence_stop.is_set():
                     raw_level = self.audio_capture.rolling_avg_level
@@ -802,67 +818,71 @@ class hyprwhsprApp:
         still composing their first sentence. The silence threshold auto-calibrates from
         the noise floor (same approach as continuous mode). No-op when silence_timeout <= 0.
         """
-        self._autostop_stop_silence_monitor()
+        silence_timeout = self._get_float_setting('silence_timeout', 0)
+        configured_threshold = self._get_float_setting('continuous_silence_threshold', 0)
 
-        silence_timeout = self.config.get_setting('silence_timeout', 0)
-        try:
-            silence_timeout = float(silence_timeout)
-        except (TypeError, ValueError):
-            silence_timeout = 0
-        if silence_timeout <= 0:
-            return  # feature disabled (default)
+        with self._autostop_lock:
+            self._autostop_teardown_locked()
+            if silence_timeout <= 0:
+                return  # feature disabled (default)
 
-        self._autostop_silence_stop.clear()
-        samples_needed = max(1, int(silence_timeout / self._POLL_INTERVAL))
-        configured_threshold = self.config.get_setting('continuous_silence_threshold', 0)
-        try:
-            configured_threshold = float(configured_threshold)
-        except (TypeError, ValueError):
-            configured_threshold = 0  # unset/null in config -> auto-calibrate
+            stop_event = threading.Event()
+            samples_needed = max(1, int(silence_timeout / self._POLL_INTERVAL))
 
-        def monitor():
-            try:
-                threshold = configured_threshold
-                if threshold <= 0:
-                    # Sample the noise floor over ~0.6s to auto-calibrate
-                    samples = []
-                    for _ in range(6):
-                        self._autostop_silence_stop.wait(0.1)
-                        if self._autostop_silence_stop.is_set() or not self.is_recording:
+            def monitor():
+                thread = threading.current_thread()
+                try:
+                    threshold = configured_threshold
+                    if threshold <= 0:
+                        threshold = self._calibrate_noise_floor(stop_event)
+                        if threshold is None:
                             return
-                        samples.append(self.audio_capture.rolling_avg_level)
-                    noise_floor = min(samples)
-                    threshold = max(noise_floor * 2, 2e-4)
 
-                armed = False          # don't count silence until speech has been heard
-                silent_count = 0
-                while self.is_recording and not self._autostop_silence_stop.is_set():
-                    level = self.audio_capture.rolling_avg_level
-                    if level >= threshold:
-                        armed = True
-                        silent_count = 0
-                    elif armed:
-                        silent_count += 1
-                        if silent_count >= samples_needed:
-                            print(f"[AUTOSTOP] {silence_timeout:.1f}s of silence - stopping recording", flush=True)
-                            self._autostop_silence_stop.set()
-                            self._stop_recording()   # plays the stop beep; transcribes + pastes
-                            return
-                    self._autostop_silence_stop.wait(self._POLL_INTERVAL)
-            except Exception as e:
-                print(f"[AUTOSTOP] Silence monitor error: {e}", flush=True)
+                    armed = False          # don't count silence until speech has been heard
+                    silent_count = 0
+                    while self.is_recording and not stop_event.is_set():
+                        level = self.audio_capture.rolling_avg_level
+                        if level >= threshold:
+                            armed = True
+                            silent_count = 0
+                        elif armed:
+                            silent_count += 1
+                            if silent_count >= samples_needed:
+                                print(f"[AUTOSTOP] {silence_timeout:.1f}s of silence - stopping recording", flush=True)
+                                stop_event.set()
+                                # Deregister ourselves before handing off to _stop_recording()
+                                # (which also tears down the monitor generically) so a
+                                # concurrent new session's monitor can't be clobbered by us.
+                                with self._autostop_lock:
+                                    if self._autostop_silence_thread is thread:
+                                        self._autostop_silence_thread = None
+                                        self._autostop_silence_stop = None
+                                self._stop_recording()   # plays the stop beep; transcribes + pastes
+                                return
+                        stop_event.wait(self._POLL_INTERVAL)
+                except Exception as e:
+                    print(f"[AUTOSTOP] Silence monitor error: {e}", flush=True)
 
-        self._autostop_silence_thread = threading.Thread(target=monitor, daemon=True)
-        self._autostop_silence_thread.start()
+            self._autostop_silence_thread = threading.Thread(target=monitor, daemon=True)
+            self._autostop_silence_stop = stop_event
+            self._autostop_silence_thread.start()
 
     def _autostop_stop_silence_monitor(self):
         """Stop the auto-stop silence monitor (safe to call from anywhere, incl. the monitor)."""
-        self._autostop_silence_stop.set()
+        with self._autostop_lock:
+            self._autostop_teardown_locked()
+
+    def _autostop_teardown_locked(self):
+        """Tear down the currently-registered autostop monitor. Caller must hold `_autostop_lock`."""
+        stop_event = self._autostop_silence_stop
         thread = self._autostop_silence_thread
+        if stop_event is not None:
+            stop_event.set()
         # Avoid self-join deadlock when the monitor thread is the one triggering the stop
         if thread and thread.is_alive() and threading.current_thread() is not thread:
             thread.join(timeout=0.5)
         self._autostop_silence_thread = None
+        self._autostop_silence_stop = None
 
     def _continuous_stop_and_wait(self):
         """Stop the silence monitor and wait for any in-progress transcription"""
@@ -1481,6 +1501,7 @@ class hyprwhsprApp:
     def _cleanup_recording_state(self):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
         self._notify_capture_subscriber("", final=True)
+        self._autostop_stop_silence_monitor()
 
         try:
             self._clear_mic_osd_preview_text()
