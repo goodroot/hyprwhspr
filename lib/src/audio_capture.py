@@ -650,8 +650,10 @@ class AudioCapture:
                 return None
 
             pulse_source_name = result.stdout.strip()
+            source_changed = pulse_source_name != self._last_pulse_default_source_name
             self._last_pulse_default_source_name = pulse_source_name
-            print(f"[PULSE] System default source: {pulse_source_name}")
+            if source_changed:
+                print(f"[PULSE] System default source: {pulse_source_name}")
 
             try:
                 devices = sd.query_devices()
@@ -669,7 +671,8 @@ class AudioCapture:
             # Fallback: return first PulseAudio device with input channels
             for idx, device in enumerate(devices or []):
                 if device['max_input_channels'] > 0 and 'pulse' in device['name'].lower():
-                    print(f"[PULSE] Fallback to first PulseAudio device {idx}: {device['name']}")
+                    if source_changed:
+                        print(f"[PULSE] Fallback to first PulseAudio device {idx}: {device['name']}")
                     return idx
 
             return None
@@ -909,6 +912,37 @@ class AudioCapture:
         # Just call start_recording - it handles everything
         return self.start_recording(streaming_callback=streaming_callback)
 
+    def _teardown_stream_with_timeout(self, stream, context: str):
+        """Stop and close a stream with timeout protection.
+
+        PortAudio stop()/close() can block forever if the device vanished
+        mid-stream; run them in daemon threads so a stuck call is leaked
+        rather than hanging the calling thread.
+        """
+        def stop_stream():
+            try:
+                stream.stop()
+            except Exception:
+                pass
+
+        def close_stream():
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+        stop_thread = threading.Thread(target=stop_stream, daemon=True)
+        stop_thread.start()
+        stop_thread.join(timeout=1.0)
+        if stop_thread.is_alive():
+            print(f"[RECOVERY] Warning: stream.stop() timed out in {context}", flush=True)
+
+        close_thread = threading.Thread(target=close_stream, daemon=True)
+        close_thread.start()
+        close_thread.join(timeout=1.0)
+        if close_thread.is_alive():
+            print(f"[RECOVERY] Warning: stream.close() timed out in {context}", flush=True)
+
     def _record_audio(self):
         """Internal method to record audio in a separate thread"""
         try:
@@ -1021,32 +1055,7 @@ class AudioCapture:
                     
                     # Clean up outside lock with timeout protection
                     if stream is not None:
-                        # Use threading to add timeout to stream operations
-                        def stop_with_timeout():
-                            try:
-                                stream.stop()
-                            except (AttributeError, RuntimeError, Exception):
-                                pass
-                        
-                        def close_with_timeout():
-                            try:
-                                stream.close()
-                            except (AttributeError, RuntimeError, Exception):
-                                pass
-                        
-                        # Stop stream with timeout
-                        stop_thread = threading.Thread(target=stop_with_timeout, daemon=True)
-                        stop_thread.start()
-                        stop_thread.join(timeout=1.0)
-                        if stop_thread.is_alive():
-                            print("[RECOVERY] Warning: stream.stop() timed out in thread cleanup", flush=True)
-                        
-                        # Close stream with timeout
-                        close_thread = threading.Thread(target=close_with_timeout, daemon=True)
-                        close_thread.start()
-                        close_thread.join(timeout=1.0)
-                        if close_thread.is_alive():
-                            print("[RECOVERY] Warning: stream.close() timed out in thread cleanup", flush=True)
+                        self._teardown_stream_with_timeout(stream, "thread cleanup")
                     
                     # Signal cleanup is complete
                     self._cleanup_complete.set()
@@ -1067,14 +1076,11 @@ class AudioCapture:
                 traceback.print_exc()
         finally:
             # Ensure stream is cleaned up even on exception during stream creation
-            if self.stream:
-                try:
-                    self.stream.stop()
-                    self.stream.close()
-                except Exception:
-                    pass
-                with self.lock:
-                    self.stream = None
+            with self.lock:
+                stream = self.stream
+                self.stream = None
+            if stream is not None:
+                self._teardown_stream_with_timeout(stream, "final cleanup")
             # Signal cleanup is complete (even if exception occurred)
             self._cleanup_complete.set()
 
