@@ -1158,9 +1158,10 @@ class AudioCapture:
     def rolling_avg_level(self) -> float:
         """Rolling average RMS level over the last ~0.5s of audio chunks.
         More stable than current_level for silence detection."""
-        if not self._level_history:
-            return 0.0
-        return sum(self._level_history) / len(self._level_history)
+        with self.lock:
+            if not self._level_history:
+                return 0.0
+            return sum(self._level_history) / len(self._level_history)
     
     def _cleanup_stream(self):
         """Clean up the audio stream (idempotent - safe to call multiple times)"""
