@@ -107,7 +107,8 @@ class AudioDucker:
 
                     self._is_ducked = True
                     stream_count = len(self._original_volumes)
-                    print(f"[AUDIO_DUCKER] Ducked {stream_count} stream(s) by {self._reduction_percent:.0f}%", flush=True)
+                    if stream_count > 0:
+                        print(f"[AUDIO_DUCKER] Ducked {stream_count} stream(s) by {self._reduction_percent:.0f}%", flush=True)
                     return True
 
             except Exception as e:
@@ -145,7 +146,8 @@ class AudioDucker:
 
                     self._original_volumes.clear()
                     self._is_ducked = False
-                    print(f"[AUDIO_DUCKER] Restored {restored_count} stream(s) to original volume", flush=True)
+                    if restored_count > 0:
+                        print(f"[AUDIO_DUCKER] Restored {restored_count} stream(s) to original volume", flush=True)
                     return True
 
             except Exception as e:
