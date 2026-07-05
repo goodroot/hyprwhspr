@@ -752,7 +752,7 @@ class hyprwhsprApp:
         value = self.config.get_setting(key, default)
         try:
             value = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
         return value if math.isfinite(value) else default
 
@@ -848,16 +848,19 @@ class hyprwhsprApp:
                         elif armed:
                             silent_count += 1
                             if silent_count >= samples_needed:
-                                print(f"[AUTOSTOP] {silence_timeout:.1f}s of silence - stopping recording", flush=True)
                                 stop_event.set()
-                                # Deregister ourselves before handing off to _stop_recording()
-                                # (which also tears down the monitor generically) so a
-                                # concurrent new session's monitor can't be clobbered by us.
+                                # Deregister ourselves before handing off to _stop_recording().
+                                # If a newer generation already replaced us here, our session
+                                # already ended some other way - don't stop whatever is
+                                # recording now, it isn't ours.
                                 with self._autostop_lock:
-                                    if self._autostop_silence_thread is thread:
+                                    still_current = self._autostop_silence_thread is thread
+                                    if still_current:
                                         self._autostop_silence_thread = None
                                         self._autostop_silence_stop = None
-                                self._stop_recording()   # plays the stop beep; transcribes + pastes
+                                if still_current:
+                                    print(f"[AUTOSTOP] {silence_timeout:.1f}s of silence - stopping recording", flush=True)
+                                    self._stop_recording()   # plays the stop beep; transcribes + pastes
                                 return
                         stop_event.wait(self._POLL_INTERVAL)
                 except Exception as e:
@@ -873,7 +876,10 @@ class hyprwhsprApp:
             self._autostop_teardown_locked()
 
     def _autostop_teardown_locked(self):
-        """Tear down the currently-registered autostop monitor. Caller must hold `_autostop_lock`."""
+        """Tear down whatever autostop monitor is currently registered. Caller must hold `_autostop_lock`.
+
+        No generation check here (unlike the monitor's self-stop path) - accepted edge case.
+        """
         stop_event = self._autostop_silence_stop
         thread = self._autostop_silence_thread
         if stop_event is not None:
