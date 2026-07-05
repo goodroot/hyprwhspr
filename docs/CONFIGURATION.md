@@ -763,7 +763,7 @@ Quiet system volume on record:
 - `audio_ducking: true` — set true to enable audio ducking
 - `audio_ducking_percent: 50` — how much to reduce volume BY (default 50 = reduce to 50% of original; 70 = reduce to 30%)
 
-Ducking lowers the volume of each playing application stream (PulseAudio/PipeWire sink inputs), not the output device's master volume — so your speaker volume setting is never touched and desktop-shell volume OSDs (Noctalia, swayosd, GNOME) don't fire on every recording. Streams are captured at recording start; a stream that begins mid-recording (e.g. a notification sound) is not ducked.
+Ducking lowers each application stream's volume, not the device master — your speaker setting is untouched and shell volume OSDs don't fire on every recording. Streams that start mid-recording aren't ducked.
 
 ## Text processing
 
@@ -1006,27 +1006,20 @@ Waybar icon click interactions:
 
 ### Noctalia
 
-[Noctalia](https://noctalia.dev) (v5+) ships its own bar and theming engine, so hyprwhspr integrates through a Noctalia plugin and an app-theming template instead of Waybar config:
+[Noctalia](https://noctalia.dev) (v5+) ships its own bar and theming engine. `hyprwhspr setup` offers this integration when Noctalia is detected, or run it directly:
 
 ```bash
-hyprwhspr noctalia install
+hyprwhspr noctalia install   # also: status / remove
 ```
 
-This installs two pieces:
+You get:
 
-- **Bar widget** — the `noctwhspr` plugin at `~/.local/share/noctalia/plugins/noctwhspr/` polls the same tray script the Waybar module uses and shows service/recording state as a bar glyph. Left-click starts/stops recording, right-click restarts the service. After install, add it to your bar: Noctalia Settings → Bar → add widget (or add `"goodroot/noctwhspr:status"` to a bar's widget list in Noctalia's `settings.toml`).
-- **Visualizer theme sync** — a Noctalia user template (`[theme.templates.user.noctwhspr_mic_osd]` in Noctalia's `settings.toml`) that renders the live palette to `~/.config/hyprwhspr/theme/mic-osd.css`. The recording overlay picks it up automatically — including live, when you switch Noctalia themes.
+- **Bar widget** (`noctwhspr`) — service/recording state as a glyph; left-click records, right-click restarts. Add it to your bar via Noctalia Settings → Bar → add widget.
+- **Visualizer theme sync** — the recording overlay follows your live Noctalia palette, including theme switches.
 
-Reinstalling migrates any earlier `goodroot/hyprwhspr` plugin ids and template names in Noctalia's settings to the `noctwhspr` names automatically.
+Earlier `goodroot/hyprwhspr` names migrate automatically on reinstall.
 
-Check or remove with:
-
-```bash
-hyprwhspr noctalia status
-hyprwhspr noctalia remove
-```
-
-Niri users: also see [Service starts but doesn't work until restarted](#service-starts-but-doesnt-work-until-restarted) for the `NIRI_SOCKET` requirement.
+Niri users: see [Service starts but doesn't work until restarted](#service-starts-but-doesnt-work-until-restarted) for the `NIRI_SOCKET` requirement.
 
 ### Keyboard device selection
 
