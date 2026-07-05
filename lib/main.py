@@ -160,6 +160,10 @@ class hyprwhsprApp:
         # Set when model is loading in background (e.g. slow backends like cohere-transcribe)
         # Recording is blocked while True; cleared once initialize() succeeds or fails.
         self._model_initializing = False
+        # Set when background initialize() failed; record start retries init instead
+        # of recording audio that can never be transcribed
+        self._backend_init_failed = False
+        self._backend_init_lock = threading.Lock()
 
         # Recording control FIFO (for immediate push-to-talk response)
         self._recording_control_thread = None  # Background thread handle for FIFO listener
@@ -1291,6 +1295,16 @@ class hyprwhsprApp:
                 self.is_recording = False
             self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
             print("[CONTROL] Recording blocked: model is still initializing", flush=True)
+            return
+
+        # Block recording if backend init failed (e.g. deps missing at boot) and
+        # retry it, instead of recording audio that can never be transcribed
+        if self._backend_init_failed:
+            with self._recording_lock:
+                self.is_recording = False
+            self._notify_user("hyprwhspr", "Backend failed to load — retrying, try again shortly", urgency="normal")
+            print("[CONTROL] Recording blocked: backend init failed - retrying", flush=True)
+            self._start_backend_init_background()
             return
 
         # Block recording if model was deliberately unloaded to free GPU resources
@@ -2431,6 +2445,30 @@ class hyprwhsprApp:
             except OSError:
                 pass
 
+    def _start_backend_init_background(self):
+        """Initialize the transcription backend in a background thread.
+
+        Used for slow backends at startup and to retry after a failed init.
+        Guarded so concurrent callers can't spawn duplicate init threads.
+        """
+        with self._backend_init_lock:
+            if self._model_initializing:
+                return
+            self._model_initializing = True
+            self._backend_init_failed = False
+
+        def _bg_init():
+            ok = self.whisper_manager.initialize()
+            self._backend_init_failed = not ok
+            self._model_initializing = False
+            if ok:
+                print("[READY] Model ready — recording now available", flush=True)
+                self._notify_user("hyprwhspr", "Ready", urgency="low")
+            else:
+                print("[ERROR] Failed to initialize backend in background", flush=True)
+
+        threading.Thread(target=_bg_init, daemon=True, name="BackendInit").start()
+
     def _attempt_recovery_if_needed(self):
         """
         Check for recovery request from tray script and attempt recovery once per error state.
@@ -2821,17 +2859,8 @@ class hyprwhsprApp:
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
         slow_backends = {'cohere-transcribe'}
         if backend in slow_backends:
-            self._model_initializing = True
             print(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...", flush=True)
-            def _bg_init():
-                ok = self.whisper_manager.initialize()
-                self._model_initializing = False
-                if ok:
-                    print("[READY] Model ready — recording now available", flush=True)
-                    self._notify_user("hyprwhspr", "Ready", urgency="low")
-                else:
-                    print("[ERROR] Failed to initialize backend in background", flush=True)
-            threading.Thread(target=_bg_init, daemon=True, name="BackendInit").start()
+            self._start_backend_init_background()
         else:
             if not self.whisper_manager.initialize():
                 print("[ERROR] Failed to initialize Whisper.")
