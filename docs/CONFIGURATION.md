@@ -81,6 +81,22 @@ Hybrid tap/hold - automatically detects your intent:
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
+### Auto-stop on silence
+
+In **toggle** and **auto** modes, `silence_timeout` automatically stops recording (transcribe + paste) after a period of silence — press once, speak, and it finalizes itself when you go quiet:
+
+```jsonc
+{
+    "recording_mode": "toggle",
+    "silence_timeout": 2.5  // Auto-stop after 2.5s of silence. 0 (default) = disabled.
+}
+```
+
+- Default is `0` (disabled) - existing behavior is unchanged.
+- The timer **only arms after speech is detected**, so it won't fire while you're still composing your first sentence.
+- The silence threshold auto-calibrates from your mic's noise floor (shares `continuous_silence_threshold`).
+- Manual stop still works at any time; the stop beep signals the auto-stop. This is purely additive.
+
 ### Continuous mode
 
 Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. Press again to stop:
