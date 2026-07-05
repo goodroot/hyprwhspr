@@ -1,12 +1,28 @@
 """
 Theme loading for mic-osd.
 
-Reads colors from Omarchy theme files in ~/.config/omarchy/current/theme/
+Reads colors from @define-color CSS files, in priority order:
+1. ~/.config/hyprwhspr/theme/mic-osd.css — rendered by a shell's theming
+   engine (e.g. Noctalia's app-theming templates) from its live palette
+2. ~/.config/omarchy/current/theme/mic-osd.css — Omarchy theme
+3. ~/.config/omarchy/current/theme/swayosd.css — Omarchy fallback
 """
 
 import os
 import re
 from pathlib import Path
+
+try:
+    from ..src.paths import CONFIG_DIR
+except ImportError:
+    try:
+        from src.paths import CONFIG_DIR
+    except ImportError:
+        CONFIG_DIR = Path(os.environ.get('XDG_CONFIG_HOME',
+                                         Path.home() / '.config')) / 'hyprwhspr'
+
+# CSS rendered from the desktop shell's live palette (see module docstring)
+SHELL_THEME_CSS = CONFIG_DIR / 'theme' / 'mic-osd.css'
 
 
 # Default colors (fallback if theme not found)
@@ -54,18 +70,33 @@ def hex_to_rgb(hex_color: str) -> tuple:
 
 def load_theme() -> dict:
     """
-    Load theme colors from Omarchy theme file.
-    
+    Load theme colors from the first available CSS source.
+
     Looks for (in order):
-    1. ~/.config/omarchy/current/theme/mic-osd.css
-    2. ~/.config/omarchy/current/theme/swayosd.css (fallback)
-    
+    1. ~/.config/hyprwhspr/theme/mic-osd.css (shell-rendered palette)
+    2. ~/.config/omarchy/current/theme/mic-osd.css
+    3. ~/.config/omarchy/current/theme/swayosd.css (fallback)
+
     Returns:
         Dict of color name -> RGB(A) tuple
     """
     colors = DEFAULT_COLORS.copy()
     theme_dir = Path.home() / '.config' / 'omarchy' / 'current' / 'theme'
-    
+
+    # Shell-rendered theme (e.g. Noctalia app-theming template) wins, but only
+    # when it actually yields colors — an empty or unrendered file (template
+    # registered but never applied, leftover from a removed shell) must not
+    # shadow a working Omarchy theme.
+    if SHELL_THEME_CSS.exists():
+        try:
+            shell_colors = parse_css_colors(SHELL_THEME_CSS)
+        except Exception:
+            shell_colors = {}
+        if shell_colors:
+            colors.update(shell_colors)
+            return colors
+        # No parseable colors: fall through to Omarchy sources
+
     # Try mic-osd specific theme first
     mic_osd_path = theme_dir / 'mic-osd.css'
     if mic_osd_path.exists():
@@ -223,62 +254,75 @@ theme = Theme()
 
 class ThemeWatcher:
     """
-    Watches for Omarchy theme changes and reloads the theme.
-    
-    Omarchy uses `ln -nsf` to atomically swap the theme symlink, which
-    inotify/GLib.FileMonitor can't detect. Instead, we poll the symlink
-    target every second (negligible overhead, theme changes are rare).
+    Watches for theme changes and reloads the theme.
+
+    Two signals are polled every second (negligible overhead, theme changes
+    are rare):
+    - The shell-rendered CSS (SHELL_THEME_CSS) mtime — rewritten by e.g.
+      Noctalia's template engine whenever its palette changes.
+    - The Omarchy theme symlink target — Omarchy uses `ln -nsf` to atomically
+      swap it, which inotify/GLib.FileMonitor can't detect.
     """
-    
+
     def __init__(self, on_theme_changed=None):
         """
         Initialize the theme watcher.
-        
+
         Args:
             on_theme_changed: Optional callback to invoke after theme reload
         """
         self._timer_id = None
         self._last_target = None
+        self._last_css_mtime = None
         self._on_theme_changed = on_theme_changed
         self._theme_link = Path.home() / '.config' / 'omarchy' / 'current' / 'theme'
-    
-    def start(self):
-        """Start polling the theme symlink for changes."""
-        from gi.repository import GLib
-        import os
-        
-        if not self._theme_link.exists():
-            return False
-        
+
+    @staticmethod
+    def _css_mtime():
         try:
-            # Record initial target
-            self._last_target = os.readlink(self._theme_link)
-            # Poll every 1 second
-            self._timer_id = GLib.timeout_add(1000, self._check_theme)
-            return True
-        except Exception:
-            return False
-    
+            return SHELL_THEME_CSS.stat().st_mtime
+        except OSError:
+            return None
+
+    def _link_target(self):
+        try:
+            return os.readlink(self._theme_link)
+        except OSError:
+            return None
+
+    def start(self):
+        """Start polling the theme sources for changes."""
+        from gi.repository import GLib
+
+        self._last_target = self._link_target()
+        self._last_css_mtime = self._css_mtime()
+        # Poll every 1 second
+        self._timer_id = GLib.timeout_add(1000, self._check_theme)
+        return True
+
     def stop(self):
         """Stop polling."""
         from gi.repository import GLib
-        
+
         if self._timer_id:
             GLib.source_remove(self._timer_id)
             self._timer_id = None
-    
+
     def _check_theme(self):
-        """Check if theme symlink target has changed."""
-        import os
-        
-        try:
-            current_target = os.readlink(self._theme_link)
-            if current_target != self._last_target:
-                self._last_target = current_target
+        """Check if any theme source has changed."""
+        current_target = self._link_target()
+        current_mtime = self._css_mtime()
+        if (current_target != self._last_target
+                or current_mtime != self._last_css_mtime):
+            self._last_target = current_target
+            self._last_css_mtime = current_mtime
+            try:
                 self._reload_theme()
-        except Exception:
-            pass
-        
+            except Exception as e:
+                # Log instead of swallowing: a broken reload should be
+                # debuggable, and the poll timer must survive it.
+                print(f"[THEME] Reload failed: {e}", flush=True)
+
         return True  # Keep polling
     
     def _reload_theme(self):

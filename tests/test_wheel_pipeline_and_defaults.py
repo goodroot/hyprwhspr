@@ -81,6 +81,31 @@ class ConfigDefaultsTests(unittest.TestCase):
             self.assertIs(cm.get_setting("pywhispercpp_use_vad"), False)
 
 
+class ModelValidityTests(unittest.TestCase):
+    def test_hash_key_is_per_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "ggml-tiny.bin"
+            f.write_bytes(b"tiny model bytes")
+            h = backend_installer.compute_file_hash(f)
+            own = {f"model_hash_{f.name}": h}
+            with mock.patch.object(backend_installer, "get_state", side_effect=own.get):
+                self.assertTrue(backend_installer.check_model_validity(f))
+            # another model's stored hash must not validate this file
+            other = {"model_hash_ggml-base.bin": h}
+            with mock.patch.object(backend_installer, "get_state", side_effect=other.get):
+                self.assertFalse(backend_installer.check_model_validity(f))
+
+    def test_size_floor_without_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "ggml-tiny.bin"
+            f.write_bytes(b"x")
+            with mock.patch.object(backend_installer, "get_state", return_value=None):
+                self.assertFalse(backend_installer.check_model_validity(f))
+                with open(f, "wb") as fh:
+                    fh.truncate(75_000_000)  # sparse; ~tiny model size
+                self.assertTrue(backend_installer.check_model_validity(f))
+
+
 class PywhisperVadKwargsTests(unittest.TestCase):
     class _FakeModel:
         last_kwargs = None
@@ -124,7 +149,7 @@ class PywhisperVadKwargsTests(unittest.TestCase):
             vad_file = Path(tmp) / backend_installer.VAD_MODEL_FILENAME
             vad_file.write_bytes(b"x")
             with mock.patch.object(
-                backend_installer, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ):
                 wm = self._manager(use_vad=True)
                 wm._create_pywhisper_model("base", 4)
@@ -134,9 +159,9 @@ class PywhisperVadKwargsTests(unittest.TestCase):
     def test_failed_download_falls_back_without_vad(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(
-                backend_installer, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ), mock.patch.object(
-                backend_installer, "download_vad_model", return_value=False
+                whisper_manager, "download_vad_model", return_value=False
             ):
                 wm = self._manager(use_vad=True)
                 wm._create_pywhisper_model("base", 4)
@@ -148,7 +173,7 @@ class PywhisperVadKwargsTests(unittest.TestCase):
             vad_file = Path(tmp) / backend_installer.VAD_MODEL_FILENAME
             vad_file.write_bytes(b"x")
             with mock.patch.object(
-                backend_installer, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ):
                 wm = self._manager(use_vad=True)
                 wm._create_pywhisper_model("base", 4)

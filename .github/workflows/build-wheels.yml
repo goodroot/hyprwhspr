@@ -1,25 +1,64 @@
 name: Build PyWhisperCPP Wheels
 
-# CUDA wheels only; CPU comes from PyPI. Version and variant suffix are derived
-# from lib/src/backend_installer.py so the workflow never restates the contract.
+# CUDA wheels only; CPU comes from PyPI. Version, commit, and variant suffix are
+# derived from lib/src/backend_installer.py so the workflow never restates the
+# contract. Wheels publish to the rolling `wheels-v2` release the installer
+# downloads from (WHEEL_BASE_URL). Pushes to main are gated by a preflight that
+# skips the build when the pinned version's wheels are already published, so a
+# version bump ships wheels automatically and unrelated installer edits cost
+# one curl.
 
 on:
   workflow_dispatch:
     inputs:
       pywhispercpp_commit:
-        description: 'PyWhisperCPP commit (defaults to backend_installer.PYWHISPERCPP_PINNED_COMMIT)'
+        description: 'PyWhisperCPP commit (empty = backend_installer.PYWHISPERCPP_PINNED_COMMIT)'
         required: false
-        default: '294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f'  # v1.5.0
-  release:
-    types: [published]
+        default: ''
+  push:
+    branches: [main]
+    paths: ['lib/src/backend_installer.py']
+
+concurrency:
+  group: build-wheels
+  cancel-in-progress: false
 
 env:
-  PYWHISPERCPP_COMMIT: ${{ github.event.inputs.pywhispercpp_commit || '294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f' }}
   CUDA_BUILD_VERSION: '12.6'  # one 12.x build serves all CUDA 12
 
 jobs:
+  preflight:
+    name: Check wheels-v2 for pinned version
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.gate.outputs.build }}
+    steps:
+      - name: Checkout hyprwhspr
+        uses: actions/checkout@v4
+
+      - name: Skip if installer's wheels already published
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "manual run: building"
+            exit 0
+          fi
+          probe=$(PYTHONPATH=lib/src python3 -c "import backend_installer as b; print(b._get_wheel_filename('3.10', 'cuda12', True))")
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/wheels-v2/${probe}"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+          if [ "$code" = "302" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "already on wheels-v2: $probe - nothing to do"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "missing on wheels-v2 (HTTP $code): $probe - building"
+          fi
+
   build-cuda:
     name: Build CUDA wheel (Python ${{ matrix.python-version }})
+    needs: preflight
+    if: needs.preflight.outputs.build == 'true'
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -43,13 +82,16 @@ jobs:
           variant=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b._get_wheel_variant('${CUDA_BUILD_VERSION}'))")
           echo "EXPECTED_VERSION=$ver" >> "$GITHUB_ENV"
           echo "VARIANT=$variant" >> "$GITHUB_ENV"
-          echo "contract: version=$ver variant=$variant pin=$pin"
+          commit='${{ github.event.inputs.pywhispercpp_commit }}'
+          [ -n "$commit" ] || commit="$pin"
+          echo "PYWHISPERCPP_COMMIT=$commit" >> "$GITHUB_ENV"
+          echo "contract: version=$ver variant=$variant commit=$commit"
           if [ "$variant" != "cuda12" ]; then
             echo "::error::Installer maps CUDA ${CUDA_BUILD_VERSION} to '$variant', expected 'cuda12'."
             exit 1
           fi
-          if [ "${PYWHISPERCPP_COMMIT}" != "$pin" ]; then
-            echo "::warning::Building ${PYWHISPERCPP_COMMIT}, installer pins $pin (v$ver)."
+          if [ "$commit" != "$pin" ]; then
+            echo "::warning::Building $commit, installer pins $pin (v$ver)."
           fi
 
       - name: Install CUDA Toolkit ${{ env.CUDA_BUILD_VERSION }}
@@ -177,10 +219,9 @@ jobs:
           echo "OK: only CUDA libs unresolved (expected without a GPU)"
 
   publish-wheels:
-    name: Publish wheels to release
+    name: Publish wheels to wheels-v2
     needs: [build-cuda, verify-wheels]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
 
@@ -192,28 +233,27 @@ jobs:
           pattern: wheel-*
           merge-multiple: true
 
-      - name: List wheels
-        run: ls -la wheels/
-
-      - name: Generate checksums
+      - name: Upload to rolling wheels-v2 release (merged checksums)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cd wheels
-          sha256sum *.whl > SHA256SUMS.txt
+          ls -la wheels/
+          (cd wheels && sha256sum *.whl) > new-sums.txt
+          # Merge with the release's existing checksums: replace entries for
+          # files being (re)uploaded, keep every other version's entries.
+          gh release download wheels-v2 --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS.txt --output existing-sums.txt || : > existing-sums.txt
+          awk '{print $2}' new-sums.txt > new-files.txt
+          grep -vFf new-files.txt existing-sums.txt > SHA256SUMS.txt || true
+          cat new-sums.txt >> SHA256SUMS.txt
+          sort -k2 -o SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
+          gh release upload wheels-v2 wheels/*.whl SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          cp SHA256SUMS.txt wheels/
 
-      - name: Upload wheels to release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            wheels/*.whl
-            wheels/SHA256SUMS.txt
-
-      - name: Upload wheels as workflow artifact (manual trigger)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload wheels as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: all-wheels
-          path: |
-            wheels/*.whl
-            wheels/SHA256SUMS.txt
+          path: wheels/

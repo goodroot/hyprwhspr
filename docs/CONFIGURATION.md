@@ -779,6 +779,8 @@ Quiet system volume on record:
 - `audio_ducking: true` — set true to enable audio ducking
 - `audio_ducking_percent: 50` — how much to reduce volume BY (default 50 = reduce to 50% of original; 70 = reduce to 30%)
 
+Ducking lowers each application stream's volume, not the device master — your speaker setting is untouched and shell volume OSDs don't fire on every recording. Streams that start mid-recording aren't ducked.
+
 ## Text processing
 
 ### Word overrides
@@ -1017,6 +1019,23 @@ Waybar icon click interactions:
 
 - **Left-click**: Start/stop recording (auto-starts service if needed)
 - **Right-click**: Restart Hyprwhspr service
+
+### Noctalia
+
+[Noctalia](https://noctalia.dev) (v5+) ships its own bar and theming engine. `hyprwhspr setup` offers this integration when Noctalia is detected, or run it directly:
+
+```bash
+hyprwhspr noctalia install   # also: status / remove
+```
+
+You get:
+
+- **Bar widget** (`noctwhspr`) — service/recording state as a glyph; left-click records, right-click restarts. Add it to your bar via Noctalia Settings → Bar → add widget.
+- **Visualizer theme sync** — the recording overlay follows your live Noctalia palette, including theme switches.
+
+Earlier `goodroot/hyprwhspr` names migrate automatically on reinstall.
+
+Niri users: see [Service starts but doesn't work until restarted](#service-starts-but-doesnt-work-until-restarted) for the `NIRI_SOCKET` requirement.
 
 ### Keyboard device selection
 
