@@ -815,6 +815,10 @@ class hyprwhsprApp:
         self._autostop_silence_stop.clear()
         samples_needed = max(1, int(silence_timeout / self._POLL_INTERVAL))
         configured_threshold = self.config.get_setting('continuous_silence_threshold', 0)
+        try:
+            configured_threshold = float(configured_threshold)
+        except (TypeError, ValueError):
+            configured_threshold = 0  # unset/null in config -> auto-calibrate
 
         def monitor():
             try:
