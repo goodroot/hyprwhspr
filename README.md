@@ -93,7 +93,7 @@ hyprwhspr setup
 4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
 5. **Bam!** Text appears in active buffer!
 
-> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay -- on Noctalia it auto-matches your live shell theme; on GNOME/Mutter you may need to make additional changes. See [Themed visualizer](docs/CONFIGURATION.md#themed-visualizer) for details.
+> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay -- on Noctalia / Omarchy it auto-matches your live shell theme; on GNOME/Mutter you may need to make additional changes. See [Themed visualizer](docs/CONFIGURATION.md#themed-visualizer) for details.
 
 Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose).
 
