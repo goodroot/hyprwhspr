@@ -111,9 +111,9 @@ model_exists() {
     local cfg="$HOME/.config/hyprwhspr/config.json"
     [[ -f "$cfg" ]] || return 0
 
-    # Check backend first - remote backends don't require local model validation
-    local backend
-    backend=$("$SYSTEM_PYTHON" - <<'PY' "$cfg" 2>/dev/null
+    # One interpreter start reads both keys (this runs on every status poll)
+    local backend model_path
+    IFS=$'\t' read -r backend model_path < <("$SYSTEM_PYTHON" - <<'PY' "$cfg" 2>/dev/null
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -125,9 +125,9 @@ try:
         backend = "pywhispercpp"
     elif backend == "remote":
         backend = "rest-api"
-    print(backend)
+    print(f"{backend}\t{data.get('model', '')}")
 except Exception:
-    print("pywhispercpp")
+    print("pywhispercpp\t")
 PY
     )
 
@@ -162,20 +162,7 @@ PY
         return 1
     fi
 
-    # Only read model setting for pywhispercpp backends
-    local model_path
-    model_path=$("$SYSTEM_PYTHON" - <<'PY' "$cfg" 2>/dev/null
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-try:
-    data = json.loads(path.read_text())
-    print(data.get("model", ""))
-except Exception:
-    print("")
-PY
-    )
-
+    # model_path was read alongside the backend above
     [[ -n "$model_path" ]] || return 0  # use defaults; skip
     
     # If it's a short name like "base.en", resolve to pywhispercpp full path

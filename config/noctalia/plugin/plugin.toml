@@ -11,3 +11,9 @@ tags         = ["audio", "dictation"]
 [[widget]]
 id    = "status"
 entry = "widget.luau"
+
+  [[widget.setting]]
+  key     = "root"
+  type    = "string"
+  label   = "hyprwhspr install root"
+  default = "/usr/lib/hyprwhspr"

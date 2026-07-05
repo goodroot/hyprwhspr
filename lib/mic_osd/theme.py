@@ -83,13 +83,19 @@ def load_theme() -> dict:
     colors = DEFAULT_COLORS.copy()
     theme_dir = Path.home() / '.config' / 'omarchy' / 'current' / 'theme'
 
-    # Shell-rendered theme (e.g. Noctalia app-theming template) wins
+    # Shell-rendered theme (e.g. Noctalia app-theming template) wins, but only
+    # when it actually yields colors — an empty or unrendered file (template
+    # registered but never applied, leftover from a removed shell) must not
+    # shadow a working Omarchy theme.
     if SHELL_THEME_CSS.exists():
         try:
-            colors.update(parse_css_colors(SHELL_THEME_CSS))
-            return colors
+            shell_colors = parse_css_colors(SHELL_THEME_CSS)
         except Exception:
-            pass  # Fall through to Omarchy sources
+            shell_colors = {}
+        if shell_colors:
+            colors.update(shell_colors)
+            return colors
+        # No parseable colors: fall through to Omarchy sources
 
     # Try mic-osd specific theme first
     mic_osd_path = theme_dir / 'mic-osd.css'
@@ -304,16 +310,18 @@ class ThemeWatcher:
 
     def _check_theme(self):
         """Check if any theme source has changed."""
-        try:
-            current_target = self._link_target()
-            current_mtime = self._css_mtime()
-            if (current_target != self._last_target
-                    or current_mtime != self._last_css_mtime):
-                self._last_target = current_target
-                self._last_css_mtime = current_mtime
+        current_target = self._link_target()
+        current_mtime = self._css_mtime()
+        if (current_target != self._last_target
+                or current_mtime != self._last_css_mtime):
+            self._last_target = current_target
+            self._last_css_mtime = current_mtime
+            try:
                 self._reload_theme()
-        except Exception:
-            pass
+            except Exception as e:
+                # Log instead of swallowing: a broken reload should be
+                # debuggable, and the poll timer must survive it.
+                print(f"[THEME] Reload failed: {e}", flush=True)
 
         return True  # Keep polling
     

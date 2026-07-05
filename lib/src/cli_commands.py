@@ -3299,6 +3299,13 @@ def _noctalia_register_template(settings_path: Path, template_input: Path,
     except OSError:
         return False
     if marker in content:
+        # Registered — but if the section no longer references the current
+        # template filename, its input_path points somewhere stale (e.g. a
+        # partially-migrated path form). Surface it instead of masking it.
+        if template_input.name not in content:
+            log_warning(f"Noctalia template section [{marker}] exists but does not "
+                        f"reference {template_input.name} - check its input_path")
+            return False
         return True  # already registered
 
     section = (
@@ -3327,7 +3334,14 @@ def _noctalia_register_template(settings_path: Path, template_input: Path,
 
 
 def _noctalia_migrate_legacy_settings(settings_path: Path, dst: dict) -> bool:
-    """Rename the first hyprwhspr Noctalia integration to noctwhspr."""
+    """Rename legacy hyprwhspr Noctalia identifiers to noctwhspr.
+
+    Replacements are anchored: ids only match when not followed by a
+    word/dash character (so 'goodroot/hyprwhspr-extras' is untouched), and the
+    template path is migrated by its filename alone, which covers every
+    serialization Noctalia may have stored ($XDG_CONFIG_HOME token, absolute,
+    tilde) since only the filename changed in the rename.
+    """
     try:
         content = settings_path.read_text(encoding='utf-8')
     except OSError:
@@ -3335,14 +3349,12 @@ def _noctalia_migrate_legacy_settings(settings_path: Path, dst: dict) -> bool:
 
     updated = content
     replacements = {
-        NOCTALIA_LEGACY_PLUGIN_ID: NOCTALIA_PLUGIN_ID,
-        NOCTALIA_LEGACY_TEMPLATE_ID: NOCTALIA_TEMPLATE_ID,
-        str(dst['legacy_template_input']): str(dst['template_input']),
-        '$XDG_CONFIG_HOME/noctalia/templates/hyprwhspr-mic-osd.css':
-            '$XDG_CONFIG_HOME/noctalia/templates/noctwhspr-mic-osd.css',
+        re.escape(NOCTALIA_LEGACY_PLUGIN_ID) + r'(?![\w-])': NOCTALIA_PLUGIN_ID,
+        re.escape(NOCTALIA_LEGACY_TEMPLATE_ID) + r'(?![\w-])': NOCTALIA_TEMPLATE_ID,
+        re.escape(dst['legacy_template_input'].name): dst['template_input'].name,
     }
-    for old, new in replacements.items():
-        updated = updated.replace(old, new)
+    for pattern, new in replacements.items():
+        updated = re.sub(pattern, new, updated)
 
     if updated == content:
         return True
@@ -3500,8 +3512,9 @@ def noctalia_status():
     if dst['template_output'].exists():
         log_success(f"Rendered palette CSS: {dst['template_output']}")
     else:
-        log_warning("Palette CSS not rendered yet (run: noctalia msg templates-apply)")
-        ok = False
+        # Not a failure: rendering only happens once a running Noctalia
+        # applies templates, which legitimately postdates a correct install.
+        log_info("Palette CSS not rendered yet (run: noctalia msg templates-apply)")
 
     if dst['settings'].exists():
         try:

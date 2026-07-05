@@ -763,7 +763,7 @@ Quiet system volume on record:
 - `audio_ducking: true` — set true to enable audio ducking
 - `audio_ducking_percent: 50` — how much to reduce volume BY (default 50 = reduce to 50% of original; 70 = reduce to 30%)
 
-Ducking lowers the volume of each playing application stream (PulseAudio/PipeWire sink inputs), not the output device's master volume — so your speaker volume setting is never touched and desktop-shell volume OSDs (Noctalia, swayosd, GNOME) don't fire on every recording.
+Ducking lowers the volume of each playing application stream (PulseAudio/PipeWire sink inputs), not the output device's master volume — so your speaker volume setting is never touched and desktop-shell volume OSDs (Noctalia, swayosd, GNOME) don't fire on every recording. Streams are captured at recording start; a stream that begins mid-recording (e.g. a notification sound) is not ducked.
 
 ## Text processing
 

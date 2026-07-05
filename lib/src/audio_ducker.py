@@ -8,6 +8,11 @@ device, which desktop shells (Noctalia, GNOME, swayosd, ...) watch and answer
 with a volume OSD on every recording — and it also means a crash while ducked
 leaves the user's speaker volume wrong. Per-stream ducking is invisible to
 master-volume watchers and leaves the device volume untouched.
+
+Known tradeoff: streams are snapshot once at duck time, so a stream that
+STARTS during the recording (notification ping, autoplaying video) plays at
+full volume. Covering late arrivals needs a sink-input event subscription;
+until then this is the accepted cost of not touching the master volume.
 """
 
 import threading
@@ -37,12 +42,26 @@ class AudioDucker:
                               50 means reduce to 50% of original volume.
         """
         self._reduction_percent = max(0.0, min(100.0, reduction_percent))
-        self._original_volumes = {}  # sink_input index -> original volume
+        self._original_volumes = {}  # sink_input index -> (identity, original volume)
         self._lock = threading.Lock()
         self._is_ducked = False
 
         if not PULSECTL_AVAILABLE:
             print("[AUDIO_DUCKER] pulsectl not available, ducking disabled")
+
+    @staticmethod
+    def _stream_identity(sink_input) -> tuple:
+        """Best-effort identity beyond the numeric index.
+
+        Sink-input indices can be reused (PipeWire recycles object ids), so a
+        stream that ends while ducked could hand its index to an unrelated new
+        stream. Restore only when the identity still matches, never blindly by
+        index.
+        """
+        props = sink_input.proplist
+        return (props.get('application.process.id'),
+                props.get('application.name'),
+                props.get('application.process.binary'))
 
     @staticmethod
     def _is_own_stream(sink_input) -> bool:
@@ -81,7 +100,8 @@ class AudioDucker:
 
                         # Store original volume (average of channels)
                         original_vol = sum(stream.volume.values) / len(stream.volume.values)
-                        self._original_volumes[stream.index] = original_vol
+                        self._original_volumes[stream.index] = (
+                            self._stream_identity(stream), original_vol)
 
                         pulse.volume_set_all_chans(stream, original_vol * multiplier)
 
@@ -114,10 +134,14 @@ class AudioDucker:
                 with pulsectl.Pulse('hyprwhspr-ducker') as pulse:
                     restored_count = 0
                     for stream in pulse.sink_input_list():
-                        if stream.index in self._original_volumes:
-                            original_vol = self._original_volumes[stream.index]
-                            pulse.volume_set_all_chans(stream, original_vol)
-                            restored_count += 1
+                        entry = self._original_volumes.get(stream.index)
+                        if entry is None:
+                            continue
+                        identity, original_vol = entry
+                        if identity != self._stream_identity(stream):
+                            continue  # index was reused by a different stream
+                        pulse.volume_set_all_chans(stream, original_vol)
+                        restored_count += 1
 
                     self._original_volumes.clear()
                     self._is_ducked = False
