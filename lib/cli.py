@@ -85,7 +85,7 @@ def main():
     auto_parser.add_argument('--backend', choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr'],
                              help='Backend to install (default: auto-detect GPU)')
     auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
-    auto_parser.add_argument('--no-waybar', action='store_true', help='Skip waybar integration')
+    auto_parser.add_argument('--no-waybar', action='store_true', help='Skip bar integration (Waybar/Noctalia)')
     auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization')
     auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')
     auto_parser.add_argument('--hypr-bindings', action='store_true', help='Enable Hyprland compositor bindings')

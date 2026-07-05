@@ -1754,19 +1754,27 @@ def setup_command(python_path: Optional[str] = None):
                 log_warning(f"Model download failed. You can download it later with:")
                 log_warning(f"  hyprwhspr model download {faster_whisper_model}")
     
-    # Step 3: Waybar integration
+    # Step 3: Bar integration - offer whichever supported shells are detected
     print("\n" + "="*60)
-    print("Waybar Integration")
+    print("Bar Integration")
     print("="*60)
     waybar_config_path = Path.home() / '.config' / 'waybar' / 'config.jsonc'
     waybar_style_path = Path.home() / '.config' / 'waybar' / 'style.css'
     waybar_installed = waybar_config_path.exists() or waybar_style_path.exists()
-    
+    noctalia_installed = _noctalia_detected()
+
+    setup_waybar_choice = False
+    setup_noctalia_choice = False
     if waybar_installed:
         print(f"\nWaybar configuration detected at: {waybar_config_path.parent}")
         setup_waybar_choice = Confirm.ask("Configure Waybar integration?", default=True)
-    else:
-        print("\nWaybar configuration not found.")
+    if noctalia_installed:
+        print("\nNoctalia shell detected.")
+        setup_noctalia_choice = Confirm.ask(
+            "Configure Noctalia integration (bar widget + mic-OSD theme sync)?",
+            default=True)
+    if not waybar_installed and not noctalia_installed:
+        print("\nNo supported bar detected (Waybar, Noctalia).")
         setup_waybar_choice = Confirm.ask("Set up Waybar integration anyway?", default=False)
     
     # Step 3b: Recording status indicator setup
@@ -1972,6 +1980,8 @@ def setup_command(python_path: Optional[str] = None):
     elif backend_normalized == 'cohere-transcribe':
         print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
+    if noctalia_installed:
+        print(f"Noctalia integration: {'Yes' if setup_noctalia_choice else 'No'}")
     _status_label = "Recording status (notifications)" if is_mutter_session else "Mic-OSD visualization"
     if setup_mic_osd_choice and not is_mutter_session and not mic_osd_available:
         print(f"{_status_label}: Yes (enabled, but dependencies missing: {mic_osd_reason})")
@@ -2030,11 +2040,15 @@ def setup_command(python_path: Optional[str] = None):
             config.set_setting('faster_whisper_model', faster_whisper_model)
             config.save_config()
         
-        # Step 2: Waybar
+        # Step 2: Bar integration
         if setup_waybar_choice:
             setup_waybar('install')
         else:
             log_info("Skipping Waybar integration")
+        if setup_noctalia_choice:
+            setup_noctalia('install')
+        elif noctalia_installed:
+            log_info("Skipping Noctalia integration")
         
         # Step 2b: Mic-OSD
         if setup_mic_osd_choice:
@@ -2387,7 +2401,7 @@ def omarchy_command(args=None):
     This command:
     1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU) or uses specified backend
     2. Installs appropriate backend (CUDA for NVIDIA, Vulkan for others, CPU fallback)
-    3. Configures defaults (auto recording mode, Waybar integration)
+    3. Configures defaults (auto recording mode, bar integration for detected shells)
     4. Sets up and starts systemd service
     5. Validates installation
 
@@ -2397,7 +2411,7 @@ def omarchy_command(args=None):
         args: Optional argparse namespace with:
             - backend: 'nvidia', 'vulkan', 'cpu', or 'onnx-asr' (default: auto-detect)
             - model: Model name to download (default: 'base' for whisper, auto for onnx-asr)
-            - no_waybar: Skip waybar integration
+            - no_waybar: Skip bar integration (Waybar/Noctalia)
             - no_mic_osd: Disable mic-osd visualization
             - no_systemd: Skip systemd service setup
             - hypr_bindings: Enable Hyprland compositor bindings
@@ -2522,13 +2536,13 @@ def omarchy_command(args=None):
     elif backend == 'onnx-asr':
         log_info("onnx-asr model downloaded during setup")
 
-    # 7. Waybar integration (if detected and not skipped)
+    # 7. Bar integration (whichever supported shells are detected, unless skipped)
     print("\n" + "="*60)
-    print("Waybar Integration")
+    print("Bar Integration")
     print("="*60)
 
     if skip_waybar:
-        log_info("Waybar integration skipped (--no-waybar)")
+        log_info("Bar integration skipped (--no-waybar)")
     else:
         waybar_config = Path.home() / '.config' / 'waybar' / 'config.jsonc'
         if waybar_config.exists():
@@ -2536,6 +2550,11 @@ def omarchy_command(args=None):
             waybar_command('install')
         else:
             log_info("Waybar not detected - skipping")
+        if _noctalia_detected():
+            log_info("Noctalia detected - installing integration...")
+            noctalia_command('install')
+        else:
+            log_info("Noctalia not detected - skipping")
 
     # 8. Systemd service (unless skipped)
     print("\n" + "="*60)
@@ -3271,6 +3290,13 @@ def _noctalia_paths():
         'legacy_template_input': xdg_config / 'noctalia' / 'templates' / 'hyprwhspr-mic-osd.css',
         'template_output': xdg_config / 'hyprwhspr' / 'theme' / 'mic-osd.css',
     }
+
+
+def _noctalia_detected() -> bool:
+    """True when the Noctalia shell appears to be installed."""
+    if shutil.which('noctalia') is not None:
+        return True
+    return _noctalia_paths()['settings'].exists()
 
 
 def _noctalia_msg(*args) -> bool:
