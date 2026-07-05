@@ -20,12 +20,12 @@ class OnnxAsrVadRoutingTests(unittest.TestCase):
 
     def test_onnx_vad_model_is_kept_separate_from_direct_model(self):
         tree = self._parse_whisper_manager()
-        initialize = self._find_function(tree, "initialize")
-        self.assertIsNotNone(initialize)
+        init_onnx = self._find_function(tree, "_init_onnx_asr")
+        self.assertIsNotNone(init_onnx)
 
         assigns_vad_model = False
         overwrites_direct_model_with_vad = False
-        for node in ast.walk(initialize):
+        for node in ast.walk(init_onnx):
             if not isinstance(node, ast.Assign):
                 continue
             target_names = [

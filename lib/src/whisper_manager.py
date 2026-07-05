@@ -94,7 +94,7 @@ class WhisperManager:
         self._model_manually_unloaded = False
 
     def initialize(self) -> bool:
-        """Initialize the whisper manager and check dependencies"""
+        """Initialize the configured transcription backend and check dependencies"""
         try:
             self.temp_dir = self.config.get_temp_directory()
 
@@ -102,592 +102,602 @@ class WhisperManager:
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
             backend = normalize_backend(backend)  # Backward compatibility
 
-            # Configure ONNX-ASR backend (CPU or GPU-optimized)
-            if backend == 'onnx-asr':
-                try:
-                    import onnx_asr
-                except ImportError:
-                    print('ERROR: onnx-asr not installed. Run: hyprwhspr setup')
-                    print('ERROR: Select option [1] ONNX Parakeet to install')
-                    return False
-
-                # Suppress ONNX Runtime verbose error logging
-                # Errors about missing CUDA libraries are expected and will fall back to CPU
-                import logging
-                from io import StringIO
-                
-                # Set ONNX Runtime log level to suppress warnings/errors
-                os.environ['ORT_LOGGING_LEVEL'] = '4'  # 4 = FATAL (suppress ERROR/WARNING/INFO)
-                
-                # Detect GPU availability at runtime (but don't claim it if libraries aren't available)
-                use_gpu = False
-                try:
-                    import onnxruntime
-                    # Suppress ONNX Runtime Python logging
-                    logging.getLogger('onnxruntime').setLevel(logging.CRITICAL)
-                    
-                    # Check if providers are listed (but they may not actually work)
-                    available_providers = onnxruntime.get_available_providers()
-                    if 'CUDAExecutionProvider' in available_providers or 'TensorrtExecutionProvider' in available_providers:
-                        # Note: We'll let onnx-asr try to use GPU, but it will fall back to CPU
-                        # if libraries aren't available. We won't claim GPU support upfront.
-                        use_gpu = True
-                except Exception:
-                    pass
-
-                model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
-                quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
-                use_vad = self.config.get_setting('onnx_asr_use_vad', True)
-                vad_min_duration = self._get_onnx_asr_vad_min_duration()
-
-                print(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})', flush=True)
-
-                try:
-                    # Load model with optional quantization
-                    # onnx-asr automatically uses GPU providers if available
-                    # Suppress stderr during model loading to avoid CUDA library error spam
-                    # These errors are harmless - ONNX Runtime will fall back to CPU automatically
-                    with redirect_stderr(StringIO()):
-                        if quantization:
-                            self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
-                        else:
-                            self._onnx_asr_model = onnx_asr.load_model(model_name)
-
-                    self._onnx_asr_vad_model = None
-                    # Add VAD for long audio handling without putting short
-                    # dictations through an aggressive speech-boundary trimmer.
-                    if use_vad:
-                        print('[BACKEND] Loading Silero VAD for long audio support', flush=True)
-                        vad = onnx_asr.load_vad('silero')
-                        self._onnx_asr_vad_model = self._onnx_asr_model.with_vad(vad)
-
-                    vad_info = f', vad_min_duration={vad_min_duration}s' if use_vad else ''
-                    print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})', flush=True)
-
-                except Exception as e:
-                    print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return False
-
-                # onnx-asr doesn't use current_model in the same way
-                self.current_model = None
-                self.ready = True
-                return True
-
-            # Configure faster-whisper backend (CTranslate2, CUDA INT8)
-            if backend == 'faster-whisper':
-                try:
-                    from faster_whisper import WhisperModel
-                except ImportError:
-                    print('ERROR: faster-whisper not installed. Run: hyprwhspr setup and select faster-whisper', flush=True)
-                    return False
-
-                model_name = self.config.get_setting('faster_whisper_model', 'base')
-                device = self.config.get_setting('faster_whisper_device', 'auto')
-                compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
-
-                # Resolve 'auto' device
-                if device == 'auto':
-                    device = 'cpu'  # default
-                    try:
-                        import ctranslate2
-                        if ctranslate2.get_cuda_device_count() > 0:
-                            # GPU visible — verify compute libraries are actually loadable.
-                            # CTranslate2 loads libcublas lazily; a missing library won't
-                            # surface until the first encode(), so we probe upfront.
-                            # Check both: system libcublas.so.12 AND pip-installed nvidia-cublas-cu12
-                            # (CTranslate2 ≥ 4.0 searches Python package dirs for nvidia libs).
-                            cuda_libs_ok = False
-                            try:
-                                import ctypes
-                                ctypes.CDLL('libcublas.so.12')
-                                cuda_libs_ok = True
-                            except OSError:
-                                pass
-                            if not cuda_libs_ok:
-                                try:
-                                    import importlib.util
-                                    if importlib.util.find_spec('nvidia.cublas') is not None:
-                                        cuda_libs_ok = True
-                                except Exception:
-                                    pass
-                            if cuda_libs_ok:
-                                device = 'cuda'
-                                # Preload pip-installed nvidia CUDA libs with RTLD_GLOBAL so
-                                # CTranslate2 can find them at inference time.
-                                # LD_LIBRARY_PATH alone is unreliable because the dynamic linker
-                                # may cache search paths at process startup. Preloading by full
-                                # path registers the library under its SONAME in the linker table,
-                                # so any subsequent dlopen("libcublas.so.12") finds it already loaded.
-                                try:
-                                    import ctypes as _ctypes
-                                    import glob as _glob
-                                    import site as _site
-                                    _site_dirs = []
-                                    try:
-                                        _site_dirs.extend(_site.getsitepackages())
-                                    except Exception:
-                                        pass
-                                    try:
-                                        _site_dirs.append(_site.getusersitepackages())
-                                    except Exception:
-                                        pass
-                                    _preloaded = []
-                                    for _sd in _site_dirs:
-                                        for _pkg, _soname in [('cublas', 'libcublas.so.12'), ('cudnn', 'libcudnn.so.9')]:
-                                            _lib_dir = os.path.join(_sd, 'nvidia', _pkg, 'lib')
-                                            if not os.path.isdir(_lib_dir):
-                                                continue
-                                            # Also add to LD_LIBRARY_PATH as belt-and-suspenders
-                                            _ld = os.environ.get('LD_LIBRARY_PATH', '')
-                                            if _lib_dir not in _ld:
-                                                os.environ['LD_LIBRARY_PATH'] = f"{_lib_dir}:{_ld}" if _ld else _lib_dir
-                                            # Preload: try exact soname, then versioned variants
-                                            _candidates = (
-                                                [os.path.join(_lib_dir, _soname)]
-                                                + sorted(_glob.glob(os.path.join(_lib_dir, _soname + '.*')))
-                                            )
-                                            for _lib_path in _candidates:
-                                                if os.path.exists(_lib_path):
-                                                    try:
-                                                        _ctypes.CDLL(_lib_path, _ctypes.RTLD_GLOBAL)
-                                                        _preloaded.append(os.path.basename(_lib_path))
-                                                        break
-                                                    except OSError:
-                                                        continue
-                                    if _preloaded:
-                                        print(f'[BACKEND] Preloaded CUDA libs: {", ".join(_preloaded)}', flush=True)
-                                except Exception as _e:
-                                    print(f'[WARN] Could not preload CUDA libs: {_e}', flush=True)
-                            else:
-                                print('[WARN] NVIDIA GPU detected but CUDA libraries not found.', flush=True)
-                                print('[WARN] Re-run: hyprwhspr setup (select faster-whisper) to install CUDA libs.', flush=True)
-                                print('[WARN] Falling back to CPU.', flush=True)
-                    except Exception:
-                        pass
-
-                # Resolve 'auto' compute_type
-                if compute_type == 'auto':
-                    compute_type = 'int8' if device == 'cuda' else 'float32'
-
-                try:
-                    print(f'[BACKEND] Loading faster-whisper model: {model_name} (device={device}, compute_type={compute_type})', flush=True)
-                    self._faster_whisper_model = WhisperModel(model_name, device=device, compute_type=compute_type)
-                    print(f'[BACKEND] faster-whisper ready (model={model_name}, device={device}, compute_type={compute_type})', flush=True)
-                except Exception as e:
-                    print(f'ERROR: Failed to load faster-whisper model: {e}', flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return False
-
-                self.current_model = model_name
-                self.ready = True
-                self._last_use_time = time.monotonic()
-                return True
-
-            # Configure Cohere Transcribe backend (transformers, CUDA/CPU)
-            if backend == 'cohere-transcribe':
-                try:
-                    import torch
-                    from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
-                except ImportError:
-                    print('ERROR: cohere-transcribe dependencies not installed. Run: hyprwhspr setup and select cohere-transcribe', flush=True)
-                    return False
-
-                model_id = 'CohereLabs/cohere-transcribe-03-2026'
-                device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
-                dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
-
-                # Resolve device
-                if device_setting == 'auto':
-                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-                else:
-                    device = device_setting
-
-                # Resolve dtype — bfloat16 is required for GPU: float16 overflows at the
-                # -1e9 attention mask fill value (float16 max ~65504). bfloat16 shares
-                # float32's exponent range so handles it correctly at ~4-5 GB VRAM.
-                if device == 'cuda' and dtype_setting in ('float16', 'bfloat16'):
-                    torch_dtype = torch.bfloat16
-                else:
-                    torch_dtype = torch.float32
-
-                # Get HuggingFace token for gated model access
-                hf_token = None
-                try:
-                    hf_token = get_credential('huggingface') or None
-                except Exception:
-                    pass
-
-                try:
-                    import contextlib, os as _os
-                    print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
-                    # Cohere's trust_remote_code path prints large ANSI-laden blobs that
-                    # journald records as "[NNK blob data]". Redirect during from_pretrained.
-                    with open(_os.devnull, 'w') as _devnull, \
-                            contextlib.redirect_stdout(_devnull), \
-                            contextlib.redirect_stderr(_devnull):
-                        self._cohere_processor = AutoProcessor.from_pretrained(
-                            model_id, trust_remote_code=True, token=hf_token,
-                            local_files_only=True)
-                        self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                            model_id,
-                            trust_remote_code=True,
-                            dtype=torch_dtype,
-                            token=hf_token,
-                            local_files_only=True,
-                        ).to(device)
-                    self._cohere_model.eval()
-                    print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
-                except Exception as e:
-                    print(f'ERROR: Failed to load Cohere Transcribe model: {e}', flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return False
-
-                self.current_model = model_id
-                self.ready = True
-                self._last_use_time = time.monotonic()
-                return True
-
-            # Configure Realtime WebSocket backend
-            if backend == 'realtime-ws':
-                # Validate WebSocket configuration
-                provider_id = self.config.get_setting('websocket_provider')
-                model_id = self.config.get_setting('websocket_model')
-                
-                if not provider_id:
-                    print('ERROR: Realtime WebSocket backend selected but websocket_provider not configured')
-                    return False
-                
-                if not model_id:
-                    print('ERROR: Realtime WebSocket backend selected but websocket_model not configured')
-                    return False
-                
-                # Get API key from credential manager
-                api_key = get_credential(provider_id)
-                if not api_key:
-                    print(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
-                    return False
-                
-                # Select appropriate client based on provider
-                if provider_id == 'google':
-                    # Use Gemini Live API client
-                    try:
-                        from .gemini_realtime_client import GeminiRealtimeClient
-                    except ImportError:
-                        from gemini_realtime_client import GeminiRealtimeClient
-
-                    realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-                    self._realtime_client = GeminiRealtimeClient(mode=realtime_mode)
-
-                    # Get WebSocket URL
-                    websocket_url = self.config.get_setting('websocket_url')
-                    if not websocket_url:
-                        provider = get_provider(provider_id)
-                        if provider and 'websocket_endpoint' in provider:
-                            websocket_url = provider['websocket_endpoint']
-                        else:
-                            websocket_url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
-
-                    # Build instructions
-                    instructions_parts = []
-                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
-                    if whisper_prompt:
-                        instructions_parts.append(whisper_prompt)
-
-                    language = self.config.get_setting('language', None)
-                    if language:
-                        instructions_parts.append(f"Transcribe in {language} language.")
-
-                    instructions = ' '.join(instructions_parts) if instructions_parts else None
-
-                    # Set language
-                    self._realtime_client.language = language
-
-                    # Set buffer max seconds
-                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
-                    self._realtime_client.set_max_buffer_seconds(buffer_max)
-
-                    # Connect (API key goes in URL query param, handled by client)
-                    self._realtime_connect_params = {
-                        'websocket_url': websocket_url,
-                        'api_key': api_key,
-                        'model_id': model_id,
-                        'instructions': instructions,
-                    }
-                    if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                        print('ERROR: Failed to connect to Gemini Live API')
-                        try:
-                            self._realtime_client.close()
-                        except Exception:
-                            pass
-                        self._realtime_client = None
-                        return False
-
-                    def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio directly to Gemini; client resamples if needed."""
-                        try:
-                            self._realtime_client.append_audio(audio_chunk)
-                        except Exception as e:
-                            print(f'[GEMINI] Streaming error: {e}', flush=True)
-
-                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
-                    self._realtime_streaming_callback = _send_direct
-
-                elif provider_id == 'elevenlabs':
-                    # Use ElevenLabs-specific client (Scribe v2 Realtime)
-                    try:
-                        from .elevenlabs_realtime_client import ElevenLabsRealtimeClient
-                    except ImportError:
-                        from elevenlabs_realtime_client import ElevenLabsRealtimeClient
-                    
-                    self._realtime_client = ElevenLabsRealtimeClient()
-                    
-                    # Get WebSocket URL
-                    websocket_url = self.config.get_setting('websocket_url')
-                    if not websocket_url:
-                        provider = get_provider(provider_id)
-                        if provider and 'websocket_endpoint' in provider:
-                            websocket_url = provider['websocket_endpoint']
-                        else:
-                            websocket_url = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime'
-                    
-                    # Set language (used at connection time via query params)
-                    language = self.config.get_setting('language', None)
-                    self._realtime_client.language = language
-                    
-                    # Set buffer max seconds
-                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
-                    self._realtime_client.set_max_buffer_seconds(buffer_max)
-                    
-                    # Connect (ElevenLabs doesn't use instructions)
-                    self._realtime_connect_params = {
-                        'websocket_url': websocket_url,
-                        'api_key': api_key,
-                        'model_id': model_id,
-                        'instructions': None,
-                    }
-                    if not self._realtime_client.connect(websocket_url, api_key, model_id, None):
-                        print('ERROR: Failed to connect to ElevenLabs Realtime WebSocket')
-                        try:
-                            self._realtime_client.close()
-                        except Exception:
-                            pass
-                        self._realtime_client = None
-                        return False
-                    
-                    def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio directly to ElevenLabs; client resamples if needed."""
-                        try:
-                            self._realtime_client.append_audio(audio_chunk)
-                        except Exception as e:
-                            print(f'[ELEVENLABS] Streaming error: {e}', flush=True)
-                    
-                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
-                    self._realtime_streaming_callback = _send_direct
-                
-                else:
-                    # Use OpenAI-compatible client (default)
-                    try:
-                        from .realtime_client import RealtimeClient
-                    except ImportError:
-                        from realtime_client import RealtimeClient
-                    
-                    # Initialize RealtimeClient with mode
-                    realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-                    if provider_id == 'openai' and model_id == 'gpt-realtime-whisper' and realtime_mode != 'transcribe':
-                        print('ERROR: gpt-realtime-whisper is supported only with realtime_mode="transcribe"', flush=True)
-                        return False
-                    self._realtime_client = RealtimeClient(mode=realtime_mode)
-                    
-                    # Get WebSocket URL
-                    websocket_url = self.config.get_setting('websocket_url')
-                    if not websocket_url:
-                        # For custom providers, websocket_url must be explicitly set
-                        if provider_id == 'custom':
-                            print('ERROR: Custom realtime backend requires websocket_url to be configured')
-                            return False
-                        
-                        # For known providers, derive from provider registry
-                        try:
-                            websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
-                        except Exception as e:
-                            print(f'ERROR: Failed to derive WebSocket URL: {e}')
-                            return False
-                    
-                    # Build instructions from whisper_prompt and language
-                    instructions_parts = []
-                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
-                    if whisper_prompt:
-                        instructions_parts.append(whisper_prompt)
-                    
-                    language = self.config.get_setting('language', None)
-                    if language:
-                        instructions_parts.append(f"Transcribe in {language} language.")
-                    
-                    instructions = ' '.join(instructions_parts) if instructions_parts else None
-                    
-                    # Set language in realtime client (for session.update)
-                    self._realtime_client.language = language
-
-                    delay = self.config.get_setting('realtime_transcription_delay', 'low')
-                    self._realtime_client.set_transcription_delay(delay)
-                    if self._is_realtime_whisper_preview_enabled(provider_id, model_id, realtime_mode):
-                        self._realtime_client.set_partial_transcript_callback(self._realtime_partial_callback)
-                    else:
-                        self._realtime_client.set_partial_transcript_callback(None)
-                        self._clear_realtime_partial_preview()
-                    
-                    # Set buffer max seconds
-                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
-                    self._realtime_client.set_max_buffer_seconds(buffer_max)
-                    
-                    # Connect
-                    self._realtime_connect_params = {
-                        'websocket_url': websocket_url,
-                        'api_key': api_key,
-                        'model_id': model_id,
-                        'instructions': instructions,
-                    }
-                    if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                        print('ERROR: Failed to connect to Realtime WebSocket')
-                        # Clean up failed client
-                        try:
-                            self._realtime_client.close()
-                        except Exception:
-                            pass
-                        self._realtime_client = None
-                        return False
-                    
-                    def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio to realtime client; client handles resampling/queueing."""
-                        try:
-                            self._realtime_client.append_audio(audio_chunk)
-                        except Exception as e:
-                            print(f'[REALTIME] Streaming error: {e}', flush=True)
-                    
-                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
-                    self._realtime_streaming_callback = _send_direct
-                
-                print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
-                print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
-                
-                # Explicitly set to None to avoid confusion with top-level model setting
-                self.current_model = None
-                self.ready = True
-                return True
-
-            # Configure REST API backend and return early
-            if backend == 'rest-api':
-                # Attempt migration of API key if needed (backup in case config was loaded before migration)
-                self.config.migrate_api_key_to_credential_manager()
-                
-                # Validate REST configuration
-                endpoint_url = self.config.get_setting('rest_endpoint_url')
-
-                if not endpoint_url:
-                    print('ERROR: REST backend selected but rest_endpoint_url not configured')
-                    return False
-
-                if not endpoint_url.startswith('https://') and not endpoint_url.startswith('http://'):
-                    print(f'WARNING: REST endpoint URL should start with https:// or http://: {endpoint_url}')
-
-                # Validate timeout is reasonable
-                timeout = self.config.get_setting('rest_timeout', 30)
-                if timeout < 1 or timeout > 300:
-                    print(f'WARNING: REST timeout should be between 1-300 seconds, got {timeout}')
-
-                print(f'[BACKEND] Using REST API: {endpoint_url}')
-                print(f'[REST] Timeout configured: {timeout}s')
-
-                # Log user-defined config objects (sanitized)
-                rest_headers = self.config.get_setting('rest_headers', {})
-                rest_body = self.config.get_setting('rest_body', {})
-                
-                # Retrieve API key: prefer credential manager, fall back to config for backward compatibility
-                api_key = None
-                provider_id = self.config.get_setting('rest_api_provider')
-                if provider_id:
-                    api_key = get_credential(provider_id)
-                    if api_key:
-                        print(f'[REST] API key configured (via credential manager, provider: {provider_id})')
-                    else:
-                        print(f'WARNING: [REST] Provider {provider_id} configured but API key not found in credential store')
-                else:
-                    # Backward compatibility: check for old rest_api_key in config
-                    api_key = self.config.get_setting('rest_api_key')
-                    if api_key:
-                        print('[REST] API key configured (via rest_api_key - deprecated, consider migrating)')
-
-                if rest_headers and isinstance(rest_headers, dict):
-                    header_count = len([k for k in rest_headers.keys() if rest_headers.get(k) is not None])
-                    if header_count > 0:
-                        print(f'[REST] Custom headers configured ({header_count} keys)')
-
-                if rest_body and isinstance(rest_body, dict):
-                    body_count = len([k for k in rest_body.keys() if rest_body.get(k) is not None])
-                    if body_count > 0:
-                        print(f'[REST] Custom body fields configured ({body_count} fields)')
-
-                language = self.config.get_setting('language', None)
-                if language:
-                    print(f'[REST] Language hint: {language}')
-
-                # Explicitly set to None to avoid confusion with top-level model setting
-                self.current_model = None
-                self.ready = True
-                return True
-
-            # Initialize local pywhispercpp backend
-            self.current_model = self.config.get_setting('model', 'base')
-            
-            # Detect GPU backend for logging
-            gpu_backend = self._detect_gpu_backend()
-
-            try:
-                # Validate model file exists before attempting to load
-                models_dir = PYWHISPERCPP_MODELS_DIR
-                model_file = models_dir / f"ggml-{self.current_model}.bin"
-                
-                if not model_file.exists():
-                    # Try English-only variant
-                    if not self.current_model.endswith('.en'):
-                        model_file = models_dir / f"ggml-{self.current_model}.en.bin"
-                
-                if not model_file.exists():
-                    print(f"[ERROR] Model file not found: {model_file}")
-                    print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
-                    return False
-
-                self._pywhisper_model = self._create_pywhisper_model(
-                    self.current_model,
-                    self.config.get_setting('threads', 4)
-                )
-
-                print(f"[BACKEND] pywhispercpp ({gpu_backend}) - model: {self.current_model}")
-                self.ready = True
-                # Record initialization time for suspend/resume detection
-                self._last_use_time = time.monotonic()
-                return True
-
-            except ImportError as e:
-                print("")
-                print("ERROR: pywhispercpp is not installed or incompatible.")
-                print(f"Import error: {e}")
-                print("Run: hyprwhspr setup to configure a backend.")
-
-                print("")
-                return False
-            except Exception as e:
-                print(f"[ERROR] pywhispercpp initialization failed: {e}")
-                import traceback
-                traceback.print_exc()
-                return False
+            init_backend = {
+                'onnx-asr': self._init_onnx_asr,
+                'faster-whisper': self._init_faster_whisper,
+                'cohere-transcribe': self._init_cohere_transcribe,
+                'realtime-ws': self._init_realtime_ws,
+                'rest-api': self._init_rest_api,
+            }.get(backend, self._init_pywhispercpp)
+            return init_backend()
 
         except Exception as e:
             print(f"ERROR: Failed to initialize Whisper manager: {e}")
+            return False
+
+    def _init_onnx_asr(self) -> bool:
+        """Configure ONNX-ASR backend (CPU or GPU-optimized)"""
+        try:
+            import onnx_asr
+        except ImportError:
+            print('ERROR: onnx-asr not installed. Run: hyprwhspr setup')
+            print('ERROR: Select option [1] ONNX Parakeet to install')
+            return False
+
+        # Suppress ONNX Runtime verbose error logging
+        # Errors about missing CUDA libraries are expected and will fall back to CPU
+        import logging
+        from io import StringIO
+
+        # Set ONNX Runtime log level to suppress warnings/errors
+        os.environ['ORT_LOGGING_LEVEL'] = '4'  # 4 = FATAL (suppress ERROR/WARNING/INFO)
+
+        # Detect GPU availability at runtime (but don't claim it if libraries aren't available)
+        use_gpu = False
+        try:
+            import onnxruntime
+            # Suppress ONNX Runtime Python logging
+            logging.getLogger('onnxruntime').setLevel(logging.CRITICAL)
+
+            # Check if providers are listed (but they may not actually work)
+            available_providers = onnxruntime.get_available_providers()
+            if 'CUDAExecutionProvider' in available_providers or 'TensorrtExecutionProvider' in available_providers:
+                # Note: We'll let onnx-asr try to use GPU, but it will fall back to CPU
+                # if libraries aren't available. We won't claim GPU support upfront.
+                use_gpu = True
+        except Exception:
+            pass
+
+        model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
+        quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
+        use_vad = self.config.get_setting('onnx_asr_use_vad', True)
+        vad_min_duration = self._get_onnx_asr_vad_min_duration()
+
+        print(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})', flush=True)
+
+        try:
+            # Load model with optional quantization
+            # onnx-asr automatically uses GPU providers if available
+            # Suppress stderr during model loading to avoid CUDA library error spam
+            # These errors are harmless - ONNX Runtime will fall back to CPU automatically
+            with redirect_stderr(StringIO()):
+                if quantization:
+                    self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
+                else:
+                    self._onnx_asr_model = onnx_asr.load_model(model_name)
+
+            self._onnx_asr_vad_model = None
+            # Add VAD for long audio handling without putting short
+            # dictations through an aggressive speech-boundary trimmer.
+            if use_vad:
+                print('[BACKEND] Loading Silero VAD for long audio support', flush=True)
+                vad = onnx_asr.load_vad('silero')
+                self._onnx_asr_vad_model = self._onnx_asr_model.with_vad(vad)
+
+            vad_info = f', vad_min_duration={vad_min_duration}s' if use_vad else ''
+            print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})', flush=True)
+
+        except Exception as e:
+            print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)
+            import traceback
+            traceback.print_exc()
+            return False
+
+        # onnx-asr doesn't use current_model in the same way
+        self.current_model = None
+        self.ready = True
+        return True
+
+    def _init_faster_whisper(self) -> bool:
+        """Configure faster-whisper backend (CTranslate2, CUDA INT8)"""
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            print('ERROR: faster-whisper not installed. Run: hyprwhspr setup and select faster-whisper', flush=True)
+            return False
+
+        model_name = self.config.get_setting('faster_whisper_model', 'base')
+        device = self.config.get_setting('faster_whisper_device', 'auto')
+        compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
+
+        # Resolve 'auto' device
+        if device == 'auto':
+            device = 'cpu'  # default
+            try:
+                import ctranslate2
+                if ctranslate2.get_cuda_device_count() > 0:
+                    # GPU visible — verify compute libraries are actually loadable.
+                    # CTranslate2 loads libcublas lazily; a missing library won't
+                    # surface until the first encode(), so we probe upfront.
+                    # Check both: system libcublas.so.12 AND pip-installed nvidia-cublas-cu12
+                    # (CTranslate2 ≥ 4.0 searches Python package dirs for nvidia libs).
+                    cuda_libs_ok = False
+                    try:
+                        import ctypes
+                        ctypes.CDLL('libcublas.so.12')
+                        cuda_libs_ok = True
+                    except OSError:
+                        pass
+                    if not cuda_libs_ok:
+                        try:
+                            import importlib.util
+                            if importlib.util.find_spec('nvidia.cublas') is not None:
+                                cuda_libs_ok = True
+                        except Exception:
+                            pass
+                    if cuda_libs_ok:
+                        device = 'cuda'
+                        # Preload pip-installed nvidia CUDA libs with RTLD_GLOBAL so
+                        # CTranslate2 can find them at inference time.
+                        # LD_LIBRARY_PATH alone is unreliable because the dynamic linker
+                        # may cache search paths at process startup. Preloading by full
+                        # path registers the library under its SONAME in the linker table,
+                        # so any subsequent dlopen("libcublas.so.12") finds it already loaded.
+                        try:
+                            import ctypes as _ctypes
+                            import glob as _glob
+                            import site as _site
+                            _site_dirs = []
+                            try:
+                                _site_dirs.extend(_site.getsitepackages())
+                            except Exception:
+                                pass
+                            try:
+                                _site_dirs.append(_site.getusersitepackages())
+                            except Exception:
+                                pass
+                            _preloaded = []
+                            for _sd in _site_dirs:
+                                for _pkg, _soname in [('cublas', 'libcublas.so.12'), ('cudnn', 'libcudnn.so.9')]:
+                                    _lib_dir = os.path.join(_sd, 'nvidia', _pkg, 'lib')
+                                    if not os.path.isdir(_lib_dir):
+                                        continue
+                                    # Also add to LD_LIBRARY_PATH as belt-and-suspenders
+                                    _ld = os.environ.get('LD_LIBRARY_PATH', '')
+                                    if _lib_dir not in _ld:
+                                        os.environ['LD_LIBRARY_PATH'] = f"{_lib_dir}:{_ld}" if _ld else _lib_dir
+                                    # Preload: try exact soname, then versioned variants
+                                    _candidates = (
+                                        [os.path.join(_lib_dir, _soname)]
+                                        + sorted(_glob.glob(os.path.join(_lib_dir, _soname + '.*')))
+                                    )
+                                    for _lib_path in _candidates:
+                                        if os.path.exists(_lib_path):
+                                            try:
+                                                _ctypes.CDLL(_lib_path, _ctypes.RTLD_GLOBAL)
+                                                _preloaded.append(os.path.basename(_lib_path))
+                                                break
+                                            except OSError:
+                                                continue
+                            if _preloaded:
+                                print(f'[BACKEND] Preloaded CUDA libs: {", ".join(_preloaded)}', flush=True)
+                        except Exception as _e:
+                            print(f'[WARN] Could not preload CUDA libs: {_e}', flush=True)
+                    else:
+                        print('[WARN] NVIDIA GPU detected but CUDA libraries not found.', flush=True)
+                        print('[WARN] Re-run: hyprwhspr setup (select faster-whisper) to install CUDA libs.', flush=True)
+                        print('[WARN] Falling back to CPU.', flush=True)
+            except Exception:
+                pass
+
+        # Resolve 'auto' compute_type
+        if compute_type == 'auto':
+            compute_type = 'int8' if device == 'cuda' else 'float32'
+
+        try:
+            print(f'[BACKEND] Loading faster-whisper model: {model_name} (device={device}, compute_type={compute_type})', flush=True)
+            self._faster_whisper_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            print(f'[BACKEND] faster-whisper ready (model={model_name}, device={device}, compute_type={compute_type})', flush=True)
+        except Exception as e:
+            print(f'ERROR: Failed to load faster-whisper model: {e}', flush=True)
+            import traceback
+            traceback.print_exc()
+            return False
+
+        self.current_model = model_name
+        self.ready = True
+        self._last_use_time = time.monotonic()
+        return True
+
+    def _init_cohere_transcribe(self) -> bool:
+        """Configure Cohere Transcribe backend (transformers, CUDA/CPU)"""
+        try:
+            import torch
+            from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+        except ImportError:
+            print('ERROR: cohere-transcribe dependencies not installed. Run: hyprwhspr setup and select cohere-transcribe', flush=True)
+            return False
+
+        model_id = 'CohereLabs/cohere-transcribe-03-2026'
+        device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
+        dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
+
+        # Resolve device
+        if device_setting == 'auto':
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        else:
+            device = device_setting
+
+        # Resolve dtype — bfloat16 is required for GPU: float16 overflows at the
+        # -1e9 attention mask fill value (float16 max ~65504). bfloat16 shares
+        # float32's exponent range so handles it correctly at ~4-5 GB VRAM.
+        if device == 'cuda' and dtype_setting in ('float16', 'bfloat16'):
+            torch_dtype = torch.bfloat16
+        else:
+            torch_dtype = torch.float32
+
+        # Get HuggingFace token for gated model access
+        hf_token = None
+        try:
+            hf_token = get_credential('huggingface') or None
+        except Exception:
+            pass
+
+        try:
+            import contextlib, os as _os
+            print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
+            # Cohere's trust_remote_code path prints large ANSI-laden blobs that
+            # journald records as "[NNK blob data]". Redirect during from_pretrained.
+            with open(_os.devnull, 'w') as _devnull, \
+                    contextlib.redirect_stdout(_devnull), \
+                    contextlib.redirect_stderr(_devnull):
+                self._cohere_processor = AutoProcessor.from_pretrained(
+                    model_id, trust_remote_code=True, token=hf_token,
+                    local_files_only=True)
+                self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
+                    dtype=torch_dtype,
+                    token=hf_token,
+                    local_files_only=True,
+                ).to(device)
+            self._cohere_model.eval()
+            print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
+        except Exception as e:
+            print(f'ERROR: Failed to load Cohere Transcribe model: {e}', flush=True)
+            import traceback
+            traceback.print_exc()
+            return False
+
+        self.current_model = model_id
+        self.ready = True
+        self._last_use_time = time.monotonic()
+        return True
+
+    def _init_realtime_ws(self) -> bool:
+        """Configure the Realtime WebSocket backend and connect the client"""
+        # Validate WebSocket configuration
+        provider_id = self.config.get_setting('websocket_provider')
+        model_id = self.config.get_setting('websocket_model')
+
+        if not provider_id:
+            print('ERROR: Realtime WebSocket backend selected but websocket_provider not configured')
+            return False
+
+        if not model_id:
+            print('ERROR: Realtime WebSocket backend selected but websocket_model not configured')
+            return False
+
+        # Get API key from credential manager
+        api_key = get_credential(provider_id)
+        if not api_key:
+            print(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
+            return False
+
+        # Select appropriate client based on provider
+        if provider_id == 'google':
+            # Use Gemini Live API client
+            try:
+                from .gemini_realtime_client import GeminiRealtimeClient
+            except ImportError:
+                from gemini_realtime_client import GeminiRealtimeClient
+
+            realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+            self._realtime_client = GeminiRealtimeClient(mode=realtime_mode)
+
+            # Get WebSocket URL
+            websocket_url = self.config.get_setting('websocket_url')
+            if not websocket_url:
+                provider = get_provider(provider_id)
+                if provider and 'websocket_endpoint' in provider:
+                    websocket_url = provider['websocket_endpoint']
+                else:
+                    websocket_url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
+
+            # Build instructions
+            instructions_parts = []
+            whisper_prompt = self.config.get_setting('whisper_prompt', None)
+            if whisper_prompt:
+                instructions_parts.append(whisper_prompt)
+
+            language = self.config.get_setting('language', None)
+            if language:
+                instructions_parts.append(f"Transcribe in {language} language.")
+
+            instructions = ' '.join(instructions_parts) if instructions_parts else None
+
+            # Set language
+            self._realtime_client.language = language
+
+            # Set buffer max seconds
+            buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+            self._realtime_client.set_max_buffer_seconds(buffer_max)
+
+            # Connect (API key goes in URL query param, handled by client)
+            self._realtime_connect_params = {
+                'websocket_url': websocket_url,
+                'api_key': api_key,
+                'model_id': model_id,
+                'instructions': instructions,
+            }
+            if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
+                print('ERROR: Failed to connect to Gemini Live API')
+                try:
+                    self._realtime_client.close()
+                except Exception:
+                    pass
+                self._realtime_client = None
+                return False
+
+            def _send_direct(audio_chunk: np.ndarray):
+                """Send audio directly to Gemini; client resamples if needed."""
+                try:
+                    self._realtime_client.append_audio(audio_chunk)
+                except Exception as e:
+                    print(f'[GEMINI] Streaming error: {e}', flush=True)
+
+            _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
+            self._realtime_streaming_callback = _send_direct
+
+        elif provider_id == 'elevenlabs':
+            # Use ElevenLabs-specific client (Scribe v2 Realtime)
+            try:
+                from .elevenlabs_realtime_client import ElevenLabsRealtimeClient
+            except ImportError:
+                from elevenlabs_realtime_client import ElevenLabsRealtimeClient
+
+            self._realtime_client = ElevenLabsRealtimeClient()
+
+            # Get WebSocket URL
+            websocket_url = self.config.get_setting('websocket_url')
+            if not websocket_url:
+                provider = get_provider(provider_id)
+                if provider and 'websocket_endpoint' in provider:
+                    websocket_url = provider['websocket_endpoint']
+                else:
+                    websocket_url = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime'
+
+            # Set language (used at connection time via query params)
+            language = self.config.get_setting('language', None)
+            self._realtime_client.language = language
+
+            # Set buffer max seconds
+            buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+            self._realtime_client.set_max_buffer_seconds(buffer_max)
+
+            # Connect (ElevenLabs doesn't use instructions)
+            self._realtime_connect_params = {
+                'websocket_url': websocket_url,
+                'api_key': api_key,
+                'model_id': model_id,
+                'instructions': None,
+            }
+            if not self._realtime_client.connect(websocket_url, api_key, model_id, None):
+                print('ERROR: Failed to connect to ElevenLabs Realtime WebSocket')
+                try:
+                    self._realtime_client.close()
+                except Exception:
+                    pass
+                self._realtime_client = None
+                return False
+
+            def _send_direct(audio_chunk: np.ndarray):
+                """Send audio directly to ElevenLabs; client resamples if needed."""
+                try:
+                    self._realtime_client.append_audio(audio_chunk)
+                except Exception as e:
+                    print(f'[ELEVENLABS] Streaming error: {e}', flush=True)
+
+            _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
+            self._realtime_streaming_callback = _send_direct
+
+        else:
+            # Use OpenAI-compatible client (default)
+            try:
+                from .realtime_client import RealtimeClient
+            except ImportError:
+                from realtime_client import RealtimeClient
+
+            # Initialize RealtimeClient with mode
+            realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+            if provider_id == 'openai' and model_id == 'gpt-realtime-whisper' and realtime_mode != 'transcribe':
+                print('ERROR: gpt-realtime-whisper is supported only with realtime_mode="transcribe"', flush=True)
+                return False
+            self._realtime_client = RealtimeClient(mode=realtime_mode)
+
+            # Get WebSocket URL
+            websocket_url = self.config.get_setting('websocket_url')
+            if not websocket_url:
+                # For custom providers, websocket_url must be explicitly set
+                if provider_id == 'custom':
+                    print('ERROR: Custom realtime backend requires websocket_url to be configured')
+                    return False
+
+                # For known providers, derive from provider registry
+                try:
+                    websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
+                except Exception as e:
+                    print(f'ERROR: Failed to derive WebSocket URL: {e}')
+                    return False
+
+            # Build instructions from whisper_prompt and language
+            instructions_parts = []
+            whisper_prompt = self.config.get_setting('whisper_prompt', None)
+            if whisper_prompt:
+                instructions_parts.append(whisper_prompt)
+
+            language = self.config.get_setting('language', None)
+            if language:
+                instructions_parts.append(f"Transcribe in {language} language.")
+
+            instructions = ' '.join(instructions_parts) if instructions_parts else None
+
+            # Set language in realtime client (for session.update)
+            self._realtime_client.language = language
+
+            delay = self.config.get_setting('realtime_transcription_delay', 'low')
+            self._realtime_client.set_transcription_delay(delay)
+            if self._is_realtime_whisper_preview_enabled(provider_id, model_id, realtime_mode):
+                self._realtime_client.set_partial_transcript_callback(self._realtime_partial_callback)
+            else:
+                self._realtime_client.set_partial_transcript_callback(None)
+                self._clear_realtime_partial_preview()
+
+            # Set buffer max seconds
+            buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
+            self._realtime_client.set_max_buffer_seconds(buffer_max)
+
+            # Connect
+            self._realtime_connect_params = {
+                'websocket_url': websocket_url,
+                'api_key': api_key,
+                'model_id': model_id,
+                'instructions': instructions,
+            }
+            if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
+                print('ERROR: Failed to connect to Realtime WebSocket')
+                # Clean up failed client
+                try:
+                    self._realtime_client.close()
+                except Exception:
+                    pass
+                self._realtime_client = None
+                return False
+
+            def _send_direct(audio_chunk: np.ndarray):
+                """Send audio to realtime client; client handles resampling/queueing."""
+                try:
+                    self._realtime_client.append_audio(audio_chunk)
+                except Exception as e:
+                    print(f'[REALTIME] Streaming error: {e}', flush=True)
+
+            _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
+            self._realtime_streaming_callback = _send_direct
+
+        print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
+        print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
+
+        # Explicitly set to None to avoid confusion with top-level model setting
+        self.current_model = None
+        self.ready = True
+        return True
+
+    def _init_rest_api(self) -> bool:
+        """Configure REST API backend"""
+        # Attempt migration of API key if needed (backup in case config was loaded before migration)
+        self.config.migrate_api_key_to_credential_manager()
+
+        # Validate REST configuration
+        endpoint_url = self.config.get_setting('rest_endpoint_url')
+
+        if not endpoint_url:
+            print('ERROR: REST backend selected but rest_endpoint_url not configured')
+            return False
+
+        if not endpoint_url.startswith('https://') and not endpoint_url.startswith('http://'):
+            print(f'WARNING: REST endpoint URL should start with https:// or http://: {endpoint_url}')
+
+        # Validate timeout is reasonable
+        timeout = self.config.get_setting('rest_timeout', 30)
+        if timeout < 1 or timeout > 300:
+            print(f'WARNING: REST timeout should be between 1-300 seconds, got {timeout}')
+
+        print(f'[BACKEND] Using REST API: {endpoint_url}')
+        print(f'[REST] Timeout configured: {timeout}s')
+
+        # Log user-defined config objects (sanitized)
+        rest_headers = self.config.get_setting('rest_headers', {})
+        rest_body = self.config.get_setting('rest_body', {})
+
+        # Retrieve API key: prefer credential manager, fall back to config for backward compatibility
+        api_key = None
+        provider_id = self.config.get_setting('rest_api_provider')
+        if provider_id:
+            api_key = get_credential(provider_id)
+            if api_key:
+                print(f'[REST] API key configured (via credential manager, provider: {provider_id})')
+            else:
+                print(f'WARNING: [REST] Provider {provider_id} configured but API key not found in credential store')
+        else:
+            # Backward compatibility: check for old rest_api_key in config
+            api_key = self.config.get_setting('rest_api_key')
+            if api_key:
+                print('[REST] API key configured (via rest_api_key - deprecated, consider migrating)')
+
+        if rest_headers and isinstance(rest_headers, dict):
+            header_count = len([k for k in rest_headers.keys() if rest_headers.get(k) is not None])
+            if header_count > 0:
+                print(f'[REST] Custom headers configured ({header_count} keys)')
+
+        if rest_body and isinstance(rest_body, dict):
+            body_count = len([k for k in rest_body.keys() if rest_body.get(k) is not None])
+            if body_count > 0:
+                print(f'[REST] Custom body fields configured ({body_count} fields)')
+
+        language = self.config.get_setting('language', None)
+        if language:
+            print(f'[REST] Language hint: {language}')
+
+        # Explicitly set to None to avoid confusion with top-level model setting
+        self.current_model = None
+        self.ready = True
+        return True
+
+    def _init_pywhispercpp(self) -> bool:
+        """Initialize local pywhispercpp backend"""
+        self.current_model = self.config.get_setting('model', 'base')
+
+        # Detect GPU backend for logging
+        gpu_backend = self._detect_gpu_backend()
+
+        try:
+            # Validate model file exists before attempting to load
+            models_dir = PYWHISPERCPP_MODELS_DIR
+            model_file = models_dir / f"ggml-{self.current_model}.bin"
+
+            if not model_file.exists():
+                # Try English-only variant
+                if not self.current_model.endswith('.en'):
+                    model_file = models_dir / f"ggml-{self.current_model}.en.bin"
+
+            if not model_file.exists():
+                print(f"[ERROR] Model file not found: {model_file}")
+                print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
+                return False
+
+            self._pywhisper_model = self._create_pywhisper_model(
+                self.current_model,
+                self.config.get_setting('threads', 4)
+            )
+
+            print(f"[BACKEND] pywhispercpp ({gpu_backend}) - model: {self.current_model}")
+            self.ready = True
+            # Record initialization time for suspend/resume detection
+            self._last_use_time = time.monotonic()
+            return True
+
+        except ImportError as e:
+            print("")
+            print("ERROR: pywhispercpp is not installed or incompatible.")
+            print(f"Import error: {e}")
+            print("Run: hyprwhspr setup to configure a backend.")
+
+            print("")
+            return False
+        except Exception as e:
+            print(f"[ERROR] pywhispercpp initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def _create_pywhisper_model(self, model_name: str, n_threads: int):
