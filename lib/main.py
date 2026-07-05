@@ -480,6 +480,8 @@ class hyprwhsprApp:
                 on_server_restart_callback=self._on_pulse_server_restarted
             )
             if self.pulse_monitor.start():
+                # Monitored bindings stay fresh via events; record start can skip its pactl poll
+                self.audio_capture.set_default_monitor_check(self.pulse_monitor.is_healthy)
                 print("[INIT] PulseAudio/PipeWire monitoring enabled")
             else:
                 print("[WARN] Failed to start PulseAudio monitoring")

@@ -76,6 +76,9 @@ class AudioCapture:
         self._keepalive_stream = None
         self._keepalive_lock = threading.Lock()  # Protects _keepalive_stream across threads
         self._last_pulse_default_source_name = None
+        # Callable reporting whether an external event monitor (PulseMonitor)
+        # keeps the default-input binding fresh; lets record start skip its poll
+        self._default_monitor_check = None
 
         # Initialize sounddevice
         self._initialize_sounddevice()
@@ -360,6 +363,22 @@ class AudioCapture:
                 print(f"[PULSE] Default input refresh skipped during recovery ({reason})", flush=True)
                 return False
             return self._refresh_default_input_unlocked(reason)
+
+    def set_default_monitor_check(self, check):
+        """Register a callable reporting whether an external event monitor keeps
+        the default-input binding fresh (e.g. PulseAudioMonitor.is_healthy)."""
+        self._default_monitor_check = check
+
+    def _default_binding_is_monitored(self) -> bool:
+        """True when the pactl poll at record start can be skipped: an event
+        monitor is alive (it refreshes the binding on every default-source
+        change) and we already hold a concrete device binding."""
+        if self.device_id is None:
+            return False
+        try:
+            return bool(self._default_monitor_check and self._default_monitor_check())
+        except Exception:
+            return False
 
     def _is_multiplexed_audio_server(self) -> bool:
         """Return True if the device is routed through PipeWire or PulseAudio.
@@ -982,7 +1001,12 @@ class AudioCapture:
             # recover_audio_capture sets recovery_in_progress before releasing
             # recovery_lock, so this either refreshes before recovery starts or
             # returns immediately instead of blocking while recovery joins us.
-            self.refresh_default_input("record_start")
+            # Skipped while the pulse event monitor is alive — it already refreshes
+            # the binding on every default-source change, so polling here would
+            # spawn a pactl subprocess per keypress for nothing. The stream-open
+            # retry loop below still re-refreshes if the binding turns out stale.
+            if not self._default_binding_is_monitored():
+                self.refresh_default_input("record_start")
             self._notify_streaming_sample_rate()
 
             # Open and start the stream, retrying on transient failures.
