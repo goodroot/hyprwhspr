@@ -1,0 +1,22 @@
+/*
+ * hyprwhspr mic-OSD colors, rendered by Noctalia's app-theming engine.
+ *
+ * Install (see docs/CONFIGURATION.md "Noctalia" section):
+ *   copy to  ~/.config/noctalia/templates/hyprwhspr-mic-osd.css
+ *   and register as a user template rendering to
+ *   ~/.config/hyprwhspr/theme/mic-osd.css
+ *
+ * Color-role mapping follows Noctalia's own builtin GTK template
+ * (warning -> tertiary, success -> secondary).
+ * background-color carries an alpha suffix (F2 ~ 0.95).
+ */
+@define-color background-color {{colors.surface.default.hex}}F2;
+@define-color border-color {{colors.primary.default.hex}};
+@define-color bar-color-left {{colors.primary.default.hex}};
+@define-color bar-color-right {{colors.secondary.default.hex}};
+@define-color recording-dot {{colors.error.default.hex}};
+@define-color text-color {{colors.on_surface.default.hex}};
+@define-color paused-dot {{colors.tertiary.default.hex}};
+@define-color processing-dot {{colors.secondary.default.hex}};
+@define-color error-dot {{colors.error.default.hex}};
+@define-color success-dot {{colors.secondary.default.hex}};

@@ -1,0 +1,13 @@
+id           = "goodroot/hyprwhspr"
+name         = "hyprwhspr"
+version      = "1.0.0"
+min_noctalia = "5.0.0"
+author       = "goodroot"
+license      = "MIT"
+icon         = "microphone"
+description  = "Dictation status for hyprwhspr: shows service/recording state, click to record, right-click to restart."
+tags         = ["audio", "dictation"]
+
+[[widget]]
+id    = "status"
+entry = "widget.luau"
