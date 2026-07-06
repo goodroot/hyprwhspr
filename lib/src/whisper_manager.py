@@ -1301,7 +1301,8 @@ class WhisperManager:
             threshold = 30.0
         return max(0.0, threshold)
 
-    def _transcribe_onnx_asr(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
+    def _transcribe_onnx_asr(self, audio_data: np.ndarray, sample_rate: int = 16000,
+                             language_override: Optional[str] = None) -> str:
         """
         Transcribe audio using onnx-asr backend (CPU-optimized).
 
@@ -1385,50 +1386,42 @@ class WhisperManager:
         vad_filter = self.config.get_setting('faster_whisper_vad_filter', True)
         task = self.config.get_setting('task', 'transcribe')
 
-        with self._model_lock:
-            current_time = time.monotonic()
-            time_since_last_use = current_time - self._last_use_time
-            if time_since_last_use > 1800 and self._last_use_time > 0:
-                print('[MODEL] Long idle detected - reinitializing faster-whisper model', flush=True)
-                if not self._reinitialize_faster_whisper():
-                    return ''
+        try:
+            transcribe_kwargs = {
+                'vad_filter': vad_filter,
+                'beam_size': self.config.get_setting('beam_size', 5),
+                'task': task,
+            }
+            if language:
+                transcribe_kwargs['language'] = language
+            if whisper_prompt:
+                transcribe_kwargs['initial_prompt'] = whisper_prompt
 
-            try:
-                transcribe_kwargs = {
-                    'vad_filter': vad_filter,
-                    'beam_size': self.config.get_setting('beam_size', 5),
-                    'task': task,
-                }
-                if language:
-                    transcribe_kwargs['language'] = language
-                if whisper_prompt:
-                    transcribe_kwargs['initial_prompt'] = whisper_prompt
-
-                segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
-                result = ' '.join(seg.text for seg in segments).strip()
-                self._last_use_time = time.monotonic()
-                return result
-            except RuntimeError as e:
-                if 'cannot be loaded' in str(e) or 'not found' in str(e):
-                    print(f'[WARN] CUDA library unavailable ({e}), falling back to CPU', flush=True)
-                    if self._reinitialize_faster_whisper(force_cpu=True):
-                        try:
-                            segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
-                            result = ' '.join(seg.text for seg in segments).strip()
-                            self._last_use_time = time.monotonic()
-                            return result
-                        except Exception as retry_e:
-                            print(f'[ERROR] faster-whisper CPU fallback failed: {retry_e}', flush=True)
-                    return ''
-                print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
-                import traceback
-                traceback.print_exc()
+            segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
+            result = ' '.join(seg.text for seg in segments).strip()
+            self._last_use_time = time.monotonic()
+            return result
+        except RuntimeError as e:
+            if 'cannot be loaded' in str(e) or 'not found' in str(e):
+                print(f'[WARN] CUDA library unavailable ({e}), falling back to CPU', flush=True)
+                if self._reinitialize_faster_whisper(force_cpu=True):
+                    try:
+                        segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
+                        result = ' '.join(seg.text for seg in segments).strip()
+                        self._last_use_time = time.monotonic()
+                        return result
+                    except Exception as retry_e:
+                        print(f'[ERROR] faster-whisper CPU fallback failed: {retry_e}', flush=True)
                 return ''
-            except Exception as e:
-                print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
-                import traceback
-                traceback.print_exc()
-                return ''
+            print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
+            import traceback
+            traceback.print_exc()
+            return ''
+        except Exception as e:
+            print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
+            import traceback
+            traceback.print_exc()
+            return ''
 
     def _reinitialize_faster_whisper(self, force_cpu: bool = False) -> bool:
         """Reinitialize faster-whisper model after suspend/resume or CUDA library failure."""
@@ -1521,37 +1514,21 @@ class WhisperManager:
 
         use_compile = self.config.get_setting('cohere_transcribe_compile', False)
 
-        with self._model_lock:
-            current_time = time.monotonic()
-            time_since_last_use = current_time - self._last_use_time
-            if time_since_last_use > 1800 and self._last_use_time > 0:
-                print('[MODEL] Long idle detected - reinitializing Cohere Transcribe model', flush=True)
-                if not self._reinitialize_cohere_transcribe():
-                    return ''
-
+        try:
+            # On the first torch.compile call, triton spawns a C compiler subprocess
+            # whose output (warnings, notes) leaks to journald. Suppress at fd level
+            # for that one call; afterwards the kernel is cached and nothing is emitted.
+            needs_suppress = use_compile and not self._cohere_compile_done
+            if needs_suppress:
+                import os as _os, warnings as _warnings
+                _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
+                _old_stderr = _os.dup(2)
+                _os.dup2(_devnull_fd, 2)
             try:
-                # On the first torch.compile call, triton spawns a C compiler subprocess
-                # whose output (warnings, notes) leaks to journald. Suppress at fd level
-                # for that one call; afterwards the kernel is cached and nothing is emitted.
-                needs_suppress = use_compile and not self._cohere_compile_done
                 if needs_suppress:
-                    import os as _os, warnings as _warnings
-                    _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
-                    _old_stderr = _os.dup(2)
-                    _os.dup2(_devnull_fd, 2)
-                try:
-                    if needs_suppress:
-                        import warnings as _warnings
-                        with _warnings.catch_warnings():
-                            _warnings.simplefilter('ignore')
-                            texts = self._cohere_model.transcribe(
-                                processor=self._cohere_processor,
-                                audio_arrays=[audio_data],
-                                sample_rates=[sample_rate],
-                                language=language,
-                                compile=use_compile,
-                            )
-                    else:
+                    import warnings as _warnings
+                    with _warnings.catch_warnings():
+                        _warnings.simplefilter('ignore')
                         texts = self._cohere_model.transcribe(
                             processor=self._cohere_processor,
                             audio_arrays=[audio_data],
@@ -1559,20 +1536,28 @@ class WhisperManager:
                             language=language,
                             compile=use_compile,
                         )
-                finally:
-                    if needs_suppress:
-                        _os.dup2(_old_stderr, 2)
-                        _os.close(_old_stderr)
-                        _os.close(_devnull_fd)
-                        self._cohere_compile_done = True
-                result = texts[0].strip() if texts else ''
-                self._last_use_time = time.monotonic()
-                return result
-            except Exception as e:
-                print(f'[ERROR] Cohere Transcribe transcription failed: {e}', flush=True)
-                import traceback
-                traceback.print_exc()
-                return ''
+                else:
+                    texts = self._cohere_model.transcribe(
+                        processor=self._cohere_processor,
+                        audio_arrays=[audio_data],
+                        sample_rates=[sample_rate],
+                        language=language,
+                        compile=use_compile,
+                    )
+            finally:
+                if needs_suppress:
+                    _os.dup2(_old_stderr, 2)
+                    _os.close(_old_stderr)
+                    _os.close(_devnull_fd)
+                    self._cohere_compile_done = True
+            result = texts[0].strip() if texts else ''
+            self._last_use_time = time.monotonic()
+            return result
+        except Exception as e:
+            print(f'[ERROR] Cohere Transcribe transcription failed: {e}', flush=True)
+            import traceback
+            traceback.print_exc()
+            return ''
 
     def _reinitialize_cohere_transcribe(self) -> bool:
         """Reinitialize Cohere Transcribe model after suspend/resume."""
@@ -1854,104 +1839,112 @@ class WhisperManager:
             traceback.print_exc()
             return ""
 
-        # Route to appropriate backend
-        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        
-        # Backward compatibility
-        if backend == 'local':
-            backend = 'pywhispercpp'
-        elif backend == 'remote':
-            backend = 'rest-api'
+        # Route to the configured backend. Remote backends (rest-api,
+        # realtime-ws) manage their own connection state and need no model lock.
+        backend = self._current_backend_name()
 
         if backend == 'rest-api':
-            # Use REST API transcription
-            # Debug: ensure we're not accidentally using pywhispercpp
-            if self._pywhisper_model is not None:
-                print(f"[WARN] REST API backend selected but pywhispercpp model is loaded - this should not happen", flush=True)
             return self._transcribe_rest(audio_data, sample_rate, language_override=language_override)
 
         if backend == 'realtime-ws':
-            # Use Realtime WebSocket transcription
-            # Note: Audio was already streamed via callback during capture
-            # This just commits and waits for the result
+            # Audio was already streamed via callback during capture;
+            # this just commits and waits for the result
             return self._transcribe_realtime(audio_data, sample_rate, language_override=language_override)
 
-        if backend == 'onnx-asr':
-            # Use ONNX-ASR transcription (CPU-optimized)
-            return self._transcribe_onnx_asr(audio_data, sample_rate)
+        transcribe_backend = {
+            'onnx-asr': self._transcribe_onnx_asr,
+            'faster-whisper': self._transcribe_faster_whisper,
+            'cohere-transcribe': self._transcribe_cohere_transcribe,
+        }.get(backend, self._transcribe_pywhispercpp)
+
+        # Use model lock to prevent concurrent transcription calls and
+        # crashes from concurrent access to the loaded model
+        with self._model_lock:
+            if not self._ensure_backend_fresh_locked(backend):
+                return ""
+            return transcribe_backend(audio_data, sample_rate, language_override=language_override)
+
+    def _ensure_backend_fresh_locked(self, backend: str) -> bool:
+        """Reinitialize a long-idle local model (call under _model_lock).
+
+        If the model hasn't been used in 30+ minutes a suspend/resume likely
+        invalidated its GPU context; refresh it before transcribing. Runs
+        inside the lock so concurrent threads can't reinitialize twice.
+
+        Returns:
+            False if a needed reinitialization failed, True otherwise
+        """
+        time_since_last_use = time.monotonic() - self._last_use_time
+        if not (time_since_last_use > 1800 and self._last_use_time > 0):
+            return True
 
         if backend == 'faster-whisper':
-            return self._transcribe_faster_whisper(audio_data, sample_rate, language_override=language_override)
+            reinit = self._reinitialize_faster_whisper
+        elif backend == 'cohere-transcribe':
+            reinit = self._reinitialize_cohere_transcribe
+        elif backend == 'onnx-asr':
+            return True  # in-process ONNX session; no GPU context to refresh
+        else:
+            reinit = self._reinitialize_model
 
-        if backend == 'cohere-transcribe':
-            return self._transcribe_cohere_transcribe(audio_data, sample_rate, language_override=language_override)
+        print(f"[MODEL] Long idle detected - reinitializing {backend} model (suspend/resume likely)", flush=True)
+        if not reinit():
+            print("[MODEL] Reinitialization failed, transcription may fail", flush=True)
+            return False
+        return True
 
-        # Use model lock to prevent concurrent transcription calls
-        # This prevents crashes from concurrent access to the whisper model
-        with self._model_lock:
-            # Check if model needs reinitialization (suspend/resume detection)
-            # This check is inside the lock to prevent race conditions where
-            # multiple threads detect idle period and try to reinitialize simultaneously
-            current_time = time.monotonic()
-            time_since_last_use = current_time - self._last_use_time
+    def _transcribe_pywhispercpp(self, audio_data: np.ndarray, sample_rate: int = 16000,
+                                 language_override: Optional[str] = None) -> str:
+        """Transcribe using the local pywhispercpp model."""
+        try:
+            audio_data = self._resample_audio(audio_data, sample_rate, 16000)
 
-            # If model hasn't been used in 30+ minutes, likely suspend/resume occurred
-            # Reinitialize to refresh CUDA context before using stale model
-            if time_since_last_use > 1800 and self._last_use_time > 0:
-                print("[MODEL] Long idle period detected - reinitializing model (suspend/resume likely)", flush=True)
-                if not self._reinitialize_model():
-                    print("[MODEL] Reinitialization failed, transcription may fail", flush=True)
-                    return ""
+            # Use language_override if provided, otherwise get from config (None = auto-detect)
+            language = language_override if language_override is not None else self.config.get_setting('language', None)
 
-            try:
-                audio_data = self._resample_audio(audio_data, sample_rate, 16000)
+            # pywhispercpp doesn't auto-detect language when no language kwarg is passed —
+            # it keeps whisper.cpp's compiled-in default of "en". Call auto_detect_language()
+            # explicitly so a null config value behaves as documented.
+            if not language:
+                try:
+                    (detected, prob), _ = self._pywhisper_model.auto_detect_language(audio_data)
+                    language = detected
+                    print(f'[LANG] auto-detected: {detected} (p={prob:.2f})', flush=True)
+                except Exception as e:
+                    print(f'[WARN] language auto-detect failed: {e}; falling back to en', flush=True)
+                    language = 'en'
 
-                # Use language_override if provided, otherwise get from config (None = auto-detect)
-                language = language_override if language_override is not None else self.config.get_setting('language', None)
+            whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
 
-                # pywhispercpp doesn't auto-detect language when no language kwarg is passed —
-                # it keeps whisper.cpp's compiled-in default of "en". Call auto_detect_language()
-                # explicitly so a null config value behaves as documented.
-                if not language:
-                    try:
-                        (detected, prob), _ = self._pywhisper_model.auto_detect_language(audio_data)
-                        language = detected
-                        print(f'[LANG] auto-detected: {detected} (p={prob:.2f})', flush=True)
-                    except Exception as e:
-                        print(f'[WARN] language auto-detect failed: {e}; falling back to en', flush=True)
-                        language = 'en'
+            task = self.config.get_setting('task', 'transcribe')
 
-                whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
+            # Intercept progress logs and enhance them
+            with self._intercept_progress_logs():
+                # Build transcribe kwargs with available values
+                transcribe_kwargs = {'language': language}
+                if task == 'translate':
+                    transcribe_kwargs['translate'] = True
+                if whisper_prompt:
+                    transcribe_kwargs['initial_prompt'] = whisper_prompt
+                if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search':
+                    transcribe_kwargs['beam_search'] = {
+                        'beam_size': self.config.get_setting('beam_size', 5),
+                        'patience': -1.0,
+                    }
 
-                task = self.config.get_setting('task', 'transcribe')
+                segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
 
-                # Intercept progress logs and enhance them
-                with self._intercept_progress_logs():
-                    # Build transcribe kwargs with available values
-                    transcribe_kwargs = {'language': language}
-                    if task == 'translate':
-                        transcribe_kwargs['translate'] = True
-                    if whisper_prompt:
-                        transcribe_kwargs['initial_prompt'] = whisper_prompt
-                    if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search':
-                        transcribe_kwargs['beam_search'] = {
-                            'beam_size': self.config.get_setting('beam_size', 5),
-                            'patience': -1.0,
-                        }
+            result = ' '.join(seg.text for seg in segments).strip()
 
-                    segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
+            # Update last use time on successful transcription
+            self._last_use_time = time.monotonic()
 
-                result = ' '.join(seg.text for seg in segments).strip()
-                
-                # Update last use time on successful transcription
-                self._last_use_time = time.monotonic()
-                
-                return result
-            except Exception as e:
-                print(f"[ERROR] pywhispercpp transcription failed: {e}")
-                import traceback
-                traceback.print_exc()
-                return ""
+            return result
+        except Exception as e:
+            print(f"[ERROR] pywhispercpp transcription failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return ""
 
     def _validate_model_file(self, model_name: str) -> bool:
         """Validate that model file exists and is not corrupted"""
