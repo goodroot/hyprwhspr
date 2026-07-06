@@ -1337,9 +1337,7 @@ class hyprwhsprApp:
 
             # Update language in realtime client if override is provided
             if language_override is not None:
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                    self.whisper_manager._realtime_client.update_language(language_override)
+                self.whisper_manager.update_realtime_language(language_override)
             
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
@@ -1476,11 +1474,7 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
 
-                # Close WebSocket if using realtime-ws backend
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                    print("[CLEANUP] Closing WebSocket after recording start failure", flush=True)
-                    self.whisper_manager._cleanup_realtime_client()
+                self.whisper_manager.close_realtime_connection("recording start failure")
 
                 # Stop recording (will clean up if thread started)
                 try:
@@ -1506,11 +1500,7 @@ class hyprwhsprApp:
             self._hide_mic_osd()
             self._stop_audio_level_monitoring()
 
-            # Close WebSocket if using realtime-ws backend
-            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                print("[CLEANUP] Closing WebSocket after recording start failure", flush=True)
-                self.whisper_manager._cleanup_realtime_client()
+            self.whisper_manager.close_realtime_connection("recording start failure")
 
             with self._recording_lock:
                 self.is_recording = False
@@ -1581,9 +1571,7 @@ class hyprwhsprApp:
             self.audio_capture.stop_recording()
 
             # Close WebSocket if using realtime-ws backend (no transcription needed)
-            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                self.whisper_manager._cleanup_realtime_client()
+            self.whisper_manager.close_realtime_connection("recording cancelled")
 
             self.audio_manager.play_error_sound()
         except Exception as e:
@@ -1667,11 +1655,7 @@ class hyprwhsprApp:
                 self._write_recording_status(False)
                 self._continuous_stop_silence_monitor()
 
-                # Close WebSocket if using realtime-ws backend
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                    print("[CLEANUP] Closing WebSocket after recording stop error", flush=True)
-                    self.whisper_manager._cleanup_realtime_client()
+                self.whisper_manager.close_realtime_connection("recording stop error")
             except Exception:
                 pass  # Best effort cleanup
 
@@ -2532,31 +2516,9 @@ class hyprwhsprApp:
 
             # After successful audio recovery, also reinitialize model if needed
             # This handles suspend/resume cases where CUDA context is invalid
-            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            backend = normalize_backend(backend)
-            model_reinit_success = True
-
-            pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
-            if backend in pywhispercpp_variants and hasattr(self.whisper_manager, '_pywhisper_model') and self.whisper_manager._pywhisper_model:
-                # Check if model needs reinitialization (long idle = suspend/resume)
-                current_time = time.monotonic()
-                if hasattr(self.whisper_manager, '_last_use_time'):
-                    time_since_last = current_time - self.whisper_manager._last_use_time
-                    if time_since_last > 1800 and self.whisper_manager._last_use_time > 0:
-                        print("[RECOVERY] Reinitializing model after audio recovery (suspend/resume detected)", flush=True)
-                        if not self.whisper_manager._reinitialize_model():
-                            print("[RECOVERY] Model reinitialization failed after audio recovery", flush=True)
-                            model_reinit_success = False
-            elif backend == 'faster-whisper' and hasattr(self.whisper_manager, '_faster_whisper_model') and self.whisper_manager._faster_whisper_model:
-                # Check if faster-whisper model needs reinitialization (long idle = suspend/resume)
-                current_time = time.monotonic()
-                if hasattr(self.whisper_manager, '_last_use_time'):
-                    time_since_last = current_time - self.whisper_manager._last_use_time
-                    if time_since_last > 1800 and self.whisper_manager._last_use_time > 0:
-                        print("[RECOVERY] Reinitializing faster-whisper model after audio recovery (suspend/resume detected)", flush=True)
-                        if not self.whisper_manager._reinitialize_faster_whisper():
-                            print("[RECOVERY] faster-whisper reinitialization failed after audio recovery", flush=True)
-                            model_reinit_success = False
+            model_reinit_success = self.whisper_manager.reinitialize_after_resume(only_if_idle=True)
+            if not model_reinit_success:
+                print("[RECOVERY] Model reinitialization failed after audio recovery", flush=True)
 
             # Write recovery result for tray script.
             #
@@ -2609,10 +2571,7 @@ class hyprwhsprApp:
             print("[SUSPEND] System entering suspend", flush=True)
 
             # Close WebSocket connections preemptively (avoid timeout errors)
-            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                print("[SUSPEND] Closing WebSocket before suspend", flush=True)
-                self.whisper_manager._cleanup_realtime_client()
+            self.whisper_manager.close_realtime_connection("system suspend")
         except Exception as e:
             print(f"[SUSPEND] Error handling suspend: {e}", flush=True)
 
@@ -2658,28 +2617,10 @@ class hyprwhsprApp:
             self._resync_shortcut_keyboards("post_suspend_resume")
 
             if self.audio_capture.recover_audio_capture('post_suspend_resume'):
-                # Reinitialize backend based on type
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                backend_reinit_success = True
-
-                # Backends that use pywhispercpp (model in memory, CUDA context)
-                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
-                if backend in pywhispercpp_variants:
-                    if not self.whisper_manager._reinitialize_model():
-                        print("[SUSPEND] Recovery failed - model reinitialization failed", flush=True)
-                        backend_reinit_success = False
-                elif backend == 'faster-whisper':
-                    if not self.whisper_manager._reinitialize_faster_whisper():
-                        print("[SUSPEND] Recovery failed - faster-whisper reinitialization failed", flush=True)
-                        backend_reinit_success = False
-                # WebSocket backend (persistent connection)
-                elif backend == 'realtime-ws':
-                    if not self.whisper_manager.initialize():
-                        print("[SUSPEND] Recovery failed - WebSocket reinitialization failed", flush=True)
-                        backend_reinit_success = False
-                # Stateless backends (rest-api, parakeet) - no reinitialization needed
-                # elif backend in ['rest-api', 'parakeet']:
-                #     pass  # No persistent state to reinitialize
+                # Reinitialize backend state (model / WebSocket) per backend type
+                backend_reinit_success = self.whisper_manager.reinitialize_after_resume()
+                if not backend_reinit_success:
+                    print("[SUSPEND] Recovery failed - backend reinitialization failed", flush=True)
 
                 # Write recovery result and clear background recovery flag only after ALL recovery steps complete
                 if backend_reinit_success:
@@ -2749,23 +2690,8 @@ class hyprwhsprApp:
 
             # Attempt recovery
             if self.audio_capture.recover_audio_capture(f'background_retry_{attempt}'):
-                # Reinitialize backend based on type
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                backend_reinit_success = True
-
-                # Backends that use pywhispercpp (model in memory, CUDA context)
-                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
-                if backend in pywhispercpp_variants:
-                    if not self.whisper_manager._reinitialize_model():
-                        backend_reinit_success = False
-                elif backend == 'faster-whisper':
-                    if not self.whisper_manager._reinitialize_faster_whisper():
-                        backend_reinit_success = False
-                # WebSocket backend (persistent connection)
-                elif backend == 'realtime-ws':
-                    if not self.whisper_manager.initialize():
-                        backend_reinit_success = False
-                # Stateless backends (rest-api, parakeet) - no reinitialization needed
+                # Reinitialize backend state (model / WebSocket) per backend type
+                backend_reinit_success = self.whisper_manager.reinitialize_after_resume()
 
                 # Write recovery result only after ALL recovery steps complete
                 if backend_reinit_success:

@@ -1718,6 +1718,60 @@ class WhisperManager:
             print(f'[REALTIME] Reconnect failed: {e}', flush=True)
             return False
 
+    def _current_backend_name(self) -> str:
+        """Normalized name of the configured transcription backend."""
+        return normalize_backend(
+            self.config.get_setting('transcription_backend', 'pywhispercpp'))
+
+    def update_realtime_language(self, language: Optional[str]) -> None:
+        """Apply a language override to a connected realtime client (no-op otherwise)."""
+        if self._current_backend_name() == 'realtime-ws' and self._realtime_client:
+            self._realtime_client.update_language(language)
+
+    def close_realtime_connection(self, reason: str = '') -> None:
+        """Close the realtime WebSocket if one is active (no-op otherwise)."""
+        if self._current_backend_name() == 'realtime-ws' and self._realtime_client:
+            note = f' ({reason})' if reason else ''
+            print(f'[CLEANUP] Closing realtime WebSocket{note}', flush=True)
+            self._cleanup_realtime_client()
+
+    def reinitialize_after_resume(self, only_if_idle: bool = False) -> bool:
+        """Recover backend state after suspend/resume or audio recovery.
+
+        With only_if_idle, reinitialize only when a loaded local model has been
+        unused long enough (>30 min) that a suspend likely invalidated its
+        CUDA/GPU context; otherwise reinitialize unconditionally per backend.
+
+        Returns:
+            True if the backend is healthy (or needed no action), False otherwise
+        """
+        backend = self._current_backend_name()
+        pywhispercpp_variants = ('pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan')
+
+        if only_if_idle:
+            if backend in pywhispercpp_variants:
+                loaded = self._pywhisper_model is not None
+            elif backend == 'faster-whisper':
+                loaded = self._faster_whisper_model is not None
+            else:
+                return True
+            if not loaded:
+                return True
+            idle = time.monotonic() - self._last_use_time
+            if not (idle > 1800 and self._last_use_time > 0):
+                return True
+            print(f"[RECOVERY] Reinitializing {backend} model after audio recovery (suspend/resume detected)", flush=True)
+
+        if backend in pywhispercpp_variants:
+            return self._reinitialize_model()
+        if backend == 'faster-whisper':
+            return self._reinitialize_faster_whisper()
+        if backend == 'realtime-ws':
+            return self.initialize()
+        # Stateless backends (rest-api, onnx-asr in-process without GPU context
+        # concerns) need no reinitialization
+        return True
+
     def is_ready(self) -> bool:
         """Check if whisper is ready for transcription"""
         return self.ready
