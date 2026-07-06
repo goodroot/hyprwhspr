@@ -1,20 +1,12 @@
 """
 Whisper manager for hyprwhspr
-PyWhisperCPP-only backend (in-process, model kept hot)
+Facade over the transcription backend classes in backends/ — owns shared
+state (config, ready flag, model lock, last-use time) and dispatches to the
+configured backend instance.
 """
 
-import os
-import shutil
-import sys
-import contextlib
 import threading
 import time
-import types
-import wave
-import re
-import io
-from contextlib import contextmanager, redirect_stderr
-from io import BytesIO
 from typing import Optional, Callable
 
 try:
@@ -23,26 +15,21 @@ except ImportError:
     from dependencies import require_package
 
 np = require_package('numpy')
-requests = require_package('requests')
 
 try:
     from .config_manager import ConfigManager
-    from .credential_manager import get_credential
-    from .provider_registry import get_provider
 except ImportError:
     from config_manager import ConfigManager
-    from credential_manager import get_credential
-    from provider_registry import get_provider
 
 try:
-    from .backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
+    from .backend_utils import normalize_backend
 except ImportError:
-    from backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
+    from backend_utils import normalize_backend
 
 try:
-    from .backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
+    from .backend_installer import PYWHISPERCPP_MODELS_DIR
 except ImportError:
-    from backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
+    from backend_installer import PYWHISPERCPP_MODELS_DIR
 
 try:
     from .backends import BACKENDS, PywhispercppBackend
@@ -51,7 +38,7 @@ except ImportError:
 
 
 class WhisperManager:
-    """Manages whisper transcription with dual backend support"""
+    """Facade that manages transcription through per-backend classes"""
 
     def __init__(self, config_manager: Optional[ConfigManager] = None):
         if config_manager is None:
@@ -80,8 +67,7 @@ class WhisperManager:
         # Set when model is deliberately unloaded via unload_model() to free GPU resources
         self._model_manually_unloaded = False
 
-        # Active TranscriptionBackend instance (None while the configured
-        # backend still uses the legacy in-manager code paths)
+        # Active TranscriptionBackend instance, created by initialize()
         self._backend = None
 
     def initialize(self) -> bool:
@@ -111,25 +97,6 @@ class WhisperManager:
         if self._backend is not None and self._backend.name == 'realtime-ws':
             return self._backend.get_streaming_callback()
         return None
-
-    def _resample_audio(self, audio_data: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
-        """Resample float32 mono audio when a backend requires a fixed sample rate."""
-        if source_rate == target_rate:
-            return audio_data
-        try:
-            from math import gcd
-            from scipy import signal
-
-            divisor = gcd(int(source_rate), int(target_rate))
-            resampled = signal.resample_poly(
-                audio_data,
-                up=int(target_rate) // divisor,
-                down=int(source_rate) // divisor,
-            )
-            return resampled.astype(np.float32, copy=False)
-        except Exception as e:
-            print(f"[WARN] Failed to resample audio {source_rate}Hz -> {target_rate}Hz: {e}", flush=True)
-            return audio_data
 
     def set_realtime_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         """Set callback for realtime partial transcript previews."""
@@ -408,19 +375,7 @@ class WhisperManager:
             return set_model(model_name)
 
     def get_current_model(self) -> str:
-        """Get the current model name"""
-        # For REST API backends, return empty string or None
-        if self.current_model is None:
-            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            
-            # Backward compatibility
-            if backend == 'local':
-                backend = 'pywhispercpp'
-            elif backend == 'remote':
-                backend = 'rest-api'
-            
-            if backend == 'rest-api':
-                return ''
+        """Get the current model name ('' for backends without a local model)"""
         return self.current_model or ''
 
     def get_available_models(self) -> list:
@@ -455,16 +410,14 @@ class WhisperManager:
 
     def get_backend_info(self) -> str:
         """Get information about the current backend"""
-        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        
-        # Backward compatibility
-        if backend == 'local':
-            backend = 'pywhispercpp'
-        elif backend == 'remote':
-            backend = 'rest-api'
-        
+        backend = self._current_backend_name()
+
         if backend == 'rest-api':
             endpoint_url = self.config.get_setting('rest_endpoint_url', 'not configured')
             return f"REST API ({endpoint_url})"
-        else:
+        if backend not in BACKENDS:
+            # pywhispercpp hardware variants (cpu/nvidia/vulkan)
+            backend = 'pywhispercpp'
+        if backend == 'pywhispercpp':
             return f"pywhispercpp (in-process, model: {self.current_model})"
+        return f"{backend} (model: {self.current_model})" if self.current_model else backend
