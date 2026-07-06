@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "lib" / "src"))
 sys.path.insert(0, str(ROOT / "lib"))
 sys.modules.setdefault("websocket", types.SimpleNamespace(WebSocketApp=object))
 
+from backends import RealtimeWsBackend
 from realtime_client import RealtimeClient
 from whisper_manager import WhisperManager
 import mic_osd.runner as runner_module
@@ -49,7 +50,8 @@ class RealtimePreviewIntegrationTests(unittest.TestCase):
         client.connected = True
         client.ws = FakeWebSocket()
         client.model = "gpt-realtime-whisper"
-        manager._realtime_client = client
+        manager._backend = RealtimeWsBackend(manager)
+        manager._backend._realtime_client = client
 
         with tempfile.TemporaryDirectory() as tmp:
             preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
@@ -80,7 +82,8 @@ class RealtimePreviewIntegrationTests(unittest.TestCase):
         )
         manager = WhisperManager(config_manager=config)
         client = RealtimeClient(mode="transcribe")
-        manager._realtime_client = client
+        manager._backend = RealtimeWsBackend(manager)
+        manager._backend._realtime_client = client
 
         callback = mock.Mock()
         manager.set_realtime_partial_callback(callback)
