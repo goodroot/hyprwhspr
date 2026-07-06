@@ -44,6 +44,11 @@ try:
 except ImportError:
     from backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
 
+try:
+    from .backends import BACKENDS
+except ImportError:
+    from backends import BACKENDS
+
 
 class WhisperManager:
     """Manages whisper transcription with dual backend support"""
@@ -93,15 +98,24 @@ class WhisperManager:
         # Set when model is deliberately unloaded via unload_model() to free GPU resources
         self._model_manually_unloaded = False
 
+        # Active TranscriptionBackend instance (None while the configured
+        # backend still uses the legacy in-manager code paths)
+        self._backend = None
+
     def initialize(self) -> bool:
         """Initialize the configured transcription backend and check dependencies"""
         try:
             self.temp_dir = self.config.get_temp_directory()
 
-            # Check which backend is configured
-            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            backend = normalize_backend(backend)  # Backward compatibility
+            backend = self._current_backend_name()
 
+            backend_cls = BACKENDS.get(backend)
+            if backend_cls is not None:
+                self._backend = backend_cls(self)
+                return self._backend.initialize()
+
+            # Not yet extracted into a backend class: legacy in-manager init
+            self._backend = None
             init_backend = {
                 'onnx-asr': self._init_onnx_asr,
                 'faster-whisper': self._init_faster_whisper,
@@ -1734,7 +1748,10 @@ class WhisperManager:
         pywhispercpp_variants = ('pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan')
 
         if only_if_idle:
-            if backend in pywhispercpp_variants:
+            if self._backend is not None:
+                loaded = (self._backend.reinit_on_resume and self._backend.is_local
+                          and self._backend.is_loaded)
+            elif backend in pywhispercpp_variants:
                 loaded = self._pywhisper_model is not None
             elif backend == 'faster-whisper':
                 loaded = self._faster_whisper_model is not None
@@ -1747,6 +1764,10 @@ class WhisperManager:
                 return True
             print(f"[RECOVERY] Reinitializing {backend} model after audio recovery (suspend/resume detected)", flush=True)
 
+        if self._backend is not None:
+            if not self._backend.reinit_on_resume:
+                return True
+            return self._backend.reinitialize()
         if backend in pywhispercpp_variants:
             return self._reinitialize_model()
         if backend == 'faster-whisper':
@@ -1844,18 +1865,25 @@ class WhisperManager:
         backend = self._current_backend_name()
 
         if backend == 'rest-api':
+            if self._backend is not None:
+                return self._backend.transcribe(audio_data, sample_rate, language_override=language_override)
             return self._transcribe_rest(audio_data, sample_rate, language_override=language_override)
 
         if backend == 'realtime-ws':
             # Audio was already streamed via callback during capture;
             # this just commits and waits for the result
+            if self._backend is not None:
+                return self._backend.transcribe(audio_data, sample_rate, language_override=language_override)
             return self._transcribe_realtime(audio_data, sample_rate, language_override=language_override)
 
-        transcribe_backend = {
-            'onnx-asr': self._transcribe_onnx_asr,
-            'faster-whisper': self._transcribe_faster_whisper,
-            'cohere-transcribe': self._transcribe_cohere_transcribe,
-        }.get(backend, self._transcribe_pywhispercpp)
+        if self._backend is not None:
+            transcribe_backend = self._backend.transcribe
+        else:
+            transcribe_backend = {
+                'onnx-asr': self._transcribe_onnx_asr,
+                'faster-whisper': self._transcribe_faster_whisper,
+                'cohere-transcribe': self._transcribe_cohere_transcribe,
+            }.get(backend, self._transcribe_pywhispercpp)
 
         # Use model lock to prevent concurrent transcription calls and
         # crashes from concurrent access to the loaded model
@@ -1878,7 +1906,11 @@ class WhisperManager:
         if not (time_since_last_use > 1800 and self._last_use_time > 0):
             return True
 
-        if backend == 'faster-whisper':
+        if self._backend is not None:
+            if not self._backend.reinit_on_idle:
+                return True
+            reinit = self._backend.reinitialize
+        elif backend == 'faster-whisper':
             reinit = self._reinitialize_faster_whisper
         elif backend == 'cohere-transcribe':
             reinit = self._reinitialize_cohere_transcribe
