@@ -8,10 +8,12 @@ registered as they are extracted from whisper_manager.py.
 """
 
 from .base import TranscriptionBackend
+from .onnx_asr_backend import OnnxAsrBackend
 from .rest_api_backend import RestApiBackend
 
 BACKENDS = {
+    OnnxAsrBackend.name: OnnxAsrBackend,
     RestApiBackend.name: RestApiBackend,
 }
 
-__all__ = ['BACKENDS', 'TranscriptionBackend', 'RestApiBackend']
+__all__ = ['BACKENDS', 'TranscriptionBackend', 'OnnxAsrBackend', 'RestApiBackend']
