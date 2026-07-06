@@ -14,6 +14,8 @@ sys.path.insert(0, str(ROOT / "lib" / "src"))
 import backend_installer  # noqa: E402
 import config_manager  # noqa: E402
 import whisper_manager  # noqa: E402
+from backends import pywhispercpp_backend  # noqa: E402
+from backends import PywhispercppBackend  # noqa: E402
 
 
 class WheelVariantTests(unittest.TestCase):
@@ -140,7 +142,7 @@ class PywhisperVadKwargsTests(unittest.TestCase):
 
     def test_disabled_omits_vad_kwargs(self):
         wm = self._manager(use_vad=False)
-        wm._create_pywhisper_model("base", 4)
+        PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
         self.assertNotIn("vad", self._FakeModel.last_kwargs)
         self.assertNotIn("vad_model_path", self._FakeModel.last_kwargs)
 
@@ -149,22 +151,22 @@ class PywhisperVadKwargsTests(unittest.TestCase):
             vad_file = Path(tmp) / backend_installer.VAD_MODEL_FILENAME
             vad_file.write_bytes(b"x")
             with mock.patch.object(
-                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                pywhispercpp_backend, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ):
                 wm = self._manager(use_vad=True)
-                wm._create_pywhisper_model("base", 4)
+                PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
         self.assertIs(self._FakeModel.last_kwargs["vad"], True)
         self.assertEqual(self._FakeModel.last_kwargs["vad_model_path"], str(vad_file))
 
     def test_failed_download_falls_back_without_vad(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(
-                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                pywhispercpp_backend, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ), mock.patch.object(
-                whisper_manager, "download_vad_model", return_value=False
+                pywhispercpp_backend, "download_vad_model", return_value=False
             ):
                 wm = self._manager(use_vad=True)
-                wm._create_pywhisper_model("base", 4)
+                PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
         self.assertNotIn("vad", self._FakeModel.last_kwargs)
 
     def test_stale_pywhispercpp_typeerror_falls_back(self):
@@ -173,10 +175,10 @@ class PywhisperVadKwargsTests(unittest.TestCase):
             vad_file = Path(tmp) / backend_installer.VAD_MODEL_FILENAME
             vad_file.write_bytes(b"x")
             with mock.patch.object(
-                whisper_manager, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+                pywhispercpp_backend, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
             ):
                 wm = self._manager(use_vad=True)
-                wm._create_pywhisper_model("base", 4)
+                PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
         self.assertNotIn("vad", self._FakeModel.last_kwargs)
 
 
