@@ -17,9 +17,12 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from mic_osd.audio import FeedLevelSource
+from unittest import mock
+
+from mic_osd.audio import FeedLevelSource, AudioMonitor
 from mic_osd.runner import MicOSDRunner
 import mic_osd.runner as runner_module
+import mic_osd.audio as audio_module
 
 
 class FeedLevelSourceTests(unittest.TestCase):
@@ -206,6 +209,40 @@ class GetVizFrameTests(unittest.TestCase):
         _, buckets = frame
         self.assertEqual(len(buckets), 2)
         self.assertAlmostEqual(buckets[0], 0.2, places=5)
+
+
+class AudioMonitorSampleRateTests(unittest.TestCase):
+    """The fallback monitor must use the device's native rate, not a hardcoded
+    44100 that fails on 48 kHz-only hardware (issue #205)."""
+
+    def _fake_sd(self, default_samplerate):
+        opened = {}
+
+        class FakeStream:
+            def start(self_):
+                opened["started"] = True
+
+        def query_devices(device=None, kind=None):
+            return {"default_samplerate": default_samplerate, "max_input_channels": 1}
+
+        def InputStream(**kwargs):
+            opened["samplerate"] = kwargs.get("samplerate")
+            return FakeStream()
+
+        return mock.Mock(query_devices=query_devices, InputStream=InputStream), opened
+
+    def test_uses_device_default_samplerate(self):
+        fake_sd, opened = self._fake_sd(48000)
+        with mock.patch.object(audio_module, "sd", fake_sd):
+            AudioMonitor(samplerate=44100).start()
+        self.assertEqual(opened["samplerate"], 48000)
+
+    def test_falls_back_to_configured_rate_when_query_fails(self):
+        fake_sd, opened = self._fake_sd(48000)
+        fake_sd.query_devices = mock.Mock(side_effect=RuntimeError("no device"))
+        with mock.patch.object(audio_module, "sd", fake_sd):
+            AudioMonitor(samplerate=44100).start()
+        self.assertEqual(opened["samplerate"], 44100)
 
 
 if __name__ == "__main__":

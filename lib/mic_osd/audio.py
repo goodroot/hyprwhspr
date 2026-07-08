@@ -162,12 +162,22 @@ class AudioMonitor:
         """
         if self.running:
             return
-        
+
+        # Use the device's native rate; a hardcoded 44100 fails with
+        # PaErrorCode -9997 on 48 kHz-only hardware (issue #205).
+        samplerate = self.samplerate
+        try:
+            default_sr = sd.query_devices(device, kind='input').get('default_samplerate')
+            if default_sr:
+                samplerate = int(default_sr)
+        except Exception:
+            pass
+
         try:
             self.stream = sd.InputStream(
                 device=device,
                 channels=1,
-                samplerate=self.samplerate,
+                samplerate=samplerate,
                 blocksize=self.blocksize,
                 callback=self._audio_callback
             )
