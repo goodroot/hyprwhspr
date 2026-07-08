@@ -20,13 +20,9 @@ except ImportError:
 
 
 class FeedLevelSource:
-    """
-    Level/sample source backed by the runtime feed file written by
-    MicOSDRunner (space-separated floats: level followed by bucket RMS
-    values). Same get_level()/get_samples() surface as AudioMonitor, but no
-    audio stream of its own — the capture device stays a single-consumer
-    concern of the main process.
-    """
+    """Reads the runtime feed file MicOSDRunner writes (space-separated floats:
+    level then bucket RMS values). Same get_level()/get_samples() surface as
+    AudioMonitor, but opens no audio stream of its own."""
 
     STALE_AFTER_SECONDS = 1.0
 
@@ -56,7 +52,7 @@ class FeedLevelSource:
         try:
             stat = os.stat(self.path)
         except OSError:
-            # Feed gone (recording ended / writer stopped) — decay to silence
+            # Feed gone — decay to silence
             self._level = 0.0
             self._samples = np.zeros(0)
             return
@@ -70,7 +66,7 @@ class FeedLevelSource:
             with open(self.path, 'r', encoding='utf-8') as f:
                 values = [float(part) for part in f.read().split()]
         except (OSError, ValueError):
-            return  # Keep last good frame; next write is ~33ms away
+            return  # Keep last good frame
         if not values:
             return
         self._mtime_ns = stat.st_mtime_ns

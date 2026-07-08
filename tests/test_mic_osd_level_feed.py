@@ -175,15 +175,25 @@ class GetVizFrameTests(unittest.TestCase):
         chunk[512:] = 0.5  # Second half loud, first half silent
         capture._viz_chunk = chunk
         capture._viz_chunk_time = time.monotonic()
-        capture.current_level = 0.35
+        capture.current_level = 0.05
 
         frame = capture.get_viz_frame(num_buckets=32)
         self.assertIsNotNone(frame)
         level, buckets = frame
-        self.assertAlmostEqual(level, 0.35)
+        # Level is display-scaled (raw * 10, clamped) to match get_audio_level()
+        self.assertAlmostEqual(level, 0.5)
         self.assertEqual(len(buckets), 32)
         self.assertTrue(all(b == 0.0 for b in buckets[:16]))
         self.assertTrue(all(abs(b - 0.5) < 1e-6 for b in buckets[16:]))
+
+    def test_display_level_is_clamped_to_one(self):
+        capture = self._make_capture()
+        capture._viz_chunk = np.ones(1024, dtype=np.float32) * 0.5
+        capture._viz_chunk_time = time.monotonic()
+        capture.current_level = 0.4  # * 10 = 4.0, must clamp to 1.0
+
+        level, _ = capture.get_viz_frame(num_buckets=32)
+        self.assertEqual(level, 1.0)
 
     def test_short_chunk_falls_back_to_abs_samples(self):
         capture = self._make_capture()

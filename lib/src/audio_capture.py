@@ -69,7 +69,7 @@ class AudioCapture:
         self.current_level = 0.0
         # Rolling window of recent RMS values.
         self._level_history = deque(maxlen=8)
-        # Most recent audio chunk, kept for visualization (mic-OSD level feed).
+        # Latest chunk, for the mic-OSD level feed.
         self._viz_chunk = None
         self._viz_chunk_time = 0.0
         
@@ -436,12 +436,9 @@ class AudioCapture:
             if ('pulse' in api_name or 'pipewire' in api_name or
                     'pulse' in device_name or 'pipewire' in device_name):
                 return True
-            # A raw ALSA hardware device ("... (hw:3,0)") is exclusive no matter
-            # which servers are running: opening it bypasses PipeWire/PulseAudio
-            # entirely.  The explicit device-selection paths all resolve to such
-            # a device, so this must lose to raw-ALSA before the socket check —
-            # otherwise a system-wide Pulse socket would wrongly mark a
-            # monopolising keepalive as shareable.
+            # A raw ALSA device ("... (hw:3,0)") is exclusive regardless of a
+            # system-wide socket, so it must lose to raw-ALSA before the check
+            # below. Explicit device selection resolves to exactly these.
             if '(hw:' in device_name:
                 return False
             # 'default' (and other ALSA virtual devices) silently route through
@@ -1243,16 +1240,18 @@ class AudioCapture:
         return min(1.0, self.current_level * 10)  # Scale for better visualization
 
     def get_viz_frame(self, num_buckets: int = 32):
-        """Reduce the latest captured chunk to (rms_level, bucket_rms_list).
+        """Reduce the latest captured chunk to (display_level, bucket_rms_list)
+        for the mic-OSD meter, or None when no chunk has arrived recently.
 
-        Feeds the mic-OSD visualizer from the recording stream itself, so the
-        meter always reflects the device actually being captured. Returns None
-        when no chunk has arrived recently (stream not producing).
+        display_level is on the same 0..1 display scale as get_audio_level() so
+        the vu_meter (which uses it directly as its fill fraction) reads the
+        same as the fallback AudioMonitor path. num_buckets must match the
+        waveform's num_bars — see the caller in main.py.
         """
         with self.lock:
             chunk = self._viz_chunk
             chunk_time = self._viz_chunk_time
-            level = self.current_level
+            raw_level = self.current_level
         if chunk is None or (time.monotonic() - chunk_time) > 0.5:
             return None
         usable = len(chunk) - (len(chunk) % num_buckets)
@@ -1260,7 +1259,8 @@ class AudioCapture:
             buckets = np.sqrt(np.mean(chunk[:usable].reshape(num_buckets, -1) ** 2, axis=1))
         else:
             buckets = np.abs(chunk)
-        return float(level), [float(b) for b in buckets]
+        display_level = min(1.0, raw_level * 10)
+        return float(display_level), [float(b) for b in buckets]
 
     @property
     def rolling_avg_level(self) -> float:

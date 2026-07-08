@@ -205,10 +205,8 @@ class MicOSD:
         self.visible = True
         self.window.set_visible(True)
 
-        # Start audio monitoring. Prefer the level feed streamed from the main
-        # process's capture stream — it tracks the configured device and never
-        # contends for it. Fall back to opening the default input directly
-        # (standalone mic-osd runs, or an older hyprwhspr without the feed).
+        # Prefer the main process's level feed (tracks the recorded device, no
+        # contention); fall back to opening the default input directly.
         if not self.audio_monitor:
             if FeedLevelSource is not None and FeedLevelSource.available(MIC_OSD_LEVEL_FEED_FILE):
                 self.audio_monitor = FeedLevelSource(MIC_OSD_LEVEL_FEED_FILE)
