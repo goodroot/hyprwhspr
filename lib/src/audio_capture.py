@@ -69,6 +69,9 @@ class AudioCapture:
         self.current_level = 0.0
         # Rolling window of recent RMS values.
         self._level_history = deque(maxlen=8)
+        # Most recent audio chunk, kept for visualization (mic-OSD level feed).
+        self._viz_chunk = None
+        self._viz_chunk_time = 0.0
         
         # Threading
         self.record_thread = None
@@ -814,6 +817,8 @@ class AudioCapture:
                 self.audio_data = []
                 self.is_recording = True
                 self.streaming_callback = streaming_callback
+                self._viz_chunk = None
+                self._viz_chunk_time = 0.0
                 # Reset callback health tracking
                 self.frames_since_start = 0
                 self.last_callback_monotonic = 0.0
@@ -1019,9 +1024,12 @@ class AudioCapture:
                         # Update current audio level for monitoring
                         self.current_level = np.sqrt(np.mean(audio_chunk**2))
                         self._level_history.append(self.current_level)
-                        
+
                         # Store audio data
-                        self.audio_data.append(audio_chunk.copy())
+                        chunk_copy = audio_chunk.copy()
+                        self.audio_data.append(chunk_copy)
+                        self._viz_chunk = chunk_copy
+                        self._viz_chunk_time = time.monotonic()
                         
                         # Call streaming callback if set (for realtime backends)
                         if self.streaming_callback:
@@ -1225,6 +1233,26 @@ class AudioCapture:
     def get_audio_level(self) -> float:
         """Get the current audio level (0.0 to 1.0)"""
         return min(1.0, self.current_level * 10)  # Scale for better visualization
+
+    def get_viz_frame(self, num_buckets: int = 32):
+        """Reduce the latest captured chunk to (rms_level, bucket_rms_list).
+
+        Feeds the mic-OSD visualizer from the recording stream itself, so the
+        meter always reflects the device actually being captured. Returns None
+        when no chunk has arrived recently (stream not producing).
+        """
+        with self.lock:
+            chunk = self._viz_chunk
+            chunk_time = self._viz_chunk_time
+            level = self.current_level
+        if chunk is None or (time.monotonic() - chunk_time) > 0.5:
+            return None
+        usable = len(chunk) - (len(chunk) % num_buckets)
+        if usable >= num_buckets:
+            buckets = np.sqrt(np.mean(chunk[:usable].reshape(num_buckets, -1) ** 2, axis=1))
+        else:
+            buckets = np.abs(chunk)
+        return float(level), [float(b) for b in buckets]
 
     @property
     def rolling_avg_level(self) -> float:

@@ -34,6 +34,7 @@ SUSPEND_MARKER_FILE = CONFIG_DIR / '.suspend_marker'
 LOCK_FILE = CONFIG_DIR / 'hyprwhspr.lock'
 VISUALIZER_STATE_FILE = CONFIG_DIR / 'visualizer_state'  # recording|paused|processing|error|success
 TRANSCRIPT_PREVIEW_FILE = RUNTIME_DIR / 'transcript_preview'
+MIC_OSD_LEVEL_FEED_FILE = RUNTIME_DIR / 'mic_osd_level_feed'
 
 # Secure credential storage
 CREDENTIALS_DIR = DATA_DIR

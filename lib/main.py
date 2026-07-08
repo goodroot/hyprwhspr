@@ -250,7 +250,9 @@ class hyprwhsprApp:
                         print("[WARN] No layer-shell overlay and no desktop notifications; recording has no status indicator", flush=True)
 
                 if MicOSDRunner.is_available() and MicOSDRunner.layer_shell_active():
-                    runner = MicOSDRunner()
+                    # Feed the OSD meter from the capture stream itself so it
+                    # reflects the device actually being recorded (issue #205)
+                    runner = MicOSDRunner(level_source=self.audio_capture.get_viz_frame)
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
                         print("[INIT] Mic-OSD daemon started", flush=True)

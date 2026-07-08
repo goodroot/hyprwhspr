@@ -16,10 +16,16 @@ from pathlib import Path
 
 # Import paths
 try:
-    from ..src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
+    from ..src.paths import (
+        MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
+        MIC_OSD_LEVEL_FEED_FILE,
+    )
 except ImportError:
     # Fallback for direct execution
-    from src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
+    from src.paths import (
+        MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
+        MIC_OSD_LEVEL_FEED_FILE,
+    )
 
 
 class MicOSDRunner:
@@ -30,8 +36,18 @@ class MicOSDRunner:
     """
 
     PREVIEW_WRITE_INTERVAL_SECONDS = 0.05
-    
-    def __init__(self):
+    LEVEL_FEED_INTERVAL_SECONDS = 1.0 / 30
+
+    def __init__(self, level_source=None):
+        """
+        Args:
+            level_source: Optional callable returning (level, bucket_rms_list)
+                from the live capture stream, or None when no chunk is fresh
+                (e.g. AudioCapture.get_viz_frame). When provided, show() streams
+                these frames to a runtime file the OSD daemon reads instead of
+                opening its own audio stream — so the meter tracks the device
+                actually being recorded.
+        """
         self._process = None
         self._mic_osd_dir = Path(__file__).parent
         self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
@@ -40,6 +56,9 @@ class MicOSDRunner:
         self._pending_preview_text = None
         self._preview_flush_timer = None
         self._preview_generation = 0
+        self._level_source = level_source
+        self._level_feed_thread = None
+        self._level_feed_stop = threading.Event()
     
     @staticmethod
     def is_available() -> bool:
@@ -316,23 +335,88 @@ sys.exit(main())
         except Exception:
             pass
     
+    def _start_level_feed(self):
+        """Start streaming capture levels to the OSD's runtime feed file.
+
+        Writes the first frame synchronously so the file is already fresh when
+        the daemon handles SIGUSR1 and decides between feed and fallback mode.
+        """
+        if self._level_source is None or self._level_feed_thread is not None:
+            return
+        self._level_feed_stop.clear()
+        self._write_level_feed_frame()
+
+        def _feed_loop():
+            while not self._level_feed_stop.wait(self.LEVEL_FEED_INTERVAL_SECONDS):
+                self._write_level_feed_frame()
+
+        self._level_feed_thread = threading.Thread(target=_feed_loop, daemon=True)
+        self._level_feed_thread.start()
+
+    def _stop_level_feed(self):
+        self._level_feed_stop.set()
+        thread = self._level_feed_thread
+        self._level_feed_thread = None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.5)
+        try:
+            if MIC_OSD_LEVEL_FEED_FILE.exists():
+                MIC_OSD_LEVEL_FEED_FILE.unlink()
+        except Exception:
+            pass
+
+    def _write_level_feed_frame(self):
+        frame = None
+        try:
+            frame = self._level_source()
+        except Exception:
+            pass
+        # A zero frame (no fresh chunk yet / stream stalled) keeps the file
+        # fresh so the OSD stays in feed mode and shows a decaying/flat meter.
+        level, buckets = frame if frame is not None else (0.0, [])
+        payload = ' '.join(f"{value:.6f}" for value in [level, *buckets])
+        try:
+            MIC_OSD_LEVEL_FEED_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            temp_path = MIC_OSD_LEVEL_FEED_FILE.with_name(
+                f".{MIC_OSD_LEVEL_FEED_FILE.name}.{os.getpid()}.tmp"
+            )
+            fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(payload)
+                os.replace(temp_path, MIC_OSD_LEVEL_FEED_FILE)
+            finally:
+                try:
+                    if temp_path.exists():
+                        temp_path.unlink()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[MIC-OSD] Failed to write level feed: {e}", flush=True)
+            self._level_feed_stop.set()
+
     def show(self) -> bool:
         """Show the mic-osd overlay (instant via signal)."""
         if not self.is_available():
             return False
-        
+
         if not self._ensure_daemon():
             return False
-        
+
+        # Feed must be fresh before the daemon's show handler samples it
+        self._start_level_feed()
+
         try:
             return self._signal_daemon(signal.SIGUSR1)
         except (ProcessLookupError, OSError):
+            self._stop_level_feed()
             self._process = None
             self._orphaned_daemon_pid = None
             return False
-    
+
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
+        self._stop_level_feed()
         self.clear_preview_text()
 
         if self._process is None:
@@ -506,6 +590,7 @@ sys.exit(main())
 
     def stop(self):
         """Stop the daemon completely."""
+        self._stop_level_feed()
         if self._process is None:
             return
 
