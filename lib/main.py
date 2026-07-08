@@ -126,6 +126,8 @@ class hyprwhsprApp:
         self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
         self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
         self._last_mic_error_log_time = 0.0  # Track when we last logged mic error (prevent duplicates)
+        self._last_mic_error_message = None  # Last mic error message (dedupe identical repeats only)
+        self._mic_error_nid = None  # Desktop notification id for coalescing mic-error banners
         self._mic_disconnected = False  # Track if microphone was disconnected via hotplug event
         self._last_hotplug_add_time = float('-inf')  # Track last USB add event (for debouncing multiple events)
         
@@ -1323,8 +1325,6 @@ class hyprwhsprApp:
             print("[CONTROL] Recording blocked: model is unloaded. Run: hyprwhspr model reload", flush=True)
             return
 
-        print("Recording started", flush=True)
-
         try:
             self._clear_mic_osd_preview_text()
 
@@ -1409,21 +1409,17 @@ class hyprwhsprApp:
                     # Hide mic-osd visualization
                     self._hide_mic_osd()
 
-                    # Check if we know the microphone was disconnected
-                    with self._mic_state_lock:
-                        mic_was_disconnected = self._mic_disconnected
-
-                    if mic_was_disconnected:
-                        self._notify_zero_volume("Microphone disconnected - please replug USB microphone", log_level="ERROR")
-                    else:
-                        self._notify_zero_volume("Microphone not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+                    message = self._mic_failure_message(
+                        "Microphone not responding - please unplug and replug USB microphone, then try recording again")
+                    self._notify_zero_volume(message, log_level="ERROR")
 
                     # Restore audio if it was ducked
                     if self.audio_ducker.is_ducked:
                         self.audio_ducker.restore()
                     return  # Don't attempt recovery during user-initiated recording
-                
+
                 # Stream is verified working - show mic-osd visualization
+                print("Recording started", flush=True)
                 self._show_mic_osd()
                 
                 # Additional stability check - verify stream continues working
@@ -1437,14 +1433,9 @@ class hyprwhsprApp:
                     # Hide mic-osd visualization
                     self._hide_mic_osd()
 
-                    # Check if we know the microphone was disconnected
-                    with self._mic_state_lock:
-                        mic_was_disconnected = self._mic_disconnected
-
-                    if mic_was_disconnected:
-                        self._notify_zero_volume("Microphone disconnected - please replug USB microphone", log_level="ERROR")
-                    else:
-                        self._notify_zero_volume("Microphone stream unstable - please wait a moment and try recording again", log_level="WARN")
+                    fallback = "Microphone stream unstable - please wait a moment and try recording again"
+                    message = self._mic_failure_message(fallback)
+                    self._notify_zero_volume(message, log_level="WARN" if message == fallback else "ERROR")
 
                     # Restore audio if it was ducked
                     if self.audio_ducker.is_ducked:
@@ -1486,7 +1477,10 @@ class hyprwhsprApp:
                 with self._recording_lock:
                     self.is_recording = False
                 self._write_recording_status(False)
-                self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+                self._notify_zero_volume(
+                    self._mic_failure_message(
+                        "Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again"),
+                    log_level="ERROR")
 
                 # Restore audio if it was ducked
                 if self.audio_ducker.is_ducked:
@@ -1778,22 +1772,51 @@ class hyprwhsprApp:
         except Exception:
             pass  # Silently fail if notify-send not available
 
-    def _notify_zero_volume(self, message: str, log_level: str = "WARN"):
-        """Log zero-volume recording and signal waybar (no desktop notifications)"""
-        # Prevent duplicate error logs within 2 seconds (user might hit record twice)
-        # Use lock to ensure thread-safe read-modify-write on _last_mic_error_log_time
-        if "Microphone disconnected or not responding" in message:
-            with self._error_log_lock:
-                current_time = time.monotonic()
-                if current_time - self._last_mic_error_log_time < 2.0:
-                    # Already logged this error recently, skip duplicate log
-                    return
-                self._last_mic_error_log_time = current_time
+    def _mic_failure_message(self, fallback: str) -> str:
+        """Pick user advice for a failed recording start based on what actually failed.
 
-        # Print to logs (primary notification)
+        Distinguishes "input device missing/initializing" (stream never opened)
+        from "device wedged" (stream opened but delivers no callbacks) using the
+        open outcome recorded by the capture thread; fallback covers the latter.
+        """
+        with self._mic_state_lock:
+            if self._mic_disconnected:
+                return "Microphone disconnected - please replug USB microphone"
+        if not getattr(self.audio_capture, 'stream_opened', True):
+            open_error = getattr(self.audio_capture, 'stream_open_error', None)
+            if open_error:
+                print(f"[ERROR] Stream open failed: {open_error}", flush=True)
+            return "Microphone unavailable - input device missing or still initializing - check the connection and try again"
+        return fallback
+
+    def _notify_zero_volume(self, message: str, log_level: str = "WARN"):
+        """Log a mic failure, signal waybar, and show a coalesced desktop notification"""
+        # Prevent duplicate handling of the same error within 2 seconds (user
+        # might hit record twice). Lock protects the read-modify-write.
+        with self._error_log_lock:
+            current_time = time.monotonic()
+            if (message == self._last_mic_error_message
+                    and current_time - self._last_mic_error_log_time < 2.0):
+                # Already handled this exact error recently, skip duplicate
+                return
+            self._last_mic_error_log_time = current_time
+            self._last_mic_error_message = message
+
+        # Print to logs (primary record)
         print(f"[{log_level}] {message}", flush=True)
 
-        # Note: No desktop notification - tray monitors state files and handles all user notifications
+        # Direct desktop notification: environments without the waybar tray
+        # (e.g. Niri) otherwise never see mic failures. Reusing replaces_id
+        # coalesces repeats into a single replaced banner instead of stacking.
+        try:
+            from desktop_notify import send_notification_with_id
+            nid = send_notification_with_id(
+                "hyprwhspr", message, urgency="normal", timeout_ms=6000,
+                replaces_id=self._mic_error_nid)
+            if nid is not None:
+                self._mic_error_nid = nid
+        except Exception:
+            pass  # Silently fail if no notification daemon
 
         # Write waybar signal file (atomic, no conflicts)
         # This allows waybar to detect when mic is present but not recording properly
@@ -1812,6 +1835,17 @@ class hyprwhsprApp:
                 MIC_ZERO_VOLUME_FILE.unlink()
         except Exception:
             pass  # Silently fail - waybar signal cleanup is optional
+
+        # Retire the mic-error banner: recording works (or is being retried),
+        # so a stale error notification would just be noise
+        nid = self._mic_error_nid
+        self._mic_error_nid = None
+        if nid is not None:
+            try:
+                from desktop_notify import close_notification
+                close_notification(nid)
+            except Exception:
+                pass
 
     def _write_recording_status(self, is_recording):
         """Write recording status to file for tray script"""
