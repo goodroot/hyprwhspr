@@ -436,6 +436,14 @@ class AudioCapture:
             if ('pulse' in api_name or 'pipewire' in api_name or
                     'pulse' in device_name or 'pipewire' in device_name):
                 return True
+            # A raw ALSA hardware device ("... (hw:3,0)") is exclusive no matter
+            # which servers are running: opening it bypasses PipeWire/PulseAudio
+            # entirely.  The explicit device-selection paths all resolve to such
+            # a device, so this must lose to raw-ALSA before the socket check —
+            # otherwise a system-wide Pulse socket would wrongly mark a
+            # monopolising keepalive as shareable.
+            if '(hw:' in device_name:
+                return False
             # 'default' (and other ALSA virtual devices) silently route through
             # PipeWire or PulseAudio when running — check their runtime sockets.
             uid = os.getuid()

@@ -173,6 +173,13 @@ class AudioDeviceRefreshTests(unittest.TestCase):
                 sys.modules.pop("audio_capture", None)
             else:
                 sys.modules["audio_capture"] = self._saved_audio_capture
+                # _load_audio_capture reloaded this module in place against the
+                # fake sounddevice/numpy, rebinding its module-level `sd`/`np`.
+                # Restoring the sys.modules reference alone doesn't undo that,
+                # so reload once more against the now-restored real modules to
+                # avoid leaking the fakes into other tests' imports.
+                if self._saved_sounddevice is not None and self._saved_numpy is not None:
+                    importlib.reload(self._saved_audio_capture)
 
     def _run_sources(self, sources):
         source_iter = iter(sources)
