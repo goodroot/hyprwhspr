@@ -10,6 +10,7 @@ import wave
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 from typing import Optional, Callable
 from io import BytesIO
 
@@ -20,6 +21,31 @@ except ImportError:
 
 sd = require_package('sounddevice')
 np = require_package('numpy')
+
+
+@contextmanager
+def _quiet_alsa_stderr():
+    """Silence fd-level stderr during a stream open attempt.
+
+    A failed PortAudio open spews several raw ALSA C-library lines
+    ("Expression 'r' failed in pa_linux_alsa.c...") per attempt that drown the
+    one meaningful Python-level log line. The spew comes from C code, so only
+    an fd redirect catches it. Degrades to a no-op when stderr isn't a real fd.
+    """
+    try:
+        saved_fd = os.dup(2)
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    except Exception:
+        yield
+        return
+    try:
+        sys.stderr.flush()
+        os.dup2(devnull_fd, 2)
+        yield
+    finally:
+        os.dup2(saved_fd, 2)
+        os.close(saved_fd)
+        os.close(devnull_fd)
 
 
 class AudioCapture:
@@ -55,7 +81,13 @@ class AudioCapture:
         
         # Audio stream
         self.stream = None
-        
+
+        # Outcome of the last stream-open attempt cycle. Lets the app layer
+        # distinguish "stream never opened" (device missing/initializing) from
+        # "stream opened but delivers no callbacks" (wedged device).
+        self.stream_opened = False
+        self.stream_open_error = None
+
         # Recovery state tracking
         self.recovery_in_progress = False
         self.recovery_lock = threading.Lock()
@@ -785,6 +817,9 @@ class AudioCapture:
                 # Reset callback health tracking
                 self.frames_since_start = 0
                 self.last_callback_monotonic = 0.0
+                # Reset stream-open outcome for this attempt cycle
+                self.stream_opened = False
+                self.stream_open_error = None
             
             # Reset cleanup tracking flags for new recording
             self._cleanup_complete.clear()
@@ -1022,15 +1057,17 @@ class AudioCapture:
             for _attempt in range(_max_start_attempts):
                 try:
                     device_to_use = self.device_id
-                    self.stream = sd.InputStream(
-                        device=device_to_use,
-                        samplerate=self.sample_rate,
-                        channels=self.channels,
-                        dtype=self.dtype,
-                        blocksize=self.chunk_size,
-                        callback=audio_callback
-                    )
-                    self.stream.start()
+                    with _quiet_alsa_stderr():
+                        self.stream = sd.InputStream(
+                            device=device_to_use,
+                            samplerate=self.sample_rate,
+                            channels=self.channels,
+                            dtype=self.dtype,
+                            blocksize=self.chunk_size,
+                            callback=audio_callback
+                        )
+                        self.stream.start()
+                    self.stream_opened = True
                     self._stop_keepalive()  # Node is warm; safe to release keepalive now
                     break  # success
                 except Exception as _start_err:
@@ -1090,6 +1127,11 @@ class AudioCapture:
         except Exception as e:
             # Always log the error message
             print(f"[ERROR] Error in recording thread: {e}", flush=True)
+
+            # Record the open failure so the app layer can distinguish
+            # "device missing" from "device wedged" when choosing user advice
+            if not self.stream_opened:
+                self.stream_open_error = str(e)
 
             # Only print traceback for unexpected errors (not common device/stream errors)
             # This reduces log noise during startup/recovery when device isn't ready yet

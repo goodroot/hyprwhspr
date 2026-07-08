@@ -320,6 +320,44 @@ class AudioDeviceRefreshTests(unittest.TestCase):
         self.assertEqual(capture.device_id, 1)
         self.assertEqual(callback.input_sample_rate, 44100)
 
+    def test_stream_open_failure_records_error_state(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+
+        def raise_host_error():
+            raise RuntimeError("Unanticipated host error")
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"] * 8)):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            fake_sd.on_stream_start = raise_host_error
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=2.0)
+
+            self.assertFalse(capture.stream_opened)
+            self.assertIn("Unanticipated host error", capture.stream_open_error)
+
+            # A later successful start must reset the recorded outcome
+            capture.is_recording = False
+            fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=2.0)
+
+        self.assertTrue(capture.stream_opened)
+        self.assertIsNone(capture.stream_open_error)
+
+    def test_stream_open_success_sets_opened_flag(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic", "alsa_input.old mic"])):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=1.0)
+
+        self.assertTrue(capture.stream_opened)
+        self.assertIsNone(capture.stream_open_error)
+
     def test_unmatched_pulse_default_clears_stale_concrete_device(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)
