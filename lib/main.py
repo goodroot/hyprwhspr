@@ -3188,8 +3188,10 @@ def main():
 if __name__ == "__main__":
     # Safety check: if a CLI subcommand was passed, redirect to CLI instead of starting the service
     # This handles cases where an old bin/hyprwhspr wrapper doesn't recognize newer CLI subcommands
+    # Keep in sync with the subcommand route in bin/hyprwhspr
     CLI_SUBCOMMANDS = ['setup', 'install', 'config', 'waybar', 'noctalia', 'systemd', 'status',
-                       'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd']
+                       'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd',
+                       'keyboard', 'record', 'test']
     if len(sys.argv) > 1 and sys.argv[1] in CLI_SUBCOMMANDS:
         print(f"[REDIRECT] Detected CLI subcommand '{sys.argv[1]}', redirecting to CLI...")
         # Execute CLI with same arguments

@@ -77,6 +77,7 @@ if [[ "$1" == "help" ]]; then
 fi
 
 # Subcommands: route to CLI if recognized
+# Keep in sync with CLI_SUBCOMMANDS in lib/main.py
 # 'test' needs venv Python since it loads the transcription backend
 if [[ "$1" == "test" ]]; then
   exec "$PYTHON_CMD" "$LIB_DIR/cli.py" "$@"
