@@ -5666,7 +5666,10 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         items_to_remove.append(f"Parakeet venv: {PARAKEET_VENV_DIR}")
     if PYWHISPERCPP_SRC_DIR.exists():
         items_to_remove.append(f"pywhispercpp source: {PYWHISPERCPP_SRC_DIR}")
-    
+    src_dir = USER_BASE / 'src'
+    if (src_dir / '.git').exists():
+        items_to_remove.append(f"Managed clone: {src_dir}")
+
     # Models
     if not keep_models and PYWHISPERCPP_MODELS_DIR.exists():
         models = list(PYWHISPERCPP_MODELS_DIR.glob('ggml-*.bin'))
@@ -5792,6 +5795,11 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         if PYWHISPERCPP_SRC_DIR.exists():
             shutil.rmtree(PYWHISPERCPP_SRC_DIR, ignore_errors=True)
             log_success(f"Removed {PYWHISPERCPP_SRC_DIR}")
+
+        # Remove managed clone (from the bootstrap installer)
+        if (src_dir / '.git').exists():
+            shutil.rmtree(src_dir, ignore_errors=True)
+            log_success(f"Removed {src_dir}")
     except Exception as e:
         error_msg = f"Failed to remove backend installations: {e}"
         log_warning(error_msg)
@@ -5938,6 +5946,10 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         print("="*60)
     
     print("\nAll hyprwhspr user data has been removed.")
+    hf_cache = Path(os.environ.get('XDG_CACHE_HOME', USER_HOME / '.cache')) / 'huggingface'
+    if hf_cache.exists():
+        print(f"Note: {hf_cache} (shared model cache) was not removed.")
+        print("      Delete it manually if no other apps use Hugging Face models.")
     if not skip_permissions and not permissions_removed:
         print("Note: System permissions (group memberships, udev rules) were not removed.")
         print("      You may want to remove them manually if needed.")
