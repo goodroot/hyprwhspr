@@ -5655,42 +5655,37 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     if waybar_module.exists():
         items_to_remove.append("Waybar integration")
     
-    # User configuration
+    # Plain filesystem targets: declared once here, listed in the summary and
+    # removed in one pass below (dirs rmtree'd, files/symlinks unlinked)
+    fs_targets = []
     if USER_CONFIG_DIR.exists():
-        items_to_remove.append(f"User configuration: {USER_CONFIG_DIR}")
-    
-    # Backend installations
+        fs_targets.append((f"User configuration: {USER_CONFIG_DIR}", USER_CONFIG_DIR))
     if VENV_DIR.exists():
-        items_to_remove.append(f"Main backend venv: {VENV_DIR}")
+        fs_targets.append((f"Main backend venv: {VENV_DIR}", VENV_DIR))
     if PARAKEET_VENV_DIR.exists():
-        items_to_remove.append(f"Parakeet venv: {PARAKEET_VENV_DIR}")
+        fs_targets.append((f"Parakeet venv: {PARAKEET_VENV_DIR}", PARAKEET_VENV_DIR))
     if PYWHISPERCPP_SRC_DIR.exists():
-        items_to_remove.append(f"pywhispercpp source: {PYWHISPERCPP_SRC_DIR}")
+        fs_targets.append((f"pywhispercpp source: {PYWHISPERCPP_SRC_DIR}", PYWHISPERCPP_SRC_DIR))
     src_dir = USER_BASE / 'src'
     if (src_dir / '.git').exists():
-        items_to_remove.append(f"Managed clone: {src_dir}")
+        fs_targets.append((f"Managed clone: {src_dir}", src_dir))
     cmd_symlink = USER_HOME / '.local' / 'bin' / 'hyprwhspr'
     if cmd_symlink.is_symlink() and os.readlink(cmd_symlink).endswith('/bin/hyprwhspr'):
-        items_to_remove.append(f"Command symlink: {cmd_symlink}")
+        fs_targets.append((f"Command symlink: {cmd_symlink}", cmd_symlink))
+    if STATE_DIR.exists():
+        fs_targets.append((f"State files: {STATE_DIR}", STATE_DIR))
+    if CREDENTIALS_FILE.exists():
+        fs_targets.append(("Stored API credentials", CREDENTIALS_FILE))
+    temp_dir = USER_BASE / 'temp'
+    if temp_dir.exists():
+        fs_targets.append((f"Temporary files: {temp_dir}", temp_dir))
+    items_to_remove.extend(label for label, _ in fs_targets)
 
     # Models
     if not keep_models and PYWHISPERCPP_MODELS_DIR.exists():
         models = list(PYWHISPERCPP_MODELS_DIR.glob('ggml-*.bin'))
         if models:
             items_to_remove.append(f"Whisper models: {len(models)} model(s) in {PYWHISPERCPP_MODELS_DIR}")
-    
-    # State files
-    if STATE_DIR.exists():
-        items_to_remove.append(f"State files: {STATE_DIR}")
-    
-    # Credentials
-    if CREDENTIALS_FILE.exists():
-        items_to_remove.append("Stored API credentials")
-    
-    # Temp files
-    temp_dir = USER_BASE / 'temp'
-    if temp_dir.exists():
-        items_to_remove.append(f"Temporary files: {temp_dir}")
     
     # Permissions (if not skipped)
     if not skip_permissions:
@@ -5765,53 +5760,31 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         log_warning(error_msg)
         errors.append(error_msg)
     
-    # 3. Remove user configuration
-    log_info("Removing user configuration...")
+    # 3. Backend-specific cleanup (while config still exists for detection)
+    log_info("Cleaning up backend...")
     try:
-        if USER_CONFIG_DIR.exists():
-            shutil.rmtree(USER_CONFIG_DIR, ignore_errors=True)
-            log_success(f"Removed {USER_CONFIG_DIR}")
-    except Exception as e:
-        error_msg = f"Failed to remove user configuration: {e}"
-        log_warning(error_msg)
-        errors.append(error_msg)
-    
-    # 4. Remove backend installations
-    log_info("Removing backend installations...")
-    try:
-        # Detect current backend and cleanup
         current_backend = _detect_current_backend()
         if current_backend:
             _cleanup_backend(current_backend)
-        
-        # Remove main venv
-        if VENV_DIR.exists():
-            shutil.rmtree(VENV_DIR, ignore_errors=True)
-            log_success(f"Removed {VENV_DIR}")
-        
-        # Remove Parakeet venv
-        if PARAKEET_VENV_DIR.exists():
-            shutil.rmtree(PARAKEET_VENV_DIR, ignore_errors=True)
-            log_success(f"Removed {PARAKEET_VENV_DIR}")
-        
-        # Remove pywhispercpp source
-        if PYWHISPERCPP_SRC_DIR.exists():
-            shutil.rmtree(PYWHISPERCPP_SRC_DIR, ignore_errors=True)
-            log_success(f"Removed {PYWHISPERCPP_SRC_DIR}")
-
-        # Remove managed clone (from the bootstrap installer)
-        if (src_dir / '.git').exists():
-            shutil.rmtree(src_dir, ignore_errors=True)
-            log_success(f"Removed {src_dir}")
-
-        if cmd_symlink.is_symlink() and os.readlink(cmd_symlink).endswith('/bin/hyprwhspr'):
-            cmd_symlink.unlink(missing_ok=True)
-            log_success(f"Removed {cmd_symlink}")
     except Exception as e:
-        error_msg = f"Failed to remove backend installations: {e}"
+        error_msg = f"Backend cleanup failed: {e}"
         log_warning(error_msg)
         errors.append(error_msg)
-    
+
+    # 4. Remove filesystem targets from the summary manifest
+    log_info("Removing files...")
+    for label, target in fs_targets:
+        try:
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                target.unlink(missing_ok=True)
+            log_success(f"Removed {label}")
+        except Exception as e:
+            error_msg = f"Failed to remove {label}: {e}"
+            log_warning(error_msg)
+            errors.append(error_msg)
+
     # 5. Remove models (if not keeping)
     if not keep_models:
         log_info("Removing Whisper models...")
@@ -5831,65 +5804,29 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     else:
         log_info("Keeping Whisper models (--keep-models flag)")
     
-    # 6. Remove state files
-    log_info("Removing state files...")
+    # 6. Remove the base directory if it's empty or only contains empty subdirs
     try:
-        if STATE_DIR.exists():
-            shutil.rmtree(STATE_DIR, ignore_errors=True)
-            log_success(f"Removed {STATE_DIR}")
-    except Exception as e:
-        error_msg = f"Failed to remove state files: {e}"
-        log_warning(error_msg)
-        errors.append(error_msg)
-    
-    # 7. Remove credentials
-    log_info("Removing stored credentials...")
-    try:
-        if CREDENTIALS_FILE.exists():
-            CREDENTIALS_FILE.unlink(missing_ok=True)
-            log_success("Removed stored API credentials")
-    except Exception as e:
-        error_msg = f"Failed to remove credentials: {e}"
-        log_warning(error_msg)
-        errors.append(error_msg)
-    
-    # 8. Remove temp files
-    log_info("Removing temporary files...")
-    try:
-        temp_dir = USER_BASE / 'temp'
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            log_success(f"Removed {temp_dir}")
-        
-        # Also try to remove the entire USER_BASE directory if it's empty or only contains empty dirs
         if USER_BASE.exists():
-            try:
-                # Check if directory is empty or only contains empty subdirs
-                has_content = False
-                for item in USER_BASE.iterdir():
-                    if item.is_file():
-                        has_content = True
-                        break
-                    elif item.is_dir():
-                        # Check if subdirectory has content
-                        try:
-                            if any(item.iterdir()):
-                                has_content = True
-                                break
-                        except Exception:
-                            pass
-                
-                if not has_content:
-                    shutil.rmtree(USER_BASE, ignore_errors=True)
-                    log_success(f"Removed {USER_BASE}")
-            except Exception:
-                pass  # Ignore errors when trying to remove base directory
-    except Exception as e:
-        error_msg = f"Failed to remove temporary files: {e}"
-        log_warning(error_msg)
-        errors.append(error_msg)
-    
-    # 9. Remove system permissions (if requested)
+            has_content = False
+            for item in USER_BASE.iterdir():
+                if item.is_file():
+                    has_content = True
+                    break
+                elif item.is_dir():
+                    try:
+                        if any(item.iterdir()):
+                            has_content = True
+                            break
+                    except Exception:
+                        pass
+
+            if not has_content:
+                shutil.rmtree(USER_BASE, ignore_errors=True)
+                log_success(f"Removed {USER_BASE}")
+    except Exception:
+        pass  # Ignore errors when trying to remove base directory
+
+    # 7. Remove system permissions (if requested)
     permissions_removed = False
     if not skip_permissions:
         log_info("Checking system permissions...")
