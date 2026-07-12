@@ -1288,40 +1288,41 @@ class hyprwhsprApp:
             language_override: Optional language code to use for this recording session
                               (overrides the default language from config)
         """
-        # Use a lock to prevent concurrent starts (race condition protection)
+        # Gate checks happen under the same lock that sets the flag, so a
+        # concurrent toggle never sees is_recording=True for a start that
+        # gets blocked (and stops a recording that never began)
         with self._recording_lock:
             if self.is_recording:
                 return
-            
-            # Set flag immediately to prevent duplicate starts
-            self.is_recording = True
-            # Store language override for this recording session
-            self._current_language_override = language_override
-        
-        # Block recording if model is still loading in background
-        if self._model_initializing:
-            with self._recording_lock:
-                self.is_recording = False
+            if self._model_initializing:
+                blocked = 'initializing'
+            elif self._backend_init_failed:
+                blocked = 'init-failed'
+            elif getattr(self.whisper_manager, '_model_manually_unloaded', False):
+                blocked = 'unloaded'
+            else:
+                blocked = None
+                # Set flag immediately to prevent duplicate starts
+                self.is_recording = True
+                # Store language override for this recording session
+                self._current_language_override = language_override
+
+        # Model is still loading in background
+        if blocked == 'initializing':
             self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
             print("[CONTROL] Recording blocked: model is still initializing", flush=True)
             return
 
-        # Block recording if backend init failed (e.g. deps missing at boot) and
-        # retry it, instead of recording audio that can never be transcribed
-        if self._backend_init_failed:
-            with self._recording_lock:
-                self.is_recording = False
+        # Backend init failed (e.g. deps missing at boot): retry it instead
+        # of recording audio that can never be transcribed
+        if blocked == 'init-failed':
             self._notify_user("hyprwhspr", "Backend failed to load — retrying, try again shortly", urgency="normal")
             print("[CONTROL] Recording blocked: backend init failed - retrying", flush=True)
             self._start_backend_init_background()
             return
 
-        # Block recording if model was deliberately unloaded to free GPU resources
-        with self._recording_lock:
-            model_unloaded = getattr(self.whisper_manager, '_model_manually_unloaded', False)
-            if model_unloaded:
-                self.is_recording = False
-        if model_unloaded:
+        # Model was deliberately unloaded to free GPU resources
+        if blocked == 'unloaded':
             self._notify_user(
                 "hyprwhspr",
                 "Model unloaded — run: hyprwhspr model reload",
