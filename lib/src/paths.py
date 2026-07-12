@@ -11,6 +11,9 @@ XDG_DATA_HOME = Path(os.environ.get('XDG_DATA_HOME', HOME / '.local' / 'share'))
 XDG_RUNTIME_DIR = os.environ.get('XDG_RUNTIME_DIR')
 
 # hyprwhspr directories
+# Runtime-dir resolution is mirrored in config/hyprland/hyprwhspr-tray.sh,
+# lib/mic_osd/main.py's import fallback, and the contrib GNOME extension —
+# change together
 CONFIG_DIR = XDG_CONFIG_HOME / 'hyprwhspr'
 DATA_DIR = XDG_DATA_HOME / 'hyprwhspr'
 if XDG_RUNTIME_DIR:
