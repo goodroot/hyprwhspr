@@ -29,7 +29,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **Translation** - Translate non-English to English with a single config
 - **REST API or websockets** - Secure, fast wires to top clouds like Gemini, ElevenLabs
-- **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
+- **Themed visualizer** - Visualizes your voice, will automatch Omarchy and Noctalia themes
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
 - **Long form mode with saving** - Pause, think, resume, pause: submit... Bam!
