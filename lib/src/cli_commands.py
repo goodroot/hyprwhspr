@@ -5669,6 +5669,9 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     src_dir = USER_BASE / 'src'
     if (src_dir / '.git').exists():
         items_to_remove.append(f"Managed clone: {src_dir}")
+    cmd_symlink = USER_HOME / '.local' / 'bin' / 'hyprwhspr'
+    if cmd_symlink.is_symlink() and os.readlink(cmd_symlink).endswith('/bin/hyprwhspr'):
+        items_to_remove.append(f"Command symlink: {cmd_symlink}")
 
     # Models
     if not keep_models and PYWHISPERCPP_MODELS_DIR.exists():
@@ -5800,6 +5803,10 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         if (src_dir / '.git').exists():
             shutil.rmtree(src_dir, ignore_errors=True)
             log_success(f"Removed {src_dir}")
+
+        if cmd_symlink.is_symlink() and os.readlink(cmd_symlink).endswith('/bin/hyprwhspr'):
+            cmd_symlink.unlink(missing_ok=True)
+            log_success(f"Removed {cmd_symlink}")
     except Exception as e:
         error_msg = f"Failed to remove backend installations: {e}"
         log_warning(error_msg)

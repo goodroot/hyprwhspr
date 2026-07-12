@@ -49,11 +49,12 @@ except ImportError:
         )
     except ImportError:
         # Fallback: construct paths manually if imports fail
+        import tempfile
         xdg_runtime = os.environ.get('XDG_RUNTIME_DIR')
         if xdg_runtime:
             runtime_dir = Path(xdg_runtime) / 'hyprwhspr'
         else:
-            runtime_dir = Path(os.environ.get('TMPDIR', '/tmp')) / f"hyprwhspr-{os.getuid()}"
+            runtime_dir = Path(tempfile.gettempdir()) / f"hyprwhspr-{os.getuid()}"
         RECORDING_STATUS_FILE = runtime_dir / 'recording_status'
         VISUALIZER_STATE_FILE = runtime_dir / 'visualizer_state'
         TRANSCRIPT_PREVIEW_FILE = runtime_dir / 'transcript_preview'

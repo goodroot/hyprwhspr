@@ -40,6 +40,12 @@ if [[ -f /etc/os-release ]]; then
         echo "Then run: hyprwhspr setup"
         exit 0
     fi
+    # Pre-flight before cloning; install-deps.sh remains the authority
+    case " ${ID:-} ${ID_LIKE:-} " in
+        *debian*|*ubuntu*|*fedora*|*rhel*|*suse*) ;;
+        *) die "Unsupported distro '${ID:-unknown}' — supported: Ubuntu, Debian, Fedora, openSUSE (and derivatives).
+See manual install: https://github.com/goodroot/hyprwhspr#other-linux-distros" ;;
+    esac
 fi
 
 { : </dev/tty; } 2>/dev/null || die "This installer is interactive and needs a terminal.

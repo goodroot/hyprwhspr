@@ -1900,10 +1900,13 @@ class hyprwhsprApp:
         }
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            for name, target in compat.items():
-                (CONFIG_DIR / name).symlink_to(target)
         except Exception as e:
-            print(f"[WARN] Failed to create legacy compat symlinks: {e}")
+            print(f"[WARN] Failed to create config dir: {e}")
+        for name, target in compat.items():
+            try:
+                (CONFIG_DIR / name).symlink_to(target)
+            except Exception as e:
+                print(f"[WARN] Failed to create legacy compat symlink {name}: {e}")
 
     def _reset_stale_state(self):
         """Clear runtime state files that may be stale from a previous session.

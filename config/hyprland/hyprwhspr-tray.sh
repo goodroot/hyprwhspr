@@ -30,13 +30,14 @@ fi
 
 ICON_PATH="$PACKAGE_ROOT/share/assets/hyprwhspr.png"
 
-# Transient signal files live in the runtime dir (matches lib/src/paths.py)
+# Transient signal files live in the runtime dir (matches lib/src/paths.py,
+# including tempfile.gettempdir()'s TMPDIR/TEMP/TMP fallback order)
 if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
     RUNTIME_DIR="$XDG_RUNTIME_DIR/hyprwhspr"
 else
-    RUNTIME_DIR="${TMPDIR:-/tmp}/hyprwhspr-$(id -u)"
+    RUNTIME_DIR="${TMPDIR:-${TEMP:-${TMP:-/tmp}}}/hyprwhspr-$(id -u)"
 fi
-mkdir -p "$RUNTIME_DIR"
+mkdir -p -m 700 "$RUNTIME_DIR"
 
 # Performance optimization: command caching
 _now=$(date +%s%3N 2>/dev/null || date +%s)  # ms if available

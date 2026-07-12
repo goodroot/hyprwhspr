@@ -1,5 +1,6 @@
 import St from 'gi://St';
 import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
 import Clutter from 'gi://Clutter';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -16,8 +17,11 @@ const C2 = [167, 139, 250]; // violet (right)
 // Signal files live in the runtime dir; config-dir paths kept as a fallback
 // for hyprwhspr versions that predate the move.
 const CONFIG_DIR = GLib.build_filenamev([GLib.get_user_config_dir(), 'hyprwhspr']);
-const RUNTIME = GLib.getenv('XDG_RUNTIME_DIR') || GLib.get_tmp_dir();
-const RUNTIME_DIR = GLib.build_filenamev([RUNTIME, 'hyprwhspr']);
+const RUNTIME = GLib.getenv('XDG_RUNTIME_DIR');
+// No-XDG fallback mirrors hyprwhspr's paths.py: <tmp>/hyprwhspr-<uid>
+const RUNTIME_DIR = RUNTIME
+    ? GLib.build_filenamev([RUNTIME, 'hyprwhspr'])
+    : GLib.build_filenamev([GLib.get_tmp_dir(), `hyprwhspr-${Gio.Credentials.new().get_unix_user()}`]);
 const REC_FILES = [
     GLib.build_filenamev([RUNTIME_DIR, 'recording_status']),
     GLib.build_filenamev([CONFIG_DIR, 'recording_status']),
