@@ -74,12 +74,6 @@ Then run the interactive setup:
 hyprwhspr setup
 ```
 
-After setup, log out and back in for group permissions, then:
-
-```bash
-hyprwhspr status
-```
-
 #### Ubuntu, Debian, Fedora, openSUSE
 
 ```bash
@@ -88,11 +82,6 @@ curl -fsSL https://hyprwhspr.com/install.sh | bash
 
 Installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup. 
 
-After setup, log out and back in for group permissions, then:
-
-```bash
-hyprwhspr status
-```
 
 Re-run it any time to update.
 
@@ -113,7 +102,7 @@ cd hyprwhspr
 
 </details>
 
-**Setup walks you through the process either way:**
+**Setup then walks you through:**
 
 1. ✅ Configure transcription backend (Cohere Transcribe, Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
 2. ✅ Download models
