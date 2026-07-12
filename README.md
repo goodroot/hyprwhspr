@@ -74,13 +74,27 @@ Then run the interactive setup:
 hyprwhspr setup
 ```
 
+After setup, log out and back in for group permissions, then:
+
+```bash
+hyprwhspr status
+```
+
 #### Ubuntu, Debian, Fedora, openSUSE
 
 ```bash
 curl -fsSL https://hyprwhspr.com/install.sh | bash
 ```
 
-Installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup. Re-run it any time to update.
+Installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup. 
+
+After setup, log out and back in for group permissions, then:
+
+```bash
+hyprwhspr status
+```
+
+Re-run it any time to update.
 
 <details>
 <summary>Manual install</summary>
@@ -134,12 +148,6 @@ curl -fsSL https://hyprwhspr.com/install.sh | bash
 
 # Either way, setup is idempotent if you need to re-run it
 hyprwhspr setup
-```
-
-After setup, log out and back in for group permissions, then:
-
-```bash
-hyprwhspr status
 ```
 
 ### CLI commands
