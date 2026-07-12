@@ -2871,8 +2871,9 @@ class hyprwhsprApp:
             self._start_backend_init_background()
         else:
             if not self.whisper_manager.initialize():
-                print("[ERROR] Failed to initialize Whisper.")
-                return False
+                # Stay alive with recording blocked; the record gate retries init
+                print("[ERROR] Failed to initialize backend - will retry on next record attempt", flush=True)
+                self._backend_init_failed = True
 
         if use_hypr_bindings:
             print("\n[READY] hyprwhspr ready - using Hyprland compositor bindings", flush=True)
