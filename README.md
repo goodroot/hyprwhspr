@@ -107,9 +107,24 @@ yay -Syu hyprwhspr
 hyprwhspr setup
 ```
 
+On other distros, re-run the installer:
+
+```bash
+curl -fsSL https://hyprwhspr.com/install.sh | bash
+```
+
 ### Other Linux distros
 
 hyprwhspr can run on any Linux distribution with systemd.
+
+```bash
+curl -fsSL https://hyprwhspr.com/install.sh | bash
+```
+
+Supports Ubuntu, Debian, Fedora and openSUSE -- installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup. Re-run it any time to update.
+
+<details>
+<summary>Manual install</summary>
 
 ```bash
 # Clone the repo
@@ -122,6 +137,8 @@ cd hyprwhspr
 # Run interactive setup
 ./bin/hyprwhspr setup
 ```
+
+</details>
 
 After setup, log out and back in for group permissions, then:
 
