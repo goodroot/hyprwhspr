@@ -21,18 +21,17 @@ else:
 # Configuration files
 CONFIG_FILE = CONFIG_DIR / 'config.json'
 
-# Runtime state signal files (used for IPC between service and waybar)
-RECORDING_STATUS_FILE = CONFIG_DIR / 'recording_status'
-RECORDING_CONTROL_FILE = CONFIG_DIR / 'recording_control'
-SOCKET_FILE = CONFIG_DIR / 'hyprwhspr.sock'
-AUDIO_LEVEL_FILE = CONFIG_DIR / 'audio_level'
-RECOVERY_REQUESTED_FILE = CONFIG_DIR / 'recovery_requested'
-RECOVERY_RESULT_FILE = CONFIG_DIR / 'recovery_result'
-MIC_ZERO_VOLUME_FILE = CONFIG_DIR / '.mic_zero_volume'
-MIC_OSD_PID_FILE = CONFIG_DIR / 'mic_osd.pid'
-SUSPEND_MARKER_FILE = CONFIG_DIR / '.suspend_marker'
-LOCK_FILE = CONFIG_DIR / 'hyprwhspr.lock'
-VISUALIZER_STATE_FILE = CONFIG_DIR / 'visualizer_state'  # recording|paused|processing|error|success
+# Transient IPC/signal files (tmpfs; wiped at logout/reboot)
+RECORDING_STATUS_FILE = RUNTIME_DIR / 'recording_status'
+RECORDING_CONTROL_FILE = RUNTIME_DIR / 'recording_control'
+SOCKET_FILE = RUNTIME_DIR / 'hyprwhspr.sock'
+AUDIO_LEVEL_FILE = RUNTIME_DIR / 'audio_level'
+RECOVERY_REQUESTED_FILE = RUNTIME_DIR / 'recovery_requested'
+RECOVERY_RESULT_FILE = RUNTIME_DIR / 'recovery_result'
+MIC_ZERO_VOLUME_FILE = RUNTIME_DIR / '.mic_zero_volume'
+MIC_OSD_PID_FILE = RUNTIME_DIR / 'mic_osd.pid'
+LOCK_FILE = RUNTIME_DIR / 'hyprwhspr.lock'
+VISUALIZER_STATE_FILE = RUNTIME_DIR / 'visualizer_state'  # recording|paused|processing|error|success
 TRANSCRIPT_PREVIEW_FILE = RUNTIME_DIR / 'transcript_preview'
 MIC_OSD_LEVEL_FEED_FILE = RUNTIME_DIR / 'mic_osd_level_feed'
 
@@ -44,8 +43,8 @@ CREDENTIALS_FILE = CREDENTIALS_DIR / 'credentials'
 TEMP_DIR = DATA_DIR / 'temp'
 
 # Long-form recording mode
-LONGFORM_STATE_FILE = CONFIG_DIR / 'longform_state'  # IDLE|RECORDING|PAUSED|PROCESSING|ERROR
+LONGFORM_STATE_FILE = RUNTIME_DIR / 'longform_state'  # IDLE|RECORDING|PAUSED|PROCESSING|ERROR
 LONGFORM_SEGMENTS_DIR = TEMP_DIR / 'longform_segments'
 
 # Model lifecycle signal file (presence = model is manually unloaded from memory)
-MODEL_UNLOADED_FILE = CONFIG_DIR / 'model_unloaded'
+MODEL_UNLOADED_FILE = RUNTIME_DIR / 'model_unloaded'

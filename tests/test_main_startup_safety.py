@@ -97,6 +97,42 @@ class MainStartupSafetyTests(unittest.TestCase):
         )
         self.assertTrue(references_preview_file)
 
+    def test_migrate_legacy_state_files_creates_compat_symlinks(self):
+        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
+
+        migrate_func = self._find_function(tree, "_migrate_legacy_state_files")
+        self.assertIsNotNone(migrate_func)
+
+        calls_symlink = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "symlink_to"
+            for node in ast.walk(migrate_func)
+        )
+        self.assertTrue(calls_symlink)
+
+        constants = {
+            node.value
+            for node in ast.walk(migrate_func)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        for name in ("recording_control", "recording_status", "audio_level"):
+            self.assertIn(name, constants)
+
+        app_class = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef) and node.name == "hyprwhsprApp"
+        )
+        init_func = self._find_function(app_class, "__init__")
+        self.assertIsNotNone(init_func)
+        called_from_init = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_migrate_legacy_state_files"
+            for node in ast.walk(init_func)
+        )
+        self.assertTrue(called_from_init)
+
     def test_cancel_cleanup_clears_transcript_preview(self):
         tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
 

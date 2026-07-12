@@ -218,7 +218,7 @@ You can also cancel without a dedicated shortcut:
 hyprwhspr record cancel
 
 # Via FIFO directly (useful for Hyprland binds or sxhkd)
-echo cancel > ~/.config/hyprwhspr/recording_control
+echo cancel > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
 ### Hyprland native bindings
@@ -248,8 +248,8 @@ bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/h
 Hold the key to record, release to stop:
 
 ```bash
-bind = SUPER ALT, D, exec, echo "start" > ~/.config/hyprwhspr/recording_control
-bindr = SUPER ALT, D, exec, echo "stop" > ~/.config/hyprwhspr/recording_control
+bind = SUPER ALT, D, exec, echo "start" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
+bindr = SUPER ALT, D, exec, echo "stop" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
 #### Long-form mode
@@ -258,7 +258,7 @@ Primary shortcut toggles record/pause/resume; submit shortcut transcribes:
 
 ```bash
 bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record
-bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > ~/.config/hyprwhspr/recording_control
+bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
 #### Cancel recording (all modes)
@@ -266,7 +266,7 @@ bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > ~/.config/hyp
 Discard audio without transcribing:
 
 ```bash
-bind = SUPER, ESCAPE, exec, echo "cancel" > ~/.config/hyprwhspr/recording_control
+bind = SUPER, ESCAPE, exec, echo "cancel" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
 Restart the service to lock in changes:
@@ -280,7 +280,7 @@ systemctl --user restart hyprwhspr
 With `grab_keys: false` (default), hyprwhspr can start even if you are not in the `input` group, but the global shortcut will not work. Control recording via:
 
 - The CLI (`hyprwhspr record toggle`, `hyprwhspr record start`, etc.)
-- The `recording_control` file (e.g. bind in Hyprland to `echo start > ~/.config/hyprwhspr/recording_control`)
+- The `recording_control` FIFO for lowest latency (e.g. bind in Hyprland to `echo start > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"`)
 
 ## Backends
 

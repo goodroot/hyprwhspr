@@ -49,15 +49,13 @@ except ImportError:
         )
     except ImportError:
         # Fallback: construct paths manually if imports fail
-        home = Path.home()
-        xdg_config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
         xdg_runtime = os.environ.get('XDG_RUNTIME_DIR')
         if xdg_runtime:
             runtime_dir = Path(xdg_runtime) / 'hyprwhspr'
         else:
             runtime_dir = Path(os.environ.get('TMPDIR', '/tmp')) / f"hyprwhspr-{os.getuid()}"
-        RECORDING_STATUS_FILE = xdg_config / 'hyprwhspr' / 'recording_status'
-        VISUALIZER_STATE_FILE = xdg_config / 'hyprwhspr' / 'visualizer_state'
+        RECORDING_STATUS_FILE = runtime_dir / 'recording_status'
+        VISUALIZER_STATE_FILE = runtime_dir / 'visualizer_state'
         TRANSCRIPT_PREVIEW_FILE = runtime_dir / 'transcript_preview'
         MIC_OSD_LEVEL_FEED_FILE = runtime_dir / 'mic_osd_level_feed'
 

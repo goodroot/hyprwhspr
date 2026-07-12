@@ -30,6 +30,14 @@ fi
 
 ICON_PATH="$PACKAGE_ROOT/share/assets/hyprwhspr.png"
 
+# Transient signal files live in the runtime dir (matches lib/src/paths.py)
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    RUNTIME_DIR="$XDG_RUNTIME_DIR/hyprwhspr"
+else
+    RUNTIME_DIR="${TMPDIR:-/tmp}/hyprwhspr-$(id -u)"
+fi
+mkdir -p "$RUNTIME_DIR"
+
 # Performance optimization: command caching
 _now=$(date +%s%3N 2>/dev/null || date +%s)  # ms if available
 declare -A _cache
@@ -56,8 +64,8 @@ try() { timeout 0.5s bash -c "$*" 2>/dev/null; }
 ERR_THRESHOLD=2
 # Debounce errors: a lone slow/timed-out tick shouldn't flip the tray
 stabilize() {
-    local cand="$1" f="$HOME/.config/hyprwhspr/tray_state" last streak
-    read -r last streak < "$f" 2>/dev/null || { last=ready; streak=0; }
+    local cand="$1" f="$RUNTIME_DIR/tray_state" last streak
+    read -r last streak 2>/dev/null < "$f" || { last=ready; streak=0; }
     if [[ "$cand" == error:* ]]; then
         streak=$((streak + 1))
         (( streak >= ERR_THRESHOLD )) && last="$cand"
@@ -219,7 +227,7 @@ mic_recording_now() {
     fi
     
     # Check recording status file written by hyprwhspr
-    local status_file="$HOME/.config/hyprwhspr/recording_status"
+    local status_file="$RUNTIME_DIR/recording_status"
     if [[ ! -f "$status_file" ]]; then
         # No recording status file means hyprwhspr is not recording
         return 1
@@ -234,7 +242,7 @@ mic_recording_now() {
     # Verify recording is actually active by checking audio_level file staleness
     # If recording is active, audio_level should be updated regularly (every ~100ms)
     # If the file is stale (>2 seconds old), recording likely stopped/crashed
-    local level_file="$HOME/.config/hyprwhspr/audio_level"
+    local level_file="$RUNTIME_DIR/audio_level"
     if [[ -f "$level_file" ]]; then
         # Check file modification time (seconds since epoch)
         local file_age
@@ -365,8 +373,8 @@ show_notification() {
 
 # Function to check and show recovery result notification
 check_recovery_result() {
-    local result_file="$HOME/.config/hyprwhspr/recovery_result"
-    local notification_lock_dir="$HOME/.config/hyprwhspr/.recovery_notification_lock"
+    local result_file="$RUNTIME_DIR/recovery_result"
+    local notification_lock_dir="$RUNTIME_DIR/.recovery_notification_lock"
     local notification_lock_file="${notification_lock_dir}/lock"
 
     if [[ ! -f "$result_file" ]]; then
@@ -535,7 +543,7 @@ toggle_hyprwhspr() {
 
 # Function to control recording (start/stop)
 control_recording() {
-    local control_file="$HOME/.config/hyprwhspr/recording_control"
+    local control_file="$RUNTIME_DIR/recording_control"
 
     # Check if currently recording
     if is_hyprwhspr_recording; then
@@ -687,7 +695,7 @@ get_current_state() {
     fi
     
     # Service is running - check if model is manually unloaded
-    local model_unloaded_file="$HOME/.config/hyprwhspr/model_unloaded"
+    local model_unloaded_file="$RUNTIME_DIR/model_unloaded"
     if [[ -f "$model_unloaded_file" ]]; then
         echo "unloaded"; return
     fi
@@ -701,7 +709,7 @@ get_current_state() {
 
     # Check if mic is present and accessible
     # BUT: if recovery just succeeded (within last 5 seconds), give it grace period
-    local recovery_file="$HOME/.config/hyprwhspr/recovery_result"
+    local recovery_file="$RUNTIME_DIR/recovery_result"
     local in_recovery_grace=false
     if [[ -f "$recovery_file" ]]; then
         local result=$(cat "$recovery_file" 2>/dev/null)
@@ -726,7 +734,7 @@ get_current_state() {
     fi
     
     # Check for zero-volume signal from main app (mic present but not working)
-    local zero_volume_file="$HOME/.config/hyprwhspr/.mic_zero_volume"
+    local zero_volume_file="$RUNTIME_DIR/.mic_zero_volume"
     if [[ -f "$zero_volume_file" ]]; then
         # Check file age - if recent (<60s), show error
         local file_age

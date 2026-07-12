@@ -13,6 +13,7 @@ import fcntl
 import atexit
 import subprocess
 import select
+import shutil
 from pathlib import Path
 
 try:
@@ -84,7 +85,7 @@ from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR,
-    MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE
+    MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE, CONFIG_DIR, RUNTIME_DIR
 )
 from backend_utils import normalize_backend
 from segment_manager import SegmentManager
@@ -219,6 +220,7 @@ class hyprwhsprApp:
         self._startup_grace_period = 5.0  # Ignore hotplug events for 5 seconds after startup
 
         # Clear stale runtime state from any previous session (crash, SIGKILL, reboot)
+        self._migrate_legacy_state_files()
         self._reset_stale_state()
 
         # Set up device hotplug monitoring (for automatic mic recovery)
@@ -1864,6 +1866,44 @@ class hyprwhsprApp:
                     RECORDING_STATUS_FILE.unlink()
         except Exception as e:
             print(f"[WARN] Failed to write recording status: {e}")
+
+    def _migrate_legacy_state_files(self):
+        """One-time cleanup of signal files that lived in CONFIG_DIR before they
+        moved to RUNTIME_DIR, plus compat symlinks for the three files external
+        consumers (Hyprland binds, GNOME extension) may still use at old paths.
+        """
+        try:
+            RUNTIME_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+            RUNTIME_DIR.chmod(0o700)
+        except Exception as e:
+            print(f"[WARN] Failed to prepare runtime dir {RUNTIME_DIR}: {e}")
+
+        legacy_names = [
+            'recording_status', 'recording_control', 'hyprwhspr.sock',
+            'audio_level', 'recovery_requested', 'recovery_result',
+            '.mic_zero_volume', 'mic_osd.pid', '.suspend_marker',
+            'hyprwhspr.lock', 'visualizer_state', 'longform_state',
+            'model_unloaded', 'tray_state',
+        ]
+        for name in legacy_names:
+            try:
+                (CONFIG_DIR / name).unlink(missing_ok=True)
+            except Exception:
+                pass
+        shutil.rmtree(CONFIG_DIR / '.recovery_notification_lock', ignore_errors=True)
+
+        # Compat symlinks, kept for one release cycle
+        compat = {
+            'recording_control': RECORDING_CONTROL_FILE,
+            'recording_status': RECORDING_STATUS_FILE,
+            'audio_level': AUDIO_LEVEL_FILE,
+        }
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            for name, target in compat.items():
+                (CONFIG_DIR / name).symlink_to(target)
+        except Exception as e:
+            print(f"[WARN] Failed to create legacy compat symlinks: {e}")
 
     def _reset_stale_state(self):
         """Clear runtime state files that may be stale from a previous session.
