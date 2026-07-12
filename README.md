@@ -54,7 +54,9 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **NVIDIA GPU** (optional, for CUDA acceleration)
 - **AMD/Intel GPU / APU** (optional, for Vulkan acceleration)
 
-### Quick start (Arch Linux)
+### Install
+
+#### Arch Linux
 
 On the AUR:
 
@@ -66,14 +68,38 @@ yay -S hyprwhspr
 yay -S hyprwhspr-git
 ```
 
-Then run the auto installer, or perform your own:
+Then run the interactive setup:
 
 ```bash
-# Run interactive setup
 hyprwhspr setup
 ```
 
-**The setup will walk you through the process:**
+#### Ubuntu, Debian, Fedora, openSUSE
+
+```bash
+curl -fsSL https://hyprwhspr.com/install.sh | bash
+```
+
+Installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup. Re-run it any time to update.
+
+<details>
+<summary>Manual install</summary>
+
+```bash
+# Clone the repo
+git clone https://github.com/goodroot/hyprwhspr.git
+cd hyprwhspr
+
+# Install dependencies for your distro
+./scripts/install-deps.sh
+
+# Run interactive setup
+./bin/hyprwhspr setup
+```
+
+</details>
+
+**Setup walks you through the process either way:**
 
 1. ✅ Configure transcription backend (Cohere Transcribe, Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
 2. ✅ Download models
@@ -100,53 +126,21 @@ Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues
 ### Updating
 
 ```bash
-# Update via your AUR helper
+# Arch: update via your AUR helper
 yay -Syu hyprwhspr
 
-# If needed, re-run setup (idempotent)
+# Other distros: re-run the installer
+curl -fsSL https://hyprwhspr.com/install.sh | bash
+
+# Either way, setup is idempotent if you need to re-run it
 hyprwhspr setup
 ```
-
-On other distros, re-run the installer:
-
-```bash
-curl -fsSL https://hyprwhspr.com/install.sh | bash
-```
-
-### Other Linux distros
-
-hyprwhspr can run on any Linux distribution with systemd.
-
-```bash
-curl -fsSL https://hyprwhspr.com/install.sh | bash
-```
-
-Supports Ubuntu, Debian, Fedora and openSUSE -- installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup. Re-run it any time to update.
-
-<details>
-<summary>Manual install</summary>
-
-```bash
-# Clone the repo
-git clone https://github.com/goodroot/hyprwhspr.git
-cd hyprwhspr
-
-# Install dependencies for your distro (Ubuntu, Debian, Fedora, openSUSE)
-./scripts/install-deps.sh
-
-# Run interactive setup
-./bin/hyprwhspr setup
-```
-
-</details>
 
 After setup, log out and back in for group permissions, then:
 
 ```bash
 hyprwhspr status
 ```
-
-> Non-Arch distro support is new - please report any snags!
 
 ### CLI commands
 
