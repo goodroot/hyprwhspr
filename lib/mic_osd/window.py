@@ -145,11 +145,6 @@ class OSDWindow(Gtk.Window):
         self._visualizer_state = (state or "recording").lower()
         self.drawing_area.queue_draw()
     
-    def set_visualization(self, visualization):
-        """Change the visualization type."""
-        self.visualization = visualization
-        self.drawing_area.queue_draw()
-
     def _draw_preview_text(self, cr: cairo.Context, width: int, height: int):
         if not self._preview_text or self._visualizer_state != "recording":
             return
@@ -226,16 +221,6 @@ class OSDWindow(Gtk.Window):
 
         truncated = text[-low:].lstrip()
         return prefix + truncated if truncated else prefix
-    
-    def make_click_through(self):
-        """
-        Make the window click-through (input passes to windows below).
-        
-        This needs to be called after the window is realized.
-        """
-        # For layer shell windows, we just need to not set keyboard mode
-        # The default is already non-interactive
-        pass
 
 
 def load_css(css_path=None):

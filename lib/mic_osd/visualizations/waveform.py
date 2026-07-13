@@ -213,11 +213,6 @@ class WaveformVisualization(BaseVisualization):
             self._elapsed_seconds = 0.0
             self._show_elapsed_time = False
 
-    def set_elapsed_time(self, seconds: float):
-        """Set the elapsed time directly (for long-form mode)."""
-        self._elapsed_seconds = seconds
-        self._show_elapsed_time = True
-
     def _get_elapsed_seconds(self) -> float:
         """Get current elapsed time in seconds."""
         if self._recording_start_time is not None:
