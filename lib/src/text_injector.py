@@ -26,6 +26,22 @@ except ImportError:
 
 pyperclip = require_package('pyperclip')
 
+# pyperclip's own auto-detection (determine_clipboard(), triggered lazily on first
+# copy()/paste()) prefers a GObject-Introspection GTK clipboard whenever `gi` is
+# importable, ahead of xclip/xsel — and does `gi.require_version('Gtk', '3.0')` to
+# get it. mic_osd's layer-shell availability probe already pins this same process's
+# `Gtk` namespace to version 4.0, so pyperclip's lazy GTK3 request then raises
+# "Namespace Gtk is already loaded with version 4.0" the first time the clipboard
+# fallback path (wl-copy unavailable/failing, e.g. under X11) runs. Forcing a
+# subprocess-based backend up front means pyperclip never touches `gi` at all.
+try:
+    if shutil.which('xclip'):
+        pyperclip.set_clipboard('xclip')
+    elif shutil.which('xsel'):
+        pyperclip.set_clipboard('xsel')
+except Exception:
+    pass
+
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
 NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'
 
@@ -869,11 +885,16 @@ except Exception:
 
     def _copy_text_to_clipboard(self, text: str) -> bool:
         """Copy text to the clipboard without triggering paste."""
+        if shutil.which("wl-copy"):
+            try:
+                result = subprocess.run(["wl-copy"], input=text.encode("utf-8"), timeout=2)
+                if result.returncode == 0:
+                    return True
+            except Exception:
+                pass
+        # Fallback: pyperclip (X11, or wl-copy present but no compositor to reach)
         try:
-            if shutil.which("wl-copy"):
-                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=2)
-            else:
-                pyperclip.copy(text)
+            pyperclip.copy(text)
             return True
         except Exception as e:
             print(f"ERROR: Clipboard copy failed: {e}")
@@ -897,12 +918,18 @@ except Exception:
                     if current != injected:
                         return
 
+                restored = False
                 if shutil.which("wl-copy"):
-                    subprocess.run(["wl-copy"], input=saved, check=True, timeout=2)
-                else:
-                    # pyperclip is text-only; only restore if the saved bytes are
-                    # valid UTF-8 text. Binary clipboard data (images, etc.) cannot
-                    # be round-tripped through pyperclip without corruption.
+                    try:
+                        result = subprocess.run(["wl-copy"], input=saved, timeout=2)
+                        restored = result.returncode == 0
+                    except Exception:
+                        restored = False
+                if not restored:
+                    # Fallback: pyperclip (X11, or wl-copy present but no compositor to
+                    # reach). It's text-only; only restore if the saved bytes are valid
+                    # UTF-8 text. Binary clipboard data (images, etc.) cannot be
+                    # round-tripped through pyperclip without corruption.
                     try:
                         pyperclip.copy(saved.decode("utf-8"))
                     except UnicodeDecodeError:
