@@ -9,8 +9,8 @@
 # apt repositories contain an outdated 0.1.x version that is incompatible.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/goodroot/hyprwhspr/main/scripts/install-deps.sh | bash
-#   # or
+#   curl -fsSL https://hyprwhspr.com/install.sh | bash   # full bootstrap (runs this script)
+#   # or directly:
 #   ./scripts/install-deps.sh
 #
 

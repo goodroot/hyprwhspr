@@ -70,7 +70,7 @@ PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.l
 STATE_DIR = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'state')) / 'hyprwhspr'
 STATE_FILE = STATE_DIR / 'install-state.json'
 PYWHISPERCPP_SRC_DIR = USER_BASE / 'pywhispercpp-src'
-PYWHISPERCPP_PINNED_COMMIT = "d8f202f4435cf3e5e0bf735723eaacbe84c6853c"
+PYWHISPERCPP_PINNED_COMMIT = "294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f"
 PARAKEET_VENV_DIR = USER_BASE / 'parakeet-venv'
 PARAKEET_DIR = Path(HYPRWHSPR_ROOT) / 'lib' / 'backends' / 'parakeet'
 PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
@@ -79,7 +79,7 @@ PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
 # Pre-built wheel configuration
 WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v2"
 WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
-PYWHISPERCPP_VERSION = "1.4.1"
+PYWHISPERCPP_VERSION = "1.5.0"
 
 
 def _safe_decode(output) -> str:
@@ -654,20 +654,14 @@ def check_model_validity(model_file: Path) -> bool:
     """Check if model file is valid"""
     if not model_file.exists():
         return False
-    
-    file_size = model_file.stat().st_size
-    stored_hash = get_state("model_base_en_hash")
-    current_hash = compute_file_hash(model_file)
-    
-    # If we have a stored hash and it matches, it's valid
-    if stored_hash and current_hash == stored_hash:
+
+    stored_hash = get_state(f"model_hash_{model_file.name}")
+    if stored_hash and compute_file_hash(model_file) == stored_hash:
         return True
-    
-    # If file is reasonable size (>100MB), it's probably valid
-    if file_size > 100000000:
-        return True
-    
-    return False
+
+    # No stored hash: size floor catches truncated downloads and HF error
+    # pages (smallest real model, quantized tiny, is ~31MB)
+    return model_file.stat().st_size > 20_000_000
 
 
 # ==================== Helper Functions ====================
@@ -1717,6 +1711,38 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
 
 # ==================== Model Download ====================
 
+VAD_MODEL_FILENAME = 'ggml-silero-v5.1.2.bin'
+VAD_MODEL_URL = f"https://huggingface.co/ggml-org/whisper-vad/resolve/main/{VAD_MODEL_FILENAME}"
+
+
+def download_vad_model() -> bool:
+    """Download the Silero VAD model for whisper.cpp native VAD. Never raises."""
+    try:
+        PYWHISPERCPP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+        vad_file = PYWHISPERCPP_MODELS_DIR / VAD_MODEL_FILENAME
+
+        # ~2MB model; anything tiny is a failed/partial download
+        if vad_file.exists():
+            if vad_file.stat().st_size > 500_000:
+                return True
+            log_warning("Existing VAD model appears invalid; re-downloading")
+            vad_file.unlink()
+
+        log_info(f"Fetching {VAD_MODEL_URL}")
+        urllib.request.urlretrieve(VAD_MODEL_URL, vad_file)
+
+        if vad_file.stat().st_size <= 500_000:
+            log_error("Downloaded VAD model appears invalid")
+            vad_file.unlink()
+            return False
+
+        log_success("Silero VAD model downloaded")
+        return True
+    except Exception as e:
+        log_error(f"Failed to download Silero VAD model: {e}")
+        return False
+
+
 def download_pywhispercpp_model(model_name: str = 'base') -> bool:
     """Download pywhispercpp model with progress feedback"""
     log_info(f"Downloading pywhispercpp model: {model_name}…")
@@ -1726,11 +1752,11 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
     model_url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{model_name}.bin"
     
     if check_model_validity(model_file):
-        log_success("pywhispercpp base model present")
+        log_success(f"pywhispercpp model present: {model_name}")
         return True
-    
+
     if model_file.exists():
-        log_warning("Existing base model appears invalid; re-downloading")
+        log_warning(f"Existing {model_name} model appears invalid; re-downloading")
         model_file.unlink()
     
     log_info(f"Fetching {model_url}")
@@ -1756,12 +1782,12 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
         
         # Store hash for future validation
         model_hash = compute_file_hash(model_file)
-        set_state("model_base_en_hash", model_hash)
-        
-        log_success("pywhispercpp base model downloaded")
+        set_state(f"model_hash_{model_file.name}", model_hash)
+
+        log_success(f"pywhispercpp model downloaded: {model_name}")
         return True
     except Exception as e:
-        log_error(f"Failed to download pywhispercpp base model: {e}")
+        log_error(f"Failed to download pywhispercpp model {model_name}: {e}")
         return False
 
 

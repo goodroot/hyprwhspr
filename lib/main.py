@@ -5,6 +5,7 @@ hyprwhspr - stt
 
 import sys
 import time
+import math
 import threading
 import os
 import socket
@@ -12,6 +13,7 @@ import fcntl
 import atexit
 import subprocess
 import select
+import shutil
 from pathlib import Path
 
 try:
@@ -83,7 +85,7 @@ from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR,
-    MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE
+    MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE, CONFIG_DIR, RUNTIME_DIR
 )
 from backend_utils import normalize_backend
 from segment_manager import SegmentManager
@@ -125,6 +127,8 @@ class hyprwhsprApp:
         self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
         self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
         self._last_mic_error_log_time = 0.0  # Track when we last logged mic error (prevent duplicates)
+        self._last_mic_error_message = None  # Last mic error message (dedupe identical repeats only)
+        self._mic_error_nid = None  # Desktop notification id for coalescing mic-error banners
         self._mic_disconnected = False  # Track if microphone was disconnected via hotplug event
         self._last_hotplug_add_time = float('-inf')  # Track last USB add event (for debouncing multiple events)
         
@@ -159,6 +163,10 @@ class hyprwhsprApp:
         # Set when model is loading in background (e.g. slow backends like cohere-transcribe)
         # Recording is blocked while True; cleared once initialize() succeeds or fails.
         self._model_initializing = False
+        # Set when background initialize() failed; record start retries init instead
+        # of recording audio that can never be transcribed
+        self._backend_init_failed = False
+        self._backend_init_lock = threading.Lock()
 
         # Recording control FIFO (for immediate push-to-talk response)
         self._recording_control_thread = None  # Background thread handle for FIFO listener
@@ -191,6 +199,12 @@ class hyprwhsprApp:
         self._continuous_transcription_done.set()  # no transcription in flight
         self._continuous_cancelled = False  # set on cancel to suppress in-flight injection
 
+        # Auto-stop-on-silence state (toggle/auto modes). The stop Event is created fresh
+        # per session (not reused) so a stale monitor generation can never signal a newer one.
+        self._autostop_silence_thread = None
+        self._autostop_silence_stop = None
+        self._autostop_lock = threading.Lock()  # guards thread/event bookkeeping across threads
+
         # Long-form recording mode state
         self._longform_state = 'IDLE'  # IDLE, RECORDING, PAUSED, PROCESSING, ERROR
         self._longform_language_override = None  # Language override for long-form session
@@ -206,6 +220,7 @@ class hyprwhsprApp:
         self._startup_grace_period = 5.0  # Ignore hotplug events for 5 seconds after startup
 
         # Clear stale runtime state from any previous session (crash, SIGKILL, reboot)
+        self._migrate_legacy_state_files()
         self._reset_stale_state()
 
         # Set up device hotplug monitoring (for automatic mic recovery)
@@ -237,7 +252,10 @@ class hyprwhsprApp:
                         print("[WARN] No layer-shell overlay and no desktop notifications; recording has no status indicator", flush=True)
 
                 if MicOSDRunner.is_available() and MicOSDRunner.layer_shell_active():
-                    runner = MicOSDRunner()
+                    # Feed the OSD meter from the capture stream (issue #205).
+                    # get_viz_frame's default num_buckets must match the
+                    # waveform visualization's num_bars (32).
+                    runner = MicOSDRunner(level_source=self.audio_capture.get_viz_frame)
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
                         # Force the overlay hidden at startup. If we reused an
@@ -477,6 +495,8 @@ class hyprwhsprApp:
                 on_server_restart_callback=self._on_pulse_server_restarted
             )
             if self.pulse_monitor.start():
+                # Monitored bindings stay fresh via events; record start can skip its pactl poll
+                self.audio_capture.set_default_monitor_check(self.pulse_monitor.is_healthy)
                 print("[INIT] PulseAudio/PipeWire monitoring enabled")
             else:
                 print("[WARN] Failed to start PulseAudio monitoring")
@@ -654,6 +674,8 @@ class hyprwhsprApp:
                 self._start_recording(language_override=language_override)
                 if recording_mode == 'continuous':
                     self._continuous_start_silence_monitor()
+                elif recording_mode == 'toggle':
+                    self._autostop_start_silence_monitor()
         elif recording_mode == 'push_to_talk':
             # Push-to-talk mode: only start recording on key press
             if not self.is_recording:
@@ -680,6 +702,8 @@ class hyprwhsprApp:
                     should_start = False
 
             # Call _start_recording() outside the lock to avoid blocking release callback
+            # NOTE: auto-stop-on-silence is armed on RELEASE (tap-confirm path), not here, so a
+            # >=400ms hold stays pure push-to-talk and is never cut off mid-hold.
             if should_start:
                 self._start_recording(language_override=language_override)
         else:
@@ -728,7 +752,10 @@ class hyprwhsprApp:
                 # Tap (< 400ms): only stop if we didn't start recording on this press (toggle off)
                 if not started_this_press:
                     self._stop_recording()
-                # Otherwise, keep recording (tap started it, let it continue)
+                else:
+                    # Tap started the session and we're keeping it: arm auto-stop-on-silence now
+                    # (deferred from press so a >=400ms hold stays pure push-to-talk).
+                    self._autostop_start_silence_monitor()
 
     def _on_secondary_shortcut_triggered(self):
         """Handle secondary shortcut trigger (key press) with language override"""
@@ -741,15 +768,35 @@ class hyprwhsprApp:
     # Continuous mode: auto-paste on speech pause
     _POLL_INTERVAL = 0.1  # seconds between silence checks
 
+    def _get_float_setting(self, key, default=0.0):
+        """Coerce a config value to float; falls back to `default` if missing, invalid, or non-finite (NaN/Infinity)."""
+        value = self.config.get_setting(key, default)
+        try:
+            value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return value if math.isfinite(value) else default
+
+    def _calibrate_noise_floor(self, stop_event):
+        """Sample the mic's noise floor over ~0.6s. Returns None if stopped/recording ended early."""
+        samples = []
+        for _ in range(6):
+            stop_event.wait(0.1)
+            if stop_event.is_set() or not self.is_recording:
+                return None
+            samples.append(self.audio_capture.rolling_avg_level)
+        noise_floor = min(samples)
+        return max(noise_floor * 2, 2e-4)
+
     def _continuous_start_silence_monitor(self):
         """Start monitoring for silence to trigger auto-paste in continuous mode"""
         self._continuous_cancelled = False
         self._continuous_stop_silence_monitor()
         self._continuous_silence_stop.clear()
 
-        silence_seconds = self.config.get_setting('continuous_silence_seconds', 2.0)
-        configured_threshold = self.config.get_setting('continuous_silence_threshold', 0)
-        samples_needed = int(silence_seconds / self._POLL_INTERVAL)
+        silence_seconds = self._get_float_setting('continuous_silence_seconds', 2.0)
+        configured_threshold = self._get_float_setting('continuous_silence_threshold', 0)
+        samples_needed = max(1, int(silence_seconds / self._POLL_INTERVAL))
 
         def monitor():
             silent_count = 0
@@ -757,17 +804,10 @@ class hyprwhsprApp:
                 # Auto-calibrate threshold from noise floor if not manually configured
                 threshold = configured_threshold
                 if threshold <= 0:
-                    # Sample level 6 times over 0.6s; use minimum to get noise floor
-                    # even if the user starts speaking immediately after pressing record
-                    samples = []
-                    for _ in range(6):
-                        self._continuous_silence_stop.wait(0.1)
-                        if self._continuous_silence_stop.is_set() or not self.is_recording:
-                            return
-                        samples.append(self.audio_capture.rolling_avg_level)
-                    noise_floor = min(samples)
-                    threshold = max(noise_floor * 2, 2e-4)
-                    print(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f} (noise floor={noise_floor:.5f})", flush=True)
+                    threshold = self._calibrate_noise_floor(self._continuous_silence_stop)
+                    if threshold is None:
+                        return
+                    print(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f}", flush=True)
 
                 while self.is_recording and not self._continuous_silence_stop.is_set():
                     raw_level = self.audio_capture.rolling_avg_level
@@ -791,6 +831,85 @@ class hyprwhsprApp:
         if self._continuous_silence_thread and self._continuous_silence_thread.is_alive():
             self._continuous_silence_thread.join(timeout=0.5)
         self._continuous_silence_thread = None
+
+    def _autostop_start_silence_monitor(self):
+        """Auto-stop recording after `silence_timeout` seconds of silence (toggle/auto modes).
+
+        Arms only after speech has been detected, so it can't fire while the user is
+        still composing their first sentence. The silence threshold auto-calibrates from
+        the noise floor (same approach as continuous mode). No-op when silence_timeout <= 0.
+        """
+        silence_timeout = self._get_float_setting('silence_timeout', 0)
+        configured_threshold = self._get_float_setting('continuous_silence_threshold', 0)
+
+        with self._autostop_lock:
+            self._autostop_teardown_locked()
+            if silence_timeout <= 0:
+                return  # feature disabled (default)
+
+            stop_event = threading.Event()
+            samples_needed = max(1, int(silence_timeout / self._POLL_INTERVAL))
+
+            def monitor():
+                thread = threading.current_thread()
+                try:
+                    threshold = configured_threshold
+                    if threshold <= 0:
+                        threshold = self._calibrate_noise_floor(stop_event)
+                        if threshold is None:
+                            return
+
+                    armed = False          # don't count silence until speech has been heard
+                    silent_count = 0
+                    while self.is_recording and not stop_event.is_set():
+                        level = self.audio_capture.rolling_avg_level
+                        if level >= threshold:
+                            armed = True
+                            silent_count = 0
+                        elif armed:
+                            silent_count += 1
+                            if silent_count >= samples_needed:
+                                stop_event.set()
+                                # Deregister ourselves before handing off to _stop_recording().
+                                # If a newer generation already replaced us here, our session
+                                # already ended some other way - don't stop whatever is
+                                # recording now, it isn't ours.
+                                with self._autostop_lock:
+                                    still_current = self._autostop_silence_thread is thread
+                                    if still_current:
+                                        self._autostop_silence_thread = None
+                                        self._autostop_silence_stop = None
+                                if still_current:
+                                    print(f"[AUTOSTOP] {silence_timeout:.1f}s of silence - stopping recording", flush=True)
+                                    self._stop_recording()   # plays the stop beep; transcribes + pastes
+                                return
+                        stop_event.wait(self._POLL_INTERVAL)
+                except Exception as e:
+                    print(f"[AUTOSTOP] Silence monitor error: {e}", flush=True)
+
+            self._autostop_silence_thread = threading.Thread(target=monitor, daemon=True)
+            self._autostop_silence_stop = stop_event
+            self._autostop_silence_thread.start()
+
+    def _autostop_stop_silence_monitor(self):
+        """Stop the auto-stop silence monitor (safe to call from anywhere, incl. the monitor)."""
+        with self._autostop_lock:
+            self._autostop_teardown_locked()
+
+    def _autostop_teardown_locked(self):
+        """Tear down whatever autostop monitor is currently registered. Caller must hold `_autostop_lock`.
+
+        No generation check here (unlike the monitor's self-stop path) - accepted edge case.
+        """
+        stop_event = self._autostop_silence_stop
+        thread = self._autostop_silence_thread
+        if stop_event is not None:
+            stop_event.set()
+        # Avoid self-join deadlock when the monitor thread is the one triggering the stop
+        if thread and thread.is_alive() and threading.current_thread() is not thread:
+            thread.join(timeout=0.5)
+        self._autostop_silence_thread = None
+        self._autostop_silence_stop = None
 
     def _continuous_stop_and_wait(self):
         """Stop the silence monitor and wait for any in-progress transcription"""
@@ -1177,30 +1296,41 @@ class hyprwhsprApp:
             language_override: Optional language code to use for this recording session
                               (overrides the default language from config)
         """
-        # Use a lock to prevent concurrent starts (race condition protection)
+        # Gate checks happen under the same lock that sets the flag, so a
+        # concurrent toggle never sees is_recording=True for a start that
+        # gets blocked (and stops a recording that never began)
         with self._recording_lock:
             if self.is_recording:
                 return
-            
-            # Set flag immediately to prevent duplicate starts
-            self.is_recording = True
-            # Store language override for this recording session
-            self._current_language_override = language_override
-        
-        # Block recording if model is still loading in background
-        if self._model_initializing:
-            with self._recording_lock:
-                self.is_recording = False
+            if self._model_initializing:
+                blocked = 'initializing'
+            elif self._backend_init_failed:
+                blocked = 'init-failed'
+            elif getattr(self.whisper_manager, '_model_manually_unloaded', False):
+                blocked = 'unloaded'
+            else:
+                blocked = None
+                # Set flag immediately to prevent duplicate starts
+                self.is_recording = True
+                # Store language override for this recording session
+                self._current_language_override = language_override
+
+        # Model is still loading in background
+        if blocked == 'initializing':
             self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
             print("[CONTROL] Recording blocked: model is still initializing", flush=True)
             return
 
-        # Block recording if model was deliberately unloaded to free GPU resources
-        with self._recording_lock:
-            model_unloaded = getattr(self.whisper_manager, '_model_manually_unloaded', False)
-            if model_unloaded:
-                self.is_recording = False
-        if model_unloaded:
+        # Backend init failed (e.g. deps missing at boot): retry it instead
+        # of recording audio that can never be transcribed
+        if blocked == 'init-failed':
+            self._notify_user("hyprwhspr", "Backend failed to load — retrying, try again shortly", urgency="normal")
+            print("[CONTROL] Recording blocked: backend init failed - retrying", flush=True)
+            self._start_backend_init_background()
+            return
+
+        # Model was deliberately unloaded to free GPU resources
+        if blocked == 'unloaded':
             self._notify_user(
                 "hyprwhspr",
                 "Model unloaded — run: hyprwhspr model reload",
@@ -1208,8 +1338,6 @@ class hyprwhsprApp:
             )
             print("[CONTROL] Recording blocked: model is unloaded. Run: hyprwhspr model reload", flush=True)
             return
-
-        print("Recording started", flush=True)
 
         try:
             self._clear_mic_osd_preview_text()
@@ -1223,9 +1351,7 @@ class hyprwhsprApp:
 
             # Update language in realtime client if override is provided
             if language_override is not None:
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                    self.whisper_manager._realtime_client.update_language(language_override)
+                self.whisper_manager.update_realtime_language(language_override)
             
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()
@@ -1297,21 +1423,17 @@ class hyprwhsprApp:
                     # Hide mic-osd visualization
                     self._hide_mic_osd()
 
-                    # Check if we know the microphone was disconnected
-                    with self._mic_state_lock:
-                        mic_was_disconnected = self._mic_disconnected
-
-                    if mic_was_disconnected:
-                        self._notify_zero_volume("Microphone disconnected - please replug USB microphone", log_level="ERROR")
-                    else:
-                        self._notify_zero_volume("Microphone not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+                    message = self._mic_failure_message(
+                        "Microphone not responding - please unplug and replug USB microphone, then try recording again")
+                    self._notify_zero_volume(message, log_level="ERROR")
 
                     # Restore audio if it was ducked
                     if self.audio_ducker.is_ducked:
                         self.audio_ducker.restore()
                     return  # Don't attempt recovery during user-initiated recording
-                
+
                 # Stream is verified working - show mic-osd visualization
+                print("Recording started", flush=True)
                 self._show_mic_osd()
                 
                 # Additional stability check - verify stream continues working
@@ -1325,14 +1447,9 @@ class hyprwhsprApp:
                     # Hide mic-osd visualization
                     self._hide_mic_osd()
 
-                    # Check if we know the microphone was disconnected
-                    with self._mic_state_lock:
-                        mic_was_disconnected = self._mic_disconnected
-
-                    if mic_was_disconnected:
-                        self._notify_zero_volume("Microphone disconnected - please replug USB microphone", log_level="ERROR")
-                    else:
-                        self._notify_zero_volume("Microphone stream unstable - please wait a moment and try recording again", log_level="WARN")
+                    fallback = "Microphone stream unstable - please wait a moment and try recording again"
+                    message = self._mic_failure_message(fallback)
+                    self._notify_zero_volume(message, log_level="WARN" if message == fallback else "ERROR")
 
                     # Restore audio if it was ducked
                     if self.audio_ducker.is_ducked:
@@ -1362,11 +1479,7 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
 
-                # Close WebSocket if using realtime-ws backend
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                    print("[CLEANUP] Closing WebSocket after recording start failure", flush=True)
-                    self.whisper_manager._cleanup_realtime_client()
+                self.whisper_manager.close_realtime_connection("recording start failure")
 
                 # Stop recording (will clean up if thread started)
                 try:
@@ -1378,7 +1491,10 @@ class hyprwhsprApp:
                 with self._recording_lock:
                     self.is_recording = False
                 self._write_recording_status(False)
-                self._notify_zero_volume("Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again", log_level="ERROR")
+                self._notify_zero_volume(
+                    self._mic_failure_message(
+                        "Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again"),
+                    log_level="ERROR")
 
                 # Restore audio if it was ducked
                 if self.audio_ducker.is_ducked:
@@ -1392,11 +1508,7 @@ class hyprwhsprApp:
             self._hide_mic_osd()
             self._stop_audio_level_monitoring()
 
-            # Close WebSocket if using realtime-ws backend
-            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                print("[CLEANUP] Closing WebSocket after recording start failure", flush=True)
-                self.whisper_manager._cleanup_realtime_client()
+            self.whisper_manager.close_realtime_connection("recording start failure")
 
             with self._recording_lock:
                 self.is_recording = False
@@ -1409,6 +1521,7 @@ class hyprwhsprApp:
     def _cleanup_recording_state(self):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
         self._notify_capture_subscriber("", final=True)
+        self._autostop_stop_silence_monitor()
 
         try:
             self._clear_mic_osd_preview_text()
@@ -1466,9 +1579,7 @@ class hyprwhsprApp:
             self.audio_capture.stop_recording()
 
             # Close WebSocket if using realtime-ws backend (no transcription needed)
-            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                self.whisper_manager._cleanup_realtime_client()
+            self.whisper_manager.close_realtime_connection("recording cancelled")
 
             self.audio_manager.play_error_sound()
         except Exception as e:
@@ -1482,6 +1593,9 @@ class hyprwhsprApp:
             self.is_recording = False
 
         print("Recording stopped", flush=True)
+
+        # Tear down the auto-stop silence monitor if it was running (toggle/auto modes)
+        self._autostop_stop_silence_monitor()
 
         try:
             self._clear_mic_osd_preview_text()
@@ -1549,11 +1663,7 @@ class hyprwhsprApp:
                 self._write_recording_status(False)
                 self._continuous_stop_silence_monitor()
 
-                # Close WebSocket if using realtime-ws backend
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                    print("[CLEANUP] Closing WebSocket after recording stop error", flush=True)
-                    self.whisper_manager._cleanup_realtime_client()
+                self.whisper_manager.close_realtime_connection("recording stop error")
             except Exception:
                 pass  # Best effort cleanup
 
@@ -1676,22 +1786,51 @@ class hyprwhsprApp:
         except Exception:
             pass  # Silently fail if notify-send not available
 
-    def _notify_zero_volume(self, message: str, log_level: str = "WARN"):
-        """Log zero-volume recording and signal waybar (no desktop notifications)"""
-        # Prevent duplicate error logs within 2 seconds (user might hit record twice)
-        # Use lock to ensure thread-safe read-modify-write on _last_mic_error_log_time
-        if "Microphone disconnected or not responding" in message:
-            with self._error_log_lock:
-                current_time = time.monotonic()
-                if current_time - self._last_mic_error_log_time < 2.0:
-                    # Already logged this error recently, skip duplicate log
-                    return
-                self._last_mic_error_log_time = current_time
+    def _mic_failure_message(self, fallback: str) -> str:
+        """Pick user advice for a failed recording start based on what actually failed.
 
-        # Print to logs (primary notification)
+        Distinguishes "input device missing/initializing" (stream never opened)
+        from "device wedged" (stream opened but delivers no callbacks) using the
+        open outcome recorded by the capture thread; fallback covers the latter.
+        """
+        with self._mic_state_lock:
+            if self._mic_disconnected:
+                return "Microphone disconnected - please replug USB microphone"
+        if not getattr(self.audio_capture, 'stream_opened', True):
+            open_error = getattr(self.audio_capture, 'stream_open_error', None)
+            if open_error:
+                print(f"[ERROR] Stream open failed: {open_error}", flush=True)
+            return "Microphone unavailable - input device missing or still initializing - check the connection and try again"
+        return fallback
+
+    def _notify_zero_volume(self, message: str, log_level: str = "WARN"):
+        """Log a mic failure, signal waybar, and show a coalesced desktop notification"""
+        # Prevent duplicate handling of the same error within 2 seconds (user
+        # might hit record twice). Lock protects the read-modify-write.
+        with self._error_log_lock:
+            current_time = time.monotonic()
+            if (message == self._last_mic_error_message
+                    and current_time - self._last_mic_error_log_time < 2.0):
+                # Already handled this exact error recently, skip duplicate
+                return
+            self._last_mic_error_log_time = current_time
+            self._last_mic_error_message = message
+
+        # Print to logs (primary record)
         print(f"[{log_level}] {message}", flush=True)
 
-        # Note: No desktop notification - tray monitors state files and handles all user notifications
+        # Direct desktop notification: environments without the waybar tray
+        # (e.g. Niri) otherwise never see mic failures. Reusing replaces_id
+        # coalesces repeats into a single replaced banner instead of stacking.
+        try:
+            from desktop_notify import send_notification_with_id
+            nid = send_notification_with_id(
+                "hyprwhspr", message, urgency="normal", timeout_ms=6000,
+                replaces_id=self._mic_error_nid)
+            if nid is not None:
+                self._mic_error_nid = nid
+        except Exception:
+            pass  # Silently fail if no notification daemon
 
         # Write waybar signal file (atomic, no conflicts)
         # This allows waybar to detect when mic is present but not recording properly
@@ -1711,6 +1850,17 @@ class hyprwhsprApp:
         except Exception:
             pass  # Silently fail - waybar signal cleanup is optional
 
+        # Retire the mic-error banner: recording works (or is being retried),
+        # so a stale error notification would just be noise
+        nid = self._mic_error_nid
+        self._mic_error_nid = None
+        if nid is not None:
+            try:
+                from desktop_notify import close_notification
+                close_notification(nid)
+            except Exception:
+                pass
+
     def _write_recording_status(self, is_recording):
         """Write recording status to file for tray script"""
         try:
@@ -1725,6 +1875,47 @@ class hyprwhsprApp:
                     RECORDING_STATUS_FILE.unlink()
         except Exception as e:
             print(f"[WARN] Failed to write recording status: {e}")
+
+    def _migrate_legacy_state_files(self):
+        """One-time cleanup of signal files that lived in CONFIG_DIR before they
+        moved to RUNTIME_DIR, plus compat symlinks for the three files external
+        consumers (Hyprland binds, GNOME extension) may still use at old paths.
+        """
+        try:
+            RUNTIME_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+            RUNTIME_DIR.chmod(0o700)
+        except Exception as e:
+            print(f"[WARN] Failed to prepare runtime dir {RUNTIME_DIR}: {e}")
+
+        legacy_names = [
+            'recording_status', 'recording_control', 'hyprwhspr.sock',
+            'audio_level', 'recovery_requested', 'recovery_result',
+            '.mic_zero_volume', 'mic_osd.pid', '.suspend_marker',
+            'hyprwhspr.lock', 'visualizer_state', 'longform_state',
+            'model_unloaded', 'tray_state',
+        ]
+        for name in legacy_names:
+            try:
+                (CONFIG_DIR / name).unlink(missing_ok=True)
+            except Exception:
+                pass
+        shutil.rmtree(CONFIG_DIR / '.recovery_notification_lock', ignore_errors=True)
+
+        # Compat symlinks, kept for one release cycle
+        compat = {
+            'recording_control': RECORDING_CONTROL_FILE,
+            'recording_status': RECORDING_STATUS_FILE,
+            'audio_level': AUDIO_LEVEL_FILE,
+        }
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"[WARN] Failed to create config dir: {e}")
+        for name, target in compat.items():
+            try:
+                (CONFIG_DIR / name).symlink_to(target)
+            except Exception as e:
+                print(f"[WARN] Failed to create legacy compat symlink {name}: {e}")
 
     def _reset_stale_state(self):
         """Clear runtime state files that may be stale from a previous session.
@@ -2053,6 +2244,8 @@ class hyprwhsprApp:
                         self._start_recording(language_override=language_param)
                         if recording_mode == "continuous":
                             self._continuous_start_silence_monitor()
+                        elif recording_mode in ("toggle", "auto"):
+                            self._autostop_start_silence_monitor()
                     else:
                         print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
                 elif action == "stop":
@@ -2327,6 +2520,30 @@ class hyprwhsprApp:
             except OSError:
                 pass
 
+    def _start_backend_init_background(self):
+        """Initialize the transcription backend in a background thread.
+
+        Used for slow backends at startup and to retry after a failed init.
+        Guarded so concurrent callers can't spawn duplicate init threads.
+        """
+        with self._backend_init_lock:
+            if self._model_initializing:
+                return
+            self._model_initializing = True
+            self._backend_init_failed = False
+
+        def _bg_init():
+            ok = self.whisper_manager.initialize()
+            self._backend_init_failed = not ok
+            self._model_initializing = False
+            if ok:
+                print("[READY] Model ready — recording now available", flush=True)
+                self._notify_user("hyprwhspr", "Ready", urgency="low")
+            else:
+                print("[ERROR] Failed to initialize backend in background", flush=True)
+
+        threading.Thread(target=_bg_init, daemon=True, name="BackendInit").start()
+
     def _attempt_recovery_if_needed(self):
         """
         Check for recovery request from tray script and attempt recovery once per error state.
@@ -2388,31 +2605,9 @@ class hyprwhsprApp:
 
             # After successful audio recovery, also reinitialize model if needed
             # This handles suspend/resume cases where CUDA context is invalid
-            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            backend = normalize_backend(backend)
-            model_reinit_success = True
-
-            pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
-            if backend in pywhispercpp_variants and hasattr(self.whisper_manager, '_pywhisper_model') and self.whisper_manager._pywhisper_model:
-                # Check if model needs reinitialization (long idle = suspend/resume)
-                current_time = time.monotonic()
-                if hasattr(self.whisper_manager, '_last_use_time'):
-                    time_since_last = current_time - self.whisper_manager._last_use_time
-                    if time_since_last > 1800 and self.whisper_manager._last_use_time > 0:
-                        print("[RECOVERY] Reinitializing model after audio recovery (suspend/resume detected)", flush=True)
-                        if not self.whisper_manager._reinitialize_model():
-                            print("[RECOVERY] Model reinitialization failed after audio recovery", flush=True)
-                            model_reinit_success = False
-            elif backend == 'faster-whisper' and hasattr(self.whisper_manager, '_faster_whisper_model') and self.whisper_manager._faster_whisper_model:
-                # Check if faster-whisper model needs reinitialization (long idle = suspend/resume)
-                current_time = time.monotonic()
-                if hasattr(self.whisper_manager, '_last_use_time'):
-                    time_since_last = current_time - self.whisper_manager._last_use_time
-                    if time_since_last > 1800 and self.whisper_manager._last_use_time > 0:
-                        print("[RECOVERY] Reinitializing faster-whisper model after audio recovery (suspend/resume detected)", flush=True)
-                        if not self.whisper_manager._reinitialize_faster_whisper():
-                            print("[RECOVERY] faster-whisper reinitialization failed after audio recovery", flush=True)
-                            model_reinit_success = False
+            model_reinit_success = self.whisper_manager.reinitialize_after_resume(only_if_idle=True)
+            if not model_reinit_success:
+                print("[RECOVERY] Model reinitialization failed after audio recovery", flush=True)
 
             # Write recovery result for tray script.
             #
@@ -2465,10 +2660,7 @@ class hyprwhsprApp:
             print("[SUSPEND] System entering suspend", flush=True)
 
             # Close WebSocket connections preemptively (avoid timeout errors)
-            backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-            if backend == 'realtime-ws' and self.whisper_manager._realtime_client:
-                print("[SUSPEND] Closing WebSocket before suspend", flush=True)
-                self.whisper_manager._cleanup_realtime_client()
+            self.whisper_manager.close_realtime_connection("system suspend")
         except Exception as e:
             print(f"[SUSPEND] Error handling suspend: {e}", flush=True)
 
@@ -2514,28 +2706,10 @@ class hyprwhsprApp:
             self._resync_shortcut_keyboards("post_suspend_resume")
 
             if self.audio_capture.recover_audio_capture('post_suspend_resume'):
-                # Reinitialize backend based on type
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                backend_reinit_success = True
-
-                # Backends that use pywhispercpp (model in memory, CUDA context)
-                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
-                if backend in pywhispercpp_variants:
-                    if not self.whisper_manager._reinitialize_model():
-                        print("[SUSPEND] Recovery failed - model reinitialization failed", flush=True)
-                        backend_reinit_success = False
-                elif backend == 'faster-whisper':
-                    if not self.whisper_manager._reinitialize_faster_whisper():
-                        print("[SUSPEND] Recovery failed - faster-whisper reinitialization failed", flush=True)
-                        backend_reinit_success = False
-                # WebSocket backend (persistent connection)
-                elif backend == 'realtime-ws':
-                    if not self.whisper_manager.initialize():
-                        print("[SUSPEND] Recovery failed - WebSocket reinitialization failed", flush=True)
-                        backend_reinit_success = False
-                # Stateless backends (rest-api, parakeet) - no reinitialization needed
-                # elif backend in ['rest-api', 'parakeet']:
-                #     pass  # No persistent state to reinitialize
+                # Reinitialize backend state (model / WebSocket) per backend type
+                backend_reinit_success = self.whisper_manager.reinitialize_after_resume()
+                if not backend_reinit_success:
+                    print("[SUSPEND] Recovery failed - backend reinitialization failed", flush=True)
 
                 # Write recovery result and clear background recovery flag only after ALL recovery steps complete
                 if backend_reinit_success:
@@ -2605,23 +2779,8 @@ class hyprwhsprApp:
 
             # Attempt recovery
             if self.audio_capture.recover_audio_capture(f'background_retry_{attempt}'):
-                # Reinitialize backend based on type
-                backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
-                backend_reinit_success = True
-
-                # Backends that use pywhispercpp (model in memory, CUDA context)
-                pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
-                if backend in pywhispercpp_variants:
-                    if not self.whisper_manager._reinitialize_model():
-                        backend_reinit_success = False
-                elif backend == 'faster-whisper':
-                    if not self.whisper_manager._reinitialize_faster_whisper():
-                        backend_reinit_success = False
-                # WebSocket backend (persistent connection)
-                elif backend == 'realtime-ws':
-                    if not self.whisper_manager.initialize():
-                        backend_reinit_success = False
-                # Stateless backends (rest-api, parakeet) - no reinitialization needed
+                # Reinitialize backend state (model / WebSocket) per backend type
+                backend_reinit_success = self.whisper_manager.reinitialize_after_resume()
 
                 # Write recovery result only after ALL recovery steps complete
                 if backend_reinit_success:
@@ -2717,21 +2876,13 @@ class hyprwhsprApp:
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
         slow_backends = {'cohere-transcribe'}
         if backend in slow_backends:
-            self._model_initializing = True
             print(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...", flush=True)
-            def _bg_init():
-                ok = self.whisper_manager.initialize()
-                self._model_initializing = False
-                if ok:
-                    print("[READY] Model ready — recording now available", flush=True)
-                    self._notify_user("hyprwhspr", "Ready", urgency="low")
-                else:
-                    print("[ERROR] Failed to initialize backend in background", flush=True)
-            threading.Thread(target=_bg_init, daemon=True, name="BackendInit").start()
+            self._start_backend_init_background()
         else:
             if not self.whisper_manager.initialize():
-                print("[ERROR] Failed to initialize Whisper.")
-                return False
+                # Stay alive with recording blocked; the record gate retries init
+                print("[ERROR] Failed to initialize backend - will retry on next record attempt", flush=True)
+                self._backend_init_failed = True
 
         if use_hypr_bindings:
             print("\n[READY] hyprwhspr ready - using Hyprland compositor bindings", flush=True)
@@ -3047,8 +3198,10 @@ def main():
 if __name__ == "__main__":
     # Safety check: if a CLI subcommand was passed, redirect to CLI instead of starting the service
     # This handles cases where an old bin/hyprwhspr wrapper doesn't recognize newer CLI subcommands
-    CLI_SUBCOMMANDS = ['setup', 'install', 'config', 'waybar', 'systemd', 'status',
-                       'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd']
+    # Keep in sync with the subcommand route in bin/hyprwhspr
+    CLI_SUBCOMMANDS = ['setup', 'install', 'config', 'waybar', 'noctalia', 'systemd', 'status',
+                       'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd',
+                       'keyboard', 'record', 'test']
     if len(sys.argv) > 1 and sys.argv[1] in CLI_SUBCOMMANDS:
         print(f"[REDIRECT] Detected CLI subcommand '{sys.argv[1]}', redirecting to CLI...")
         # Execute CLI with same arguments

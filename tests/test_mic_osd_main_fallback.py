@@ -48,11 +48,17 @@ class MicOSDMainFallbackTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["mic-osd"]):
             self.assertEqual(main_module.main(), 1)
 
-    def test_transcript_preview_fallback_uses_runtime_dir(self):
+    def test_fallback_paths_use_runtime_dir(self):
         tree = ast.parse((ROOT / "lib" / "mic_osd" / "main.py").read_text(encoding="utf-8"))
 
+        expected = {
+            "RECORDING_STATUS_FILE",
+            "VISUALIZER_STATE_FILE",
+            "TRANSCRIPT_PREVIEW_FILE",
+            "MIC_OSD_LEVEL_FEED_FILE",
+        }
         uses_runtime = False
-        assigns_preview_from_runtime = False
+        assigned_from_runtime = set()
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Assign)
@@ -61,15 +67,16 @@ class MicOSDMainFallbackTests(unittest.TestCase):
                 uses_runtime = True
             if (
                 isinstance(node, ast.Assign)
-                and any(isinstance(target, ast.Name) and target.id == "TRANSCRIPT_PREVIEW_FILE" for target in node.targets)
                 and isinstance(node.value, ast.BinOp)
                 and isinstance(node.value.left, ast.Name)
                 and node.value.left.id == "runtime_dir"
             ):
-                assigns_preview_from_runtime = True
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in expected:
+                        assigned_from_runtime.add(target.id)
 
         self.assertTrue(uses_runtime)
-        self.assertTrue(assigns_preview_from_runtime)
+        self.assertEqual(assigned_from_runtime, expected)
 
     def test_hide_clears_preview_file_before_visibility_return(self):
         tree = ast.parse((ROOT / "lib" / "mic_osd" / "main.py").read_text(encoding="utf-8"))

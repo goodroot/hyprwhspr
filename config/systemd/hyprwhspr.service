@@ -15,7 +15,7 @@ After=wireplumber.service
 Type=simple
 ExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do { ls "$XDG_RUNTIME_DIR"/wayland-* || ls /tmp/.X11-unix/X*; } >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo "No Wayland or X11 display socket found"; exit 1'
 ExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr
-ExecStopPost=/bin/bash -c '( pkill -9 -f "hyprwhspr-virtual-keyboard" 2>/dev/null; pkill -9 -f "hyprwhspr-ydotool.sock" 2>/dev/null ) || true'
+ExecStopPost=/bin/bash -c '( pkill -9 -f "hyprwhspr-virtual-keyboar[d]" 2>/dev/null; pkill -9 -f "hyprwhspr-ydotool.soc[k]" 2>/dev/null ) || true'
 Environment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure

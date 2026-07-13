@@ -81,6 +81,22 @@ Hybrid tap/hold - automatically detects your intent:
 - **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
 - **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
 
+### Auto-stop on silence
+
+In **toggle** and **auto** modes, `silence_timeout` automatically stops recording (transcribe + paste) after a period of silence — press once, speak, and it finalizes itself when you go quiet:
+
+```jsonc
+{
+    "recording_mode": "toggle",
+    "silence_timeout": 2.5  // Auto-stop after 2.5s of silence. 0 (default) = disabled.
+}
+```
+
+- Default is `0` (disabled) - existing behavior is unchanged.
+- The timer **only arms after speech is detected**, so it won't fire while you're still composing your first sentence.
+- The silence threshold auto-calibrates from your mic's noise floor (shares `continuous_silence_threshold`).
+- Manual stop still works at any time; the stop beep signals the auto-stop. This is purely additive.
+
 ### Continuous mode
 
 Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. Press again to stop:
@@ -202,7 +218,7 @@ You can also cancel without a dedicated shortcut:
 hyprwhspr record cancel
 
 # Via FIFO directly (useful for Hyprland binds or sxhkd)
-echo cancel > ~/.config/hyprwhspr/recording_control
+echo cancel > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
 ### Hyprland native bindings
@@ -232,8 +248,8 @@ bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/h
 Hold the key to record, release to stop:
 
 ```bash
-bind = SUPER ALT, D, exec, echo "start" > ~/.config/hyprwhspr/recording_control
-bindr = SUPER ALT, D, exec, echo "stop" > ~/.config/hyprwhspr/recording_control
+bind = SUPER ALT, D, exec, echo "start" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
+bindr = SUPER ALT, D, exec, echo "stop" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
 #### Long-form mode
@@ -242,7 +258,7 @@ Primary shortcut toggles record/pause/resume; submit shortcut transcribes:
 
 ```bash
 bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record
-bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > ~/.config/hyprwhspr/recording_control
+bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
 #### Cancel recording (all modes)
@@ -250,7 +266,7 @@ bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > ~/.config/hyp
 Discard audio without transcribing:
 
 ```bash
-bind = SUPER, ESCAPE, exec, echo "cancel" > ~/.config/hyprwhspr/recording_control
+bind = SUPER, ESCAPE, exec, echo "cancel" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
 Restart the service to lock in changes:
@@ -264,7 +280,7 @@ systemctl --user restart hyprwhspr
 With `grab_keys: false` (default), hyprwhspr can start even if you are not in the `input` group, but the global shortcut will not work. Control recording via:
 
 - The CLI (`hyprwhspr record toggle`, `hyprwhspr record start`, etc.)
-- The `recording_control` file (e.g. bind in Hyprland to `echo start > ~/.config/hyprwhspr/recording_control`)
+- The `recording_control` FIFO for lowest latency (e.g. bind in Hyprland to `echo start > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"`)
 
 ## Backends
 
@@ -443,6 +459,18 @@ Set model in config (pywhispercpp only — faster-whisper uses `faster_whisper_m
     // "threads": 6       // optional; omit for auto = min(8, CPU count)
 }
 ```
+
+#### Voice activity detection
+
+Optional native Silero VAD strips silence before inference — the same hallucination mitigation faster-whisper ships, off by default here because it needs an extra ~1 MB model (`ggml-silero-v5.1.2.bin`, auto-downloaded to the models directory on first use):
+
+```jsonc
+{
+    "pywhispercpp_use_vad": true   // default: false
+}
+```
+
+If the download fails (e.g. offline), the service logs a warning and continues without VAD.
 
 #### Language detection
 
@@ -751,6 +779,8 @@ Quiet system volume on record:
 - `audio_ducking: true` — set true to enable audio ducking
 - `audio_ducking_percent: 50` — how much to reduce volume BY (default 50 = reduce to 50% of original; 70 = reduce to 30%)
 
+Ducking lowers each application stream's volume, not the device master — your speaker setting is untouched and shell volume OSDs don't fire on every recording. Streams that start mid-recording aren't ducked.
+
 ## Text processing
 
 ### Word overrides
@@ -989,6 +1019,23 @@ Waybar icon click interactions:
 
 - **Left-click**: Start/stop recording (auto-starts service if needed)
 - **Right-click**: Restart Hyprwhspr service
+
+### Noctalia
+
+[Noctalia](https://noctalia.dev) (v5+) ships its own bar and theming engine. `hyprwhspr setup` offers this integration when Noctalia is detected, or run it directly:
+
+```bash
+hyprwhspr noctalia install   # also: status / remove
+```
+
+You get:
+
+- **Bar widget** (`noctwhspr`) — service/recording state as a glyph; left-click records, right-click restarts. Add it to your bar via Noctalia Settings → Bar → add widget.
+- **Visualizer theme sync** — the recording overlay follows your live Noctalia palette, including theme switches.
+
+Earlier `goodroot/hyprwhspr` names migrate automatically on reinstall.
+
+Niri users: see [Service starts but doesn't work until restarted](#service-starts-but-doesnt-work-until-restarted) for the `NIRI_SOCKET` requirement.
 
 ### Keyboard device selection
 

@@ -24,34 +24,41 @@ def is_gnome():
 _MIC_OSD_IMPORT_ERROR = None
 try:
     from .window import OSDWindow, load_css
-    from .audio import AudioMonitor
+    from .audio import AudioMonitor, FeedLevelSource
     from .visualizations import VISUALIZATIONS
     from .theme import ThemeWatcher
 except ImportError as e:
     _MIC_OSD_IMPORT_ERROR = e
     OSDWindow = None
     AudioMonitor = None
+    FeedLevelSource = None
     VISUALIZATIONS = {}
     ThemeWatcher = None
 
 # Import paths with fallback for daemon context
 try:
-    from ..src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
+    from ..src.paths import (
+        RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
+        MIC_OSD_LEVEL_FEED_FILE,
+    )
 except ImportError:
     try:
-        from src.paths import RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
+        from src.paths import (
+            RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
+            MIC_OSD_LEVEL_FEED_FILE,
+        )
     except ImportError:
         # Fallback: construct paths manually if imports fail
-        home = Path.home()
-        xdg_config = Path(os.environ.get('XDG_CONFIG_HOME', home / '.config'))
+        import tempfile
         xdg_runtime = os.environ.get('XDG_RUNTIME_DIR')
         if xdg_runtime:
             runtime_dir = Path(xdg_runtime) / 'hyprwhspr'
         else:
-            runtime_dir = Path(os.environ.get('TMPDIR', '/tmp')) / f"hyprwhspr-{os.getuid()}"
-        RECORDING_STATUS_FILE = xdg_config / 'hyprwhspr' / 'recording_status'
-        VISUALIZER_STATE_FILE = xdg_config / 'hyprwhspr' / 'visualizer_state'
+            runtime_dir = Path(tempfile.gettempdir()) / f"hyprwhspr-{os.getuid()}"
+        RECORDING_STATUS_FILE = runtime_dir / 'recording_status'
+        VISUALIZER_STATE_FILE = runtime_dir / 'visualizer_state'
         TRANSCRIPT_PREVIEW_FILE = runtime_dir / 'transcript_preview'
+        MIC_OSD_LEVEL_FEED_FILE = runtime_dir / 'mic_osd_level_feed'
 
 
 class MicOSD:
@@ -197,9 +204,13 @@ class MicOSD:
         self.visible = True
         self.window.set_visible(True)
 
-        # Start audio monitoring
+        # Prefer the main process's level feed (tracks the recorded device, no
+        # contention); fall back to opening the default input directly.
         if not self.audio_monitor:
-            self.audio_monitor = AudioMonitor(samplerate=44100, blocksize=1024)
+            if FeedLevelSource is not None and FeedLevelSource.available(MIC_OSD_LEVEL_FEED_FILE):
+                self.audio_monitor = FeedLevelSource(MIC_OSD_LEVEL_FEED_FILE)
+            else:
+                self.audio_monitor = AudioMonitor(samplerate=44100, blocksize=1024)
 
         try:
             self.audio_monitor.start()

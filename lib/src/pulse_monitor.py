@@ -28,6 +28,14 @@ class PulseAudioMonitor:
         if not PULSECTL_AVAILABLE:
             print("[PULSE_MONITOR] pulsectl not available, pulse monitoring disabled")
 
+    def is_healthy(self) -> bool:
+        """Whether the event listener is running and can keep bindings fresh."""
+        return bool(
+            self._running
+            and self._monitor_thread is not None
+            and self._monitor_thread.is_alive()
+        )
+
     def start(self) -> bool:
         """Start monitoring pulse events"""
         if not PULSECTL_AVAILABLE:

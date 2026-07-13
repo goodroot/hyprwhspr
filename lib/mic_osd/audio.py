@@ -1,10 +1,15 @@
 """
 Audio monitoring module for mic-osd.
 
-Captures microphone input in real-time and provides level/sample data
-for visualization.
+Provides level/sample data for visualization from one of two sources:
+- FeedLevelSource: reads frames the main hyprwhspr process streams from its
+  own capture stream, so the meter tracks the device actually being recorded.
+- AudioMonitor: opens a system-default input stream directly (fallback for
+  standalone use, or when no feed is being written).
 """
 
+import os
+import time
 import threading
 import numpy as np
 
@@ -12,6 +17,69 @@ try:
     import sounddevice as sd
 except ImportError:
     sd = None
+
+
+class FeedLevelSource:
+    """Reads the runtime feed file MicOSDRunner writes (space-separated floats:
+    level then bucket RMS values). Same get_level()/get_samples() surface as
+    AudioMonitor, but opens no audio stream of its own."""
+
+    STALE_AFTER_SECONDS = 1.0
+
+    def __init__(self, path):
+        self.path = str(path)
+        self._mtime_ns = None
+        self._level = 0.0
+        self._samples = np.zeros(0)
+
+    @classmethod
+    def available(cls, path, max_age=STALE_AFTER_SECONDS):
+        """True when a feed file exists and was written recently."""
+        try:
+            return (time.time() - os.stat(str(path)).st_mtime) <= max_age
+        except OSError:
+            return False
+
+    def start(self, device=None):
+        pass
+
+    def stop(self):
+        self._mtime_ns = None
+        self._level = 0.0
+        self._samples = np.zeros(0)
+
+    def _refresh(self):
+        try:
+            stat = os.stat(self.path)
+        except OSError:
+            # Feed gone — decay to silence
+            self._level = 0.0
+            self._samples = np.zeros(0)
+            return
+        if time.time() - stat.st_mtime > self.STALE_AFTER_SECONDS:
+            self._level = 0.0
+            self._samples = np.zeros(0)
+            return
+        if stat.st_mtime_ns == self._mtime_ns:
+            return
+        try:
+            with open(self.path, 'r', encoding='utf-8') as f:
+                values = [float(part) for part in f.read().split()]
+        except (OSError, ValueError):
+            return  # Keep last good frame
+        if not values:
+            return
+        self._mtime_ns = stat.st_mtime_ns
+        self._level = values[0]
+        self._samples = np.array(values[1:], dtype=np.float64)
+
+    def get_level(self):
+        self._refresh()
+        return self._level
+
+    def get_samples(self):
+        self._refresh()
+        return self._samples
 
 
 class AudioMonitor:
@@ -94,12 +162,22 @@ class AudioMonitor:
         """
         if self.running:
             return
-        
+
+        # Use the device's native rate; a hardcoded 44100 fails with
+        # PaErrorCode -9997 on 48 kHz-only hardware (issue #205).
+        samplerate = self.samplerate
+        try:
+            default_sr = sd.query_devices(device, kind='input').get('default_samplerate')
+            if default_sr:
+                samplerate = int(default_sr)
+        except Exception:
+            pass
+
         try:
             self.stream = sd.InputStream(
                 device=device,
                 channels=1,
-                samplerate=self.samplerate,
+                samplerate=samplerate,
                 blocksize=self.blocksize,
                 callback=self._audio_callback
             )

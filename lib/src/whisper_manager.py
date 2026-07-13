@@ -1,20 +1,12 @@
 """
 Whisper manager for hyprwhspr
-PyWhisperCPP-only backend (in-process, model kept hot)
+Facade over the transcription backend classes in backends/ — owns shared
+state (config, ready flag, model lock, last-use time) and dispatches to the
+configured backend instance.
 """
 
-import os
-import shutil
-import sys
-import contextlib
 import threading
 import time
-import types
-import wave
-import re
-import io
-from contextlib import contextmanager, redirect_stderr
-from io import BytesIO
 from typing import Optional, Callable
 
 try:
@@ -23,25 +15,30 @@ except ImportError:
     from dependencies import require_package
 
 np = require_package('numpy')
-requests = require_package('requests')
 
 try:
     from .config_manager import ConfigManager
-    from .credential_manager import get_credential
-    from .provider_registry import get_provider
 except ImportError:
     from config_manager import ConfigManager
-    from credential_manager import get_credential
-    from provider_registry import get_provider
 
 try:
-    from .backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
+    from .backend_utils import normalize_backend
 except ImportError:
-    from backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
+    from backend_utils import normalize_backend
+
+try:
+    from .backend_installer import PYWHISPERCPP_MODELS_DIR
+except ImportError:
+    from backend_installer import PYWHISPERCPP_MODELS_DIR
+
+try:
+    from .backends import BACKENDS, PywhispercppBackend
+except ImportError:
+    from backends import BACKENDS, PywhispercppBackend
 
 
 class WhisperManager:
-    """Manages whisper transcription with dual backend support"""
+    """Facade that manages transcription through per-backend classes"""
 
     def __init__(self, config_manager: Optional[ConfigManager] = None):
         if config_manager is None:
@@ -52,29 +49,11 @@ class WhisperManager:
         # Whisper configuration - only set for local backend
         # Will be properly initialized in initialize() based on backend
         self.current_model = None
-        # Backend-specific attributes (pywhispercpp only)
-        self._pywhisper_model = None
         self.temp_dir = None
         
-        # Realtime WebSocket client
-        self._realtime_client = None
-        self._realtime_streaming_callback = None
+        # Realtime partial-preview callback; owned by the manager (not the
+        # realtime backend) so it survives backend re-creation on resume
         self._realtime_partial_callback = None
-        # Connection parameters used for reconnect-on-demand.
-        # (Stored in-memory only; do not log API keys.)
-        self._realtime_connect_params = None
-
-        # ONNX-ASR model (CPU-optimized)
-        self._onnx_asr_model = None
-        self._onnx_asr_vad_model = None
-
-        # faster-whisper model (CTranslate2)
-        self._faster_whisper_model = None
-
-        # Cohere Transcribe model (transformers)
-        self._cohere_model = None
-        self._cohere_processor = None
-        self._cohere_compile_done = False  # True after first torch.compile run; suppression no longer needed
 
         # Thread safety for model operations
         self._model_lock = threading.Lock()
@@ -88,1588 +67,84 @@ class WhisperManager:
         # Set when model is deliberately unloaded via unload_model() to free GPU resources
         self._model_manually_unloaded = False
 
+        # Active TranscriptionBackend instance, created by initialize()
+        self._backend = None
+
     def initialize(self) -> bool:
-        """Initialize the whisper manager and check dependencies"""
+        """Initialize the configured transcription backend and check dependencies"""
         try:
             self.temp_dir = self.config.get_temp_directory()
 
-            # Check which backend is configured
-            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            backend = normalize_backend(backend)  # Backward compatibility
+            backend = self._current_backend_name()
 
-            # Configure ONNX-ASR backend (CPU or GPU-optimized)
-            if backend == 'onnx-asr':
-                try:
-                    import onnx_asr
-                except ImportError:
-                    print('ERROR: onnx-asr not installed. Run: hyprwhspr setup')
-                    print('ERROR: Select option [1] ONNX Parakeet to install')
-                    return False
-
-                # Suppress ONNX Runtime verbose error logging
-                # Errors about missing CUDA libraries are expected and will fall back to CPU
-                import logging
-                from io import StringIO
-                
-                # Set ONNX Runtime log level to suppress warnings/errors
-                os.environ['ORT_LOGGING_LEVEL'] = '4'  # 4 = FATAL (suppress ERROR/WARNING/INFO)
-                
-                # Detect GPU availability at runtime (but don't claim it if libraries aren't available)
-                use_gpu = False
-                try:
-                    import onnxruntime
-                    # Suppress ONNX Runtime Python logging
-                    logging.getLogger('onnxruntime').setLevel(logging.CRITICAL)
-                    
-                    # Check if providers are listed (but they may not actually work)
-                    available_providers = onnxruntime.get_available_providers()
-                    if 'CUDAExecutionProvider' in available_providers or 'TensorrtExecutionProvider' in available_providers:
-                        # Note: We'll let onnx-asr try to use GPU, but it will fall back to CPU
-                        # if libraries aren't available. We won't claim GPU support upfront.
-                        use_gpu = True
-                except Exception:
-                    pass
-
-                model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
-                quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
-                use_vad = self.config.get_setting('onnx_asr_use_vad', True)
-                vad_min_duration = self._get_onnx_asr_vad_min_duration()
-
-                print(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})', flush=True)
-
-                try:
-                    # Load model with optional quantization
-                    # onnx-asr automatically uses GPU providers if available
-                    # Suppress stderr during model loading to avoid CUDA library error spam
-                    # These errors are harmless - ONNX Runtime will fall back to CPU automatically
-                    with redirect_stderr(StringIO()):
-                        if quantization:
-                            self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
-                        else:
-                            self._onnx_asr_model = onnx_asr.load_model(model_name)
-
-                    self._onnx_asr_vad_model = None
-                    # Add VAD for long audio handling without putting short
-                    # dictations through an aggressive speech-boundary trimmer.
-                    if use_vad:
-                        print('[BACKEND] Loading Silero VAD for long audio support', flush=True)
-                        vad = onnx_asr.load_vad('silero')
-                        self._onnx_asr_vad_model = self._onnx_asr_model.with_vad(vad)
-
-                    vad_info = f', vad_min_duration={vad_min_duration}s' if use_vad else ''
-                    print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})', flush=True)
-
-                except Exception as e:
-                    print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return False
-
-                # onnx-asr doesn't use current_model in the same way
-                self.current_model = None
-                self.ready = True
-                return True
-
-            # Configure faster-whisper backend (CTranslate2, CUDA INT8)
-            if backend == 'faster-whisper':
-                try:
-                    from faster_whisper import WhisperModel
-                except ImportError:
-                    print('ERROR: faster-whisper not installed. Run: hyprwhspr setup and select faster-whisper', flush=True)
-                    return False
-
-                model_name = self.config.get_setting('faster_whisper_model', 'base')
-                device = self.config.get_setting('faster_whisper_device', 'auto')
-                compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
-
-                # Resolve 'auto' device
-                if device == 'auto':
-                    device = 'cpu'  # default
-                    try:
-                        import ctranslate2
-                        if ctranslate2.get_cuda_device_count() > 0:
-                            # GPU visible — verify compute libraries are actually loadable.
-                            # CTranslate2 loads libcublas lazily; a missing library won't
-                            # surface until the first encode(), so we probe upfront.
-                            # Check both: system libcublas.so.12 AND pip-installed nvidia-cublas-cu12
-                            # (CTranslate2 ≥ 4.0 searches Python package dirs for nvidia libs).
-                            cuda_libs_ok = False
-                            try:
-                                import ctypes
-                                ctypes.CDLL('libcublas.so.12')
-                                cuda_libs_ok = True
-                            except OSError:
-                                pass
-                            if not cuda_libs_ok:
-                                try:
-                                    import importlib.util
-                                    if importlib.util.find_spec('nvidia.cublas') is not None:
-                                        cuda_libs_ok = True
-                                except Exception:
-                                    pass
-                            if cuda_libs_ok:
-                                device = 'cuda'
-                                # Preload pip-installed nvidia CUDA libs with RTLD_GLOBAL so
-                                # CTranslate2 can find them at inference time.
-                                # LD_LIBRARY_PATH alone is unreliable because the dynamic linker
-                                # may cache search paths at process startup. Preloading by full
-                                # path registers the library under its SONAME in the linker table,
-                                # so any subsequent dlopen("libcublas.so.12") finds it already loaded.
-                                try:
-                                    import ctypes as _ctypes
-                                    import glob as _glob
-                                    import site as _site
-                                    _site_dirs = []
-                                    try:
-                                        _site_dirs.extend(_site.getsitepackages())
-                                    except Exception:
-                                        pass
-                                    try:
-                                        _site_dirs.append(_site.getusersitepackages())
-                                    except Exception:
-                                        pass
-                                    _preloaded = []
-                                    for _sd in _site_dirs:
-                                        for _pkg, _soname in [('cublas', 'libcublas.so.12'), ('cudnn', 'libcudnn.so.9')]:
-                                            _lib_dir = os.path.join(_sd, 'nvidia', _pkg, 'lib')
-                                            if not os.path.isdir(_lib_dir):
-                                                continue
-                                            # Also add to LD_LIBRARY_PATH as belt-and-suspenders
-                                            _ld = os.environ.get('LD_LIBRARY_PATH', '')
-                                            if _lib_dir not in _ld:
-                                                os.environ['LD_LIBRARY_PATH'] = f"{_lib_dir}:{_ld}" if _ld else _lib_dir
-                                            # Preload: try exact soname, then versioned variants
-                                            _candidates = (
-                                                [os.path.join(_lib_dir, _soname)]
-                                                + sorted(_glob.glob(os.path.join(_lib_dir, _soname + '.*')))
-                                            )
-                                            for _lib_path in _candidates:
-                                                if os.path.exists(_lib_path):
-                                                    try:
-                                                        _ctypes.CDLL(_lib_path, _ctypes.RTLD_GLOBAL)
-                                                        _preloaded.append(os.path.basename(_lib_path))
-                                                        break
-                                                    except OSError:
-                                                        continue
-                                    if _preloaded:
-                                        print(f'[BACKEND] Preloaded CUDA libs: {", ".join(_preloaded)}', flush=True)
-                                except Exception as _e:
-                                    print(f'[WARN] Could not preload CUDA libs: {_e}', flush=True)
-                            else:
-                                print('[WARN] NVIDIA GPU detected but CUDA libraries not found.', flush=True)
-                                print('[WARN] Re-run: hyprwhspr setup (select faster-whisper) to install CUDA libs.', flush=True)
-                                print('[WARN] Falling back to CPU.', flush=True)
-                    except Exception:
-                        pass
-
-                # Resolve 'auto' compute_type
-                if compute_type == 'auto':
-                    compute_type = 'int8' if device == 'cuda' else 'float32'
-
-                try:
-                    print(f'[BACKEND] Loading faster-whisper model: {model_name} (device={device}, compute_type={compute_type})', flush=True)
-                    self._faster_whisper_model = WhisperModel(model_name, device=device, compute_type=compute_type)
-                    print(f'[BACKEND] faster-whisper ready (model={model_name}, device={device}, compute_type={compute_type})', flush=True)
-                except Exception as e:
-                    print(f'ERROR: Failed to load faster-whisper model: {e}', flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return False
-
-                self.current_model = model_name
-                self.ready = True
-                self._last_use_time = time.monotonic()
-                return True
-
-            # Configure Cohere Transcribe backend (transformers, CUDA/CPU)
-            if backend == 'cohere-transcribe':
-                try:
-                    import torch
-                    from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
-                except ImportError:
-                    print('ERROR: cohere-transcribe dependencies not installed. Run: hyprwhspr setup and select cohere-transcribe', flush=True)
-                    return False
-
-                model_id = 'CohereLabs/cohere-transcribe-03-2026'
-                device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
-                dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
-
-                # Resolve device
-                if device_setting == 'auto':
-                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-                else:
-                    device = device_setting
-
-                # Resolve dtype — bfloat16 is required for GPU: float16 overflows at the
-                # -1e9 attention mask fill value (float16 max ~65504). bfloat16 shares
-                # float32's exponent range so handles it correctly at ~4-5 GB VRAM.
-                if device == 'cuda' and dtype_setting in ('float16', 'bfloat16'):
-                    torch_dtype = torch.bfloat16
-                else:
-                    torch_dtype = torch.float32
-
-                # Get HuggingFace token for gated model access
-                hf_token = None
-                try:
-                    hf_token = get_credential('huggingface') or None
-                except Exception:
-                    pass
-
-                try:
-                    import contextlib, os as _os
-                    print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
-                    # Cohere's trust_remote_code path prints large ANSI-laden blobs that
-                    # journald records as "[NNK blob data]". Redirect during from_pretrained.
-                    with open(_os.devnull, 'w') as _devnull, \
-                            contextlib.redirect_stdout(_devnull), \
-                            contextlib.redirect_stderr(_devnull):
-                        self._cohere_processor = AutoProcessor.from_pretrained(
-                            model_id, trust_remote_code=True, token=hf_token,
-                            local_files_only=True)
-                        self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                            model_id,
-                            trust_remote_code=True,
-                            dtype=torch_dtype,
-                            token=hf_token,
-                            local_files_only=True,
-                        ).to(device)
-                    self._cohere_model.eval()
-                    print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
-                except Exception as e:
-                    print(f'ERROR: Failed to load Cohere Transcribe model: {e}', flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    return False
-
-                self.current_model = model_id
-                self.ready = True
-                self._last_use_time = time.monotonic()
-                return True
-
-            # Configure Realtime WebSocket backend
-            if backend == 'realtime-ws':
-                # Validate WebSocket configuration
-                provider_id = self.config.get_setting('websocket_provider')
-                model_id = self.config.get_setting('websocket_model')
-                
-                if not provider_id:
-                    print('ERROR: Realtime WebSocket backend selected but websocket_provider not configured')
-                    return False
-                
-                if not model_id:
-                    print('ERROR: Realtime WebSocket backend selected but websocket_model not configured')
-                    return False
-                
-                # Get API key from credential manager
-                api_key = get_credential(provider_id)
-                if not api_key:
-                    print(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
-                    return False
-                
-                # Select appropriate client based on provider
-                if provider_id == 'google':
-                    # Use Gemini Live API client
-                    try:
-                        from .gemini_realtime_client import GeminiRealtimeClient
-                    except ImportError:
-                        from gemini_realtime_client import GeminiRealtimeClient
-
-                    realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-                    self._realtime_client = GeminiRealtimeClient(mode=realtime_mode)
-
-                    # Get WebSocket URL
-                    websocket_url = self.config.get_setting('websocket_url')
-                    if not websocket_url:
-                        provider = get_provider(provider_id)
-                        if provider and 'websocket_endpoint' in provider:
-                            websocket_url = provider['websocket_endpoint']
-                        else:
-                            websocket_url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
-
-                    # Build instructions
-                    instructions_parts = []
-                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
-                    if whisper_prompt:
-                        instructions_parts.append(whisper_prompt)
-
-                    language = self.config.get_setting('language', None)
-                    if language:
-                        instructions_parts.append(f"Transcribe in {language} language.")
-
-                    instructions = ' '.join(instructions_parts) if instructions_parts else None
-
-                    # Set language
-                    self._realtime_client.language = language
-
-                    # Set buffer max seconds
-                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
-                    self._realtime_client.set_max_buffer_seconds(buffer_max)
-
-                    # Connect (API key goes in URL query param, handled by client)
-                    self._realtime_connect_params = {
-                        'websocket_url': websocket_url,
-                        'api_key': api_key,
-                        'model_id': model_id,
-                        'instructions': instructions,
-                    }
-                    if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                        print('ERROR: Failed to connect to Gemini Live API')
-                        try:
-                            self._realtime_client.close()
-                        except Exception:
-                            pass
-                        self._realtime_client = None
-                        return False
-
-                    def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio directly to Gemini; client resamples if needed."""
-                        try:
-                            self._realtime_client.append_audio(audio_chunk)
-                        except Exception as e:
-                            print(f'[GEMINI] Streaming error: {e}', flush=True)
-
-                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
-                    self._realtime_streaming_callback = _send_direct
-
-                elif provider_id == 'elevenlabs':
-                    # Use ElevenLabs-specific client (Scribe v2 Realtime)
-                    try:
-                        from .elevenlabs_realtime_client import ElevenLabsRealtimeClient
-                    except ImportError:
-                        from elevenlabs_realtime_client import ElevenLabsRealtimeClient
-                    
-                    self._realtime_client = ElevenLabsRealtimeClient()
-                    
-                    # Get WebSocket URL
-                    websocket_url = self.config.get_setting('websocket_url')
-                    if not websocket_url:
-                        provider = get_provider(provider_id)
-                        if provider and 'websocket_endpoint' in provider:
-                            websocket_url = provider['websocket_endpoint']
-                        else:
-                            websocket_url = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime'
-                    
-                    # Set language (used at connection time via query params)
-                    language = self.config.get_setting('language', None)
-                    self._realtime_client.language = language
-                    
-                    # Set buffer max seconds
-                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
-                    self._realtime_client.set_max_buffer_seconds(buffer_max)
-                    
-                    # Connect (ElevenLabs doesn't use instructions)
-                    self._realtime_connect_params = {
-                        'websocket_url': websocket_url,
-                        'api_key': api_key,
-                        'model_id': model_id,
-                        'instructions': None,
-                    }
-                    if not self._realtime_client.connect(websocket_url, api_key, model_id, None):
-                        print('ERROR: Failed to connect to ElevenLabs Realtime WebSocket')
-                        try:
-                            self._realtime_client.close()
-                        except Exception:
-                            pass
-                        self._realtime_client = None
-                        return False
-                    
-                    def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio directly to ElevenLabs; client resamples if needed."""
-                        try:
-                            self._realtime_client.append_audio(audio_chunk)
-                        except Exception as e:
-                            print(f'[ELEVENLABS] Streaming error: {e}', flush=True)
-                    
-                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
-                    self._realtime_streaming_callback = _send_direct
-                
-                else:
-                    # Use OpenAI-compatible client (default)
-                    try:
-                        from .realtime_client import RealtimeClient
-                    except ImportError:
-                        from realtime_client import RealtimeClient
-                    
-                    # Initialize RealtimeClient with mode
-                    realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-                    if provider_id == 'openai' and model_id == 'gpt-realtime-whisper' and realtime_mode != 'transcribe':
-                        print('ERROR: gpt-realtime-whisper is supported only with realtime_mode="transcribe"', flush=True)
-                        return False
-                    self._realtime_client = RealtimeClient(mode=realtime_mode)
-                    
-                    # Get WebSocket URL
-                    websocket_url = self.config.get_setting('websocket_url')
-                    if not websocket_url:
-                        # For custom providers, websocket_url must be explicitly set
-                        if provider_id == 'custom':
-                            print('ERROR: Custom realtime backend requires websocket_url to be configured')
-                            return False
-                        
-                        # For known providers, derive from provider registry
-                        try:
-                            websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
-                        except Exception as e:
-                            print(f'ERROR: Failed to derive WebSocket URL: {e}')
-                            return False
-                    
-                    # Build instructions from whisper_prompt and language
-                    instructions_parts = []
-                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
-                    if whisper_prompt:
-                        instructions_parts.append(whisper_prompt)
-                    
-                    language = self.config.get_setting('language', None)
-                    if language:
-                        instructions_parts.append(f"Transcribe in {language} language.")
-                    
-                    instructions = ' '.join(instructions_parts) if instructions_parts else None
-                    
-                    # Set language in realtime client (for session.update)
-                    self._realtime_client.language = language
-
-                    delay = self.config.get_setting('realtime_transcription_delay', 'low')
-                    self._realtime_client.set_transcription_delay(delay)
-                    if self._is_realtime_whisper_preview_enabled(provider_id, model_id, realtime_mode):
-                        self._realtime_client.set_partial_transcript_callback(self._realtime_partial_callback)
-                    else:
-                        self._realtime_client.set_partial_transcript_callback(None)
-                        self._clear_realtime_partial_preview()
-                    
-                    # Set buffer max seconds
-                    buffer_max = self.config.get_setting('realtime_buffer_max_seconds', 5)
-                    self._realtime_client.set_max_buffer_seconds(buffer_max)
-                    
-                    # Connect
-                    self._realtime_connect_params = {
-                        'websocket_url': websocket_url,
-                        'api_key': api_key,
-                        'model_id': model_id,
-                        'instructions': instructions,
-                    }
-                    if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                        print('ERROR: Failed to connect to Realtime WebSocket')
-                        # Clean up failed client
-                        try:
-                            self._realtime_client.close()
-                        except Exception:
-                            pass
-                        self._realtime_client = None
-                        return False
-                    
-                    def _send_direct(audio_chunk: np.ndarray):
-                        """Send audio to realtime client; client handles resampling/queueing."""
-                        try:
-                            self._realtime_client.append_audio(audio_chunk)
-                        except Exception as e:
-                            print(f'[REALTIME] Streaming error: {e}', flush=True)
-                    
-                    _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
-                    self._realtime_streaming_callback = _send_direct
-                
-                print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
-                print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
-                
-                # Explicitly set to None to avoid confusion with top-level model setting
-                self.current_model = None
-                self.ready = True
-                return True
-
-            # Configure REST API backend and return early
-            if backend == 'rest-api':
-                # Attempt migration of API key if needed (backup in case config was loaded before migration)
-                self.config.migrate_api_key_to_credential_manager()
-                
-                # Validate REST configuration
-                endpoint_url = self.config.get_setting('rest_endpoint_url')
-
-                if not endpoint_url:
-                    print('ERROR: REST backend selected but rest_endpoint_url not configured')
-                    return False
-
-                if not endpoint_url.startswith('https://') and not endpoint_url.startswith('http://'):
-                    print(f'WARNING: REST endpoint URL should start with https:// or http://: {endpoint_url}')
-
-                # Validate timeout is reasonable
-                timeout = self.config.get_setting('rest_timeout', 30)
-                if timeout < 1 or timeout > 300:
-                    print(f'WARNING: REST timeout should be between 1-300 seconds, got {timeout}')
-
-                print(f'[BACKEND] Using REST API: {endpoint_url}')
-                print(f'[REST] Timeout configured: {timeout}s')
-
-                # Log user-defined config objects (sanitized)
-                rest_headers = self.config.get_setting('rest_headers', {})
-                rest_body = self.config.get_setting('rest_body', {})
-                
-                # Retrieve API key: prefer credential manager, fall back to config for backward compatibility
-                api_key = None
-                provider_id = self.config.get_setting('rest_api_provider')
-                if provider_id:
-                    api_key = get_credential(provider_id)
-                    if api_key:
-                        print(f'[REST] API key configured (via credential manager, provider: {provider_id})')
-                    else:
-                        print(f'WARNING: [REST] Provider {provider_id} configured but API key not found in credential store')
-                else:
-                    # Backward compatibility: check for old rest_api_key in config
-                    api_key = self.config.get_setting('rest_api_key')
-                    if api_key:
-                        print('[REST] API key configured (via rest_api_key - deprecated, consider migrating)')
-
-                if rest_headers and isinstance(rest_headers, dict):
-                    header_count = len([k for k in rest_headers.keys() if rest_headers.get(k) is not None])
-                    if header_count > 0:
-                        print(f'[REST] Custom headers configured ({header_count} keys)')
-
-                if rest_body and isinstance(rest_body, dict):
-                    body_count = len([k for k in rest_body.keys() if rest_body.get(k) is not None])
-                    if body_count > 0:
-                        print(f'[REST] Custom body fields configured ({body_count} fields)')
-
-                language = self.config.get_setting('language', None)
-                if language:
-                    print(f'[REST] Language hint: {language}')
-
-                # Explicitly set to None to avoid confusion with top-level model setting
-                self.current_model = None
-                self.ready = True
-                return True
-
-            # Initialize local pywhispercpp backend
-            self.current_model = self.config.get_setting('model', 'base')
-            
-            # Detect GPU backend for logging
-            gpu_backend = self._detect_gpu_backend()
-
-            try:
-                # Try modern layout first
-                try:
-                    from pywhispercpp.model import Model
-                except ImportError:
-                    # Fallback for flat layout (or older versions)
-                    from pywhispercpp import Model
-
-                # Validate model file exists before attempting to load
-                from pathlib import Path
-                models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
-                model_file = models_dir / f"ggml-{self.current_model}.bin"
-                
-                if not model_file.exists():
-                    # Try English-only variant
-                    if not self.current_model.endswith('.en'):
-                        model_file = models_dir / f"ggml-{self.current_model}.en.bin"
-                
-                if not model_file.exists():
-                    print(f"[ERROR] Model file not found: {model_file}")
-                    print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
-                    return False
-
-                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-                self._pywhisper_model = Model(
-                    model=self.current_model,
-                    n_threads=self.config.get_setting('threads', 4),
-                    params_sampling_strategy=strategy_int,
-                    redirect_whispercpp_logs_to=None
-                )
-
-                print(f"[BACKEND] pywhispercpp ({gpu_backend}) - model: {self.current_model}")
-                self.ready = True
-                # Record initialization time for suspend/resume detection
-                self._last_use_time = time.monotonic()
-                return True
-
-            except ImportError as e:
-                print("")
-                print("ERROR: pywhispercpp is not installed or incompatible.")
-                print(f"Import error: {e}")
-                print("Run: hyprwhspr setup to configure a backend.")
-
-                print("")
-                return False
-            except Exception as e:
-                print(f"[ERROR] pywhispercpp initialization failed: {e}")
-                import traceback
-                traceback.print_exc()
-                return False
+            # pywhispercpp hardware variants (cpu/nvidia/vulkan) and unknown
+            # names fall back to the default pywhispercpp backend
+            backend_cls = BACKENDS.get(backend, PywhispercppBackend)
+            self._backend = backend_cls(self)
+            return self._backend.initialize()
 
         except Exception as e:
             print(f"ERROR: Failed to initialize Whisper manager: {e}")
             return False
 
-    def _detect_gpu_backend(self) -> str:
-        """Detect available GPU backend for logging purposes
-        
-        First checks which pywhispercpp package is installed via pacman,
-        then verifies hardware availability. Falls back to hardware-only
-        detection if package detection fails.
-        """
-        import subprocess
-
-        # First, check which pywhispercpp package is actually installed
-        # This tells us what the package supports, not just what hardware exists
-        try:
-            # Check each package variant individually
-            # pacman -Q returns non-zero if package not found, so we use check=False
-            packages_to_check = [
-                'python-pywhispercpp-cuda',
-                'python-pywhispercpp-rocm',
-                'python-pywhispercpp-cpu'
-            ]
-            
-            installed_package = None
-            for pkg_name in packages_to_check:
-                try:
-                    result = subprocess.run(
-                        ['pacman', '-Q', pkg_name],
-                        capture_output=True,
-                        text=True,
-                        timeout=2,
-                        check=False
-                    )
-                    if result.returncode == 0:
-                        installed_package = pkg_name
-                        break
-                except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-                    # pacman not available or error - will fall back to hardware detection
-                    break
-            
-            # Handle detected package
-            if installed_package == 'python-pywhispercpp-cuda':
-                # CUDA package installed - verify hardware
-                if shutil.which('nvidia-smi'):
-                    try:
-                        hw_check = subprocess.run(
-                            ['nvidia-smi', '-L'],
-                            capture_output=True,
-                            timeout=2
-                        )
-                        if hw_check.returncode == 0:
-                            return "CUDA (NVIDIA)"
-                        else:
-                            return "CUDA (NVIDIA) - hardware unavailable"
-                    except (subprocess.TimeoutExpired, Exception):
-                        return "CUDA (NVIDIA) - hardware check failed"
-                else:
-                    return "CUDA (NVIDIA) - hardware not detected"
-            
-            elif installed_package == 'python-pywhispercpp-rocm':
-                # ROCm package installed - verify hardware
-                if shutil.which('rocm-smi') or os.path.exists('/opt/rocm'):
-                    try:
-                        hw_check = subprocess.run(
-                            ['rocm-smi', '--showproductname'],
-                            capture_output=True,
-                            timeout=2
-                        )
-                        if hw_check.returncode == 0:
-                            return "ROCm (AMD)"
-                        else:
-                            return "ROCm (AMD) - hardware unavailable"
-                    except (subprocess.TimeoutExpired, Exception):
-                        return "ROCm (AMD) - hardware check failed"
-                else:
-                    return "ROCm (AMD) - hardware not detected"
-            
-            elif installed_package == 'python-pywhispercpp-cpu':
-                # CPU package installed - always CPU, no hardware check needed
-                return "CPU"
-                
-        except Exception:
-            # Package detection failed - fall back to config/hardware detection
-            pass
-
-        # Check config for pip-installed variant
-        backend_config = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        if backend_config == 'nvidia':
-            if shutil.which('nvidia-smi'):
-                try:
-                    result = subprocess.run(['nvidia-smi', '-L'],
-                                           capture_output=True,
-                                           timeout=2)
-                    if result.returncode == 0:
-                        return "CUDA (NVIDIA)"
-                except (subprocess.TimeoutExpired, Exception):
-                    pass
-        elif backend_config in ['amd', 'vulkan']:
-            # Check for Vulkan first (new default for AMD/Intel)
-            if shutil.which('vulkaninfo'):
-                try:
-                    result = subprocess.run(['vulkaninfo', '--summary'],
-                                           capture_output=True,
-                                           timeout=2)
-                    if result and result.returncode == 0 and result.stdout:
-                        summary = result.stdout.decode('utf-8', errors='replace') if isinstance(result.stdout, bytes) else result.stdout
-                        if vulkaninfo_has_hardware_gpu(summary):
-                            return "Vulkan (AMD/Intel)"
-                except (subprocess.TimeoutExpired, Exception):
-                    pass
-            # Fallback: check for ROCm (backward compatibility)
-            if shutil.which('rocm-smi') or os.path.exists('/opt/rocm'):
-                try:
-                    result = subprocess.run(['rocm-smi', '--showproductname'],
-                                           capture_output=True,
-                                           timeout=2)
-                    if result.returncode == 0:
-                        return "ROCm (AMD)"
-                except (subprocess.TimeoutExpired, Exception):
-                    pass
-        elif backend_config == 'cpu':
-            return "CPU"
-
-        # Fallback: hardware-only detection (for non-Arch systems or when pacman unavailable)
-        # Check NVIDIA CUDA - verify it actually works
-        if shutil.which('nvidia-smi'):
-            try:
-                result = subprocess.run(['nvidia-smi', '-L'],
-                                       capture_output=True,
-                                       timeout=2)
-                if result.returncode == 0:
-                    return "CUDA (NVIDIA) - package unknown"
-            except (subprocess.TimeoutExpired, Exception):
-                pass
-
-        # Check AMD ROCm - verify it actually works
-        if shutil.which('rocm-smi') or os.path.exists('/opt/rocm'):
-            try:
-                result = subprocess.run(['rocm-smi', '--showproductname'],
-                                       capture_output=True,
-                                       timeout=2)
-                if result.returncode == 0:
-                    return "ROCm (AMD) - package unknown"
-            except (subprocess.TimeoutExpired, Exception):
-                pass
-
-        # Check Vulkan
-        if shutil.which('vulkaninfo'):
-            return "Vulkan - package unknown"
-
-        return "CPU"
-
-    @contextmanager
-    def _intercept_progress_logs(self):
-        """Context manager to intercept and enhance progress messages from pywhispercpp"""
-        model_name = self.current_model or 'unknown'
-        context_str = f"[pywhispercpp/{model_name}]"
-        
-        # Create a custom file-like object to intercept writes
-        class ProgressInterceptor:
-            def __init__(self, original_stream, context):
-                self.original_stream = original_stream
-                self.context = context
-                self.buffer = ''
-            
-            def write(self, text):
-                # Check if this is a progress message
-                if 'Progress:' in text:
-                    # Extract percentage and spacing if present
-                    match = re.search(r'Progress:(\s+)(\d+)%', text)
-                    if match:
-                        spacing = match.group(1)  # Preserve original spacing
-                        percent = match.group(2)
-                        # Write enhanced message preserving original spacing
-                        # Preserve newline if present in original text
-                        has_newline = text.endswith('\n')
-                        enhanced = f"{self.context} Progress:{spacing}{percent}%"
-                        if has_newline:
-                            self.original_stream.write(enhanced + '\n')
-                        else:
-                            self.original_stream.write(enhanced)
-                        self.original_stream.flush()
-                    else:
-                        # Try without spacing (just in case)
-                        match = re.search(r'Progress:\s*(\d+)%', text)
-                        if match:
-                            percent = match.group(1)
-                            has_newline = text.endswith('\n')
-                            enhanced = f"{self.context} Progress: {percent:>3}%"
-                            if has_newline:
-                                self.original_stream.write(enhanced + '\n')
-                            else:
-                                self.original_stream.write(enhanced)
-                            self.original_stream.flush()
-                        else:
-                            # Just add context to any progress-related line
-                            has_newline = text.endswith('\n')
-                            enhanced = f"{self.context} {text.strip()}"
-                            if has_newline:
-                                self.original_stream.write(enhanced + '\n')
-                            else:
-                                self.original_stream.write(enhanced)
-                            self.original_stream.flush()
-                else:
-                    # Pass through other messages unchanged
-                    self.original_stream.write(text)
-                    self.original_stream.flush()
-            
-            def flush(self):
-                self.original_stream.flush()
-            
-            def __getattr__(self, name):
-                # Delegate all other attributes to the original stream
-                return getattr(self.original_stream, name)
-        
-        # Intercept both stdout and stderr (whisper.cpp may use either)
-        original_stdout = sys.stdout
-        original_stderr = sys.stderr
-        stdout_interceptor = ProgressInterceptor(original_stdout, context_str)
-        stderr_interceptor = ProgressInterceptor(original_stderr, context_str)
-        sys.stdout = stdout_interceptor
-        sys.stderr = stderr_interceptor
-        
-        try:
-            yield
-        finally:
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-
-    def _numpy_to_wav_bytes(self, audio_data: np.ndarray, sample_rate: int = 16000) -> bytes:
-        """
-        Convert numpy audio array to WAV format bytes (in-memory)
-
-        Args:
-            audio_data: NumPy array of audio samples (float32)
-            sample_rate: Sample rate of the audio data
-
-        Returns:
-            WAV file as bytes
-        """
-        try:
-            # Ensure mono
-            if audio_data.ndim != 1:
-                raise ValueError(f'Expected mono audio array, got shape {audio_data.shape}')
-            
-            # Convert float32 to int16 for WAV format
-            if audio_data.dtype == np.float32:
-                # Ensure float never expands (possible in some mic contexts)
-                audio_clipped = np.clip(audio_data, -1.0, 1.0)
-                audio_int16 = (audio_clipped * 32767).astype(np.int16)
-            else:
-                audio_int16 = audio_data.astype(np.int16)
-
-            # Create WAV file in memory
-            wav_buffer = BytesIO()
-            with wave.open(wav_buffer, 'wb') as wav_file:
-                wav_file.setnchannels(1)  # mono
-                wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(sample_rate)
-                wav_file.writeframes(audio_int16.tobytes())
-
-            return wav_buffer.getvalue()
-
-        except Exception as e:
-            print(f'ERROR: Failed to convert audio to WAV: {e}')
-            raise
-
-    def _get_websocket_url(self, provider_id: str, model_id: str, mode: str = 'transcribe') -> str:
-        """
-        Get WebSocket URL for a provider and model.
-        
-        Args:
-            provider_id: Provider identifier (e.g., 'openai')
-            model_id: Model identifier (e.g., 'gpt-realtime-whisper')
-            mode: 'transcribe' or 'converse'
-        
-        Returns:
-            WebSocket URL with appropriate query parameters
-        """
-        provider = get_provider(provider_id)
-        if not provider:
-            raise ValueError(f"Unknown provider: {provider_id}")
-        
-        # Check if provider has explicit websocket_endpoint
-        if 'websocket_endpoint' in provider:
-            base_url = provider['websocket_endpoint']
-        else:
-            # Derive from HTTP endpoint
-            endpoint = provider.get('endpoint', '')
-            if not endpoint:
-                raise ValueError(f"Provider {provider_id} has no endpoint or websocket_endpoint")
-            
-            # Transform: https:// -> wss://, replace /audio/transcriptions -> /realtime
-            base_url = endpoint.replace('https://', 'wss://').replace('http://', 'ws://')
-            if '/audio/transcriptions' in base_url:
-                base_url = base_url.replace('/audio/transcriptions', '/realtime')
-            elif '/transcriptions' in base_url:
-                base_url = base_url.replace('/transcriptions', '/realtime')
-        
-        # Build query parameters based on mode
-        if mode == 'transcribe':
-            # Transcription mode uses intent=transcription
-            return f"{base_url}?intent=transcription"
-        else:
-            # Converse mode uses model parameter
-            return f"{base_url}?model={model_id}"
-
-    def _transcribe_rest(self, audio_data: np.ndarray, sample_rate: int = 16000, language_override: Optional[str] = None) -> str:
-        """
-        Transcribe audio using remote REST API endpoint
-
-        Args:
-            audio_data: NumPy array of audio samples (float32)
-            sample_rate: Sample rate of the audio data
-            language_override: Optional language code to override config language
-
-        Returns:
-            Transcribed text string
-        """
-        try:
-
-            # Get REST endpoint configuration
-            endpoint_url = self.config.get_setting('rest_endpoint_url')
-            
-            # Retrieve API key: prefer credential manager, fall back to config for backward compatibility
-            api_key = None
-            provider_id = self.config.get_setting('rest_api_provider')
-            if provider_id:
-                api_key = get_credential(provider_id)
-                if not api_key:
-                    print(f'WARNING: [REST] Provider {provider_id} configured but API key not found in credential store')
-            else:
-                # Backward compatibility: check for old rest_api_key in config
-                api_key = self.config.get_setting('rest_api_key')
-            
-            timeout = self.config.get_setting('rest_timeout', 30)
-            rest_headers = self.config.get_setting('rest_headers', {})
-            rest_body = self.config.get_setting('rest_body', {})
-
-            if not isinstance(rest_headers, dict):
-                print('WARNING: rest_headers must be an object/dict; ignoring invalid value')
-                rest_headers = {}
-
-            if not isinstance(rest_body, dict):
-                print('WARNING: rest_body must be an object/dict; ignoring invalid value')
-                rest_body = {}
-
-            extra_headers = {}
-            for key, value in rest_headers.items():
-                if value is None:
-                    continue
-                try:
-                    extra_headers[str(key)] = str(value)
-                except Exception:
-                    print(f'WARNING: Skipping non-serializable rest_headers entry: {key}')
-
-            extra_body = {}
-            for key, value in rest_body.items():
-                if value is None:
-                    continue
-                try:
-                    key_str = str(key)
-                except Exception:
-                    print(f'WARNING: Skipping rest_body entry with non-stringable key: {key}')
-                    continue
-
-                if isinstance(value, (dict, list, tuple, set)):
-                    print(f'WARNING: rest_body values must be scalar (key: {key_str}); skipping entry')
-                    continue
-
-                extra_body[key_str] = value
-
-            if not endpoint_url:
-                raise ValueError('REST endpoint URL not configured')
-
-            # Detect backend type and extract model info
-            # Note: We need to check rest_body before it's processed into extra_body
-            # to get the model info early for logging
-            backend_name = None
-            model_info = None
-            
-            # Check if this is parakeet backend
-            if endpoint_url in ('http://127.0.0.1:8080/transcribe', 'http://localhost:8080/transcribe'):
-                backend_name = 'parakeet-tdt-0.6b-v3'
-            else:
-                # Generic REST API - use endpoint URL
-                backend_name = endpoint_url
-            
-            # Extract model information from rest_body if available (before processing)
-            if isinstance(rest_body, dict):
-                model_info = rest_body.get('model')
-            
-            # Format the log message
-            if backend_name == 'parakeet-tdt-0.6b-v3':
-                log_msg = f'[REST API] {backend_name}'
-            elif model_info:
-                log_msg = f'[REST API] {backend_name} - model: {model_info}'
-            else:
-                log_msg = f'[REST API] {backend_name}'
-            
-            print(log_msg, flush=True)
-
-            # Convert audio to WAV format
-            wav_bytes = self._numpy_to_wav_bytes(audio_data, sample_rate)
-            audio_duration = len(audio_data) / sample_rate
-            print(
-                f'[REST] Audio: {audio_duration:.2f}s @ {sample_rate}Hz, {len(wav_bytes)} bytes',
-                flush=True,
-            )
-
-            # Prepare the request
-            files = {'file': ('audio.wav', wav_bytes, 'audio/wav')}
-
-            headers = {'Accept': 'application/json'}
-            headers.update(extra_headers)
-            if api_key:
-                header_names = {key.lower() for key in headers.keys()}
-                if 'authorization' not in header_names:
-                    headers['Authorization'] = f'Bearer {api_key}'
-
-            # Add language parameter if configured
-            data = extra_body.copy()
-            # Use language_override if provided, otherwise get from config
-            language = language_override if language_override is not None else self.config.get_setting('language', None)
-            if language and 'language' not in data:
-                data['language'] = language
-
-            # Fill prompt from config - use language-specific prompt if available
-            if 'prompt' not in data:
-                whisper_prompt = None
-                if language:
-                    whisper_prompt = self.config.get_setting(f'whisper_prompt_{language}', None)
-                if not whisper_prompt:
-                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
-                if whisper_prompt:
-                    data['prompt'] = whisper_prompt
-
-            # Log request parameters for debugging
-            if data:
-                # Sanitize - don't log full prompt, just keys
-                param_summary = ', '.join(f'{k}={v[:20] + "..." if isinstance(v, str) and len(v) > 20 else v}' for k, v in data.items())
-                print(f'[REST] Request params: {param_summary}', flush=True)
-
-            # Send the request
-            print(f'[REST] Sending request to {endpoint_url}...', flush=True)
-            start_time = time.time()
-            response = requests.post(endpoint_url, files=files, data=data, headers=headers, timeout=timeout)
-            response_time = time.time() - start_time
-            print(f'[REST] Response received in {response_time:.2f}s (status: {response.status_code})', flush=True)
-
-            # Check for HTTP errors
-            if response.status_code != 200:
-                error_msg = f'REST API returned status {response.status_code}'
-                try:
-                    error_detail = response.json()
-                    error_msg += f': {error_detail}'
-                except Exception:
-                    error_msg += f': {response.text[:200]}'
-                print(f'ERROR: {error_msg}')
-                return ''
-
-            # Parse the response
-            try:
-                result = response.json()
-            except Exception as json_err:
-                # Show raw response for debugging
-                raw_body = response.text[:500] if response.text else '(empty)'
-                print(f'ERROR: Failed to parse JSON response: {json_err}')
-                print(f'[REST] Raw response body: {raw_body}')
-                print(f'[REST] Content-Type: {response.headers.get("Content-Type", "not set")}')
-                return ''
-
-            # Try common response formats
-            transcription = ''
-            if 'text' in result:
-                transcription = result['text']
-            elif 'transcription' in result:
-                transcription = result['transcription']
-            elif 'result' in result:
-                transcription = result['result']
-            else:
-                print(f'ERROR: Unexpected response format: {result}')
-                return ''
-
-            print(
-                f'[REST] Transcription received ({len(transcription)} chars)',
-                flush=True,
-            )
-            return transcription.strip()
-
-        except requests.exceptions.Timeout:
-            print(f'ERROR: REST API request timed out after {timeout}s')
-            return ''
-        except requests.exceptions.ConnectionError as e:
-            print(f'ERROR: Failed to connect to REST API: {e}')
-            return ''
-        except requests.exceptions.RequestException as e:
-            print(f'ERROR: REST API request failed: {e}')
-            return ''
-        except Exception as e:
-            print(f'ERROR: REST transcription failed: {e}')
-            return ''
-
-    def _transcribe_realtime(self, _audio_data: np.ndarray, _sample_rate: int = 16000, language_override: Optional[str] = None) -> str:
-        """
-        Transcribe audio using Realtime WebSocket backend.
-        
-        Note: For realtime-ws backend, audio should be streamed during capture
-        via the streaming callback. This method handles the commit and wait.
-        
-        Args:
-            audio_data: NumPy array of audio samples (float32)
-            sample_rate: Sample rate of the audio data (should be 16000)
-            language_override: Optional language code to override config language
-        
-        Returns:
-            Transcribed text string
-        """
-        if not self._realtime_client:
-            print('[REALTIME] Client not initialized')
-            return ""
-        
-        if not self._realtime_client.connected:
-            print('[REALTIME] Client not connected')
-            return ""
-        
-        try:
-            # Update language if override provided.
-            # Some clients (e.g. Gemini) bake language into the setup message at
-            # connect time and cannot update it after audio has been streamed —
-            # doing so would trigger a reconnect and silently drop the audio.
-            if language_override is not None:
-                if getattr(self._realtime_client, 'supports_mid_session_language_update', True):
-                    self._realtime_client.update_language(language_override)
-                else:
-                    print(
-                        f'[REALTIME] Provider does not support mid-session language override '
-                        f'(requested: {language_override}); change will take effect on next session',
-                        flush=True,
-                    )
-            
-            # Get timeout from config
-            timeout = self.config.get_setting('realtime_timeout', 30)
-            
-            # Commit and get text (audio was already streamed via callback)
-            transcription = self._realtime_client.commit_and_get_text(timeout=timeout)
-            
-            return transcription.strip()
-            
-        except Exception as e:
-            print(f'[REALTIME] Transcription failed: {e}')
-            return ""
-
-    def _get_onnx_asr_vad_min_duration(self) -> float:
-        """Return the duration threshold for routing ONNX-ASR audio through VAD."""
-        try:
-            threshold = float(self.config.get_setting('onnx_asr_vad_min_duration', 30))
-        except (TypeError, ValueError):
-            threshold = 30.0
-        return max(0.0, threshold)
-
-    def _transcribe_onnx_asr(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
-        """
-        Transcribe audio using onnx-asr backend (CPU-optimized).
-
-        Args:
-            audio_data: NumPy array of audio samples (float32)
-            sample_rate: Sample rate of the audio data (should be 16000)
-
-        Returns:
-            Transcribed text string
-        """
-        if not self._onnx_asr_model:
-            print('[ONNX-ASR] Model not loaded')
-            return ""
-
-        try:
-            audio_duration = len(audio_data) / sample_rate
-            print(f'[ONNX-ASR] Transcribing {audio_duration:.2f}s of audio', flush=True)
-
-            # onnx-asr accepts numpy arrays directly (float32)
-            # It handles resampling internally if needed
-            vad_min_duration = self._get_onnx_asr_vad_min_duration()
-            use_vad_model = (
-                self._onnx_asr_vad_model is not None
-                and audio_duration >= vad_min_duration
-            )
-            model = self._onnx_asr_vad_model if use_vad_model else self._onnx_asr_model
-            if self._onnx_asr_vad_model is not None:
-                mode = 'vad' if use_vad_model else 'direct'
-                print(f'[ONNX-ASR] Mode: {mode} (vad_min_duration={vad_min_duration}s)', flush=True)
-            start_time = time.time()
-            result = model.recognize(audio_data, sample_rate=sample_rate)
-            elapsed = time.time() - start_time
-
-            # When VAD is enabled, recognize() returns a generator of segments
-            if isinstance(result, types.GeneratorType):
-                # Collect all segments and combine their text
-                segments = list(result)
-                if not segments:
-                    transcription = ""
-                else:
-                    # Extract text from each segment
-                    segment_texts = []
-                    for seg in segments:
-                        if hasattr(seg, 'text'):
-                            segment_texts.append(seg.text)
-                        elif isinstance(seg, str):
-                            segment_texts.append(seg)
-                        else:
-                            # Fallback: try to get text representation
-                            segment_texts.append(str(seg))
-                    transcription = ' '.join(segment_texts)
-            else:
-                # No VAD - direct result (string or object with .text attribute)
-                if hasattr(result, 'text'):
-                    transcription = result.text
-                elif isinstance(result, str):
-                    transcription = result
-                else:
-                    transcription = str(result)
-
-            print(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s', flush=True)
-
-            return transcription.strip()
-
-        except Exception as e:
-            print(f'[ONNX-ASR] Transcription failed: {e}', flush=True)
-            import traceback
-            traceback.print_exc()
-            return ""
-
-    def _transcribe_faster_whisper(self, audio_data: np.ndarray, sample_rate: int = 16000,
-                                    language_override: Optional[str] = None) -> str:
-        """Transcribe using faster-whisper (CTranslate2)."""
-        if self._faster_whisper_model is None:
-            print('[ERROR] faster-whisper model not initialized', flush=True)
-            return ''
-        audio_data = self._resample_audio(audio_data, sample_rate, 16000)
-
-        language = language_override if language_override is not None else self.config.get_setting('language', None)
-        whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
-        vad_filter = self.config.get_setting('faster_whisper_vad_filter', True)
-        task = self.config.get_setting('task', 'transcribe')
-
-        with self._model_lock:
-            current_time = time.monotonic()
-            time_since_last_use = current_time - self._last_use_time
-            if time_since_last_use > 1800 and self._last_use_time > 0:
-                print('[MODEL] Long idle detected - reinitializing faster-whisper model', flush=True)
-                if not self._reinitialize_faster_whisper():
-                    return ''
-
-            try:
-                transcribe_kwargs = {
-                    'vad_filter': vad_filter,
-                    'beam_size': self.config.get_setting('beam_size', 5),
-                    'task': task,
-                }
-                if language:
-                    transcribe_kwargs['language'] = language
-                if whisper_prompt:
-                    transcribe_kwargs['initial_prompt'] = whisper_prompt
-
-                segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
-                result = ' '.join(seg.text for seg in segments).strip()
-                self._last_use_time = time.monotonic()
-                return result
-            except RuntimeError as e:
-                if 'cannot be loaded' in str(e) or 'not found' in str(e):
-                    print(f'[WARN] CUDA library unavailable ({e}), falling back to CPU', flush=True)
-                    if self._reinitialize_faster_whisper(force_cpu=True):
-                        try:
-                            segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
-                            result = ' '.join(seg.text for seg in segments).strip()
-                            self._last_use_time = time.monotonic()
-                            return result
-                        except Exception as retry_e:
-                            print(f'[ERROR] faster-whisper CPU fallback failed: {retry_e}', flush=True)
-                    return ''
-                print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
-                import traceback
-                traceback.print_exc()
-                return ''
-            except Exception as e:
-                print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
-                import traceback
-                traceback.print_exc()
-                return ''
-
-    def _reinitialize_faster_whisper(self, force_cpu: bool = False) -> bool:
-        """Reinitialize faster-whisper model after suspend/resume or CUDA library failure."""
-        try:
-            from faster_whisper import WhisperModel
-            model_name = self.config.get_setting('faster_whisper_model', 'base')
-            if force_cpu:
-                device = 'cpu'
-                compute_type = 'float32'
-                print('[MODEL] Reinitializing faster-whisper on CPU (CUDA libraries unavailable)', flush=True)
-            else:
-                device = self.config.get_setting('faster_whisper_device', 'auto')
-                compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
-                if device == 'auto':
-                    device = 'cpu'
-                    try:
-                        import ctranslate2
-                        if ctranslate2.get_cuda_device_count() > 0:
-                            cuda_libs_ok = False
-                            try:
-                                import ctypes
-                                ctypes.CDLL('libcublas.so.12')
-                                cuda_libs_ok = True
-                            except OSError:
-                                pass
-                            if not cuda_libs_ok:
-                                try:
-                                    import importlib.util
-                                    if importlib.util.find_spec('nvidia.cublas') is not None:
-                                        cuda_libs_ok = True
-                                except Exception:
-                                    pass
-                            if cuda_libs_ok:
-                                device = 'cuda'
-                                try:
-                                    import ctypes as _ctypes
-                                    import glob as _glob
-                                    import site as _site
-                                    _site_dirs = []
-                                    try:
-                                        _site_dirs.extend(_site.getsitepackages())
-                                    except Exception:
-                                        pass
-                                    try:
-                                        _site_dirs.append(_site.getusersitepackages())
-                                    except Exception:
-                                        pass
-                                    for _sd in _site_dirs:
-                                        for _pkg, _soname in [('cublas', 'libcublas.so.12'), ('cudnn', 'libcudnn.so.9')]:
-                                            _lib_dir = os.path.join(_sd, 'nvidia', _pkg, 'lib')
-                                            if not os.path.isdir(_lib_dir):
-                                                continue
-                                            _ld = os.environ.get('LD_LIBRARY_PATH', '')
-                                            if _lib_dir not in _ld:
-                                                os.environ['LD_LIBRARY_PATH'] = f"{_lib_dir}:{_ld}" if _ld else _lib_dir
-                                            _candidates = (
-                                                [os.path.join(_lib_dir, _soname)]
-                                                + sorted(_glob.glob(os.path.join(_lib_dir, _soname + '.*')))
-                                            )
-                                            for _lib_path in _candidates:
-                                                if os.path.exists(_lib_path):
-                                                    try:
-                                                        _ctypes.CDLL(_lib_path, _ctypes.RTLD_GLOBAL)
-                                                        break
-                                                    except OSError:
-                                                        continue
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-                if compute_type == 'auto':
-                    compute_type = 'int8' if device == 'cuda' else 'float32'
-            self._faster_whisper_model = WhisperModel(model_name, device=device, compute_type=compute_type)
-            self._last_use_time = time.monotonic()
-            return True
-        except Exception as e:
-            print(f'[ERROR] faster-whisper reinitialization failed: {e}', flush=True)
-            return False
-
-    def _transcribe_cohere_transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000,
-                                      language_override: Optional[str] = None) -> str:
-        """Transcribe using Cohere Transcribe (transformers)."""
-        if self._cohere_model is None or self._cohere_processor is None:
-            print('[ERROR] Cohere Transcribe model not initialized', flush=True)
-            return ''
-
-        language = language_override if language_override is not None else self.config.get_setting('language', None)
-        if not language:
-            language = 'en'
-
-        use_compile = self.config.get_setting('cohere_transcribe_compile', False)
-
-        with self._model_lock:
-            current_time = time.monotonic()
-            time_since_last_use = current_time - self._last_use_time
-            if time_since_last_use > 1800 and self._last_use_time > 0:
-                print('[MODEL] Long idle detected - reinitializing Cohere Transcribe model', flush=True)
-                if not self._reinitialize_cohere_transcribe():
-                    return ''
-
-            try:
-                # On the first torch.compile call, triton spawns a C compiler subprocess
-                # whose output (warnings, notes) leaks to journald. Suppress at fd level
-                # for that one call; afterwards the kernel is cached and nothing is emitted.
-                needs_suppress = use_compile and not self._cohere_compile_done
-                if needs_suppress:
-                    import os as _os, warnings as _warnings
-                    _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
-                    _old_stderr = _os.dup(2)
-                    _os.dup2(_devnull_fd, 2)
-                try:
-                    if needs_suppress:
-                        import warnings as _warnings
-                        with _warnings.catch_warnings():
-                            _warnings.simplefilter('ignore')
-                            texts = self._cohere_model.transcribe(
-                                processor=self._cohere_processor,
-                                audio_arrays=[audio_data],
-                                sample_rates=[sample_rate],
-                                language=language,
-                                compile=use_compile,
-                            )
-                    else:
-                        texts = self._cohere_model.transcribe(
-                            processor=self._cohere_processor,
-                            audio_arrays=[audio_data],
-                            sample_rates=[sample_rate],
-                            language=language,
-                            compile=use_compile,
-                        )
-                finally:
-                    if needs_suppress:
-                        _os.dup2(_old_stderr, 2)
-                        _os.close(_old_stderr)
-                        _os.close(_devnull_fd)
-                        self._cohere_compile_done = True
-                result = texts[0].strip() if texts else ''
-                self._last_use_time = time.monotonic()
-                return result
-            except Exception as e:
-                print(f'[ERROR] Cohere Transcribe transcription failed: {e}', flush=True)
-                import traceback
-                traceback.print_exc()
-                return ''
-
-    def _reinitialize_cohere_transcribe(self) -> bool:
-        """Reinitialize Cohere Transcribe model after suspend/resume."""
-        try:
-            import torch
-            from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
-
-            model_id = 'CohereLabs/cohere-transcribe-03-2026'
-            device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
-            dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
-
-            device = 'cuda' if (device_setting == 'auto' and torch.cuda.is_available()) else device_setting if device_setting != 'auto' else 'cpu'
-            torch_dtype = torch.bfloat16 if (device == 'cuda' and dtype_setting in ('float16', 'bfloat16')) else torch.float32
-
-            hf_token = None
-            try:
-                hf_token = get_credential('huggingface') or None
-            except Exception:
-                pass
-
-            print(f'[MODEL] Reinitializing Cohere Transcribe (device={device})', flush=True)
-            import contextlib, os as _os
-            with open(_os.devnull, 'w') as _devnull, \
-                    contextlib.redirect_stdout(_devnull), \
-                    contextlib.redirect_stderr(_devnull):
-                self._cohere_processor = AutoProcessor.from_pretrained(
-                    model_id, trust_remote_code=True, token=hf_token,
-                    local_files_only=True)
-                self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    dtype=torch_dtype,
-                    token=hf_token,
-                    local_files_only=True,
-                ).to(device)
-            self._cohere_model.eval()
-            self._last_use_time = time.monotonic()
-            return True
-        except Exception as e:
-            print(f'[ERROR] Cohere Transcribe reinitialization failed: {e}', flush=True)
-            return False
-
     def get_realtime_streaming_callback(self) -> Optional[Callable]:
         """
         Get the streaming callback for realtime-ws backend.
-        
+
         Returns:
             Callback function if realtime-ws backend is active, None otherwise
         """
-        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        backend = normalize_backend(backend)
-        
-        if backend == 'realtime-ws' and self._realtime_client:
-            # If the server closed the socket while idle, reconnect on-demand here
-            # (before we start capturing audio) to avoid dropping the first chunks.
-            if not self._realtime_client.connected:
-                if not self._reconnect_realtime_client():
-                    return None
-
-            # Clear server buffer before starting new recording
-            self._realtime_client.clear_audio_buffer()
-            return self._realtime_streaming_callback
+        if self._backend is not None and self._backend.name == 'realtime-ws':
+            return self._backend.get_streaming_callback()
         return None
-
-    def _resample_audio(self, audio_data: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
-        """Resample float32 mono audio when a backend requires a fixed sample rate."""
-        if source_rate == target_rate:
-            return audio_data
-        try:
-            from math import gcd
-            from scipy import signal
-
-            divisor = gcd(int(source_rate), int(target_rate))
-            resampled = signal.resample_poly(
-                audio_data,
-                up=int(target_rate) // divisor,
-                down=int(source_rate) // divisor,
-            )
-            return resampled.astype(np.float32, copy=False)
-        except Exception as e:
-            print(f"[WARN] Failed to resample audio {source_rate}Hz -> {target_rate}Hz: {e}", flush=True)
-            return audio_data
 
     def set_realtime_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         """Set callback for realtime partial transcript previews."""
         self._realtime_partial_callback = callback
-        if self._realtime_client and hasattr(self._realtime_client, 'set_partial_transcript_callback'):
-            provider_id = self.config.get_setting('websocket_provider')
-            model_id = self.config.get_setting('websocket_model')
-            realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-            if self._is_realtime_whisper_preview_enabled(provider_id, model_id, realtime_mode):
-                self._realtime_client.set_partial_transcript_callback(callback)
-            else:
-                self._realtime_client.set_partial_transcript_callback(None)
-                self._clear_realtime_partial_preview()
+        if self._backend is not None and self._backend.name == 'realtime-ws':
+            self._backend.apply_partial_callback(callback)
 
-    def _is_realtime_whisper_preview_enabled(self, provider_id: str, model_id: str, realtime_mode: str) -> bool:
-        return (
-            self.config.get_setting('mic_osd_enabled', True)
-            and provider_id == 'openai'
-            and model_id == 'gpt-realtime-whisper'
-            and realtime_mode == 'transcribe'
-            and self._realtime_partial_callback is not None
-        )
+    def _current_backend_name(self) -> str:
+        """Normalized name of the configured transcription backend."""
+        return normalize_backend(
+            self.config.get_setting('transcription_backend', 'pywhispercpp'))
 
-    def _clear_realtime_partial_preview(self) -> None:
-        if not self._realtime_partial_callback:
-            return
-        try:
-            self._realtime_partial_callback("")
-        except Exception as e:
-            print(f'[REALTIME] Failed to clear partial transcript preview: {e}', flush=True)
+    def update_realtime_language(self, language: Optional[str]) -> None:
+        """Apply a language override to a connected realtime client (no-op otherwise)."""
+        if (self._backend is not None and self._backend.name == 'realtime-ws'
+                and self._backend.is_loaded):
+            self._backend.update_language(language)
 
-    def _reconnect_realtime_client(self) -> bool:
-        """Reconnect realtime client using stored connect params."""
-        if not self._realtime_client:
-            return False
+    def close_realtime_connection(self, reason: str = '') -> None:
+        """Close the realtime WebSocket if one is active (no-op otherwise)."""
+        if (self._backend is not None and self._backend.name == 'realtime-ws'
+                and self._backend.is_loaded):
+            note = f' ({reason})' if reason else ''
+            print(f'[CLEANUP] Closing realtime WebSocket{note}', flush=True)
+            self._backend.close()
 
-        params = self._realtime_connect_params or {}
-        websocket_url = params.get('websocket_url')
-        api_key = params.get('api_key')
-        model_id = params.get('model_id')
-        instructions = params.get('instructions')
+    def reinitialize_after_resume(self, only_if_idle: bool = False) -> bool:
+        """Recover backend state after suspend/resume or audio recovery.
 
-        if not (websocket_url and api_key and model_id):
-            print('[REALTIME] Missing connection parameters; cannot reconnect', flush=True)
-            return False
+        With only_if_idle, reinitialize only when a loaded local model has been
+        unused long enough (>30 min) that a suspend likely invalidated its
+        CUDA/GPU context; otherwise reinitialize unconditionally per backend.
 
-        try:
-            # Best-effort: close any stale connection first
-            try:
-                self._realtime_client.close()
-            except Exception:
-                pass
-
-            if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                print('[REALTIME] Reconnect failed', flush=True)
-                return False
-
-            print('[REALTIME] Reconnected on-demand', flush=True)
+        Returns:
+            True if the backend is healthy (or needed no action), False otherwise
+        """
+        if self._backend is None or not self._backend.reinit_on_resume:
             return True
-        except Exception as e:
-            print(f'[REALTIME] Reconnect failed: {e}', flush=True)
-            return False
+
+        if only_if_idle:
+            if not (self._backend.is_local and self._backend.is_loaded):
+                return True
+            idle = time.monotonic() - self._last_use_time
+            if not (idle > 1800 and self._last_use_time > 0):
+                return True
+            print(f"[RECOVERY] Reinitializing {self._current_backend_name()} model after audio recovery (suspend/resume detected)", flush=True)
+
+        return self._backend.reinitialize()
 
     def is_ready(self) -> bool:
         """Check if whisper is ready for transcription"""
@@ -1753,209 +228,63 @@ class WhisperManager:
             traceback.print_exc()
             return ""
 
-        # Route to appropriate backend
-        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        
-        # Backward compatibility
-        if backend == 'local':
-            backend = 'pywhispercpp'
-        elif backend == 'remote':
-            backend = 'rest-api'
+        # Route to the configured backend. Remote backends (rest-api,
+        # realtime-ws) manage their own connection state and need no model lock.
+        backend = self._current_backend_name()
 
         if backend == 'rest-api':
-            # Use REST API transcription
-            # Debug: ensure we're not accidentally using pywhispercpp
-            if self._pywhisper_model is not None:
-                print(f"[WARN] REST API backend selected but pywhispercpp model is loaded - this should not happen", flush=True)
-            return self._transcribe_rest(audio_data, sample_rate, language_override=language_override)
+            if self._backend is None:
+                # Stateless backend; usable even if initialize() never ran
+                self._backend = BACKENDS['rest-api'](self)
+            return self._backend.transcribe(audio_data, sample_rate, language_override=language_override)
 
         if backend == 'realtime-ws':
-            # Use Realtime WebSocket transcription
-            # Note: Audio was already streamed via callback during capture
-            # This just commits and waits for the result
-            return self._transcribe_realtime(audio_data, sample_rate, language_override=language_override)
-
-        if backend == 'onnx-asr':
-            # Use ONNX-ASR transcription (CPU-optimized)
-            return self._transcribe_onnx_asr(audio_data, sample_rate)
-
-        if backend == 'faster-whisper':
-            return self._transcribe_faster_whisper(audio_data, sample_rate, language_override=language_override)
-
-        if backend == 'cohere-transcribe':
-            return self._transcribe_cohere_transcribe(audio_data, sample_rate, language_override=language_override)
-
-        # Use model lock to prevent concurrent transcription calls
-        # This prevents crashes from concurrent access to the whisper model
-        with self._model_lock:
-            # Check if model needs reinitialization (suspend/resume detection)
-            # This check is inside the lock to prevent race conditions where
-            # multiple threads detect idle period and try to reinitialize simultaneously
-            current_time = time.monotonic()
-            time_since_last_use = current_time - self._last_use_time
-
-            # If model hasn't been used in 30+ minutes, likely suspend/resume occurred
-            # Reinitialize to refresh CUDA context before using stale model
-            if time_since_last_use > 1800 and self._last_use_time > 0:
-                print("[MODEL] Long idle period detected - reinitializing model (suspend/resume likely)", flush=True)
-                if not self._reinitialize_model():
-                    print("[MODEL] Reinitialization failed, transcription may fail", flush=True)
-                    return ""
-
-            try:
-                audio_data = self._resample_audio(audio_data, sample_rate, 16000)
-
-                # Use language_override if provided, otherwise get from config (None = auto-detect)
-                language = language_override if language_override is not None else self.config.get_setting('language', None)
-
-                # pywhispercpp doesn't auto-detect language when no language kwarg is passed —
-                # it keeps whisper.cpp's compiled-in default of "en". Call auto_detect_language()
-                # explicitly so a null config value behaves as documented.
-                if not language:
-                    try:
-                        (detected, prob), _ = self._pywhisper_model.auto_detect_language(audio_data)
-                        language = detected
-                        print(f'[LANG] auto-detected: {detected} (p={prob:.2f})', flush=True)
-                    except Exception as e:
-                        print(f'[WARN] language auto-detect failed: {e}; falling back to en', flush=True)
-                        language = 'en'
-
-                whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
-
-                task = self.config.get_setting('task', 'transcribe')
-
-                # Intercept progress logs and enhance them
-                with self._intercept_progress_logs():
-                    # Build transcribe kwargs with available values
-                    transcribe_kwargs = {'language': language}
-                    if task == 'translate':
-                        transcribe_kwargs['translate'] = True
-                    if whisper_prompt:
-                        transcribe_kwargs['initial_prompt'] = whisper_prompt
-                    if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search':
-                        transcribe_kwargs['beam_search'] = {
-                            'beam_size': self.config.get_setting('beam_size', 5),
-                            'patience': -1.0,
-                        }
-
-                    segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
-
-                result = ' '.join(seg.text for seg in segments).strip()
-                
-                # Update last use time on successful transcription
-                self._last_use_time = time.monotonic()
-                
-                return result
-            except Exception as e:
-                print(f"[ERROR] pywhispercpp transcription failed: {e}")
-                import traceback
-                traceback.print_exc()
+            # Audio was already streamed via callback during capture;
+            # this just commits and waits for the result
+            if self._backend is None:
+                print('[REALTIME] Backend not initialized', flush=True)
                 return ""
+            return self._backend.transcribe(audio_data, sample_rate, language_override=language_override)
 
-    def _validate_model_file(self, model_name: str) -> bool:
-        """Validate that model file exists and is not corrupted"""
-        from pathlib import Path
-        models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
+        if self._backend is None:
+            print('[ERROR] No transcription backend initialized', flush=True)
+            return ""
 
-        # Check for both multilingual and English-only versions
-        model_files = [
-            models_dir / f"ggml-{model_name}.bin",
-            models_dir / f"ggml-{model_name}.en.bin"
-        ]
+        # Use model lock to prevent concurrent transcription calls and
+        # crashes from concurrent access to the loaded model
+        with self._model_lock:
+            if not self._ensure_backend_fresh_locked(backend):
+                return ""
+            return self._backend.transcribe(audio_data, sample_rate, language_override=language_override)
 
-        for model_file in model_files:
-            if model_file.exists():
-                # Basic size check (>10MB for any valid model)
-                if model_file.stat().st_size > 10000000:
-                    return True
+    def _ensure_backend_fresh_locked(self, backend: str) -> bool:
+        """Reinitialize a long-idle local model (call under _model_lock).
 
-        return False
+        If the model hasn't been used in 30+ minutes a suspend/resume likely
+        invalidated its GPU context; refresh it before transcribing. Runs
+        inside the lock so concurrent threads can't reinitialize twice.
 
-    def _cleanup_model(self) -> None:
-        """Safely cleanup existing model instance - GPU-safe approach"""
-        if self._pywhisper_model:
-            try:
-                # Conservative cleanup for GPU compatibility
-                # Just clear the reference and let Python handle cleanup
-                # Aggressive cleanup (del + gc.collect) corrupts CUDA contexts
-                self._pywhisper_model = None
-            except Exception as e:
-                print(f"[WARN] Failed to cleanup model reference: {e}")
-    
-    def _reinitialize_model(self) -> bool:
-        """
-        Reinitialize the pywhispercpp model.
-        This is needed after suspend/resume when CUDA contexts become invalid.
-        
         Returns:
-            True if reinitialization successful, False otherwise
+            False if a needed reinitialization failed, True otherwise
         """
-        if not self._pywhisper_model:
-            # Model not loaded, just initialize normally
-            return self.initialize()
-        
-        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        backend = normalize_backend(backend)
+        time_since_last_use = time.monotonic() - self._last_use_time
+        if not (time_since_last_use > 1800 and self._last_use_time > 0):
+            return True
 
-        # Only reinitialize for pywhispercpp and its variants (cpu, nvidia, vulkan/amd)
-        pywhispercpp_variants = ['pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan']
-        if backend not in pywhispercpp_variants:
+        if self._backend is None or not self._backend.reinit_on_idle:
             return True
-        
-        print("[MODEL] Reinitializing whisper model (suspend/resume detected)", flush=True)
-        
-        try:
-            # Save current model name and thread count
-            model_name = self.current_model
-            threads = self.config.get_setting('threads', 4)
-            
-            # Clean up old model
-            self._cleanup_model()
-            
-            # Small delay to let CUDA context fully release
-            time.sleep(0.1)
-            
-            # Reload model
-            try:
-                from pywhispercpp.model import Model
-            except ImportError:
-                from pywhispercpp import Model
-            
-            strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-            self._pywhisper_model = Model(
-                model=model_name,
-                n_threads=threads,
-                params_sampling_strategy=strategy_int,
-                redirect_whispercpp_logs_to=None
-            )
-            
-            self.ready = True
-            # Update last use time to mark successful reinitialization
-            self._last_use_time = time.monotonic()
-            print("[MODEL] Model reinitialized successfully", flush=True)
-            return True
-            
-        except Exception as e:
-            print(f"[MODEL] ERROR: Failed to reinitialize model: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            self.ready = False
+        reinit = self._backend.reinitialize
+
+        print(f"[MODEL] Long idle detected - reinitializing {backend} model (suspend/resume likely)", flush=True)
+        if not reinit():
+            print("[MODEL] Reinitialization failed, transcription may fail", flush=True)
             return False
-    
-    def _cleanup_realtime_client(self) -> None:
-        """Cleanup Realtime WebSocket client"""
-        if self._realtime_client:
-            try:
-                self._realtime_client.close()
-                self._realtime_client = None
-                self._realtime_streaming_callback = None
-            except Exception as e:
-                print(f"[WARN] Failed to cleanup realtime client: {e}")
-    
+        return True
+
     def cleanup(self) -> None:
         """Public cleanup method to clean up all resources"""
-        # Cleanup realtime WebSocket client if active
-        self._cleanup_realtime_client()
+        if self._backend is not None:
+            self._backend.cleanup()
 
     def unload_model(self) -> bool:
         """
@@ -1974,12 +303,8 @@ class WhisperManager:
 
         with self._model_lock:
             try:
-                self._cleanup_model()
-                self._faster_whisper_model = None
-                self._onnx_asr_model = None
-                self._onnx_asr_vad_model = None
-                self._cohere_model = None
-                self._cohere_processor = None
+                if self._backend is not None:
+                    self._backend.unload()
 
                 # Trigger Python GC so C++ destructors and ONNX sessions release immediately
                 import gc
@@ -2024,45 +349,12 @@ class WhisperManager:
 
     def set_threads(self, num_threads: int) -> bool:
         """Update the number of threads used by the backend."""
+        set_threads = getattr(self._backend, 'set_threads', None)
+        if set_threads is None:
+            print("ERROR: Backend does not support changing threads")
+            return False
         with self._model_lock:
-            try:
-                # Try dynamic update if the backend supports it
-                if self._pywhisper_model and hasattr(self._pywhisper_model, 'set_n_threads'):
-                    try:
-                        self._pywhisper_model.set_n_threads(int(num_threads))
-                        self.config.set_setting('threads', int(num_threads))
-                        return True
-                    except Exception:
-                        pass
-
-                # Fallback: reload model with new thread count
-
-                # Clean up existing model (GPU-safe)
-                self._cleanup_model()
-
-                # Load model with new thread count
-                # Try modern layout first
-                try:
-                    from pywhispercpp.model import Model
-                except ImportError:
-                    # Fallback for flat layout (or older versions)
-                    from pywhispercpp import Model
-                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-                self._pywhisper_model = Model(
-                    model=self.current_model,
-                    n_threads=int(num_threads),
-                    params_sampling_strategy=strategy_int,
-                    redirect_whispercpp_logs_to=None
-                )
-
-                # Only persist to config if successful
-                self.config.set_setting('threads', int(num_threads))
-                return True
-
-            except Exception as e:
-                print(f"ERROR: Failed to set threads: {e}")
-                self.ready = False
-                return False
+            return set_threads(int(num_threads))
 
     def set_model(self, model_name: str) -> bool:
         """
@@ -2074,77 +366,21 @@ class WhisperManager:
         Returns:
             True if successful, False otherwise
         """
-        # Check if using REST API backend - model changes don't apply
-        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        
-        # Backward compatibility
-        if backend == 'local':
-            backend = 'pywhispercpp'
-        elif backend == 'remote':
-            backend = 'rest-api'
-        
-        if backend == 'rest-api':
+        set_model = getattr(self._backend, 'set_model', None)
+        if set_model is None:
             print("ERROR: Cannot change model when using REST API backend - switch to pywhispercpp")
             print("Model selection is handled by the REST API endpoint")
             return False
-
         with self._model_lock:
-            try:
-                # Validate model file exists before attempting to load
-                if not self._validate_model_file(model_name):
-                    print(f"ERROR: Model file not found or corrupted: {model_name}")
-                    print("Please download the model to ~/.local/share/pywhispercpp/models/")
-                    return False
-
-                # Clean up existing model (GPU-safe)
-                self._cleanup_model()
-
-                # Load new model
-                # Try modern layout first
-                try:
-                    from pywhispercpp.model import Model
-                except ImportError:
-                    # Fallback for flat layout (or older versions)
-                    from pywhispercpp import Model
-                strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-                self._pywhisper_model = Model(
-                    model=model_name,
-                    n_threads=self.config.get_setting('threads', 4),
-                    params_sampling_strategy=strategy_int,
-                    redirect_whispercpp_logs_to=None
-                )
-
-                # Only update state if model loading succeeded
-                self.current_model = model_name
-                self.config.set_setting('model', model_name)
-
-                return True
-
-            except Exception as e:
-                print(f"ERROR: Failed to set model {model_name}: {e}")
-                self.ready = False
-                return False
+            return set_model(model_name)
 
     def get_current_model(self) -> str:
-        """Get the current model name"""
-        # For REST API backends, return empty string or None
-        if self.current_model is None:
-            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            
-            # Backward compatibility
-            if backend == 'local':
-                backend = 'pywhispercpp'
-            elif backend == 'remote':
-                backend = 'rest-api'
-            
-            if backend == 'rest-api':
-                return ''
+        """Get the current model name ('' for backends without a local model)"""
         return self.current_model or ''
 
     def get_available_models(self) -> list:
         """Get list of available whisper models"""
-        from pathlib import Path
-        models_dir = Path.home() / '.local' / 'share' / 'pywhispercpp' / 'models'
+        models_dir = PYWHISPERCPP_MODELS_DIR
         available_models = []
 
         # Look for the supported model files
@@ -2174,16 +410,14 @@ class WhisperManager:
 
     def get_backend_info(self) -> str:
         """Get information about the current backend"""
-        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        
-        # Backward compatibility
-        if backend == 'local':
-            backend = 'pywhispercpp'
-        elif backend == 'remote':
-            backend = 'rest-api'
-        
+        backend = self._current_backend_name()
+
         if backend == 'rest-api':
             endpoint_url = self.config.get_setting('rest_endpoint_url', 'not configured')
             return f"REST API ({endpoint_url})"
-        else:
+        if backend not in BACKENDS:
+            # pywhispercpp hardware variants (cpu/nvidia/vulkan)
+            backend = 'pywhispercpp'
+        if backend == 'pywhispercpp':
             return f"pywhispercpp (in-process, model: {self.current_model})"
+        return f"{backend} (model: {self.current_model})" if self.current_model else backend

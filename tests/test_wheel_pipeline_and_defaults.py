@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,6 +13,9 @@ sys.path.insert(0, str(ROOT / "lib" / "src"))
 
 import backend_installer  # noqa: E402
 import config_manager  # noqa: E402
+import whisper_manager  # noqa: E402
+from backends import pywhispercpp_backend  # noqa: E402
+from backends import PywhispercppBackend  # noqa: E402
 
 
 class WheelVariantTests(unittest.TestCase):
@@ -72,6 +76,110 @@ class ConfigDefaultsTests(unittest.TestCase):
                 seed_file={"$schema": "x", "word_overrides": {"foo": "bar"}},
             )
             self.assertEqual(cm.get_word_overrides(), {"foo": "bar"})
+
+    def test_pywhispercpp_vad_default_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cm = self._manager_for(tmp)
+            self.assertIs(cm.get_setting("pywhispercpp_use_vad"), False)
+
+
+class ModelValidityTests(unittest.TestCase):
+    def test_hash_key_is_per_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "ggml-tiny.bin"
+            f.write_bytes(b"tiny model bytes")
+            h = backend_installer.compute_file_hash(f)
+            own = {f"model_hash_{f.name}": h}
+            with mock.patch.object(backend_installer, "get_state", side_effect=own.get):
+                self.assertTrue(backend_installer.check_model_validity(f))
+            # another model's stored hash must not validate this file
+            other = {"model_hash_ggml-base.bin": h}
+            with mock.patch.object(backend_installer, "get_state", side_effect=other.get):
+                self.assertFalse(backend_installer.check_model_validity(f))
+
+    def test_size_floor_without_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "ggml-tiny.bin"
+            f.write_bytes(b"x")
+            with mock.patch.object(backend_installer, "get_state", return_value=None):
+                self.assertFalse(backend_installer.check_model_validity(f))
+                with open(f, "wb") as fh:
+                    fh.truncate(75_000_000)  # sparse; ~tiny model size
+                self.assertTrue(backend_installer.check_model_validity(f))
+
+
+class PywhisperVadKwargsTests(unittest.TestCase):
+    class _FakeModel:
+        last_kwargs = None
+        raise_on_vad = False
+
+        def __init__(self, **kwargs):
+            if type(self).raise_on_vad and "vad" in kwargs:
+                raise TypeError("unexpected keyword argument 'vad'")
+            type(self).last_kwargs = kwargs
+
+    def setUp(self):
+        self._FakeModel.last_kwargs = None
+        self._FakeModel.raise_on_vad = False
+        fake_mod = types.ModuleType("pywhispercpp.model")
+        fake_mod.Model = self._FakeModel
+        fake_pkg = types.ModuleType("pywhispercpp")
+        fake_pkg.model = fake_mod
+        patcher = mock.patch.dict(
+            sys.modules, {"pywhispercpp": fake_pkg, "pywhispercpp.model": fake_mod}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _manager(self, use_vad):
+        cfg = mock.Mock()
+        settings = {
+            "sampling_strategy": "beam_search",
+            "pywhispercpp_use_vad": use_vad,
+        }
+        cfg.get_setting.side_effect = lambda key, default=None: settings.get(key, default)
+        return whisper_manager.WhisperManager(config_manager=cfg)
+
+    def test_disabled_omits_vad_kwargs(self):
+        wm = self._manager(use_vad=False)
+        PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
+        self.assertNotIn("vad", self._FakeModel.last_kwargs)
+        self.assertNotIn("vad_model_path", self._FakeModel.last_kwargs)
+
+    def test_enabled_with_model_file_passes_vad(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vad_file = Path(tmp) / backend_installer.VAD_MODEL_FILENAME
+            vad_file.write_bytes(b"x")
+            with mock.patch.object(
+                pywhispercpp_backend, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+            ):
+                wm = self._manager(use_vad=True)
+                PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
+        self.assertIs(self._FakeModel.last_kwargs["vad"], True)
+        self.assertEqual(self._FakeModel.last_kwargs["vad_model_path"], str(vad_file))
+
+    def test_failed_download_falls_back_without_vad(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                pywhispercpp_backend, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+            ), mock.patch.object(
+                pywhispercpp_backend, "download_vad_model", return_value=False
+            ):
+                wm = self._manager(use_vad=True)
+                PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
+        self.assertNotIn("vad", self._FakeModel.last_kwargs)
+
+    def test_stale_pywhispercpp_typeerror_falls_back(self):
+        self._FakeModel.raise_on_vad = True
+        with tempfile.TemporaryDirectory() as tmp:
+            vad_file = Path(tmp) / backend_installer.VAD_MODEL_FILENAME
+            vad_file.write_bytes(b"x")
+            with mock.patch.object(
+                pywhispercpp_backend, "PYWHISPERCPP_MODELS_DIR", Path(tmp)
+            ):
+                wm = self._manager(use_vad=True)
+                PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
+        self.assertNotIn("vad", self._FakeModel.last_kwargs)
 
 
 if __name__ == "__main__":

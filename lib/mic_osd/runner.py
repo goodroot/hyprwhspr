@@ -16,10 +16,16 @@ from pathlib import Path
 
 # Import paths
 try:
-    from ..src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
+    from ..src.paths import (
+        MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
+        MIC_OSD_LEVEL_FEED_FILE,
+    )
 except ImportError:
     # Fallback for direct execution
-    from src.paths import MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE
+    from src.paths import (
+        MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
+        MIC_OSD_LEVEL_FEED_FILE,
+    )
 
 
 class MicOSDRunner:
@@ -30,8 +36,16 @@ class MicOSDRunner:
     """
 
     PREVIEW_WRITE_INTERVAL_SECONDS = 0.05
-    
-    def __init__(self):
+    LEVEL_FEED_INTERVAL_SECONDS = 1.0 / 30
+
+    def __init__(self, level_source=None):
+        """
+        Args:
+            level_source: Optional callable returning (level, bucket_rms_list)
+                or None (e.g. AudioCapture.get_viz_frame). When set, show()
+                streams frames to a runtime file the OSD daemon reads instead
+                of opening its own audio stream.
+        """
         self._process = None
         self._mic_osd_dir = Path(__file__).parent
         self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
@@ -40,6 +54,11 @@ class MicOSDRunner:
         self._pending_preview_text = None
         self._preview_flush_timer = None
         self._preview_generation = 0
+        self._level_source = level_source
+        self._level_feed_thread = None
+        self._level_feed_stop = threading.Event()
+        self._level_feed_lock = threading.Lock()
+        self._last_level_feed_error_at = 0.0
     
     @staticmethod
     def is_available() -> bool:
@@ -316,23 +335,82 @@ sys.exit(main())
         except Exception:
             pass
     
+    def _start_level_feed(self):
+        """Stream capture levels to the OSD's runtime feed file. Writes the
+        first frame synchronously so it's fresh before the daemon's SIGUSR1
+        handler picks feed vs. fallback mode.
+
+        Serialized with _stop_level_feed: show() and a previous recording's
+        delayed-hide run on different threads, and an interleave there could
+        drop the feed for the new recording (reintroducing #205) or orphan a
+        thread that double-writes the file.
+        """
+        with self._level_feed_lock:
+            if self._level_source is None or self._level_feed_thread is not None:
+                return
+            self._level_feed_stop.clear()
+            self._write_level_feed_frame()
+
+            def _feed_loop():
+                while not self._level_feed_stop.wait(self.LEVEL_FEED_INTERVAL_SECONDS):
+                    self._write_level_feed_frame()
+
+            self._level_feed_thread = threading.Thread(target=_feed_loop, daemon=True)
+            self._level_feed_thread.start()
+
+    def _stop_level_feed(self):
+        with self._level_feed_lock:
+            self._level_feed_stop.set()
+            thread = self._level_feed_thread
+            self._level_feed_thread = None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.5)
+        try:
+            if MIC_OSD_LEVEL_FEED_FILE.exists():
+                MIC_OSD_LEVEL_FEED_FILE.unlink()
+        except Exception:
+            pass
+
+    def _write_level_feed_frame(self):
+        frame = None
+        try:
+            frame = self._level_source()
+        except Exception:
+            pass
+        # A zero frame keeps the file fresh so the OSD stays in feed mode.
+        level, buckets = frame if frame is not None else (0.0, [])
+        payload = ' '.join(f"{value:.6f}" for value in [level, *buckets])
+        try:
+            self._atomic_write_runtime_file(MIC_OSD_LEVEL_FEED_FILE, payload)
+        except Exception as e:
+            # Transient failures (ENOSPC, replace race) must not kill the feed;
+            # a dropped frame just goes stale for one tick. Throttle the log.
+            now = time.monotonic()
+            if now - self._last_level_feed_error_at > 5.0:
+                self._last_level_feed_error_at = now
+                print(f"[MIC-OSD] Failed to write level feed: {e}", flush=True)
+
     def show(self) -> bool:
         """Show the mic-osd overlay (instant via signal)."""
         if not self.is_available():
             return False
-        
+
         if not self._ensure_daemon():
             return False
-        
+
+        self._start_level_feed()  # before signaling; first frame must be ready
+
         try:
             return self._signal_daemon(signal.SIGUSR1)
         except (ProcessLookupError, OSError):
+            self._stop_level_feed()
             self._process = None
             self._orphaned_daemon_pid = None
             return False
-    
+
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
+        self._stop_level_feed()
         self.clear_preview_text()
 
         if self._process is None:
@@ -461,33 +539,38 @@ sys.exit(main())
             self._last_preview_write_at = time.monotonic()
             self._write_preview_text_file(text)
 
+    @staticmethod
+    def _atomic_write_runtime_file(path, text: str):
+        """Atomically write non-empty text to a 0600 runtime file (temp in the
+        same dir + os.replace, so readers never see a torn frame). The temp
+        name is per-pid-and-thread so concurrent writers don't collide."""
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            path.parent.chmod(0o700)
+        except Exception:
+            pass
+        temp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(text)
+            os.replace(temp_path, path)
+        finally:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
+        try:
+            path.chmod(0o600)
+        except Exception:
+            pass
+
     def _write_preview_text_file(self, text: str):
         """Write live preview text to the runtime IPC file."""
         try:
-            TRANSCRIPT_PREVIEW_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            try:
-                TRANSCRIPT_PREVIEW_FILE.parent.chmod(0o700)
-            except Exception:
-                pass
             if text:
-                temp_path = TRANSCRIPT_PREVIEW_FILE.with_name(
-                    f".{TRANSCRIPT_PREVIEW_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-                )
-                fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                try:
-                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                        f.write(text)
-                    os.replace(temp_path, TRANSCRIPT_PREVIEW_FILE)
-                finally:
-                    try:
-                        if temp_path.exists():
-                            temp_path.unlink()
-                    except Exception:
-                        pass
-                try:
-                    TRANSCRIPT_PREVIEW_FILE.chmod(0o600)
-                except Exception:
-                    pass
+                self._atomic_write_runtime_file(TRANSCRIPT_PREVIEW_FILE, text)
             elif TRANSCRIPT_PREVIEW_FILE.exists():
                 TRANSCRIPT_PREVIEW_FILE.unlink()
         except Exception as e:
@@ -506,6 +589,7 @@ sys.exit(main())
 
     def stop(self):
         """Stop the daemon completely."""
+        self._stop_level_feed()
         if self._process is None:
             return
 

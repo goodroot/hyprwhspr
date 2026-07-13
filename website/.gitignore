@@ -1,5 +1,7 @@
 # build output
 dist/
+# copied from ../scripts/install.sh at build time
+public/install.sh
 # generated types
 .astro/
 

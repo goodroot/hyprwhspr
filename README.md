@@ -29,7 +29,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **Translation** - Translate non-English to English with a single config
 - **REST API or websockets** - Secure, fast wires to top clouds like Gemini, ElevenLabs
-- **Themed visualizer** - Visualizes your voice, will automatch Omarchy theme
+- **Themed visualizer** - Visualizes your voice, will automatch Omarchy and Noctalia themes
 - **Word overides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
 - **Long form mode with saving** - Pause, think, resume, pause: submit... Bam!
@@ -47,14 +47,16 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 ### Prerequisites
 
 - **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, etc.)
-- **Requires a Wayland session** (GNOME, KDE Plasma Wayland, Sway, Hyprland)
+- **Requires a Wayland session** (GNOME, KDE Plasma Wayland, Sway, Hyprland, Niri)
 
-- **Waybar** (optional, for status bar)
+- **Waybar or Noctalia** (optional, for status bar)
 - **gtk4 + PyCairo** (optional, for visualizer)
 - **NVIDIA GPU** (optional, for CUDA acceleration)
 - **AMD/Intel GPU / APU** (optional, for Vulkan acceleration)
 
-### Quick start (Arch Linux)
+### Install
+
+#### Arch Linux
 
 On the AUR:
 
@@ -66,19 +68,46 @@ yay -S hyprwhspr
 yay -S hyprwhspr-git
 ```
 
-Then run the auto installer, or perform your own:
+Then run the interactive setup:
 
 ```bash
-# Run interactive setup
 hyprwhspr setup
 ```
 
-**The setup will walk you through the process:**
+#### Ubuntu, Debian, Fedora, openSUSE
+
+```bash
+curl -fsSL https://hyprwhspr.com/install.sh | bash
+```
+
+Installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup. 
+
+
+Re-run it any time to update.
+
+<details>
+<summary>Manual install</summary>
+
+```bash
+# Clone the repo
+git clone https://github.com/goodroot/hyprwhspr.git
+cd hyprwhspr
+
+# Install dependencies for your distro
+./scripts/install-deps.sh
+
+# Run interactive setup
+./bin/hyprwhspr setup
+```
+
+</details>
+
+**Setup then walks you through:**
 
 1. ✅ Configure transcription backend (Cohere Transcribe, Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
 2. ✅ Download models
 3. ✅ Configure themed visualizer for maximum coolness (optional)
-4. ✅ Configure Waybar integration (optional)
+4. ✅ Configure bar integration for your shell -- Waybar or Noctalia (optional)
 5. ✅ Set up systemd user services 
 6. ✅ Set up permissions
 7. ✅ Validate installation
@@ -93,43 +122,22 @@ hyprwhspr setup
 4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
 5. **Bam!** Text appears in active buffer!
 
-> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay; on GNOME/Mutter you may need to make additional changes. See [Themed visualizer](docs/CONFIGURATION.md#themed-visualizer) for details.
+> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay -- on Noctalia / Omarchy it auto-matches your live shell theme; on GNOME/Mutter you may need to make additional changes. See [Themed visualizer](docs/CONFIGURATION.md#themed-visualizer) for details.
 
 Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose).
 
 ### Updating
 
 ```bash
-# Update via your AUR helper
+# Arch: update via your AUR helper
 yay -Syu hyprwhspr
 
-# If needed, re-run setup (idempotent)
+# Other distros: re-run the installer
+curl -fsSL https://hyprwhspr.com/install.sh | bash
+
+# Either way, setup is idempotent if you need to re-run it
 hyprwhspr setup
 ```
-
-### Other Linux distros
-
-hyprwhspr can run on any Linux distribution with systemd.
-
-```bash
-# Clone the repo
-git clone https://github.com/goodroot/hyprwhspr.git
-cd hyprwhspr
-
-# Install dependencies for your distro (Ubuntu, Debian, Fedora, openSUSE)
-./scripts/install-deps.sh
-
-# Run interactive setup
-./bin/hyprwhspr setup
-```
-
-After setup, log out and back in for group permissions, then:
-
-```bash
-hyprwhspr status
-```
-
-> Non-Arch distro support is new - please report any snags!
 
 ### CLI commands
 
@@ -143,7 +151,7 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr validate` - Validate installation
 - `hyprwhspr test` - Test microphone and transcription end-to-end
 - `hyprwhspr keyboard` - List/test keyboard devices (`list` / `test`)
-- `hyprwhspr waybar` - Manage Waybar integration
+- `hyprwhspr waybar` / `hyprwhspr noctalia` - Manage bar integration
 - `hyprwhspr mic-osd` - Enable/disable the mic OSD (`enable` / `disable` / `status`)
 - `hyprwhspr systemd` - Manage systemd services
 - `hyprwhspr uninstall` - Remove hyprwhspr and user data
@@ -162,7 +170,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 - [Audio and visual feedback](docs/CONFIGURATION.md#audio-and-visual-feedback) -- visualizer, audio feedback, ducking
 - [Text processing](docs/CONFIGURATION.md#text-processing) -- word overrides, filler words, symbol replacements
 - [Paste and clipboard behavior](docs/CONFIGURATION.md#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit
-- [Integrations](docs/CONFIGURATION.md#integrations) -- Waybar, Hyprland bindings, external hotkey systems
+- [Integrations](docs/CONFIGURATION.md#integrations) -- Waybar, Noctalia, Hyprland bindings, external hotkey systems
 - [Troubleshooting](docs/CONFIGURATION.md#troubleshooting)
 
 ## Getting help

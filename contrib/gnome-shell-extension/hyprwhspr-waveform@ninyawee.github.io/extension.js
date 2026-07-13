@@ -1,5 +1,6 @@
 import St from 'gi://St';
 import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
 import Clutter from 'gi://Clutter';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -13,11 +14,23 @@ const BAR_MAX = 56;         // px, loudest bar height
 const C1 = [34, 211, 238];  // cyan  (left)
 const C2 = [167, 139, 250]; // violet (right)
 
+// Signal files live in the runtime dir; config-dir paths kept as a fallback
+// for hyprwhspr versions that predate the move.
 const CONFIG_DIR = GLib.build_filenamev([GLib.get_user_config_dir(), 'hyprwhspr']);
-const REC_FILE = GLib.build_filenamev([CONFIG_DIR, 'recording_status']);
-const LEVEL_FILE = GLib.build_filenamev([CONFIG_DIR, 'audio_level']);
-const RUNTIME = GLib.getenv('XDG_RUNTIME_DIR') || GLib.get_tmp_dir();
-const PREVIEW_FILE = GLib.build_filenamev([RUNTIME, 'hyprwhspr', 'transcript_preview']);
+const RUNTIME = GLib.getenv('XDG_RUNTIME_DIR');
+// No-XDG fallback mirrors hyprwhspr's paths.py: <tmp>/hyprwhspr-<uid>
+const RUNTIME_DIR = RUNTIME
+    ? GLib.build_filenamev([RUNTIME, 'hyprwhspr'])
+    : GLib.build_filenamev([GLib.get_tmp_dir(), `hyprwhspr-${Gio.Credentials.new().get_unix_user()}`]);
+const REC_FILES = [
+    GLib.build_filenamev([RUNTIME_DIR, 'recording_status']),
+    GLib.build_filenamev([CONFIG_DIR, 'recording_status']),
+];
+const LEVEL_FILES = [
+    GLib.build_filenamev([RUNTIME_DIR, 'audio_level']),
+    GLib.build_filenamev([CONFIG_DIR, 'audio_level']),
+];
+const PREVIEW_FILE = GLib.build_filenamev([RUNTIME_DIR, 'transcript_preview']);
 
 function lerpColor(t) {
     const r = Math.round(C1[0] + (C2[0] - C1[0]) * t);
@@ -31,14 +44,17 @@ function fileExists(p) {
 }
 
 function readLevel() {
-    try {
-        const [ok, bytes] = GLib.file_get_contents(LEVEL_FILE);
-        if (!ok) return 0;
-        const v = parseFloat(new TextDecoder().decode(bytes).trim());
-        return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
-    } catch (_e) {
-        return 0;
+    for (const path of LEVEL_FILES) {
+        try {
+            const [ok, bytes] = GLib.file_get_contents(path);
+            if (!ok) continue;
+            const v = parseFloat(new TextDecoder().decode(bytes).trim());
+            return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+        } catch (_e) {
+            continue;
+        }
     }
+    return 0;
 }
 
 function readPreview() {
@@ -157,7 +173,7 @@ export default class HyprwhsprWaveformExtension extends Extension {
     }
 
     _tick() {
-        const recording = fileExists(REC_FILE);
+        const recording = REC_FILES.some(fileExists);
         if (recording)
             this._show();
         else

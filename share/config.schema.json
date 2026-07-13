@@ -305,6 +305,11 @@
       "default": "low",
       "description": "Latency/accuracy delay setting for OpenAI gpt-realtime-whisper transcription"
     },
+    "pywhispercpp_use_vad": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable native Silero VAD for the pywhispercpp backend (strips silence, reduces hallucination loops). Auto-downloads the ~1MB ggml-silero VAD model on first use."
+    },
     "onnx_asr_model": {
       "type": "string",
       "default": "nemo-parakeet-tdt-0.6b-v3",
@@ -477,6 +482,13 @@
       "maximum": 1,
       "default": 0,
       "description": "RMS level below which audio is considered silence in continuous mode. 0 (default) = auto-calibrate from noise floor at session start. Set manually if auto-calibration misbehaves on your mic."
+    },
+    "silence_timeout": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 30,
+      "default": 0,
+      "description": "Auto-stop recording after this many seconds of silence in toggle/auto modes. 0 (default) = disabled. The timer only arms after speech is detected, so it won't fire while you compose your first sentence."
     }
   }
 }

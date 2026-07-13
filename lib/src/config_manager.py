@@ -52,6 +52,7 @@ class ConfigManager:
             'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
             'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
             'continuous_silence_threshold': 0,  # RMS silence threshold; 0 = auto-calibrate from noise floor at session start
+            'silence_timeout': 0,   # Auto-stop after N seconds of silence in toggle/auto modes; 0 = disabled (arms only after speech)
             'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
             'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
             'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
@@ -130,6 +131,8 @@ class ConfigManager:
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
             'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
             'realtime_transcription_delay': 'low',  # gpt-realtime-whisper delay: minimal|low|medium|high|xhigh
+            # whisper.cpp (pywhispercpp) backend settings
+            'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
             # ONNX-ASR backend settings (CPU-optimized)
             'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
             'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
@@ -199,11 +202,7 @@ class ConfigManager:
         try:
             self.config_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            try:
-                from .logger import log_warning
-                log_warning(f"Could not create config directory: {e}", "CONFIG")
-            except ImportError:
-                print(f"Warning: Could not create config directory: {e}")
+            print(f"Warning: Could not create config directory: {e}")
     
     def _load_config(self):
         """Load configuration from file"""
@@ -421,18 +420,10 @@ class ConfigManager:
             self.config['rest_api_key'] = None  # Set to None instead of deleting for backward compat
             self.save_config()
             
-            try:
-                from .logger import log_info
-                log_info(f"Migrated API key to credential manager (provider: {identified_provider})", "CONFIG")
-            except ImportError:
-                print(f"Migrated API key to credential manager (provider: {identified_provider})")
+            print(f"Migrated API key to credential manager (provider: {identified_provider})")
             
             return True
         else:
             # Failed to save credential, keep old config
-            try:
-                from .logger import log_warning
-                log_warning("Failed to migrate API key to credential manager", "CONFIG")
-            except ImportError:
-                print("Warning: Failed to migrate API key to credential manager")
+            print("Warning: Failed to migrate API key to credential manager")
             return False

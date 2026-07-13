@@ -10,6 +10,7 @@ import wave
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 from typing import Optional, Callable
 from io import BytesIO
 
@@ -20,6 +21,31 @@ except ImportError:
 
 sd = require_package('sounddevice')
 np = require_package('numpy')
+
+
+@contextmanager
+def _quiet_alsa_stderr():
+    """Silence fd-level stderr during a stream open attempt.
+
+    A failed PortAudio open spews several raw ALSA C-library lines
+    ("Expression 'r' failed in pa_linux_alsa.c...") per attempt that drown the
+    one meaningful Python-level log line. The spew comes from C code, so only
+    an fd redirect catches it. Degrades to a no-op when stderr isn't a real fd.
+    """
+    try:
+        saved_fd = os.dup(2)
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    except Exception:
+        yield
+        return
+    try:
+        sys.stderr.flush()
+        os.dup2(devnull_fd, 2)
+        yield
+    finally:
+        os.dup2(saved_fd, 2)
+        os.close(saved_fd)
+        os.close(devnull_fd)
 
 
 class AudioCapture:
@@ -43,6 +69,9 @@ class AudioCapture:
         self.current_level = 0.0
         # Rolling window of recent RMS values.
         self._level_history = deque(maxlen=8)
+        # Latest chunk, for the mic-OSD level feed.
+        self._viz_chunk = None
+        self._viz_chunk_time = 0.0
         
         # Threading
         self.record_thread = None
@@ -55,7 +84,13 @@ class AudioCapture:
         
         # Audio stream
         self.stream = None
-        
+
+        # Outcome of the last stream-open attempt cycle. Lets the app layer
+        # distinguish "stream never opened" (device missing/initializing) from
+        # "stream opened but delivers no callbacks" (wedged device).
+        self.stream_opened = False
+        self.stream_open_error = None
+
         # Recovery state tracking
         self.recovery_in_progress = False
         self.recovery_lock = threading.Lock()
@@ -76,6 +111,9 @@ class AudioCapture:
         self._keepalive_stream = None
         self._keepalive_lock = threading.Lock()  # Protects _keepalive_stream across threads
         self._last_pulse_default_source_name = None
+        # Callable reporting whether an external event monitor (PulseMonitor)
+        # keeps the default-input binding fresh; lets record start skip its poll
+        self._default_monitor_check = None
 
         # Initialize sounddevice
         self._initialize_sounddevice()
@@ -361,6 +399,22 @@ class AudioCapture:
                 return False
             return self._refresh_default_input_unlocked(reason)
 
+    def set_default_monitor_check(self, check):
+        """Register a callable reporting whether an external event monitor keeps
+        the default-input binding fresh (e.g. PulseAudioMonitor.is_healthy)."""
+        self._default_monitor_check = check
+
+    def _default_binding_is_monitored(self) -> bool:
+        """True when the pactl poll at record start can be skipped: an event
+        monitor is alive (it refreshes the binding on every default-source
+        change) and we already hold a concrete device binding."""
+        if self.device_id is None:
+            return False
+        try:
+            return bool(self._default_monitor_check and self._default_monitor_check())
+        except Exception:
+            return False
+
     def _is_multiplexed_audio_server(self) -> bool:
         """Return True if the device is routed through PipeWire or PulseAudio.
 
@@ -382,6 +436,11 @@ class AudioCapture:
             if ('pulse' in api_name or 'pipewire' in api_name or
                     'pulse' in device_name or 'pipewire' in device_name):
                 return True
+            # A raw ALSA device ("... (hw:3,0)") is exclusive regardless of a
+            # system-wide socket, so it must lose to raw-ALSA before the check
+            # below. Explicit device selection resolves to exactly these.
+            if '(hw:' in device_name:
+                return False
             # 'default' (and other ALSA virtual devices) silently route through
             # PipeWire or PulseAudio when running — check their runtime sockets.
             uid = os.getuid()
@@ -650,8 +709,10 @@ class AudioCapture:
                 return None
 
             pulse_source_name = result.stdout.strip()
+            source_changed = pulse_source_name != self._last_pulse_default_source_name
             self._last_pulse_default_source_name = pulse_source_name
-            print(f"[PULSE] System default source: {pulse_source_name}")
+            if source_changed:
+                print(f"[PULSE] System default source: {pulse_source_name}")
 
             try:
                 devices = sd.query_devices()
@@ -669,7 +730,8 @@ class AudioCapture:
             # Fallback: return first PulseAudio device with input channels
             for idx, device in enumerate(devices or []):
                 if device['max_input_channels'] > 0 and 'pulse' in device['name'].lower():
-                    print(f"[PULSE] Fallback to first PulseAudio device {idx}: {device['name']}")
+                    if source_changed:
+                        print(f"[PULSE] Fallback to first PulseAudio device {idx}: {device['name']}")
                     return idx
 
             return None
@@ -760,9 +822,14 @@ class AudioCapture:
                 self.audio_data = []
                 self.is_recording = True
                 self.streaming_callback = streaming_callback
+                self._viz_chunk = None
+                self._viz_chunk_time = 0.0
                 # Reset callback health tracking
                 self.frames_since_start = 0
                 self.last_callback_monotonic = 0.0
+                # Reset stream-open outcome for this attempt cycle
+                self.stream_opened = False
+                self.stream_open_error = None
             
             # Reset cleanup tracking flags for new recording
             self._cleanup_complete.clear()
@@ -909,6 +976,37 @@ class AudioCapture:
         # Just call start_recording - it handles everything
         return self.start_recording(streaming_callback=streaming_callback)
 
+    def _teardown_stream_with_timeout(self, stream, context: str):
+        """Stop and close a stream with timeout protection.
+
+        PortAudio stop()/close() can block forever if the device vanished
+        mid-stream; run them in daemon threads so a stuck call is leaked
+        rather than hanging the calling thread.
+        """
+        def stop_stream():
+            try:
+                stream.stop()
+            except Exception:
+                pass
+
+        def close_stream():
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+        stop_thread = threading.Thread(target=stop_stream, daemon=True)
+        stop_thread.start()
+        stop_thread.join(timeout=1.0)
+        if stop_thread.is_alive():
+            print(f"[RECOVERY] Warning: stream.stop() timed out in {context}", flush=True)
+
+        close_thread = threading.Thread(target=close_stream, daemon=True)
+        close_thread.start()
+        close_thread.join(timeout=1.0)
+        if close_thread.is_alive():
+            print(f"[RECOVERY] Warning: stream.close() timed out in {context}", flush=True)
+
     def _record_audio(self):
         """Internal method to record audio in a separate thread"""
         try:
@@ -931,9 +1029,12 @@ class AudioCapture:
                         # Update current audio level for monitoring
                         self.current_level = np.sqrt(np.mean(audio_chunk**2))
                         self._level_history.append(self.current_level)
-                        
+
                         # Store audio data
-                        self.audio_data.append(audio_chunk.copy())
+                        chunk_copy = audio_chunk.copy()
+                        self.audio_data.append(chunk_copy)
+                        self._viz_chunk = chunk_copy
+                        self._viz_chunk_time = time.monotonic()
                         
                         # Call streaming callback if set (for realtime backends)
                         if self.streaming_callback:
@@ -948,7 +1049,12 @@ class AudioCapture:
             # recover_audio_capture sets recovery_in_progress before releasing
             # recovery_lock, so this either refreshes before recovery starts or
             # returns immediately instead of blocking while recovery joins us.
-            self.refresh_default_input("record_start")
+            # Skipped while the pulse event monitor is alive — it already refreshes
+            # the binding on every default-source change, so polling here would
+            # spawn a pactl subprocess per keypress for nothing. The stream-open
+            # retry loop below still re-refreshes if the binding turns out stale.
+            if not self._default_binding_is_monitored():
+                self.refresh_default_input("record_start")
             self._notify_streaming_sample_rate()
 
             # Open and start the stream, retrying on transient failures.
@@ -964,15 +1070,17 @@ class AudioCapture:
             for _attempt in range(_max_start_attempts):
                 try:
                     device_to_use = self.device_id
-                    self.stream = sd.InputStream(
-                        device=device_to_use,
-                        samplerate=self.sample_rate,
-                        channels=self.channels,
-                        dtype=self.dtype,
-                        blocksize=self.chunk_size,
-                        callback=audio_callback
-                    )
-                    self.stream.start()
+                    with _quiet_alsa_stderr():
+                        self.stream = sd.InputStream(
+                            device=device_to_use,
+                            samplerate=self.sample_rate,
+                            channels=self.channels,
+                            dtype=self.dtype,
+                            blocksize=self.chunk_size,
+                            callback=audio_callback
+                        )
+                        self.stream.start()
+                    self.stream_opened = True
                     self._stop_keepalive()  # Node is warm; safe to release keepalive now
                     break  # success
                 except Exception as _start_err:
@@ -1021,32 +1129,7 @@ class AudioCapture:
                     
                     # Clean up outside lock with timeout protection
                     if stream is not None:
-                        # Use threading to add timeout to stream operations
-                        def stop_with_timeout():
-                            try:
-                                stream.stop()
-                            except (AttributeError, RuntimeError, Exception):
-                                pass
-                        
-                        def close_with_timeout():
-                            try:
-                                stream.close()
-                            except (AttributeError, RuntimeError, Exception):
-                                pass
-                        
-                        # Stop stream with timeout
-                        stop_thread = threading.Thread(target=stop_with_timeout, daemon=True)
-                        stop_thread.start()
-                        stop_thread.join(timeout=1.0)
-                        if stop_thread.is_alive():
-                            print("[RECOVERY] Warning: stream.stop() timed out in thread cleanup", flush=True)
-                        
-                        # Close stream with timeout
-                        close_thread = threading.Thread(target=close_with_timeout, daemon=True)
-                        close_thread.start()
-                        close_thread.join(timeout=1.0)
-                        if close_thread.is_alive():
-                            print("[RECOVERY] Warning: stream.close() timed out in thread cleanup", flush=True)
+                        self._teardown_stream_with_timeout(stream, "thread cleanup")
                     
                     # Signal cleanup is complete
                     self._cleanup_complete.set()
@@ -1058,6 +1141,11 @@ class AudioCapture:
             # Always log the error message
             print(f"[ERROR] Error in recording thread: {e}", flush=True)
 
+            # Record the open failure so the app layer can distinguish
+            # "device missing" from "device wedged" when choosing user advice
+            if not self.stream_opened:
+                self.stream_open_error = str(e)
+
             # Only print traceback for unexpected errors (not common device/stream errors)
             # This reduces log noise during startup/recovery when device isn't ready yet
             error_msg = str(e).lower()
@@ -1067,14 +1155,11 @@ class AudioCapture:
                 traceback.print_exc()
         finally:
             # Ensure stream is cleaned up even on exception during stream creation
-            if self.stream:
-                try:
-                    self.stream.stop()
-                    self.stream.close()
-                except Exception:
-                    pass
-                with self.lock:
-                    self.stream = None
+            with self.lock:
+                stream = self.stream
+                self.stream = None
+            if stream is not None:
+                self._teardown_stream_with_timeout(stream, "final cleanup")
             # Signal cleanup is complete (even if exception occurred)
             self._cleanup_complete.set()
 
@@ -1154,13 +1239,37 @@ class AudioCapture:
         """Get the current audio level (0.0 to 1.0)"""
         return min(1.0, self.current_level * 10)  # Scale for better visualization
 
+    def get_viz_frame(self, num_buckets: int = 32):
+        """Reduce the latest captured chunk to (display_level, bucket_rms_list)
+        for the mic-OSD meter, or None when no chunk has arrived recently.
+
+        display_level is on the same 0..1 display scale as get_audio_level() so
+        the vu_meter (which uses it directly as its fill fraction) reads the
+        same as the fallback AudioMonitor path. num_buckets must match the
+        waveform's num_bars — see the caller in main.py.
+        """
+        with self.lock:
+            chunk = self._viz_chunk
+            chunk_time = self._viz_chunk_time
+            raw_level = self.current_level
+        if chunk is None or (time.monotonic() - chunk_time) > 0.5:
+            return None
+        usable = len(chunk) - (len(chunk) % num_buckets)
+        if usable >= num_buckets:
+            buckets = np.sqrt(np.mean(chunk[:usable].reshape(num_buckets, -1) ** 2, axis=1))
+        else:
+            buckets = np.abs(chunk)
+        display_level = min(1.0, raw_level * 10)
+        return float(display_level), [float(b) for b in buckets]
+
     @property
     def rolling_avg_level(self) -> float:
         """Rolling average RMS level over the last ~0.5s of audio chunks.
         More stable than current_level for silence detection."""
-        if not self._level_history:
-            return 0.0
-        return sum(self._level_history) / len(self._level_history)
+        with self.lock:
+            if not self._level_history:
+                return 0.0
+            return sum(self._level_history) / len(self._level_history)
     
     def _cleanup_stream(self):
         """Clean up the audio stream (idempotent - safe to call multiple times)"""

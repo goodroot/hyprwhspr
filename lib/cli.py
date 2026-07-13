@@ -22,6 +22,7 @@ from cli_commands import (
     omarchy_command,
     config_command,
     waybar_command,
+    noctalia_command,
     mic_osd_command,
     systemd_command,
     model_command,
@@ -84,7 +85,7 @@ def main():
     auto_parser.add_argument('--backend', choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr'],
                              help='Backend to install (default: auto-detect GPU)')
     auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
-    auto_parser.add_argument('--no-waybar', action='store_true', help='Skip waybar integration')
+    auto_parser.add_argument('--no-waybar', action='store_true', help='Skip bar integration (Waybar/Noctalia)')
     auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization')
     auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')
     auto_parser.add_argument('--hypr-bindings', action='store_true', help='Enable Hyprland compositor bindings')
@@ -113,6 +114,13 @@ def main():
     waybar_subparsers.add_parser('remove', help='Remove module from waybar config')
     waybar_subparsers.add_parser('status', help='Check if waybar is configured')
     
+    # noctalia command
+    noctalia_parser = subparsers.add_parser('noctalia', help='Noctalia shell integration')
+    noctalia_subparsers = noctalia_parser.add_subparsers(dest='noctalia_action', help='Noctalia actions')
+    noctalia_subparsers.add_parser('install', help='Install bar widget plugin and palette theme template')
+    noctalia_subparsers.add_parser('remove', help='Remove Noctalia integration')
+    noctalia_subparsers.add_parser('status', help='Check if Noctalia is configured')
+
     # mic-osd command
     mic_osd_parser = subparsers.add_parser('mic-osd', help='Microphone visualization overlay')
     mic_osd_subparsers = mic_osd_parser.add_subparsers(dest='mic_osd_action', help='Mic-OSD actions')
@@ -257,6 +265,11 @@ def main():
                 waybar_parser.print_help()
                 sys.exit(1)
             waybar_command(args.waybar_action)
+        elif args.command == 'noctalia':
+            if not args.noctalia_action:
+                noctalia_parser.print_help()
+                sys.exit(1)
+            noctalia_command(args.noctalia_action)
         elif args.command == 'mic-osd':
             if not args.mic_osd_action:
                 mic_osd_parser.print_help()
