@@ -255,7 +255,10 @@ class hyprwhsprApp:
                     # Feed the OSD meter from the capture stream (issue #205).
                     # get_viz_frame's default num_buckets must match the
                     # waveform visualization's num_bars (32).
-                    runner = MicOSDRunner(level_source=self.audio_capture.get_viz_frame)
+                    runner = MicOSDRunner(
+                        level_source=self.audio_capture.get_viz_frame,
+                        style=self.config.get_setting('mic_osd_style', 'waveform'),
+                    )
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
                         print("[INIT] Mic-OSD daemon started", flush=True)

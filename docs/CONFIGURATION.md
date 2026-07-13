@@ -708,6 +708,28 @@ You don't choose the mode; `hyprwhspr setup` detects GNOME/Mutter and the servic
 journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status via notifications'
 ```
 
+#### Overlay styles
+
+In overlay mode, `mic_osd_style` picks one of three visualizations (notification mode ignores it):
+
+- `waveform` — the full themed waveform with transcript preview (default)
+- `vu_meter` — a VU meter
+- `pill` — a compact monochrome status pill; it omits transcript text and shows idle dots in silence, live bars while recording, a travelling wave while processing, a pulse on error and a short checkmark on success
+
+![Pill OSD states](assets/pill-states.png)
+
+```jsonc
+{
+  "mic_osd_style": "pill"
+}
+```
+
+Restart the service after changing the style:
+
+```bash
+systemctl --user restart hyprwhspr
+```
+
 #### GNOME/Mutter waveform overlay
 
 GNOME users who want an animated waveform instead of notifications can install the opt-in GNOME Shell extension in `contrib/gnome-shell-extension/`. It draws inside gnome-shell, so it stays always-on-top without stealing focus from the application receiving the dictated text.
