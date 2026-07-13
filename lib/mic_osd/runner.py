@@ -78,7 +78,11 @@ class MicOSDRunner:
     
     @staticmethod
     def _layer_shell_ld_preload() -> str:
-        """Resolve the gtk4-layer-shell .so to LD_PRELOAD (same search as the daemon)."""
+        """Resolve the gtk4-layer-shell .so to LD_PRELOAD.
+
+        Searches common library paths including lib64 (Fedora/RHEL) and versioned
+        .so files (distros that only ship the unversioned symlink in -devel).
+        """
         for pattern in [
             '/usr/lib64/libgtk4-layer-shell.so*',
             '/usr/lib/libgtk4-layer-shell.so*',
@@ -212,24 +216,8 @@ sys.exit(main())
 """
 
         # Set LD_PRELOAD for gtk4-layer-shell.
-        # Search common library paths including lib64 (Fedora/RHEL) and versioned
-        # .so files (distros that only ship the unversioned symlink in -devel).
         env = os.environ.copy()
-        lib_path = None
-        for pattern in [
-            '/usr/lib64/libgtk4-layer-shell.so*',
-            '/usr/lib/libgtk4-layer-shell.so*',
-            '/usr/lib/*/libgtk4-layer-shell.so*',
-            '/usr/local/lib64/libgtk4-layer-shell.so*',
-            '/usr/local/lib/libgtk4-layer-shell.so*',
-        ]:
-            for candidate in sorted(glob.glob(pattern)):
-                resolved = os.path.realpath(candidate)
-                if os.path.isfile(resolved):
-                    lib_path = resolved
-                    break
-            if lib_path:
-                break
+        lib_path = self._layer_shell_ld_preload()
         if lib_path:
             env['LD_PRELOAD'] = lib_path
         env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
