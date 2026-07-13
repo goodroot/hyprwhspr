@@ -424,6 +424,12 @@
       "default": true,
       "description": "Show recording status during recording. Shown as the animated overlay on layer-shell compositors (Hyprland, Sway, niri, KDE), or as desktop notifications on GNOME/Mutter (which has no layer-shell support)."
     },
+    "mic_osd_style": {
+      "type": "string",
+      "enum": ["waveform", "vu_meter", "pill"],
+      "default": "waveform",
+      "description": "Visualization style for the mic OSD overlay. 'waveform' shows the full themed waveform with transcript preview, 'vu_meter' a VU meter, 'pill' a compact monochrome status pill without preview text. Restart the service after changing."
+    },
     "notification_timeout_ms": {
       "type": "integer",
       "minimum": 0,

@@ -255,7 +255,10 @@ class hyprwhsprApp:
                     # Feed the OSD meter from the capture stream (issue #205).
                     # get_viz_frame's default num_buckets must match the
                     # waveform visualization's num_bars (32).
-                    runner = MicOSDRunner(level_source=self.audio_capture.get_viz_frame)
+                    runner = MicOSDRunner(
+                        level_source=self.audio_capture.get_viz_frame,
+                        style=self.config.get_setting('mic_osd_style', 'waveform'),
+                    )
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
                         # Force the overlay hidden at startup. If we reused an
@@ -2140,10 +2143,15 @@ class hyprwhsprApp:
         try:
             # Ensure config directory exists
             RECORDING_CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Check if existing file is a FIFO (if regular file, remove it)
-            if RECORDING_CONTROL_FILE.exists():
-                if not RECORDING_CONTROL_FILE.is_fifo():
+
+            # Retry once: a concurrent writer can create a dirent between exists() and mkfifo().
+            for _ in range(2):
+                # Check if existing file is a FIFO (if regular file, remove it)
+                if RECORDING_CONTROL_FILE.exists():
+                    if RECORDING_CONTROL_FILE.is_fifo():
+                        # Already a FIFO, we're good
+                        print("[INIT] Recording control FIFO already exists", flush=True)
+                        return
                     # Old regular file - remove it
                     try:
                         RECORDING_CONTROL_FILE.unlink()
@@ -2151,15 +2159,17 @@ class hyprwhsprApp:
                     except Exception as e:
                         print(f"[WARN] Failed to remove old recording_control file: {e}", flush=True)
                         return
-                else:
-                    # Already a FIFO, we're good
-                    print("[INIT] Recording control FIFO already exists", flush=True)
+
+                try:
+                    os.mkfifo(str(RECORDING_CONTROL_FILE))
+                    print(f"[INIT] Created recording control FIFO: {RECORDING_CONTROL_FILE}", flush=True)
                     return
-            
-            # Create FIFO if it doesn't exist
-            os.mkfifo(str(RECORDING_CONTROL_FILE))
-            print(f"[INIT] Created recording control FIFO: {RECORDING_CONTROL_FILE}", flush=True)
-            
+                except FileExistsError:
+                    continue
+
+            print("[WARN] Failed to create recording control FIFO: file kept reappearing", flush=True)
+            print("[WARN] Recording control will fall back to file polling (1 second delay)", flush=True)
+
         except OSError as e:
             # Handle permission errors, read-only filesystem, etc.
             print(f"[WARN] Failed to create recording control FIFO: {e}", flush=True)

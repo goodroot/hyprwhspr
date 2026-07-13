@@ -121,7 +121,8 @@ class OSDWindow(Gtk.Window):
         # Draw the visualization
         self.visualization.draw(cr, width, height)
 
-        self._draw_preview_text(cr, width, height)
+        if getattr(self.visualization, 'show_preview', True):
+            self._draw_preview_text(cr, width, height)
     
     def update(self, level: float, samples=None):
         """

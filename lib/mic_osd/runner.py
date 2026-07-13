@@ -37,15 +37,19 @@ class MicOSDRunner:
 
     PREVIEW_WRITE_INTERVAL_SECONDS = 0.05
     LEVEL_FEED_INTERVAL_SECONDS = 1.0 / 30
+    OSD_STYLES = ('waveform', 'vu_meter', 'pill')
 
-    def __init__(self, level_source=None):
+    def __init__(self, level_source=None, style='waveform'):
         """
         Args:
             level_source: Optional callable returning (level, bucket_rms_list)
                 or None (e.g. AudioCapture.get_viz_frame). When set, show()
                 streams frames to a runtime file the OSD daemon reads instead
                 of opening its own audio stream.
+            style: Visualization style for the daemon; unknown values fall
+                back to 'waveform'.
         """
+        self._style = style if style in self.OSD_STYLES else 'waveform'
         self._process = None
         self._mic_osd_dir = Path(__file__).parent
         self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
@@ -203,7 +207,7 @@ signal.signal(signal.SIGUSR2, signal.SIG_IGN)
 import sys
 sys.path.insert(0, '{lib_dir}')
 from mic_osd.main import main
-sys.argv = ['mic-osd', '--daemon']
+sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
