@@ -28,7 +28,6 @@ class StateManager:
         self.current_state = VisualizerState.RECORDING
         self.state_changed_at = time.time()
         self.animation_phase = 0.0
-        self.elapsed_seconds = 0.0  # For long-form mode elapsed time display
 
     def set_state(self, new_state: VisualizerState):
         """Set a new state, resetting animation timing."""
@@ -95,15 +94,6 @@ class StateManager:
             return fade * pulse
 
         return 1.0
-
-    def is_animating(self) -> bool:
-        """Return True if state requires continuous animation updates."""
-        if self.current_state == VisualizerState.PAUSED:
-            return False
-        if self.current_state == VisualizerState.SUCCESS:
-            # Stop animating after fade completes
-            return (time.time() - self.state_changed_at) < 1.25
-        return True
 
 
 class BaseVisualization(ABC):

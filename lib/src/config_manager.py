@@ -158,6 +158,7 @@ class ConfigManager:
             'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)
             # Visual feedback settings
             'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
+            'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter' or 'pill'
             # Banner duration (ms) for non-critical desktop notifications. These are also
             # marked transient so they never accumulate in the notification center;
             # critical errors ignore this and persist. (GNOME Shell ignores -t entirely.)
