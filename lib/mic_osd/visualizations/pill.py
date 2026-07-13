@@ -65,10 +65,6 @@ class PillVisualization(BaseVisualization):
     def set_state(self, state_str: str):
         self.state_manager.set_state_from_string(state_str or "recording")
 
-    def set_elapsed_time(self, seconds: float):
-        """Retained for long-form compatibility; the compact style shows no text."""
-        return None
-
     def update(self, level: float, samples: np.ndarray = None):
         super().update(level, samples)
         now = time.monotonic()
@@ -87,8 +83,7 @@ class PillVisualization(BaseVisualization):
             if not np.any(audio):
                 audio[:] = max(0.0, float(level))
 
-            # The feed contains RMS values. Gate laptop-mic noise, then compress
-            # the remaining signal so normal speech fills the pill without clipping.
+            # Gate mic noise out of the RMS feed, then compress so speech fills the pill.
             energy = np.sqrt(np.clip(
                 np.maximum(audio - self.NOISE_GATE, 0.0) * self.INPUT_GAIN,
                 0.0,
