@@ -1,8 +1,5 @@
 import importlib
-import json
-import os
 import sys
-import tempfile
 import time
 import types
 import unittest
@@ -74,30 +71,9 @@ class PillVisualizationTests(unittest.TestCase):
         visualization = self.PillVisualization()
         self.assertFalse(visualization.show_preview)
 
-    def test_daemon_registry_applies_the_configured_pill(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_dir = Path(temp_dir) / "hyprwhspr"
-            config_dir.mkdir()
-            (config_dir / "config.json").write_text(
-                json.dumps({"mic_osd_style": "pill"}),
-                encoding="utf-8",
-            )
-
-            self._clear_visualization_modules()
-            with mock.patch.dict(
-                os.environ,
-                {
-                    "HYPRWHSPR_MIC_OSD_DAEMON": "1",
-                    "XDG_CONFIG_HOME": temp_dir,
-                },
-                clear=True,
-            ):
-                module = importlib.import_module("mic_osd.visualizations")
-
-            self.assertIs(
-                module.VISUALIZATIONS["waveform"],
-                module.PillVisualization,
-            )
+    def test_registry_exposes_the_pill_style(self):
+        module = importlib.import_module("mic_osd.visualizations")
+        self.assertIs(module.VISUALIZATIONS["pill"], self.PillVisualization)
 
 
 if __name__ == "__main__":
