@@ -87,6 +87,12 @@
       "default": false,
       "description": "Hold a silent input stream open between recordings so the mic stays warm (fixes 'paTimedOut' on some USB mics). Off by default; when on, desktops show the mic-in-use indicator continuously."
     },
+    "stream_start_retry_delay": {
+      "type": "number",
+      "minimum": 0,
+      "default": 1.5,
+      "description": "Seconds to wait between stream.start() retries when PortAudio times out. Increase if your USB mic frequently fails on the first recording after idle."
+    },
     "audio_device_model_id": {
       "type": ["string", "null"],
       "default": null,
@@ -215,6 +221,12 @@
       "type": "boolean",
       "default": true,
       "description": "Back-compat: true = Ctrl+Shift+V, false = Ctrl+V. Only used if paste_mode is absent."
+    },
+    "inject_mode": {
+      "type": ["string", "null"],
+      "enum": ["wtype", "ydotool_type", null],
+      "default": null,
+      "description": "Direct-type injection mode, bypassing the clipboard entirely. null (default) = clipboard + paste keystroke; 'wtype' = wtype -- <text> (native Wayland, works in Kitty-protocol terminals); 'ydotool_type' = ydotool type -- <text> (works in Kitty-protocol terminals)."
     },
     "prefer_clipboard_paste": {
       "type": "boolean",
