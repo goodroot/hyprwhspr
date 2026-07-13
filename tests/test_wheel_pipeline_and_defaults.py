@@ -28,8 +28,9 @@ class WheelVariantTests(unittest.TestCase):
             self.assertEqual(backend_installer._get_wheel_variant(v), "cuda12")
 
     def test_cuda11_and_13_fall_back_to_source(self):
-        for v in ("10.2", "11.8", "13.0"):
-            self.assertIsNone(backend_installer._get_wheel_variant(v))
+        with mock.patch.object(backend_installer, "log_info"):
+            for v in ("10.2", "11.8", "13.0"):
+                self.assertIsNone(backend_installer._get_wheel_variant(v))
 
 
 class WheelFilenameTests(unittest.TestCase):
