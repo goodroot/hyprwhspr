@@ -102,6 +102,7 @@ class hyprwhsprApp:
         # Initialize audio capture with configured device
         audio_device_id = self.config.get_setting('audio_device_id', None)
         self.audio_capture = AudioCapture(device_id=audio_device_id, config_manager=self.config)
+        self.audio_capture.on_unrecoverable_stream = self._on_unrecoverable_audio_stream
 
         # Initialize audio feedback manager
         self.audio_manager = AudioManager(self.config)
@@ -633,6 +634,24 @@ class hyprwhsprApp:
             self.audio_capture.refresh_default_input("pulse_default_changed")
         except Exception as e:
             print(f"[PULSE] Error handling default source change: {e}", flush=True)
+
+    def _on_unrecoverable_audio_stream(self):
+        """A wedged PortAudio stream survived every reclamation attempt (#209).
+
+        Its native thread burns a core and floods stderr until the process
+        dies, so under systemd (Restart=on-failure) exit and let it bring us
+        back clean. Outside systemd, log and limp on.
+        """
+        from instance_detection import is_running_under_systemd
+        if not is_running_under_systemd():
+            print("[RECOVERY] ERROR: wedged audio stream cannot be reclaimed - "
+                  "restart hyprwhspr to stop the CPU/log churn", flush=True)
+            return
+        print("[RECOVERY] Wedged audio stream cannot be reclaimed - exiting for systemd restart", flush=True)
+        self._notify_user("hyprwhspr", "Audio system wedged - restarting service", "critical")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)
 
     def _on_pulse_server_restarted(self):
         """Called when PulseAudio/PipeWire server restarts"""
