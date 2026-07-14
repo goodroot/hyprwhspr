@@ -113,7 +113,6 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             mock.patch.object(cli_commands, "USER_HOME", root / "missing-home"),
             mock.patch.object(cli_commands, "USER_CONFIG_DIR", root / "missing-config"),
             mock.patch.object(cli_commands, "VENV_DIR", root / "missing-venv"),
-            mock.patch.object(cli_commands, "PARAKEET_VENV_DIR", root / "missing-parakeet"),
             mock.patch.object(cli_commands, "PYWHISPERCPP_SRC_DIR", root / "missing-src"),
             mock.patch.object(cli_commands, "PYWHISPERCPP_MODELS_DIR", root / "missing-models"),
             mock.patch.object(cli_commands, "STATE_DIR", root / "missing-state"),

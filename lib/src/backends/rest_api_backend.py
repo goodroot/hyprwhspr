@@ -1,9 +1,9 @@
 """
 REST API transcription backend.
 
-Posts recorded audio as WAV to a user-configured HTTP endpoint (a local
-parakeet server or any OpenAI-compatible transcription API) and returns
-the transcript. Stateless: configuration is re-read on every request.
+Posts recorded audio as WAV to a user-configured HTTP endpoint (any
+OpenAI-compatible transcription API) and returns the transcript.
+Stateless: configuration is re-read on every request.
 """
 
 import time
@@ -160,31 +160,14 @@ class RestApiBackend(TranscriptionBackend):
             if not endpoint_url:
                 raise ValueError('REST endpoint URL not configured')
 
-            # Detect backend type and extract model info
-            # Note: We need to check rest_body before it's processed into extra_body
-            # to get the model info early for logging
-            backend_name = None
-            model_info = None
-            
-            # Check if this is parakeet backend
-            if endpoint_url in ('http://127.0.0.1:8080/transcribe', 'http://localhost:8080/transcribe'):
-                backend_name = 'parakeet-tdt-0.6b-v3'
-            else:
-                # Generic REST API - use endpoint URL
-                backend_name = endpoint_url
-            
             # Extract model information from rest_body if available (before processing)
-            if isinstance(rest_body, dict):
-                model_info = rest_body.get('model')
-            
-            # Format the log message
-            if backend_name == 'parakeet-tdt-0.6b-v3':
-                log_msg = f'[REST API] {backend_name}'
-            elif model_info:
-                log_msg = f'[REST API] {backend_name} - model: {model_info}'
+            model_info = rest_body.get('model') if isinstance(rest_body, dict) else None
+
+            if model_info:
+                log_msg = f'[REST API] {endpoint_url} - model: {model_info}'
             else:
-                log_msg = f'[REST API] {backend_name}'
-            
+                log_msg = f'[REST API] {endpoint_url}'
+
             print(log_msg, flush=True)
 
             # Convert audio to WAV format

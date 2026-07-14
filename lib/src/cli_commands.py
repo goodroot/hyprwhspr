@@ -55,7 +55,7 @@ try:
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
         init_state, _cleanup_partial_installation,
-        PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR,
+        USER_BASE, PYWHISPERCPP_SRC_DIR,
         PYWHISPERCPP_MODELS_DIR, MAX_COMPATIBLE_PYTHON, _get_python_version
     )
 except ImportError:
@@ -63,7 +63,7 @@ except ImportError:
         install_backend, VENV_DIR, STATE_FILE, STATE_DIR,
         get_install_state, set_install_state, get_all_state,
         init_state, _cleanup_partial_installation,
-        PARAKEET_VENV_DIR, PARAKEET_SCRIPT, USER_BASE, PYWHISPERCPP_SRC_DIR,
+        USER_BASE, PYWHISPERCPP_SRC_DIR,
         PYWHISPERCPP_MODELS_DIR, MAX_COMPATIBLE_PYTHON, _get_python_version
     )
 
@@ -108,7 +108,6 @@ except ImportError:
 HYPRWHSPR_ROOT = os.environ.get('HYPRWHSPR_ROOT', '/usr/lib/hyprwhspr')
 SERVICE_NAME = 'hyprwhspr.service'
 RESUME_SERVICE_NAME = 'hyprwhspr-resume.service'  # Deprecated, kept for cleanup in uninstall/status
-PARAKEET_SERVICE_NAME = 'parakeet-tdt-0.6b-v3.service'
 YDOTOOL_UNIT = 'ydotool.service'
 # Older hyprwhspr versions deployed a user-scope ydotool.service carrying one of
 # these markers. hyprwhspr now runs a private ydotoold child instead, so the markers
@@ -511,7 +510,7 @@ def _detect_current_backend(existing_cfg: Optional[dict] = None) -> Optional[str
     Detect currently installed backend.
 
     Returns:
-        'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr', 'rest-api', or None if not detected
+        'cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr', 'rest-api', or None if not detected
     """
     # First check config file
     try:
@@ -641,37 +640,6 @@ def _cleanup_backend(backend_type: str) -> bool:
     Returns:
         True if cleanup succeeded
     """
-    if backend_type == 'parakeet':
-        log_info("Cleaning up Parakeet backend...")
-        
-        # Clean up Parakeet systemd service
-        parakeet_service_dest = USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME
-        if parakeet_service_dest.exists():
-            log_info("Removing Parakeet systemd service...")
-            # Stop and disable service
-            run_command(['systemctl', '--user', 'stop', PARAKEET_SERVICE_NAME], check=False)
-            run_command(['systemctl', '--user', 'disable', PARAKEET_SERVICE_NAME], check=False)
-            # Remove the service file
-            try:
-                parakeet_service_dest.unlink()
-                log_success("Parakeet service file removed")
-            except Exception as e:
-                log_warning(f"Failed to remove Parakeet service file: {e}")
-            # Reload systemd daemon
-            run_command(['systemctl', '--user', 'daemon-reload'], check=False)
-        
-        # Clean up Parakeet venv
-        if PARAKEET_VENV_DIR.exists():
-            import shutil
-            try:
-                shutil.rmtree(PARAKEET_VENV_DIR, ignore_errors=True)
-                log_success("Parakeet venv removed")
-            except Exception as e:
-                log_warning(f"Cleanup warning: {e}")
-        
-        log_success("Parakeet backend cleaned up")
-        return True
-
     if backend_type == 'onnx-asr':
         log_info("Cleaning up ONNX-ASR backend...")
         venv_python = VENV_DIR / 'bin' / 'python'
@@ -880,13 +848,6 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
             # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr, faster-whisper, cohere-transcribe
             local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']
             if current_backend == selected and selected in local_install_backends:
-                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
-                reinstall = Confirm.ask("Reinstall backend?", default=False)
-                if not reinstall:
-                    print("Keeping existing installation.")
-                    return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
-                # If yes to reinstall, continue to return with wants_reinstall=True
-            elif current_backend == selected and selected == 'parakeet':
                 print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
                 if not reinstall:
@@ -1509,38 +1470,6 @@ def setup_command(python_path: Optional[str] = None):
         current_backend = normalize_backend(current_backend)
     backend_normalized = normalize_backend(backend)
     
-    # Check for Parakeet REST backend migration
-    # Detect parakeet by checking endpoint URL and venv existence
-    # (since _detect_current_backend() no longer returns 'parakeet')
-    is_parakeet_config = False
-    if current_backend == 'rest-api':
-        endpoint = existing_cfg.get('rest_endpoint_url', '')
-        if endpoint == 'http://127.0.0.1:8080/transcribe' and PARAKEET_VENV_DIR.exists():
-            is_parakeet_config = True
-    
-    if is_parakeet_config:
-        print("\n" + "="*60)
-        print("Backend Migration Available")
-        print("="*60)
-        print("\nYou're currently using the Parakeet REST backend (deprecated).")
-        print("The onnx-asr backend replaces it with an in-process version:")
-        print("  • No REST server to manage")
-        print("  • GPU-accelerated (auto-detected)")
-        print("  • Same Parakeet model, faster startup")
-        if Confirm.ask("\nMigrate to onnx-asr?", default=True):
-            backend_normalized = 'onnx-asr'
-            backend = 'onnx-asr'
-            # Clean up Parakeet REST service
-            if _cleanup_backend('parakeet'):
-                log_success("Parakeet REST backend removed")
-            log_info("Will install onnx-asr backend")
-        else:
-            log_warning("Keeping Parakeet REST backend. Note: Parakeet REST is deprecated.")
-            log_warning("You can migrate later by re-running: hyprwhspr setup")
-            # Preserve Parakeet backend to prevent cleanup
-            backend_normalized = 'parakeet'
-            backend = 'parakeet'
-    
     # Handle backend switching
     if current_backend and current_backend != backend_normalized:
         if current_backend not in ['rest-api', 'remote', 'realtime-ws']:
@@ -1742,7 +1671,7 @@ def setup_command(python_path: Optional[str] = None):
     
     # Model selection for local backends
     if not backend_install_skipped:
-        if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'parakeet', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
+        if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
             # Local backend - prompt for model selection
             # Note: ONNX-ASR, faster-whisper, and cohere-transcribe don't use Whisper.cpp models
             selected_model = _prompt_model_selection(current_model=existing_cfg.get('model'))
@@ -2171,8 +2100,6 @@ def setup_command(python_path: Optional[str] = None):
         if setup_permissions_choice:
             print("  If initial install, log out and back in (for group permissions)")
         if setup_systemd_choice:
-            if backend == 'parakeet':
-                print("  Parakeet server will start automatically via systemd")
             print("  Press hotkey to start dictation!")
         else:
             print("  Run hyprwhspr manually or set up systemd service later")
@@ -3884,7 +3811,7 @@ def list_onnx_asr_models():
     print()
     print("Storage: ~/.cache/huggingface/hub/")
     print("To check if the model is cached: hyprwhspr model status")
-    print("The model downloads automatically when the Parakeet service starts.")
+    print("The model downloads automatically when the onnx-asr backend starts.")
 
 
 # ==================== Cohere Transcribe Model Commands ====================
@@ -4279,7 +4206,7 @@ def backend_repair_command():
         backend_module = 'faster_whisper'
     elif configured_backend in ['cpu', 'nvidia', 'vulkan', 'amd', 'pywhispercpp']:
         backend_module = 'pywhispercpp'
-    # For rest-api, realtime-ws, parakeet - no local module to check
+    # For rest-api, realtime-ws - no local module to check
 
     if backend_module and venv_python.exists() and not venv_corrupted:
         try:
@@ -4518,7 +4445,7 @@ def validate_command():
     
     # Detect current backend to determine what to validate
     current_backend = _detect_current_backend()
-    is_rest_api = current_backend in ['rest-api', 'parakeet', 'remote', 'realtime-ws']
+    is_rest_api = current_backend in ['rest-api', 'remote', 'realtime-ws']
     is_onnx_asr = current_backend == 'onnx-asr'
     is_pywhispercpp = current_backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']
     
@@ -4672,19 +4599,6 @@ def validate_command():
             log_success(f"✓ Base model exists: {model_file}")
         else:
             log_warning(f"⚠ Base model missing: {model_file}")
-    else:
-        # For REST API backends, check Parakeet if applicable
-        if current_backend == 'parakeet':
-            if PARAKEET_VENV_DIR.exists():
-                log_success("✓ Parakeet venv exists")
-            else:
-                log_warning("⚠ Parakeet venv not found")
-            
-            if PARAKEET_SCRIPT.exists():
-                log_success("✓ Parakeet script exists")
-            else:
-                log_error("✗ Parakeet script missing")
-                all_ok = False
 
     # Check ydotool version (required for paste injection)
     ydotool_ok, ydotool_version, ydotool_msg = _check_ydotool_version()
@@ -5642,8 +5556,6 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     # Systemd services
     if (USER_SYSTEMD_DIR / SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {SERVICE_NAME}")
-    if (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).exists():
-        items_to_remove.append(f"Systemd service: {PARAKEET_SERVICE_NAME}")
     if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
         items_to_remove.append(f"Systemd service: {RESUME_SERVICE_NAME} (deprecated)")
     ydotool_unit_path = USER_SYSTEMD_DIR / YDOTOOL_UNIT
@@ -5662,8 +5574,6 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
         fs_targets.append((f"User configuration: {USER_CONFIG_DIR}", USER_CONFIG_DIR))
     if VENV_DIR.exists():
         fs_targets.append((f"Main backend venv: {VENV_DIR}", VENV_DIR))
-    if PARAKEET_VENV_DIR.exists():
-        fs_targets.append((f"Parakeet venv: {PARAKEET_VENV_DIR}", PARAKEET_VENV_DIR))
     if PYWHISPERCPP_SRC_DIR.exists():
         fs_targets.append((f"pywhispercpp source: {PYWHISPERCPP_SRC_DIR}", PYWHISPERCPP_SRC_DIR))
     src_dir = USER_BASE / 'src'
@@ -5724,12 +5634,6 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             (USER_SYSTEMD_DIR / SERVICE_NAME).unlink(missing_ok=True)
             log_success(f"Removed {SERVICE_NAME}")
 
-        # Stop and disable Parakeet service
-        if (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).exists():
-            run_command(['systemctl', '--user', 'stop', PARAKEET_SERVICE_NAME], check=False)
-            run_command(['systemctl', '--user', 'disable', PARAKEET_SERVICE_NAME], check=False)
-            (USER_SYSTEMD_DIR / PARAKEET_SERVICE_NAME).unlink(missing_ok=True)
-            log_success(f"Removed {PARAKEET_SERVICE_NAME}")
 
         # Stop and disable deprecated resume service
         if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
