@@ -22,6 +22,10 @@ except ImportError:
 sd = require_package('sounddevice')
 np = require_package('numpy')
 
+# Ceiling on buffered recording audio, so a runaway callback (e.g. an
+# orphaned stream busy-looping on a dead device, #209) can't grow unbounded.
+_MAX_BUFFER_SECONDS = 3600
+
 
 @contextmanager
 def _quiet_alsa_stderr():
@@ -66,6 +70,8 @@ class AudioCapture:
         self.is_recording = False
         self.is_monitoring = False
         self.audio_data = []
+        self._buffered_samples = 0
+        self._buffer_capped = False
         self.current_level = 0.0
         # Rolling window of recent RMS values.
         self._level_history = deque(maxlen=8)
@@ -90,6 +96,10 @@ class AudioCapture:
         # "stream opened but delivers no callbacks" (wedged device).
         self.stream_opened = False
         self.stream_open_error = None
+
+        # Invoked when a wedged stream survives even a PortAudio reset;
+        # the app layer decides what to do (e.g. exit for a systemd restart)
+        self.on_unrecoverable_stream = None
 
         # Recovery state tracking
         self.recovery_in_progress = False
@@ -819,7 +829,7 @@ class AudioCapture:
         try:
             # Clear previous audio data
             with self.lock:
-                self.audio_data = []
+                self._reset_audio_buffer_locked()
                 self.is_recording = True
                 self.streaming_callback = streaming_callback
                 self._viz_chunk = None
@@ -873,13 +883,14 @@ class AudioCapture:
                     print("[WARN] Recording thread did not exit cleanly after 3 seconds", flush=True)
 
         # Thread's finally block handles cleanup - verify it completed
-        # Do NOT cleanup here to avoid deadlock (callback may still hold lock)
         with self.lock:
-            if self.stream is not None:
-                print("[WARN] Stream still exists after thread exit - this should not happen", flush=True)
-                # Force clear the reference, but don't try to stop/close
-                # (that would deadlock if callback thread is still waiting for lock)
-                self.stream = None
+            leftover = self.stream
+            self.stream = None
+        if leftover is not None:
+            print("[WARN] Stream still exists after thread exit - this should not happen", flush=True)
+            # Tear down off-thread: closing inline could deadlock with a
+            # callback blocked on self.lock (#209).
+            self._teardown_stream_async(leftover, "post-thread cleanup")
         
         # Return recorded data
         with self.lock:
@@ -889,6 +900,12 @@ class AudioCapture:
                 if duration < 0.5:
                     print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
             return audio_array
+
+    def _reset_audio_buffer_locked(self):
+        """Clear the recording buffer and its cap tracking. Must be called with self.lock held."""
+        self.audio_data = []
+        self._buffered_samples = 0
+        self._buffer_capped = False
 
     def _collect_audio_array(self) -> Optional[np.ndarray]:
         """Concatenate audio_data into a flat float32 array. Must be called with self.lock held."""
@@ -924,14 +941,14 @@ class AudioCapture:
     def clear_buffer(self):
         """Clear the audio buffer without stopping recording."""
         with self.lock:
-            self.audio_data = []
+            self._reset_audio_buffer_locked()
             print("[AUDIO] Buffer cleared")
 
     def flush_buffer(self) -> Optional[np.ndarray]:
         """Atomically copy and clear the audio buffer. Returns audio data or None."""
         with self.lock:
             data = self._collect_audio_array()
-            self.audio_data = []
+            self._reset_audio_buffer_locked()
             return data
 
     def pause_recording(self) -> Optional[np.ndarray]:
@@ -958,7 +975,7 @@ class AudioCapture:
         with self.lock:
             audio_array = self._collect_audio_array()
             # Clear buffer after extracting
-            self.audio_data = []
+            self._reset_audio_buffer_locked()
 
         print("[AUDIO] Recording paused")
         return audio_array
@@ -976,16 +993,27 @@ class AudioCapture:
         # Just call start_recording - it handles everything
         return self.start_recording(streaming_callback=streaming_callback)
 
-    def _teardown_stream_with_timeout(self, stream, context: str):
+    def _teardown_stream_with_timeout(self, stream, context: str, abort: bool = False):
         """Stop and close a stream with timeout protection.
 
         PortAudio stop()/close() can block forever if the device vanished
         mid-stream; run them in daemon threads so a stuck call is leaked
-        rather than hanging the calling thread.
+        rather than hanging the calling thread. Pass abort=True for a stream
+        that may be wedged: abort() discards pending buffers instead of
+        waiting for them to drain.
+
+        Returns None on success, or the still-blocked close thread when the
+        stream is wedged at the C level (caller may escalate to
+        _reset_portaudio_state and re-check the thread).
         """
-        def stop_stream():
+        halt_name = 'abort' if abort else 'stop'
+
+        def halt_stream():
             try:
-                stream.stop()
+                if abort:
+                    stream.abort()
+                else:
+                    stream.stop()
             except Exception:
                 pass
 
@@ -995,54 +1023,80 @@ class AudioCapture:
             except Exception:
                 pass
 
-        stop_thread = threading.Thread(target=stop_stream, daemon=True)
-        stop_thread.start()
-        stop_thread.join(timeout=1.0)
-        if stop_thread.is_alive():
-            print(f"[RECOVERY] Warning: stream.stop() timed out in {context}", flush=True)
+        halt_thread = threading.Thread(target=halt_stream, daemon=True)
+        halt_thread.start()
+        halt_thread.join(timeout=1.0)
+        if halt_thread.is_alive():
+            print(f"[RECOVERY] Warning: stream.{halt_name}() timed out in {context}", flush=True)
 
         close_thread = threading.Thread(target=close_stream, daemon=True)
         close_thread.start()
         close_thread.join(timeout=1.0)
         if close_thread.is_alive():
             print(f"[RECOVERY] Warning: stream.close() timed out in {context}", flush=True)
+            return close_thread
+        return None
+
+    def _teardown_stream_async(self, stream, context: str):
+        """Tear down a possibly-wedged stream without blocking the caller.
+
+        Worst case a stuck stream costs a parked daemon thread, not a live
+        orphan capture (#209).
+        """
+        threading.Thread(
+            target=self._teardown_stream_with_timeout,
+            args=(stream, context, True),
+            daemon=True,
+        ).start()
 
     def _record_audio(self):
         """Internal method to record audio in a separate thread"""
         try:
             chunk_count = 0
+            # Holds the stream this thread opens; the callback only trusts
+            # chunks while its stream is still the active one, so a torn-down
+            # or replaced stream can't keep writing into shared state (#209).
+            stream_box = [None]
+
             # Callback function for sounddevice
             def audio_callback(indata, frames, time_info, status):
                 nonlocal chunk_count
-                if status:
-                    print(f"[WARN] Audio callback status: {status}")
-                
                 with self.lock:
+                    if stream_box[0] is None or self.stream is not stream_box[0]:
+                        return  # stale stream
+                    if status:
+                        print(f"[WARN] Audio callback status: {status}")
+
                     # Update callback health tracking (for recovery success criteria)
                     self.last_callback_monotonic = time.monotonic()
                     self.frames_since_start += 1
-                    
+
                     if self.is_recording:
                         # Store the audio data (indata is already numpy array)
                         audio_chunk = indata[:, 0]  # Get mono channel
-                        
+
                         # Update current audio level for monitoring
                         self.current_level = np.sqrt(np.mean(audio_chunk**2))
                         self._level_history.append(self.current_level)
 
-                        # Store audio data
+                        # Store audio data, up to the buffer cap
                         chunk_copy = audio_chunk.copy()
-                        self.audio_data.append(chunk_copy)
+                        if self._buffered_samples < self.sample_rate * _MAX_BUFFER_SECONDS:
+                            self.audio_data.append(chunk_copy)
+                            self._buffered_samples += len(chunk_copy)
+                        elif not self._buffer_capped:
+                            self._buffer_capped = True
+                            print(f"[WARN] Recording buffer full ({_MAX_BUFFER_SECONDS}s) - discarding further audio", flush=True)
                         self._viz_chunk = chunk_copy
                         self._viz_chunk_time = time.monotonic()
-                        
+
                         # Call streaming callback if set (for realtime backends)
                         if self.streaming_callback:
                             try:
                                 self.streaming_callback(audio_chunk.copy())
                             except Exception as e:
                                 print(f"[WARN] Streaming callback error: {e}")
-                        
+
                         chunk_count += 1
             
             # Re-resolve the desktop default as close as possible to stream open.
@@ -1079,6 +1133,7 @@ class AudioCapture:
                             blocksize=self.chunk_size,
                             callback=audio_callback
                         )
+                        stream_box[0] = self.stream
                         self.stream.start()
                     self.stream_opened = True
                     self._stop_keepalive()  # Node is warm; safe to release keepalive now
@@ -1115,10 +1170,9 @@ class AudioCapture:
                 # Check abort flag - if set, exit early to avoid blocking
                 if self._abort_cleanup:
                     print("[RECOVERY] Thread cleanup aborted by recovery", flush=True)
-                    # Clear the stream reference but don't try to stop/close (might be stuck)
-                    with self.lock:
-                        if self.stream is not None:
-                            self.stream = None
+                    # Leave self.stream in place: recovery pops and tears it
+                    # down, escalating to a PortAudio reset if it's wedged.
+                    # Dropping the reference here orphaned the live C stream (#209).
                     self._cleanup_complete.set()  # Signal cleanup attempt finished (even if aborted)
                 else:
                     stream = None
@@ -1154,10 +1208,13 @@ class AudioCapture:
                 import traceback
                 traceback.print_exc()
         finally:
-            # Ensure stream is cleaned up even on exception during stream creation
-            with self.lock:
-                stream = self.stream
-                self.stream = None
+            # Ensure stream is cleaned up even on exception during stream
+            # creation (recovery owns the teardown when it aborted us)
+            stream = None
+            if not self._abort_cleanup:
+                with self.lock:
+                    stream = self.stream
+                    self.stream = None
             if stream is not None:
                 self._teardown_stream_with_timeout(stream, "final cleanup")
             # Signal cleanup is complete (even if exception occurred)
@@ -1273,22 +1330,13 @@ class AudioCapture:
     
     def _cleanup_stream(self):
         """Clean up the audio stream (idempotent - safe to call multiple times)"""
-        stream = None
         with self.lock:
             stream = self.stream
-            if stream is not None:
-                self.stream = None  # Clear reference immediately to prevent double cleanup
-        
-        # Clean up stream outside lock to avoid deadlocks
+            self.stream = None  # Clear reference immediately to prevent double cleanup
+
+        # A leftover stream may be wedged; abort it with timeout protection
         if stream is not None:
-            try:
-                stream.stop()
-            except (AttributeError, RuntimeError, Exception):
-                pass  # Stream might already be stopped or invalid
-            try:
-                stream.close()
-            except (AttributeError, RuntimeError, Exception):
-                pass  # Stream might already be closed or invalid
+            self._teardown_stream_with_timeout(stream, "leftover cleanup", abort=True)
     
     def is_recovery_successful(self) -> bool:
         """
@@ -1410,16 +1458,25 @@ class AudioCapture:
             # Signal thread to abort cleanup if it's stuck
             self._abort_cleanup = True
 
-            # Stop and close stream if it exists
-            if self.stream:
-                try:
-                    self.stream.stop()
-                    self.stream.close()
-                except Exception:
-                    pass  # Expected if device is dead
-                finally:
-                    with self.lock:
-                        self.stream = None
+            # Pop under the lock and tear down with timeout protection; a bare
+            # stop()/close() on a dead server can raise or block forever,
+            # orphaning the stream (#209).
+            with self.lock:
+                stream = self.stream
+                self.stream = None
+            if stream is not None:
+                wedged_close = self._teardown_stream_with_timeout(stream, "recovery teardown", abort=True)
+                if wedged_close is not None:
+                    # Wedged at the C level: its callback thread busy-loops and
+                    # spams stderr until PortAudio itself is reset
+                    self._reset_portaudio_state()
+                    wedged_close.join(timeout=2.0)
+                    if wedged_close.is_alive():
+                        # Even Pa_Terminate couldn't reclaim it; the native
+                        # thread burns a core until the process exits (#209)
+                        print("[RECOVERY] ERROR: stream unrecoverable after PortAudio reset", flush=True)
+                        if self.on_unrecoverable_stream is not None:
+                            self.on_unrecoverable_stream()
 
             # Join record thread with timeout and verify cleanup completion
             if self.record_thread and self.record_thread.is_alive():
@@ -1453,7 +1510,7 @@ class AudioCapture:
             with self.lock:
                 self.frames_since_start = 0
                 self.last_callback_monotonic = 0.0
-                self.audio_data = []
+                self._reset_audio_buffer_locked()
 
             # Re-enumerate devices and rebind defaults
             try:
