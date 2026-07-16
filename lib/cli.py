@@ -21,8 +21,6 @@ from cli_commands import (
     setup_command,
     omarchy_command,
     uninstall_command,
-    record_command,
-    record_capture_command,
 )
 from cli.config import config_command
 from cli.keyboard import keyboard_command
@@ -36,6 +34,7 @@ from cli.maintenance import (
 )
 from cli.mic_osd import mic_osd_command
 from cli.noctalia import noctalia_command
+from cli.record import record_command, record_capture_command
 from cli.status import status_command
 from cli.test_cmd import test_command
 from cli.systemd import systemd_command
