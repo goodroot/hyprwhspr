@@ -20,19 +20,21 @@ except ImportError:
 from cli_commands import (
     setup_command,
     omarchy_command,
-    validate_command,
     test_command,
-    backend_repair_command,
-    backend_reset_command,
-    state_show_command,
-    state_validate_command,
-    state_reset_command,
     uninstall_command,
     keyboard_command,
     record_command,
     record_capture_command,
 )
 from cli.config import config_command
+from cli.maintenance import (
+    validate_command,
+    backend_repair_command,
+    backend_reset_command,
+    state_show_command,
+    state_validate_command,
+    state_reset_command,
+)
 from cli.mic_osd import mic_osd_command
 from cli.noctalia import noctalia_command
 from cli.status import status_command
