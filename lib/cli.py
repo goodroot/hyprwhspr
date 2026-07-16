@@ -21,7 +21,6 @@ from cli_commands import (
     setup_command,
     omarchy_command,
     config_command,
-    waybar_command,
     systemd_command,
     status_command,
     validate_command,
@@ -38,6 +37,7 @@ from cli_commands import (
 )
 from cli.mic_osd import mic_osd_command
 from cli.noctalia import noctalia_command
+from cli.waybar import waybar_command
 from cli.models import model_command
 
 
