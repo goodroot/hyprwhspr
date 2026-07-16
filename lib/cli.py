@@ -23,7 +23,6 @@ from cli_commands import (
     config_command,
     waybar_command,
     noctalia_command,
-    mic_osd_command,
     systemd_command,
     status_command,
     validate_command,
@@ -38,6 +37,7 @@ from cli_commands import (
     record_command,
     record_capture_command,
 )
+from cli.mic_osd import mic_osd_command
 from cli.models import model_command
 
 
