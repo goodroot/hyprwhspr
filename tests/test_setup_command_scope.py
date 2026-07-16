@@ -41,6 +41,7 @@ _stub_if_missing(
 )
 
 import cli_commands  # noqa: E402
+from cli import systemd  # noqa: E402
 from config_manager import ConfigManager  # noqa: E402
 
 
@@ -137,9 +138,9 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             calls.append(cmd)
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        with mock.patch.object(cli_commands, "USER_SYSTEMD_DIR", user_systemd), \
-                mock.patch.object(cli_commands, "run_command", side_effect=fake_run_command):
-            cli_commands._migrate_remove_managed_ydotool_unit()
+        with mock.patch.object(systemd, "USER_SYSTEMD_DIR", user_systemd), \
+                mock.patch.object(systemd, "run_command", side_effect=fake_run_command):
+            systemd._migrate_remove_managed_ydotool_unit()
 
         return ydotool_unit, calls
 
