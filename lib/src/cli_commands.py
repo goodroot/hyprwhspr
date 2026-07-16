@@ -46,9 +46,11 @@ except ImportError:
     from paths import CONFIG_DIR, CONFIG_FILE, RECORDING_CONTROL_FILE, SOCKET_FILE, RECORDING_STATUS_FILE, MODEL_UNLOADED_FILE
 
 try:
-    from .backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
+    from .backend_utils import (BACKEND_DISPLAY_NAMES, BACKEND_IMPORT_MODULES,
+                                LOCAL_INSTALL_BACKENDS, normalize_backend)
 except ImportError:
-    from backend_utils import BACKEND_DISPLAY_NAMES, normalize_backend
+    from backend_utils import (BACKEND_DISPLAY_NAMES, BACKEND_IMPORT_MODULES,
+                               LOCAL_INSTALL_BACKENDS, normalize_backend)
 
 try:
     from .backend_installer import (
@@ -845,9 +847,7 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
                     return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
 
             # If re-selecting same backend, offer reinstall option
-            # Local backends that need installation: cpu, nvidia, vulkan, onnx-asr, faster-whisper, cohere-transcribe
-            local_install_backends = ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']
-            if current_backend == selected and selected in local_install_backends:
+            if current_backend == selected and selected in LOCAL_INSTALL_BACKENDS:
                 print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
                 reinstall = Confirm.ask("Reinstall backend?", default=False)
                 if not reinstall:
@@ -2245,7 +2245,7 @@ def _verify_backend_installation(backend: str) -> bool:
     Returns:
         True if backend is importable, False otherwise
     """
-    if backend not in ['cpu', 'nvidia', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
+    if backend not in LOCAL_INSTALL_BACKENDS:
         # For non-local backends, skip import check
         return True
 
@@ -2253,15 +2253,7 @@ def _verify_backend_installation(backend: str) -> bool:
     if not venv_python.exists():
         return False
 
-    # Choose the module to import based on backend
-    if backend == 'onnx-asr':
-        import_module = 'onnx_asr'
-    elif backend == 'faster-whisper':
-        import_module = 'faster_whisper'
-    elif backend == 'cohere-transcribe':
-        import_module = 'transformers'
-    else:
-        import_module = 'pywhispercpp'
+    import_module = BACKEND_IMPORT_MODULES[backend]
 
     try:
         result = subprocess.run(
@@ -4200,13 +4192,8 @@ def backend_repair_command():
         pass
 
     # Determine which module to check based on backend
-    if configured_backend == 'onnx-asr':
-        backend_module = 'onnx_asr'
-    elif configured_backend == 'faster-whisper':
-        backend_module = 'faster_whisper'
-    elif configured_backend in ['cpu', 'nvidia', 'vulkan', 'amd', 'pywhispercpp']:
-        backend_module = 'pywhispercpp'
-    # For rest-api, realtime-ws - no local module to check
+    # (rest-api, realtime-ws have no local module to check)
+    backend_module = BACKEND_IMPORT_MODULES.get(configured_backend)
 
     if backend_module and venv_python.exists() and not venv_corrupted:
         try:
@@ -4261,7 +4248,7 @@ def backend_repair_command():
         choice = Prompt.ask("Select option", choices=['1', '2'], default='1')
         if choice == '1':
             # Use the configured backend for reinstallation
-            if configured_backend and configured_backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr']:
+            if configured_backend and configured_backend in LOCAL_INSTALL_BACKENDS:
                 log_info(f"Reinstalling {configured_backend.upper()} backend...")
                 # Use force_rebuild=True to ensure clean reinstall
                 if install_backend(configured_backend, force_rebuild=True):
