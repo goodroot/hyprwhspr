@@ -20,7 +20,6 @@ except ImportError:
 from cli_commands import (
     setup_command,
     omarchy_command,
-    test_command,
     uninstall_command,
     keyboard_command,
     record_command,
@@ -38,6 +37,7 @@ from cli.maintenance import (
 from cli.mic_osd import mic_osd_command
 from cli.noctalia import noctalia_command
 from cli.status import status_command
+from cli.test_cmd import test_command
 from cli.systemd import systemd_command
 from cli.waybar import waybar_command
 from cli.models import model_command
