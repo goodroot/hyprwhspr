@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "lib" / "src"))
 def _stub_if_missing(name, **attrs):
     """Install a stub module only if the real one cannot be imported.
 
-    cli_commands transitively imports global_shortcuts -> evdev (a hard import)
+    The cli modules transitively import global_shortcuts -> evdev (a hard import)
     and rich (prompt/console/table). On a dev machine these are installed and we
     must NOT shadow them; in a bare CI we fall back to a minimal stub so the
     import still works.
