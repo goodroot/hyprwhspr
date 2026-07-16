@@ -41,7 +41,7 @@ _stub_if_missing(
 )
 
 import cli_commands  # noqa: E402
-from cli import config, systemd  # noqa: E402
+from cli import config, systemd, uninstall  # noqa: E402
 from config_manager import ConfigManager  # noqa: E402
 
 
@@ -96,7 +96,7 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
         root = Path(tmp.name)
         user_systemd = root / "systemd"
         user_systemd.mkdir()
-        ydotool_unit = user_systemd / cli_commands.YDOTOOL_UNIT
+        ydotool_unit = user_systemd / systemd.YDOTOOL_UNIT
         ydotool_unit.write_text(unit_text, encoding="utf-8")
         return root, user_systemd, ydotool_unit
 
@@ -110,23 +110,23 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
         patches = [
-            mock.patch.object(cli_commands, "USER_SYSTEMD_DIR", user_systemd),
-            mock.patch.object(cli_commands, "USER_HOME", root / "missing-home"),
-            mock.patch.object(cli_commands, "USER_CONFIG_DIR", root / "missing-config"),
-            mock.patch.object(cli_commands, "VENV_DIR", root / "missing-venv"),
-            mock.patch.object(cli_commands, "PYWHISPERCPP_SRC_DIR", root / "missing-src"),
-            mock.patch.object(cli_commands, "PYWHISPERCPP_MODELS_DIR", root / "missing-models"),
-            mock.patch.object(cli_commands, "STATE_DIR", root / "missing-state"),
-            mock.patch.object(cli_commands, "CREDENTIALS_FILE", root / "missing-creds"),
-            mock.patch.object(cli_commands, "USER_BASE", root / "missing-user-base"),
-            mock.patch.object(cli_commands, "setup_waybar"),
+            mock.patch.object(uninstall, "USER_SYSTEMD_DIR", user_systemd),
+            mock.patch.object(uninstall, "USER_HOME", root / "missing-home"),
+            mock.patch.object(uninstall, "USER_CONFIG_DIR", root / "missing-config"),
+            mock.patch.object(uninstall, "VENV_DIR", root / "missing-venv"),
+            mock.patch.object(uninstall, "PYWHISPERCPP_SRC_DIR", root / "missing-src"),
+            mock.patch.object(uninstall, "PYWHISPERCPP_MODELS_DIR", root / "missing-models"),
+            mock.patch.object(uninstall, "STATE_DIR", root / "missing-state"),
+            mock.patch.object(uninstall, "CREDENTIALS_FILE", root / "missing-creds"),
+            mock.patch.object(uninstall, "USER_BASE", root / "missing-user-base"),
+            mock.patch.object(uninstall, "setup_waybar"),
             mock.patch.object(cli_commands, "_detect_current_backend", return_value=None),
-            mock.patch.object(cli_commands, "run_command", side_effect=fake_run_command),
+            mock.patch.object(uninstall, "run_command", side_effect=fake_run_command),
         ]
         with contextlib.ExitStack() as stack:
             for patch in patches:
                 stack.enter_context(patch)
-            cli_commands.uninstall_command(skip_permissions=True, yes=True)
+            uninstall.uninstall_command(skip_permissions=True, yes=True)
 
         return ydotool_unit, calls
 
@@ -151,7 +151,7 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
 
         self.assertFalse(unit.exists())
         self.assertIn(
-            ["systemctl", "--user", "disable", "--now", cli_commands.YDOTOOL_UNIT],
+            ["systemctl", "--user", "disable", "--now", systemd.YDOTOOL_UNIT],
             calls,
         )
         self.assertIn(["systemctl", "--user", "daemon-reload"], calls)
@@ -170,8 +170,8 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
         )
 
         self.assertFalse(unit.exists())
-        self.assertIn(["systemctl", "--user", "stop", cli_commands.YDOTOOL_UNIT], calls)
-        self.assertIn(["systemctl", "--user", "disable", cli_commands.YDOTOOL_UNIT], calls)
+        self.assertIn(["systemctl", "--user", "stop", uninstall.YDOTOOL_UNIT], calls)
+        self.assertIn(["systemctl", "--user", "disable", uninstall.YDOTOOL_UNIT], calls)
 
     def test_uninstall_leaves_foreign_ydotool_unit_untouched(self):
         unit, calls = self._run_uninstall_with_ydotool_unit(
@@ -179,8 +179,8 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
         )
 
         self.assertTrue(unit.exists())
-        self.assertNotIn(["systemctl", "--user", "stop", cli_commands.YDOTOOL_UNIT], calls)
-        self.assertNotIn(["systemctl", "--user", "disable", cli_commands.YDOTOOL_UNIT], calls)
+        self.assertNotIn(["systemctl", "--user", "stop", uninstall.YDOTOOL_UNIT], calls)
+        self.assertNotIn(["systemctl", "--user", "disable", uninstall.YDOTOOL_UNIT], calls)
 
 
 class HyprlandBindingSetupTests(unittest.TestCase):

@@ -20,9 +20,9 @@ except ImportError:
 from cli_commands import (
     setup_command,
     omarchy_command,
-    uninstall_command,
 )
 from cli.config import config_command
+from cli.uninstall import uninstall_command
 from cli.keyboard import keyboard_command
 from cli.maintenance import (
     validate_command,
