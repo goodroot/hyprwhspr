@@ -41,7 +41,7 @@ _stub_if_missing(
 )
 
 import cli_commands  # noqa: E402
-from cli import systemd  # noqa: E402
+from cli import config, systemd  # noqa: E402
 from config_manager import ConfigManager  # noqa: E402
 
 
@@ -83,8 +83,8 @@ class ConfigDefaultTests(unittest.TestCase):
         self.assertEqual(defaults["applications"], {})
 
     def test_config_command_routes_focused_window_helper(self):
-        with mock.patch.object(cli_commands, "show_focused_window_config_identifiers") as helper:
-            cli_commands.config_command("focused-window")
+        with mock.patch.object(config, "show_focused_window_config_identifiers") as helper:
+            config.config_command("focused-window")
 
         helper.assert_called_once_with()
 
