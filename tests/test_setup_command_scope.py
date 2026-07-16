@@ -41,7 +41,7 @@ _stub_if_missing(
 )
 
 import cli_commands  # noqa: E402
-from cli import config, systemd, uninstall  # noqa: E402
+from cli import config, install, systemd, uninstall  # noqa: E402
 from config_manager import ConfigManager  # noqa: E402
 
 
@@ -197,12 +197,12 @@ class HyprlandBindingSetupTests(unittest.TestCase):
                 calls.append(cmd)
                 return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            with mock.patch.object(cli_commands, "USER_HOME", root), \
-                    mock.patch.object(cli_commands, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
-                    mock.patch.object(cli_commands.shutil, "which", return_value="/usr/bin/hyprctl"), \
-                    mock.patch.dict(cli_commands.os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, clear=True), \
-                    mock.patch.object(cli_commands, "run_command", side_effect=fake_run_command):
-                self.assertTrue(cli_commands._setup_hyprland_bindings())
+            with mock.patch.object(install, "USER_HOME", root), \
+                    mock.patch.object(install, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
+                    mock.patch.object(install.shutil, "which", return_value="/usr/bin/hyprctl"), \
+                    mock.patch.dict(install.os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, clear=True), \
+                    mock.patch.object(install, "run_command", side_effect=fake_run_command):
+                self.assertTrue(install._setup_hyprland_bindings())
 
             content = bindings_file.read_text(encoding="utf-8")
             self.assertIn("/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record", content)
