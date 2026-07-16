@@ -40,8 +40,7 @@ _stub_if_missing(
     UInput=object,
 )
 
-import cli_commands  # noqa: E402
-from cli import config, install, systemd, uninstall  # noqa: E402
+from cli import config, install, setup, systemd, uninstall  # noqa: E402
 from config_manager import ConfigManager  # noqa: E402
 
 
@@ -52,12 +51,12 @@ class SetupCommandScopeTests(unittest.TestCase):
         # UnboundLocalError at the gsettings (toolkit-accessibility) call. It must
         # resolve to the module-level helper instead.
         self.assertNotIn(
-            "run_command", cli_commands.setup_command.__code__.co_varnames
+            "run_command", setup.setup_command.__code__.co_varnames
         )
 
     def test_gnome_detection_uses_session_desktop_fallback(self):
         with mock.patch.dict(
-            cli_commands.os.environ,
+            setup.os.environ,
             {
                 "XDG_CURRENT_DESKTOP": "",
                 "XDG_SESSION_DESKTOP": "gnome",
@@ -65,7 +64,7 @@ class SetupCommandScopeTests(unittest.TestCase):
             },
             clear=True,
         ):
-            self.assertTrue(cli_commands._is_gnome_or_mutter_session())
+            self.assertTrue(setup._is_gnome_or_mutter_session())
 
 
 class ConfigDefaultTests(unittest.TestCase):
@@ -120,7 +119,7 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             mock.patch.object(uninstall, "CREDENTIALS_FILE", root / "missing-creds"),
             mock.patch.object(uninstall, "USER_BASE", root / "missing-user-base"),
             mock.patch.object(uninstall, "setup_waybar"),
-            mock.patch.object(cli_commands, "_detect_current_backend", return_value=None),
+            mock.patch.object(setup, "_detect_current_backend", return_value=None),
             mock.patch.object(uninstall, "run_command", side_effect=fake_run_command),
         ]
         with contextlib.ExitStack() as stack:

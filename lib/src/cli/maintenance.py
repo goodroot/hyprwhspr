@@ -325,14 +325,14 @@ def validate_command():
         return all_ok
     
     # Detect current backend to determine what to validate.
-    # Lazy facade access: _detect_current_backend still lives in cli_commands
-    # until the setup section moves; attribute access keeps test patches on the
-    # facade effective and avoids a module-level import cycle.
+    # Lazy import with attribute access: keeps test patches on cli.setup
+    # effective and avoids a module-level import cycle (setup imports
+    # validate_command from this module).
     try:
-        from .. import cli_commands as _setup_facade
+        from . import setup as _setup
     except ImportError:
-        import cli_commands as _setup_facade
-    current_backend = _setup_facade._detect_current_backend()
+        from cli import setup as _setup
+    current_backend = _setup._detect_current_backend()
     is_rest_api = current_backend in ['rest-api', 'remote', 'realtime-ws']
     is_onnx_asr = current_backend == 'onnx-asr'
     is_pywhispercpp = current_backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']

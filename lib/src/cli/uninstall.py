@@ -168,16 +168,15 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     # 3. Backend-specific cleanup (while config still exists for detection)
     log_info("Cleaning up backend...")
     try:
-        # Lazy facade access: these still live in cli_commands until the setup
-        # section moves; attribute access keeps test patches on the facade
-        # effective and avoids a module-level import cycle.
+        # Lazy import with attribute access: keeps test patches on cli.setup
+        # effective without importing the whole setup module at load time.
         try:
-            from .. import cli_commands as _setup_facade
+            from . import setup as _setup
         except ImportError:
-            import cli_commands as _setup_facade
-        current_backend = _setup_facade._detect_current_backend()
+            from cli import setup as _setup
+        current_backend = _setup._detect_current_backend()
         if current_backend:
-            _setup_facade._cleanup_backend(current_backend)
+            _setup._cleanup_backend(current_backend)
     except Exception as e:
         error_msg = f"Backend cleanup failed: {e}"
         log_warning(error_msg)

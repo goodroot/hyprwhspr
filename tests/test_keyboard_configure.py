@@ -11,9 +11,9 @@ sys.path.insert(0, str(ROOT / "lib" / "src"))
 def _stub_if_missing(name, **attrs):
     """Install a stub module only if the real one cannot be imported.
 
-    cli_commands transitively imports global_shortcuts -> evdev and rich.prompt.
+    The cli modules transitively import global_shortcuts -> evdev and rich.prompt.
     On a dev machine both are installed and we must NOT shadow them; in a bare
-    CI we fall back to a minimal stub so importing cli_commands still works.
+    CI we fall back to a minimal stub so importing them still works.
     """
     try:
         importlib.import_module(name)
@@ -36,8 +36,7 @@ _stub_if_missing(
     UInput=object,
 )
 
-import cli_commands  # noqa: E402
-from cli import keyboard  # noqa: E402
+from cli import keyboard, setup  # noqa: E402
 
 
 def _mk(name, kbd, mouse, virt, **extra):
@@ -127,35 +126,35 @@ class GatherCandidatesTests(unittest.TestCase):
 class SetupDefaultTests(unittest.TestCase):
     def test_choice_default_hit(self):
         self.assertEqual(
-            cli_commands._choice_default('small', ['tiny', 'base', 'small'], '2'), '3')
+            setup._choice_default('small', ['tiny', 'base', 'small'], '2'), '3')
 
     def test_choice_default_miss_falls_back(self):
         self.assertEqual(
-            cli_commands._choice_default('nope', ['tiny', 'base'], '2'), '2')
+            setup._choice_default('nope', ['tiny', 'base'], '2'), '2')
 
     def test_choice_default_none_falls_back(self):
-        self.assertEqual(cli_commands._choice_default(None, ['tiny', 'base'], '2'), '2')
+        self.assertEqual(setup._choice_default(None, ['tiny', 'base'], '2'), '2')
 
     def test_bool_default_present(self):
-        self.assertFalse(cli_commands._bool_default({'audio_ducking': False}, 'audio_ducking', True))
-        self.assertTrue(cli_commands._bool_default({'audio_ducking': True}, 'audio_ducking', False))
+        self.assertFalse(setup._bool_default({'audio_ducking': False}, 'audio_ducking', True))
+        self.assertTrue(setup._bool_default({'audio_ducking': True}, 'audio_ducking', False))
 
     def test_bool_default_missing_uses_fallback(self):
-        self.assertTrue(cli_commands._bool_default({}, 'audio_ducking', True))
+        self.assertTrue(setup._bool_default({}, 'audio_ducking', True))
 
     def test_bool_default_non_bool_uses_fallback(self):
-        self.assertTrue(cli_commands._bool_default({'audio_ducking': 'yes'}, 'audio_ducking', True))
+        self.assertTrue(setup._bool_default({'audio_ducking': 'yes'}, 'audio_ducking', True))
 
     def test_backend_choice_map_matches_menu(self):
         # The reported symptom: configured 'vulkan' must default to choice '5'.
-        self.assertEqual(cli_commands._BACKEND_CHOICE['vulkan'], '5')
+        self.assertEqual(setup._BACKEND_CHOICE['vulkan'], '5')
         # Legacy 'amd' normalizes to vulkan -> still '5'.
         self.assertEqual(
-            cli_commands._BACKEND_CHOICE.get(cli_commands.normalize_backend('amd'), '1'), '5')
-        self.assertEqual(cli_commands._BACKEND_CHOICE['onnx-asr'], '1')
-        self.assertEqual(cli_commands._BACKEND_CHOICE['faster-whisper'], '2')
-        self.assertEqual(cli_commands._BACKEND_CHOICE['pywhispercpp'], '3')
-        self.assertEqual(cli_commands._BACKEND_CHOICE['cohere-transcribe'], '6')
+            setup._BACKEND_CHOICE.get(setup.normalize_backend('amd'), '1'), '5')
+        self.assertEqual(setup._BACKEND_CHOICE['onnx-asr'], '1')
+        self.assertEqual(setup._BACKEND_CHOICE['faster-whisper'], '2')
+        self.assertEqual(setup._BACKEND_CHOICE['pywhispercpp'], '3')
+        self.assertEqual(setup._BACKEND_CHOICE['cohere-transcribe'], '6')
 
 
 if __name__ == '__main__':
