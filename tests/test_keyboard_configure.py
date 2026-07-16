@@ -37,6 +37,7 @@ _stub_if_missing(
 )
 
 import cli_commands  # noqa: E402
+from cli import keyboard  # noqa: E402
 
 
 def _mk(name, kbd, mouse, virt, **extra):
@@ -56,21 +57,21 @@ class KeyboardPreselectionTests(unittest.TestCase):
         ]
 
     def test_no_allowlist_preselects_pure_keyboards_only(self):
-        sel = cli_commands._keyboard_preselection(self.candidates, [])
+        sel = keyboard._keyboard_preselection(self.candidates, [])
         self.assertEqual(sel, {'AT Translated Set 2 keyboard', 'Logitech USB Receiver'})
 
     def test_dual_role_and_virtual_not_preselected(self):
-        sel = cli_commands._keyboard_preselection(self.candidates, [])
+        sel = keyboard._keyboard_preselection(self.candidates, [])
         self.assertNotIn('Logitech MX Vertical', sel)
         self.assertNotIn('solaar-keyboard', sel)
         self.assertNotIn('ydotoold virtual device', sel)
 
     def test_existing_allowlist_preselected_exactly(self):
-        sel = cli_commands._keyboard_preselection(self.candidates, ['Logitech USB Receiver'])
+        sel = keyboard._keyboard_preselection(self.candidates, ['Logitech USB Receiver'])
         self.assertEqual(sel, {'Logitech USB Receiver'})
 
     def test_existing_allowlist_is_case_insensitive(self):
-        sel = cli_commands._keyboard_preselection(self.candidates, ['logitech usb receiver'])
+        sel = keyboard._keyboard_preselection(self.candidates, ['logitech usb receiver'])
         self.assertEqual(sel, {'Logitech USB Receiver'})
 
     def test_degraded_classification_preselects_all_non_virtual(self):
@@ -79,7 +80,7 @@ class KeyboardPreselectionTests(unittest.TestCase):
             _mk('Kbd B', False, False, False),
             _mk('ydotoold virtual device', False, False, True),
         ]
-        sel = cli_commands._keyboard_preselection(unclassified, [])
+        sel = keyboard._keyboard_preselection(unclassified, [])
         self.assertEqual(sel, {'Kbd A', 'Kbd B'})
 
 
@@ -97,15 +98,15 @@ class GatherCandidatesTests(unittest.TestCase):
             '/dev/input/event10': {'is_keyboard': True, 'is_mouse': True},
             '/dev/input/event24': {'is_keyboard': True, 'is_mouse': False},
         }
-        orig_get = cli_commands.get_available_keyboards
-        orig_cls = cli_commands._classify_input_devices
+        orig_get = keyboard.get_available_keyboards
+        orig_cls = keyboard._classify_input_devices
         try:
-            cli_commands.get_available_keyboards = lambda shortcut: list(raw)
-            cli_commands._classify_input_devices = lambda: dict(classification)
-            cands = cli_commands._gather_keyboard_candidates('SUPER+ALT+D')
+            keyboard.get_available_keyboards = lambda shortcut: list(raw)
+            keyboard._classify_input_devices = lambda: dict(classification)
+            cands = keyboard._gather_keyboard_candidates('SUPER+ALT+D')
         finally:
-            cli_commands.get_available_keyboards = orig_get
-            cli_commands._classify_input_devices = orig_cls
+            keyboard.get_available_keyboards = orig_get
+            keyboard._classify_input_devices = orig_cls
 
         names = [c['name'] for c in cands]
         # Deduped by name: receiver appears once despite two event nodes.
@@ -119,7 +120,7 @@ class GatherCandidatesTests(unittest.TestCase):
         self.assertLess(names.index('Logitech USB Receiver'), names.index('Logitech MX Vertical'))
         self.assertLess(names.index('Logitech MX Vertical'), names.index('ydotoold virtual device'))
         # Preselection (no allowlist) keeps the receiver, drops mouse + virtual.
-        sel = cli_commands._keyboard_preselection(cands, [])
+        sel = keyboard._keyboard_preselection(cands, [])
         self.assertEqual(sel, {'Logitech USB Receiver'})
 
 

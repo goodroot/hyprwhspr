@@ -38,7 +38,7 @@ _stub_if_missing(
     UInput=object,
 )
 
-import cli_commands  # noqa: E402
+from cli import keyboard  # noqa: E402
 
 
 def _kb(name):
@@ -52,21 +52,21 @@ class KeyboardSelectionTests(unittest.TestCase):
     def _run(self, *, confirm, prompt_inputs=(),
              candidates=("KB1", "KB2")):
         cands = [_kb(n) for n in candidates]
-        with mock.patch.object(cli_commands, "_gather_keyboard_candidates",
+        with mock.patch.object(keyboard, "_gather_keyboard_candidates",
                                return_value=cands), \
-                mock.patch.object(cli_commands, "Table"), \
-                mock.patch.object(cli_commands, "Console"), \
-                mock.patch.object(cli_commands, "Confirm") as confirm_mock, \
-                mock.patch.object(cli_commands, "Prompt") as prompt_mock, \
-                mock.patch.object(cli_commands.sys.stdin, "isatty",
+                mock.patch.object(keyboard, "Table"), \
+                mock.patch.object(keyboard, "Console"), \
+                mock.patch.object(keyboard, "Confirm") as confirm_mock, \
+                mock.patch.object(keyboard, "Prompt") as prompt_mock, \
+                mock.patch.object(keyboard.sys.stdin, "isatty",
                                   return_value=True), \
-                mock.patch.object(cli_commands.sys.stdout, "isatty",
+                mock.patch.object(keyboard.sys.stdout, "isatty",
                                   return_value=True), \
-                mock.patch.dict(cli_commands.os.environ, {}, clear=False):
-            cli_commands.os.environ.pop("HYPRWHSPR_NONINTERACTIVE", None)
+                mock.patch.dict(keyboard.os.environ, {}, clear=False):
+            keyboard.os.environ.pop("HYPRWHSPR_NONINTERACTIVE", None)
             confirm_mock.ask.return_value = confirm
             prompt_mock.ask.side_effect = list(prompt_inputs)
-            return cli_commands._run_keyboard_selection()
+            return keyboard._run_keyboard_selection()
 
     def test_confirm_accepts_recommendation(self):
         # Two pure keyboards are recommended; a single Y accepts them.
@@ -90,9 +90,9 @@ class KeyboardSelectionTests(unittest.TestCase):
             "is_mouse": True,
             "is_virtual": False,
         }]
-        with mock.patch.object(cli_commands, "Prompt") as prompt_mock:
+        with mock.patch.object(keyboard, "Prompt") as prompt_mock:
             prompt_mock.ask.return_value = ""
-            result = cli_commands._edit_keyboard_selection(candidates, set())
+            result = keyboard._edit_keyboard_selection(candidates, set())
 
         self.assertEqual(result, [])
 
@@ -102,14 +102,14 @@ class KeyboardSelectionTests(unittest.TestCase):
         # into the shell afterwards.
         fake_cfg = types.SimpleNamespace(
             get_setting=lambda *a, **k: "Super+Alt+D")
-        with mock.patch.object(cli_commands, "ConfigManager",
+        with mock.patch.object(keyboard, "ConfigManager",
                                return_value=fake_cfg), \
-                mock.patch.object(cli_commands, "_gather_keyboard_candidates",
+                mock.patch.object(keyboard, "_gather_keyboard_candidates",
                                   return_value=[_kb("KB1")]), \
-                mock.patch.object(cli_commands, "_detect_pressed_keyboard",
+                mock.patch.object(keyboard, "_detect_pressed_keyboard",
                                   return_value="KB1"), \
-                mock.patch.object(cli_commands, "_flush_input_buffer") as flush:
-            cli_commands.detect_keyboard()
+                mock.patch.object(keyboard, "_flush_input_buffer") as flush:
+            keyboard.detect_keyboard()
         self.assertTrue(
             flush.called,
             "input buffer must be flushed after keypress detection",
