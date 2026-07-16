@@ -35,9 +35,9 @@ except ImportError:
 
 # Shared backend helpers
 try:
-    from .backend_utils import vulkaninfo_has_hardware_gpu
+    from .backend_utils import LOCAL_INSTALL_BACKENDS, vulkaninfo_has_hardware_gpu
 except ImportError:
-    from backend_utils import vulkaninfo_has_hardware_gpu
+    from backend_utils import LOCAL_INSTALL_BACKENDS, vulkaninfo_has_hardware_gpu
 
 
 def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None,
@@ -71,10 +71,6 @@ STATE_DIR = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'stat
 STATE_FILE = STATE_DIR / 'install-state.json'
 PYWHISPERCPP_SRC_DIR = USER_BASE / 'pywhispercpp-src'
 PYWHISPERCPP_PINNED_COMMIT = "294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f"
-PARAKEET_VENV_DIR = USER_BASE / 'parakeet-venv'
-PARAKEET_DIR = Path(HYPRWHSPR_ROOT) / 'lib' / 'backends' / 'parakeet'
-PARAKEET_SCRIPT = PARAKEET_DIR / 'parakeet-tdt-0.6b-v3.py'
-PARAKEET_REQUIREMENTS = PARAKEET_DIR / 'requirements.txt'
 
 # Pre-built wheel configuration
 WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v2"
@@ -1791,199 +1787,6 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
         return False
 
 
-# ==================== Parakeet Installation ====================
-
-def setup_parakeet_venv(force_rebuild: bool = False, custom_python: Optional[str] = None) -> Path:
-    """Create or update Parakeet Python virtual environment. Returns path to pip binary.
-
-    Args:
-        force_rebuild: If True, delete and recreate venv even if it exists and Python version matches.
-        custom_python: Optional path to Python executable to use for venv creation.
-                       If None, auto-detects a compatible Python (3.14 or earlier).
-    """
-    log_info("Setting up Parakeet Python virtual environment…")
-
-    # Validate requirements.txt exists
-    if not PARAKEET_REQUIREMENTS.exists():
-        log_error(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
-        raise FileNotFoundError(f"Parakeet requirements.txt not found at {PARAKEET_REQUIREMENTS}")
-
-    # Determine Python executable to use
-    if custom_python:
-        # User specified explicit Python path
-        if not os.path.isfile(custom_python) or not os.access(custom_python, os.X_OK):
-            log_error(f"Specified Python not found or not executable: {custom_python}")
-            sys.exit(1)
-        python_executable = custom_python
-        version = _get_python_version(custom_python)
-        version_str = f"{version[0]}.{version[1]}" if version else "unknown"
-        # Validate version compatibility
-        if version and version > MAX_COMPATIBLE_PYTHON:
-            max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
-            log_error(f"Specified Python {version_str} is not compatible (requires {max_str} or earlier)")
-            log_error("ML packages like onnxruntime do not have wheels for this Python version yet.")
-            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python3.14")
-            sys.exit(1)
-        log_info(f"Using specified Python: {custom_python} ({version_str})")
-    else:
-        # Auto-detect compatible Python
-        python_executable, source = _find_compatible_python()
-        log_info(f"Using {source}: {python_executable}")
-
-    # Check if venv exists and if Python version matches
-    venv_needs_recreation = force_rebuild
-    if force_rebuild:
-        log_info("Force rebuild requested - will recreate venv")
-    if PARAKEET_VENV_DIR.exists() and not force_rebuild:
-        venv_python = PARAKEET_VENV_DIR / 'bin' / 'python'
-        if venv_python.exists():
-            try:
-                # Check Python version in venv
-                result = run_command([str(venv_python), '--version'], check=False, capture_output=True)
-                venv_version = result.stdout.strip() if result.returncode == 0 and result.stdout else ""
-                
-                # Get version of python_executable (system Python when mise is active, otherwise current Python)
-                python_exec_version_result = run_command(
-                    [python_executable, '--version'],
-                    check=False,
-                    capture_output=True
-                )
-                python_exec_version = python_exec_version_result.stdout.strip() if python_exec_version_result.returncode == 0 and python_exec_version_result.stdout else ""
-                
-                # Extract major.minor from both version strings
-                import re
-                venv_major_minor = ""
-                if venv_version:
-                    match = re.search(r'(\d+)\.(\d+)', venv_version)
-                    if match:
-                        venv_major_minor = f"{match.group(1)}.{match.group(2)}"
-                
-                python_exec_major_minor = ""
-                if python_exec_version:
-                    match = re.search(r'(\d+)\.(\d+)', python_exec_version)
-                    if match:
-                        python_exec_major_minor = f"{match.group(1)}.{match.group(2)}"
-                
-                # If we couldn't get python_exec version, handle based on whether it's the same as current Python
-                if not python_exec_major_minor:
-                    if python_executable == sys.executable:
-                        # Same Python, safe to use sys.version_info as fallback
-                        python_exec_major_minor = f"{sys.version_info.major}.{sys.version_info.minor}"
-                        python_exec_version = f"Python {python_exec_major_minor} (from sys.version_info)"
-                    else:
-                        # Different Python - can't verify version, be conservative and recreate venv
-                        log_warning(f"Could not determine version of target Python ({python_executable})")
-                        log_warning("Cannot verify venv Python version compatibility - will recreate venv to be safe")
-                        venv_needs_recreation = True
-                        # Skip version comparison since we don't have valid data
-                        python_exec_major_minor = None
-                
-                # Check if versions match (major.minor) - only if we have valid version data
-                if python_exec_major_minor and venv_major_minor and venv_major_minor != python_exec_major_minor:
-                    log_warning(f"Parakeet venv Python version mismatch: venv has {venv_version}, target Python is {python_exec_version}")
-                    log_info("Recreating venv to match target Python version...")
-                    venv_needs_recreation = True
-            except Exception:
-                # If we can't check, assume it's fine
-                pass
-        else:
-            venv_needs_recreation = True
-    
-    # Recreate venv if needed
-    if venv_needs_recreation or not PARAKEET_VENV_DIR.exists():
-        if PARAKEET_VENV_DIR.exists():
-            log_info(f"Removing existing Parakeet venv at {PARAKEET_VENV_DIR}")
-            import shutil
-            shutil.rmtree(PARAKEET_VENV_DIR)
-        log_info(f"Creating Parakeet venv at {PARAKEET_VENV_DIR}")
-        PARAKEET_VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
-        run_command([python_executable, '-m', 'venv', str(PARAKEET_VENV_DIR)], check=True)
-    else:
-        log_info(f"Parakeet venv already exists at {PARAKEET_VENV_DIR}")
-    
-    # Get pip binary
-    pip_bin = PARAKEET_VENV_DIR / 'bin' / 'pip'
-    if not pip_bin.exists():
-        log_error(f"pip not found in Parakeet venv at {PARAKEET_VENV_DIR}")
-        raise FileNotFoundError(f"pip not found in Parakeet venv")
-    
-    # Upgrade pip and wheel (mise-free env applied automatically via run_command)
-    run_command([str(pip_bin), 'install', '--upgrade', 'pip', 'wheel'], check=True)
-    
-    return pip_bin
-
-
-def install_parakeet_dependencies(pip_bin: Path) -> bool:
-    """Install Parakeet backend dependencies"""
-    log_info("Installing Parakeet dependencies...")
-    
-    # Check for CUDA availability
-    enable_cuda = False
-    if shutil.which('nvidia-smi'):
-        try:
-            result = run_command(['nvidia-smi', '-L'], check=False, capture_output=True, timeout=2)
-            if result.returncode == 0:
-                enable_cuda = True
-                log_info("CUDA detected - will install PyTorch with CUDA support")
-        except Exception:
-            pass
-    
-    try:
-
-        # Install ml_dtypes and numpy first with pinned versions to ensure compatibility
-        # - ml_dtypes 0.5.4+ includes float4_e2m1fn required by onnx
-        # - numpy must be <2.4 for numba compatibility (numba is a nemo_toolkit dep)
-        log_info("Installing ml_dtypes and numpy (required for onnx/numba compatibility)...")
-        run_command([str(pip_bin), 'install', '--upgrade', 'ml_dtypes>=0.5.4', 'numpy>=1.22,<2.4'], check=True)
-       
-        # Install base dependencies first (excluding torch)
-        log_info("Installing base dependencies... May take a moment.")
-        base_deps = [
-            'nemo_toolkit[asr]',
-            'fastapi',
-            'uvicorn[standard]',
-            'soundfile',
-            'python-multipart',
-        ]
-        
-        if enable_cuda:
-            base_deps.append('cuda-python>=12.3')
-        
-        run_command([str(pip_bin), 'install'] + base_deps, check=True)
-
-        # Re-pin ml_dtypes and numpy after nemo_toolkit installation
-        # nemo_toolkit's dependency resolution can downgrade ml_dtypes to 0.4.x
-        # which lacks float4_e2m1fn required by onnx
-        log_info("Re-pinning ml_dtypes and numpy versions...")
-        run_command([str(pip_bin), 'install', '--upgrade', 'ml_dtypes>=0.5.4', 'numpy>=1.22,<2.4'], check=True)
-
-        # Install torch with appropriate CUDA support
-        if enable_cuda:
-            log_info("Installing PyTorch with CUDA 12.1 support... May take a moment.")
-            # Use PyTorch CUDA index
-            try:
-                run_command([
-                    str(pip_bin), 'install', 'torch',
-                    '--index-url', 'https://download.pytorch.org/whl/cu121'
-                ], check=True)
-                log_success("PyTorch with CUDA support installed")
-            except subprocess.CalledProcessError as e:
-                log_warning(f"PyTorch CUDA installation failed: {e}")
-                log_warning("Falling back to CPU-only PyTorch installation... GPU preferred but it works.")
-                log_info("Installing PyTorch (CPU-only)...")
-                run_command([str(pip_bin), 'install', 'torch'], check=True)
-                log_success("PyTorch (CPU-only) installed as fallback")
-        else:
-            log_info("Installing PyTorch (CPU-only)...")
-            run_command([str(pip_bin), 'install', 'torch'], check=True)
-        
-        log_success("Parakeet dependencies installed")
-        return True
-    except subprocess.CalledProcessError as e:
-        log_error(f"Failed to install Parakeet dependencies: {e}")
-        return False
-
-
 # ==================== ONNX-ASR Installation ====================
 
 def install_onnx_asr(pip_bin: Path, enable_gpu: bool = False) -> bool:
@@ -2157,7 +1960,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
     Main function to install backend.
 
     Args:
-        backend_type: One of 'cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr'
+        backend_type: One of 'cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr'
         cleanup_on_failure: Whether to clean up partial installations on failure
         force_rebuild: If True, delete and recreate venv even if it exists
         custom_python: Optional path to Python executable to use for venv creation.
@@ -2177,7 +1980,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         log_warning("To fix: mise deactivate (or: mise unuse -g python)")
 
     # Validate backend type
-    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'parakeet', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
+    if backend_type not in LOCAL_INSTALL_BACKENDS:
         error_msg = f"Invalid backend type: {backend_type}"
         log_error(error_msg)
         set_install_state('failed', error_msg)
@@ -2216,35 +2019,6 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             if not enable_vulkan:
                 log_warning("Vulkan backend selected but Vulkan not available, falling back to CPU")
                 backend_type = 'cpu'
-        elif backend_type == 'parakeet':
-            # Parakeet uses separate venv and REST API
-            if not PARAKEET_SCRIPT.exists():
-                error_msg = f"Parakeet script not found at {PARAKEET_SCRIPT}"
-                log_error(error_msg)
-                set_install_state('failed', error_msg)
-                return False
-            
-            # Setup Parakeet venv
-            parakeet_venv_existed = PARAKEET_VENV_DIR.exists()
-            parakeet_pip_bin = setup_parakeet_venv(force_rebuild=force_rebuild, custom_python=custom_python)
-            if (force_rebuild or not parakeet_venv_existed) and PARAKEET_VENV_DIR.exists():
-                created_items['venv_created'] = True
-                created_items['venv_path'] = str(PARAKEET_VENV_DIR)
-            
-            # Install Parakeet dependencies
-            if not install_parakeet_dependencies(parakeet_pip_bin):
-                error_msg = "Failed to install Parakeet dependencies"
-                log_error(error_msg)
-                if cleanup_on_failure:
-                    log_info("Cleaning up partial installation...")
-                    _cleanup_partial_installation(created_items, parakeet_pip_bin)
-                set_install_state('failed', error_msg)
-                return False
-            
-            # Installation successful for Parakeet
-            set_install_state('completed')
-            log_success("Parakeet backend installation completed!")
-            return True
         elif backend_type == 'faster-whisper':
             # faster-whisper uses main venv with faster-whisper package
             venv_existed = VENV_DIR.exists()
