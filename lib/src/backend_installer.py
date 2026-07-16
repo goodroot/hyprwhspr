@@ -35,9 +35,9 @@ except ImportError:
 
 # Shared backend helpers
 try:
-    from .backend_utils import vulkaninfo_has_hardware_gpu
+    from .backend_utils import LOCAL_INSTALL_BACKENDS, vulkaninfo_has_hardware_gpu
 except ImportError:
-    from backend_utils import vulkaninfo_has_hardware_gpu
+    from backend_utils import LOCAL_INSTALL_BACKENDS, vulkaninfo_has_hardware_gpu
 
 
 def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None,
@@ -1980,7 +1980,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         log_warning("To fix: mise deactivate (or: mise unuse -g python)")
 
     # Validate backend type
-    if backend_type not in ['cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
+    if backend_type not in LOCAL_INSTALL_BACKENDS:
         error_msg = f"Invalid backend type: {backend_type}"
         log_error(error_msg)
         set_install_state('failed', error_msg)
