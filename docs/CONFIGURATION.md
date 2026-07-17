@@ -23,6 +23,20 @@ hyprwhspr config show        # Show your overrides only
 hyprwhspr config show --all  # Show all settings including defaults
 ```
 
+## Contents
+
+- [Minimal configuration](#minimal-configuration)
+- [Environment variable substitution](#environment-variable-substitution)
+- [Recording modes](#recording-modes) -- toggle, push-to-talk, auto, silence auto-stop, continuous, long-form
+- [Custom hotkeys](#custom-hotkeys) -- key support, secondary shortcuts, cancel, Hyprland bindings
+- [Backends](#backends) -- Cohere Transcribe, Parakeet, faster-whisper, whisper.cpp, REST API, Realtime WebSocket
+- [Audio and visual feedback](#audio-and-visual-feedback) -- themed visualizer, audio feedback, keepalive, ducking
+- [Text processing](#text-processing) -- word overrides, filler words, symbol replacements
+- [Paste and clipboard behavior](#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit, post-transcription hook
+- [Integrations](#integrations) -- Waybar, Noctalia, keyboard devices, external hotkey systems
+- [GPU resource management](#gpu-resource-management) -- unload/reload model to free VRAM
+- [Troubleshooting](#troubleshooting)
+
 ## Minimal configuration
 
 Only 2 essential options:
