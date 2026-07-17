@@ -690,12 +690,12 @@ The recording-status indicator — the **mic OSD** — gives visual feedback whi
 
 #### Display mode depends on your compositor
 
-`mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup based on your compositor:
+`mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup:
 
-- **Overlay mode** — on compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland), you get the animated overlay: pulsing bars rendered as an always-on-top layer. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
-- **Notification mode** — GNOME/Mutter does **not** implement the layer-shell protocol. The built-in overlay would degrade to a focus-stealing toplevel window that swallows the post-dictation paste keystroke, so hyprwhspr shows status as desktop notifications instead (recording / transcribing / inserted). Notifications never take keyboard focus, so injection still works. This path only needs `notify-send` (libnotify) — the GTK4/`gtk4-layer-shell` packages are not required.
+- **Overlay mode** — compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland) get the animated always-on-top overlay. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
+- **Notification mode** — GNOME/Mutter lacks layer-shell, so status shows as desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. Only requires `notify-send` (libnotify).
 
-You don't choose the mode; `hyprwhspr setup` detects GNOME/Mutter and the service picks the right one at runtime. Set `mic_osd_enabled: false` to turn off both. The service log records which one was selected:
+Set `mic_osd_enabled: false` to turn off both. The service log records which mode was selected:
 
 ```bash
 journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status via notifications'
@@ -707,7 +707,7 @@ In overlay mode, `mic_osd_style` picks one of three visualizations (notification
 
 - `waveform` — the full themed waveform with transcript preview (default)
 - `vu_meter` — a VU meter
-- `pill` — a compact monochrome status pill; it omits transcript text and shows idle dots in silence, live bars while recording, a travelling wave while processing, a pulse on error and a short checkmark on success
+- `pill` — a compact monochrome status pill (no transcript text): idle dots, live bars while recording, a travelling wave while processing, a pulse on error, a checkmark on success
 
 ![Pill OSD states](assets/pill-states.png)
 
@@ -725,14 +725,14 @@ systemctl --user restart hyprwhspr
 
 #### GNOME/Mutter waveform overlay
 
-GNOME users who want an animated waveform instead of notifications can install the opt-in GNOME Shell extension in `contrib/gnome-shell-extension/`. It draws inside gnome-shell, so it stays always-on-top without stealing focus from the application receiving the dictated text.
+GNOME users who want an animated waveform instead of notifications can install the opt-in GNOME Shell extension in `contrib/gnome-shell-extension/` — it draws inside gnome-shell, always-on-top, without stealing focus:
 
 ```bash
 cd contrib/gnome-shell-extension
 ./install.sh
 ```
 
-Log out and back in if GNOME cannot enable the new extension immediately. The extension is a status consumer only: it reads hyprwhspr's recording state and audio level files. It does not capture audio or replace the built-in notification fallback; uninstall or disable the extension and GNOME continues to use notifications.
+Log out and back in if GNOME cannot enable it immediately. The extension only reads hyprwhspr's state and audio-level files — disable it and GNOME falls back to notifications.
 
 ### Audio feedback
 
@@ -956,9 +956,9 @@ hyprwhspr saves your clipboard before injection and restores it afterward — di
 
 GNOME/Mutter lacks layer-shell and blocks `wtype`, so hyprwhspr behaves differently there:
 
-- **Window detection** uses the **accessibility bridge** (AT-SPI) — a `gsettings` toggle, not the optional waveform GNOME Shell extension. `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). Without it, GNOME can't tell terminals apart and paste falls back to Ctrl+V (wrong in terminals). Setting an explicit `paste_mode` (with no `applications` rules) skips this probe entirely — handy if you don't need per-terminal detection.
-- **Direct typing:** for ASCII text on a US layout, hyprwhspr types directly with `ydotool type` instead of touching the clipboard. Non-US layouts or non-ASCII text fall back to verbatim clipboard paste automatically. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
-- **Non-Latin layouts** (Thai, Russian, Arabic, Greek, Hebrew, …): no physical key produces a `v` keysym, so `paste_keycode` can't help. hyprwhspr briefly switches to a Latin input source (e.g. `us`) for the paste chord, then restores your layout — just keep a Latin source in Settings → Keyboard → Input Sources. The pasted text is Unicode and reproduces verbatim regardless.
+- **Window detection** uses the AT-SPI accessibility bridge — `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). Without it, GNOME can't tell terminals apart and paste falls back to Ctrl+V. An explicit `paste_mode` (with no `applications` rules) skips the probe entirely.
+- **Direct typing:** ASCII text on a US layout is typed directly with `ydotool type`; anything else falls back to clipboard paste automatically. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
+- **Non-Latin layouts** (Thai, Russian, Arabic, …): no physical key produces a `v` keysym, so hyprwhspr briefly switches to a Latin input source for the paste chord and restores your layout after — just keep a Latin source in Settings → Keyboard → Input Sources.
 
 ### Post-transcription hook
 
@@ -1239,12 +1239,9 @@ pgrep -af 'ydotoold .*hyprwhspr-ydotool.sock'
 virtual-keyboard protocol (notably GNOME/Mutter), hyprwhspr falls back to its
 **own private `ydotoold`** — a child process on a dedicated socket
 (`$XDG_RUNTIME_DIR/hyprwhspr-ydotool.sock`), launched lazily and torn down with the
-service.
-
-`ydotoold` runs rootless because the active-session user gets `/dev/uinput` via a
-`uaccess` ACL. The `input` group and the udev rule `hyprwhspr setup` adds are a fallback
-for when that ACL isn't present (it only covers the active session). The `input` group's
-main job is the global hotkey, which reads `/dev/input/event*` via evdev.
+service. It runs rootless via the `uaccess` ACL on `/dev/uinput`; the `input`
+group and udev rule from setup are the fallback, and mainly serve the global
+hotkey (evdev reads of `/dev/input/event*`).
 
 #### Service starts but doesn't work until restarted
 
