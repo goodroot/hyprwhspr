@@ -34,7 +34,8 @@ def _check_mic_osd_availability():
     venv_python = VENV_DIR / 'bin' / 'python'
     if venv_python.exists():
         try:
-            lib_path = Path(__file__).parent.parent
+            # mic_osd package lives at lib/, three levels up from lib/src/cli/
+            lib_path = Path(__file__).parent.parent.parent
             # Use repr() to safely escape the path (handles quotes, backslashes, etc.)
             lib_path_str = repr(str(lib_path))
             check_code = f"""
@@ -66,7 +67,7 @@ else:
     # Fallback: check with current Python environment
     try:
         import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
         from mic_osd import MicOSDRunner
         
         if MicOSDRunner.is_available():
