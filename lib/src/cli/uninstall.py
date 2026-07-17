@@ -37,6 +37,7 @@ except ImportError:
 
 from ._shared import (SERVICE_NAME, RESUME_SERVICE_NAME, YDOTOOL_UNIT,
                       USER_HOME, USER_CONFIG_DIR, USER_SYSTEMD_DIR)
+from .maintenance import _cleanup_backend, _detect_current_backend
 from .systemd import _is_hyprwhspr_managed_ydotool_unit
 from .waybar import setup_waybar
 
@@ -168,15 +169,9 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     # 3. Backend-specific cleanup (while config still exists for detection)
     log_info("Cleaning up backend...")
     try:
-        # Lazy import with attribute access: keeps test patches on cli.setup
-        # effective without importing the whole setup module at load time.
-        try:
-            from . import setup as _setup
-        except ImportError:
-            from cli import setup as _setup
-        current_backend = _setup._detect_current_backend()
+        current_backend = _detect_current_backend()
         if current_backend:
-            _setup._cleanup_backend(current_backend)
+            _cleanup_backend(current_backend)
     except Exception as e:
         error_msg = f"Backend cleanup failed: {e}"
         log_warning(error_msg)

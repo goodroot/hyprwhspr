@@ -6,6 +6,7 @@ management and installation validation
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 from rich.prompt import Prompt, Confirm
 
@@ -42,6 +43,220 @@ from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, _check_ydotool_version,
 
 
 # ==================== Backend Management Commands ====================
+
+def _detect_current_backend(existing_cfg: Optional[dict] = None) -> Optional[str]:
+    """
+    Detect currently installed backend.
+
+    Returns:
+        'cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr', 'rest-api', or None if not detected
+    """
+    # First check config file
+    try:
+        backend = (
+            existing_cfg.get('transcription_backend')
+            if existing_cfg is not None
+            else ConfigManager(verbose=False).get_setting('transcription_backend', None)
+        )
+        
+        # Backward compatibility: map old values
+        if backend == 'remote':
+            return 'rest-api'
+        if backend == 'local':
+            # Old 'local' - try to detect from venv or default to 'cpu'
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'import pywhispercpp; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'cpu'  # Default to cpu for old 'local'
+                except Exception:
+                    pass
+            return 'cpu'  # Fallback
+        
+        if backend == 'rest-api':
+            return 'rest-api'
+        if backend == 'realtime-ws':
+            return 'realtime-ws'
+        if backend == 'onnx-asr':
+            # Verify onnx-asr is actually installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'import onnx_asr; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'onnx-asr'
+                except Exception:
+                    pass
+            # onnx-asr configured but not installed - fall through to return None
+        if backend == 'faster-whisper':
+            # Verify faster-whisper is actually installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'import faster_whisper; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'faster-whisper'
+                except Exception:
+                    pass
+            # faster-whisper configured but not installed - fall through to return None
+        if backend == 'cohere-transcribe':
+            # Verify transformers is installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'from transformers import AutoModelForSpeechSeq2Seq; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        return 'cohere-transcribe'
+                except Exception:
+                    pass
+            # cohere-transcribe configured but not installed - fall through to return None
+        if backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']:
+            # Verify it's actually installed in venv
+            venv_python = VENV_DIR / 'bin' / 'python'
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), '-c', 'import pywhispercpp; print("ok")'],
+                        check=False,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        # Normalize backend before returning (handles 'amd' -> 'vulkan')
+                        return normalize_backend(backend)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    
+    # Fallback: check if venv exists and has pywhispercpp
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if venv_python.exists():
+        try:
+            result = subprocess.run(
+                [str(venv_python), '-c', 'import pywhispercpp; print("ok")'],
+                check=False,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                # Venv has pywhispercpp but no config - assume CPU (safest)
+                return 'cpu'
+        except Exception:
+            pass
+    
+    return None
+
+
+def _cleanup_backend(backend_type: str) -> bool:
+    """
+    Clean up an installed backend.
+
+    Args:
+        backend_type: 'cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr', or 'remote'
+
+    Returns:
+        True if cleanup succeeded
+    """
+    if backend_type == 'onnx-asr':
+        log_info("Cleaning up ONNX-ASR backend...")
+        venv_python = VENV_DIR / 'bin' / 'python'
+        if not venv_python.exists():
+            log_info("No venv found, nothing to clean")
+            return True
+        try:
+            pip_bin = VENV_DIR / 'bin' / 'pip'
+            if pip_bin.exists():
+                # Uninstall onnx-asr
+                subprocess.run(
+                    [str(pip_bin), 'uninstall', '-y', 'onnx-asr'],
+                    check=False,
+                    capture_output=True
+                )
+                log_success("ONNX-ASR backend cleaned up")
+            return True
+        except Exception as e:
+            log_warning(f"Cleanup warning: {e}")
+            return True  # Don't fail on cleanup errors
+
+    if backend_type == 'faster-whisper':
+        log_info("Cleaning up faster-whisper backend...")
+        pip_bin = VENV_DIR / 'bin' / 'pip'
+        if pip_bin.exists():
+            try:
+                subprocess.run(
+                    [str(pip_bin), 'uninstall', '-y', 'faster-whisper'],
+                    check=False,
+                    capture_output=True
+                )
+                log_success("faster-whisper backend cleaned up")
+            except Exception as e:
+                log_warning(f"Cleanup warning: {e}")
+        return True
+
+    if backend_type == 'cohere-transcribe':
+        log_info("Cleaning up Cohere Transcribe backend...")
+        pip_bin = VENV_DIR / 'bin' / 'pip'
+        if pip_bin.exists():
+            try:
+                subprocess.run(
+                    [str(pip_bin), 'uninstall', '-y', 'transformers', 'sentencepiece', 'protobuf', 'librosa'],
+                    check=False,
+                    capture_output=True
+                )
+                log_success("Cohere Transcribe backend cleaned up")
+            except Exception as e:
+                log_warning(f"Cleanup warning: {e}")
+        return True
+
+    if backend_type in ['rest-api', 'remote']:
+        # REST API doesn't have venv, nothing to clean
+        return True
+
+    log_info(f"Cleaning up {backend_type.upper()} backend...")
+
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        log_info("No venv found, nothing to clean")
+        return True
+
+    try:
+        pip_bin = VENV_DIR / 'bin' / 'pip'
+        if pip_bin.exists():
+            # Uninstall pywhispercpp
+            subprocess.run(
+                [str(pip_bin), 'uninstall', '-y', 'pywhispercpp'],
+                check=False,
+                capture_output=True
+            )
+            log_success("Backend cleaned up")
+        return True
+    except Exception as e:
+        log_warning(f"Cleanup warning: {e}")
+        return True  # Don't fail on cleanup errors
+
+
 
 def backend_repair_command():
     """Repair corrupted installation"""
@@ -324,15 +539,8 @@ def validate_command():
         all_ok = False
         return all_ok
     
-    # Detect current backend to determine what to validate.
-    # Lazy import with attribute access: keeps test patches on cli.setup
-    # effective and avoids a module-level import cycle (setup imports
-    # validate_command from this module).
-    try:
-        from . import setup as _setup
-    except ImportError:
-        from cli import setup as _setup
-    current_backend = _setup._detect_current_backend()
+    # Detect current backend to determine what to validate
+    current_backend = _detect_current_backend()
     is_rest_api = current_backend in ['rest-api', 'remote', 'realtime-ws']
     is_onnx_asr = current_backend == 'onnx-asr'
     is_pywhispercpp = current_backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']

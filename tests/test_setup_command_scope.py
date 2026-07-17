@@ -119,7 +119,7 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             mock.patch.object(uninstall, "CREDENTIALS_FILE", root / "missing-creds"),
             mock.patch.object(uninstall, "USER_BASE", root / "missing-user-base"),
             mock.patch.object(uninstall, "setup_waybar"),
-            mock.patch.object(setup, "_detect_current_backend", return_value=None),
+            mock.patch.object(uninstall, "_detect_current_backend", return_value=None),
             mock.patch.object(uninstall, "run_command", side_effect=fake_run_command),
         ]
         with contextlib.ExitStack() as stack:
