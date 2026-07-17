@@ -40,7 +40,7 @@ local function trayPath()
   end
   trayCached = nil
   local candidates = {}
-  local cfg = barWidget.getConfig("root")
+  local cfg = noctalia.getConfig("root")
   if type(cfg) == "string" and cfg ~= "" then
     table.insert(candidates, cfg)
   end

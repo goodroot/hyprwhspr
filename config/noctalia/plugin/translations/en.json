@@ -1,0 +1,5 @@
+{
+  "title": "noctwhspr",
+  "settings.root.label": "hyprwhspr install root",
+  "settings.root.description": "Directory hyprwhspr is installed under. Leave at the default unless hyprwhspr lives at a non-standard prefix."
+}

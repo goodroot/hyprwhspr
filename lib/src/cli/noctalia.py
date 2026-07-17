@@ -190,6 +190,8 @@ def setup_noctalia(mode: str = 'install'):
         dst['plugin_dir'].mkdir(parents=True, exist_ok=True)
         for name in ('plugin.toml', 'widget.luau'):
             shutil.copy2(src_plugin / name, dst['plugin_dir'] / name)
+        shutil.copytree(src_plugin / 'translations',
+                        dst['plugin_dir'] / 'translations', dirs_exist_ok=True)
         log_success(f"Plugin installed to {dst['plugin_dir']}")
         if dst['legacy_plugin_dir'].is_dir():
             shutil.rmtree(dst['legacy_plugin_dir'], ignore_errors=True)

@@ -1,19 +1,22 @@
 id           = "goodroot/noctwhspr"
 name         = "noctwhspr"
 version      = "1.0.0"
+plugin_api   = 3
 min_noctalia = "5.0.0"
 author       = "goodroot"
 license      = "MIT"
 icon         = "microphone"
 description  = "Noctalia companion for hyprwhspr: shows dictation state, click to record, right-click to restart."
-tags         = ["audio", "dictation"]
+dependencies = ["hyprwhspr"]
+tags         = ["audio", "bar", "recording", "utility"]
 
 [[widget]]
 id    = "status"
 entry = "widget.luau"
 
   [[widget.setting]]
-  key     = "root"
-  type    = "string"
-  label   = "hyprwhspr install root"
-  default = "/usr/lib/hyprwhspr"
+  key             = "root"
+  type            = "string"
+  label_key       = "settings.root.label"
+  description_key = "settings.root.description"
+  default         = "/usr/lib/hyprwhspr"
