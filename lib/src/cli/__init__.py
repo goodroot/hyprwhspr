@@ -5,19 +5,16 @@ Command implementations are split into one module per command family;
 shared constants and environment helpers live in _shared.
 """
 
+import importlib.util
 import sys
 
-# Probe rich here so every command module can import it bare: the package
-# init runs before any submodule, and a missing python-rich gets actionable
-# guidance instead of a raw traceback.
-try:
-    from rich.prompt import Prompt, Confirm  # noqa: F401
-    from rich.console import Console  # noqa: F401
-    from rich.table import Table  # noqa: F401
-except (ImportError, ModuleNotFoundError) as e:
+# Probe for python-rich here so every command module can import it bare: the
+# package init runs before any submodule, and a missing python-rich gets
+# actionable guidance instead of a raw traceback. find_spec checks
+# availability without importing, keeping light commands (record) fast.
+if 'rich' not in sys.modules and importlib.util.find_spec('rich') is None:
     # Hard fail – rich is required for the CLI
     print("ERROR: python-rich is not available in this Python environment.", file=sys.stderr)
-    print(f"ImportError: {e}", file=sys.stderr)
     print(f"\nPython being used: {sys.executable}", file=sys.stderr)
     print(f"Python version:    {sys.version.split()[0]}", file=sys.stderr)
     print("\nThis usually means python-rich is installed for a different Python version.", file=sys.stderr)
