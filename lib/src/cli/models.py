@@ -4,7 +4,6 @@ ONNX-ASR, faster-whisper and Cohere transcribe model families
 """
 
 import os
-import sys
 import subprocess
 from pathlib import Path
 
@@ -311,7 +310,6 @@ def download_cohere_transcribe_model():
     except ImportError:
         from .backend_installer import install_backend
 
-    from paths import VENV_DIR
     venv_python = VENV_DIR / 'bin' / 'python'
     if not venv_python.exists():
         log_error("Cohere Transcribe venv not found. Run: hyprwhspr setup")
