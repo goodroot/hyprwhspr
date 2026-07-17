@@ -1052,8 +1052,10 @@ hyprwhspr noctalia install   # also: status / remove
 
 You get:
 
-- **Bar widget** (`noctwhspr`) — service/recording state as a glyph; left-click records, right-click restarts. Add it to your bar via Noctalia Settings → Bar → add widget.
+- **Bar widget** (`noctwhspr`) — service/recording state as a glyph; left-click records, right-click restarts.
 - **Visualizer theme sync** — the recording overlay follows your live Noctalia palette, including theme switches.
+
+Install enables the plugin, but placing the widget is up to you: **Noctalia Settings → Bar → add widget → noctwhspr** (or add `goodroot/noctwhspr:status` to a bar's widget list in Noctalia's `settings.toml`). Setup reminds you of this only when the widget isn't in your bar yet; reinstalls keep existing placements.
 
 Earlier `goodroot/hyprwhspr` names migrate automatically on reinstall.
 
