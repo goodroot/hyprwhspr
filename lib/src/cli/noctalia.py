@@ -230,10 +230,20 @@ def setup_noctalia(mode: str = 'install'):
             log_warning(f"Noctalia settings not found at {dst['settings']}")
             _print_noctalia_template_snippet(dst)
 
+        widget_placed = False
+        if dst['settings'].exists():
+            try:
+                widget_placed = (f'{NOCTALIA_PLUGIN_ID}:status'
+                                 in dst['settings'].read_text(encoding='utf-8'))
+            except OSError:
+                pass
         log_info("")
-        log_info("One manual step remains:")
-        log_info("  Add the widget to your bar: Noctalia Settings -> Bar -> add widget,")
-        log_info(f"  or add \"{NOCTALIA_PLUGIN_ID}:status\" to the bar's widget list in settings.toml")
+        if widget_placed:
+            log_success("All set - the noctwhspr widget is live in your bar")
+        else:
+            log_info("Last step - put the widget in your bar:")
+            log_info("  Noctalia Settings -> Bar -> add widget -> noctwhspr")
+            log_info(f"  (or add \"{NOCTALIA_PLUGIN_ID}:status\" to a bar's widget list in settings.toml)")
         return True
 
     elif mode == 'remove':
