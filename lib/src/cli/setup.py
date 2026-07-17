@@ -966,10 +966,7 @@ def setup_command(python_path: Optional[str] = None):
         print("="*60)
         log_info("Ensuring Python virtual environment and dependencies are installed...")
         
-        try:
-            from .backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
-        except ImportError:
-            from backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
+        from backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
         
         # Setup venv (creates if needed, updates if exists)
         pip_bin = setup_python_venv()

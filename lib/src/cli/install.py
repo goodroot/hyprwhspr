@@ -54,10 +54,7 @@ def _auto_download_model(model: str = 'base'):
     Args:
         model: Model name to download (default: 'base')
     """
-    try:
-        from .backend_installer import download_pywhispercpp_model
-    except ImportError:
-        from backend_installer import download_pywhispercpp_model
+    from backend_installer import download_pywhispercpp_model
 
     log_info(f"Downloading {model} Whisper model...")
     if download_pywhispercpp_model(model):
@@ -270,12 +267,8 @@ def omarchy_command(args=None):
     or use --hypr-bindings flag.
     """
     # Import functions we need
-    try:
-        from .backend_installer import detect_gpu_type, install_backend
-        from .config_manager import ConfigManager
-    except ImportError:
-        from backend_installer import detect_gpu_type, install_backend
-        from config_manager import ConfigManager
+    from backend_installer import detect_gpu_type, install_backend
+    from config_manager import ConfigManager
 
     # Extract CLI options with defaults for backwards compatibility
     explicit_backend = getattr(args, 'backend', None) if args else None

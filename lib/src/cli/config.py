@@ -43,10 +43,7 @@ def config_command(action: str, show_all: bool = False):
 def show_focused_window_config_identifiers():
     """Print identifiers that can be used in the applications config object."""
     try:
-        try:
-            from .text_injector import TextInjector
-        except ImportError:
-            from text_injector import TextInjector
+        from text_injector import TextInjector
 
         injector = TextInjector(config_manager=ConfigManager(verbose=False))
         try:

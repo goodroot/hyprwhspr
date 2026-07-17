@@ -176,10 +176,7 @@ def model_command(action: str, model_name: str = 'base'):
 
 def download_model(model_name: str = 'base'):
     """Download pywhispercpp model with progress feedback"""
-    try:
-        from .backend_installer import download_pywhispercpp_model
-    except ImportError:
-        from backend_installer import download_pywhispercpp_model
+    from backend_installer import download_pywhispercpp_model
 
     return download_pywhispercpp_model(model_name)
 
@@ -290,13 +287,7 @@ def list_cohere_transcribe_models():
 
 def download_cohere_transcribe_model():
     """Download (or re-download) the Cohere Transcribe model weights."""
-    try:
-        from credential_manager import get_credential
-    except ImportError:
-        try:
-            from .credential_manager import get_credential
-        except ImportError:
-            get_credential = lambda _: None
+    from credential_manager import get_credential
 
     hf_token = get_credential('huggingface') or None
     if not hf_token:
@@ -305,10 +296,7 @@ def download_cohere_transcribe_model():
         log_info("  https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
         return
 
-    try:
-        from backend_installer import install_backend
-    except ImportError:
-        from .backend_installer import install_backend
+    from backend_installer import install_backend
 
     venv_python = VENV_DIR / 'bin' / 'python'
     if not venv_python.exists():

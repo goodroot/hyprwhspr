@@ -49,10 +49,7 @@ def test_command(live: bool = False, mic_only: bool = False):
     # ===== MICROPHONE TEST =====
     print("\n[Microphone]")
 
-    try:
-        from .audio_capture import AudioCapture
-    except ImportError:
-        from audio_capture import AudioCapture
+    from audio_capture import AudioCapture
 
     # Ensure audio is defined on all code paths (e.g., no devices found)
     audio = None
@@ -304,10 +301,7 @@ def test_command(live: bool = False, mic_only: bool = False):
 
         # Transcribe if we have audio
         if audio_data is not None and len(audio_data) > 0:
-            try:
-                from .whisper_manager import WhisperManager
-            except ImportError:
-                from whisper_manager import WhisperManager
+            from whisper_manager import WhisperManager
 
             try:
                 log_info("Initializing backend...")

@@ -340,10 +340,7 @@ def backend_repair_command():
             import shutil
             shutil.rmtree(VENV_DIR, ignore_errors=True)
             # Recreate by calling setup_python_venv
-            try:
-                from .backend_installer import setup_python_venv
-            except ImportError:
-                from backend_installer import setup_python_venv
+            from backend_installer import setup_python_venv
             setup_python_venv()
             log_success("Venv recreated")
     
@@ -505,10 +502,7 @@ def state_reset_command(remove_all: bool = False):
             log_success("Venv removed")
         
         # Remove pywhispercpp source
-        try:
-            from .backend_installer import PYWHISPERCPP_SRC_DIR
-        except ImportError:
-            from backend_installer import PYWHISPERCPP_SRC_DIR
+        from backend_installer import PYWHISPERCPP_SRC_DIR
         
         if PYWHISPERCPP_SRC_DIR.exists():
             log_info("Removing pywhispercpp source...")
