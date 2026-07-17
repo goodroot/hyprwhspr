@@ -506,8 +506,9 @@ def validate_command():
         all_ok = False
 
     # Validate configuration for potential conflicts
+    # (ConfigManager comes from the module-level import; a nested relative
+    # re-import here used to fail silently and skip this whole check)
     try:
-        from .config_manager import ConfigManager
         config = ConfigManager()
         use_hypr_bindings = config.get_setting('use_hypr_bindings', False)
         grab_keys = config.get_setting('grab_keys', False)
