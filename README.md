@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Translation** - Translate non-English to English with a single config
 - **REST API or websockets** - Secure, fast wires to top clouds like Gemini, ElevenLabs
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy and Noctalia themes
-- **Word overides and prompts** - Custom hot keys, common words, and more
+- **Word overrides and prompts** - Custom hot keys, common words, and more
 - **Multi-lingual** - Great performance in many languages
 - **Long form mode with saving** - Pause, think, resume, pause: submit... Bam!
 - **Auto-paste anywhere** - Instant paste into any active buffer, or even auto enter (optional)
@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
-**Why hyprwhspr?** There are a lotta dictation apps. This one is designed to work great for most people, and in particular those with highest end machines. If you've a recent Nvidia card, hyprwhspr is designed from the ground up for the **best possible accuracy and speed**. Other setups will run as well as they can on the hardware you bring. It's also actively maintained, and fully featured. Works on  anything with Wayland.
+**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for the highest-end machines: a recent Nvidia card gets the **best possible accuracy and speed**, and everything else runs as well as the hardware you bring. Actively maintained, fully featured, works on anything with Wayland.
 
 ---
 
@@ -48,7 +48,6 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, etc.)
 - **Requires a Wayland session** (GNOME, KDE Plasma Wayland, Sway, Hyprland, Niri)
-
 - **Waybar or Noctalia** (optional, for status bar)
 - **gtk4 + PyCairo** (optional, for visualizer)
 - **NVIDIA GPU** (optional, for CUDA acceleration)
@@ -80,10 +79,7 @@ hyprwhspr setup
 curl -fsSL https://hyprwhspr.com/install.sh | bash
 ```
 
-Installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup. 
-
-
-Re-run it any time to update.
+Installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup.
 
 <details>
 <summary>Manual install</summary>
@@ -141,8 +137,6 @@ hyprwhspr setup
 
 ### CLI commands
 
-After installation, use the `hyprwhspr` CLI to manage your installation:
-
 - `hyprwhspr setup` - Interactive initial setup
 - `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit` / `secondary-shortcut`)
 - `hyprwhspr model` - Manage models (`download` / `list` / `status` / `unload` / `reload`)
@@ -155,8 +149,6 @@ After installation, use the `hyprwhspr` CLI to manage your installation:
 - `hyprwhspr mic-osd` - Enable/disable the mic OSD (`enable` / `disable` / `status`)
 - `hyprwhspr systemd` - Manage systemd services
 - `hyprwhspr uninstall` - Remove hyprwhspr and user data
-
-For the full command reference, see the **[Configuration guide](docs/CONFIGURATION.md)**.
 
 ## Documentation
 
@@ -175,10 +167,9 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 
 ## Getting help
 
-1. **Check logs**: `journalctl --user -u hyprwhspr.service`
-2. **Verify permissions**: Run the permissions fix script
-3. **Test components**: Check ydotool, audio devices, whisper.cpp
-4. **Report issues**: [Create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) - logging info helpful!
+- **Check logs**: `journalctl --user -u hyprwhspr.service`
+- **[Troubleshooting](docs/CONFIGURATION.md#troubleshooting)** covers common issues
+- **Still stuck?** [Create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) - logs helpful!
 
 ## License
 
@@ -186,9 +177,7 @@ MIT License - see [LICENSE](LICENSE) file.
 
 ## Contributing
 
-Create an issue, happy to help!  
-
-For pull requests, also best to start with an issue.
+Start with an issue - happy to help! Pull requests best begin there too.
 
 If you want, compute credits from [opub.dev](https://opub.dev/github/goodroot/hyprwhspr) are always welcome!
 

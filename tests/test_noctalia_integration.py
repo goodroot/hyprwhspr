@@ -33,7 +33,7 @@ _stub_if_missing(
     UInput=object,
 )
 
-import cli_commands  # noqa: E402
+from cli import noctalia  # noqa: E402
 
 
 def _write_settings(content: str) -> Path:
@@ -46,17 +46,17 @@ def _write_settings(content: str) -> Path:
 
 def _no_noctalia_binary():
     """Skip the `noctalia config validate` round-trip in tests."""
-    return mock.patch.object(cli_commands.shutil, "which", return_value=None)
+    return mock.patch.object(noctalia.shutil, "which", return_value=None)
 
 
 class MigrateLegacySettingsTests(unittest.TestCase):
     def _migrate(self, content: str) -> str:
         settings = _write_settings(content)
         self.addCleanup(settings.unlink)
-        dst = cli_commands._noctalia_paths()
+        dst = noctalia._noctalia_paths()
         with _no_noctalia_binary():
             self.assertTrue(
-                cli_commands._noctalia_migrate_legacy_settings(settings, dst))
+                noctalia._noctalia_migrate_legacy_settings(settings, dst))
         return settings.read_text(encoding="utf-8")
 
     def test_renames_plugin_and_template_ids(self):
@@ -100,25 +100,25 @@ class RegisterTemplateTests(unittest.TestCase):
     def test_registered_section_with_stale_input_path_is_reported(self):
         # Regression: the marker-only early return masked a section whose
         # input_path no longer referenced the current template file.
-        dst = cli_commands._noctalia_paths()
+        dst = noctalia._noctalia_paths()
         settings = _write_settings(
             '[theme.templates.user.noctwhspr_mic_osd]\n'
             'input_path = "$XDG_CONFIG_HOME/noctalia/templates/somewhere-else.css"\n'
         )
         self.addCleanup(settings.unlink)
         with _no_noctalia_binary():
-            self.assertFalse(cli_commands._noctalia_register_template(
+            self.assertFalse(noctalia._noctalia_register_template(
                 settings, dst['template_input'], dst['template_output']))
 
     def test_registered_section_pointing_at_current_file_passes(self):
-        dst = cli_commands._noctalia_paths()
+        dst = noctalia._noctalia_paths()
         settings = _write_settings(
             '[theme.templates.user.noctwhspr_mic_osd]\n'
             f'input_path = "$XDG_CONFIG_HOME/noctalia/templates/{dst["template_input"].name}"\n'
         )
         self.addCleanup(settings.unlink)
         with _no_noctalia_binary():
-            self.assertTrue(cli_commands._noctalia_register_template(
+            self.assertTrue(noctalia._noctalia_register_template(
                 settings, dst['template_input'], dst['template_output']))
 
 

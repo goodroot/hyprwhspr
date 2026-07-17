@@ -1,6 +1,6 @@
 """
 Shared utility functions for detecting if hyprwhspr is already running.
-Used by both main.py and cli_commands.py to broker between local/remote state.
+Used by both main.py and the cli package to broker between local/remote state.
 """
 
 import os

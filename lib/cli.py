@@ -17,28 +17,9 @@ try:
 except ImportError:
     from output_control import OutputController, VerbosityLevel
 
-from cli_commands import (
-    setup_command,
-    omarchy_command,
-    config_command,
-    waybar_command,
-    noctalia_command,
-    mic_osd_command,
-    systemd_command,
-    model_command,
-    status_command,
-    validate_command,
-    test_command,
-    backend_repair_command,
-    backend_reset_command,
-    state_show_command,
-    state_validate_command,
-    state_reset_command,
-    uninstall_command,
-    keyboard_command,
-    record_command,
-    record_capture_command,
-)
+# Command handlers are imported lazily inside their dispatch branches below:
+# the record command runs on every hotkey press, and importing all command
+# modules eagerly costs it the full import graph (evdev, rich, installers).
 
 
 def _get_version():
@@ -239,6 +220,8 @@ def main():
     # Route to appropriate command handler
     try:
         if args.command == 'setup':
+            from cli.setup import setup_command
+            from cli.install import omarchy_command
             if hasattr(args, 'setup_action') and args.setup_action == 'auto':
                 if not omarchy_command(args):
                     sys.exit(1)
@@ -249,6 +232,7 @@ def main():
                 python_path = getattr(args, 'python_path', None)
                 setup_command(python_path=python_path)
         elif args.command == 'install':
+            from cli.install import omarchy_command
             if not args.install_action:
                 install_parser.print_help()
                 sys.exit(1)
@@ -259,38 +243,47 @@ def main():
             if not args.config_action:
                 config_parser.print_help()
                 sys.exit(1)
+            from cli.config import config_command
             config_command(args.config_action, show_all=getattr(args, 'show_all', False))
         elif args.command == 'waybar':
             if not args.waybar_action:
                 waybar_parser.print_help()
                 sys.exit(1)
+            from cli.waybar import waybar_command
             waybar_command(args.waybar_action)
         elif args.command == 'noctalia':
             if not args.noctalia_action:
                 noctalia_parser.print_help()
                 sys.exit(1)
+            from cli.noctalia import noctalia_command
             noctalia_command(args.noctalia_action)
         elif args.command == 'mic-osd':
             if not args.mic_osd_action:
                 mic_osd_parser.print_help()
                 sys.exit(1)
+            from cli.mic_osd import mic_osd_command
             mic_osd_command(args.mic_osd_action)
         elif args.command == 'systemd':
             if not args.systemd_action:
                 systemd_parser.print_help()
                 sys.exit(1)
+            from cli.systemd import systemd_command
             systemd_command(args.systemd_action)
         elif args.command == 'model':
             if not args.model_action:
                 model_parser.print_help()
                 sys.exit(1)
+            from cli.models import model_command
             model_name = getattr(args, 'name', 'base')
             model_command(args.model_action, model_name)
         elif args.command == 'status':
+            from cli.status import status_command
             status_command()
         elif args.command == 'validate':
+            from cli.maintenance import validate_command
             validate_command()
         elif args.command == 'test':
+            from cli.test_cmd import test_command
             test_command(
                 live=getattr(args, 'live', False),
                 mic_only=getattr(args, 'mic_only', False)
@@ -299,8 +292,10 @@ def main():
             if not args.keyboard_action:
                 keyboard_parser.print_help()
                 sys.exit(1)
+            from cli.keyboard import keyboard_command
             keyboard_command(args.keyboard_action)
         elif args.command == 'backend':
+            from cli.maintenance import backend_repair_command, backend_reset_command
             if not args.backend_action:
                 backend_parser.print_help()
                 sys.exit(1)
@@ -309,6 +304,8 @@ def main():
             elif args.backend_action == 'reset':
                 backend_reset_command()
         elif args.command == 'state':
+            from cli.maintenance import (state_show_command, state_validate_command,
+                                         state_reset_command)
             if not args.state_action:
                 state_parser.print_help()
                 sys.exit(1)
@@ -319,6 +316,7 @@ def main():
             elif args.state_action == 'reset':
                 state_reset_command(getattr(args, 'all', False))
         elif args.command == 'record':
+            from cli.record import record_command, record_capture_command
             if not args.record_action:
                 record_parser.print_help()
                 sys.exit(1)
@@ -327,6 +325,7 @@ def main():
             else:
                 record_command(args.record_action, language=getattr(args, 'language', None))
         elif args.command == 'uninstall':
+            from cli.uninstall import uninstall_command
             uninstall_command(
                 keep_models=getattr(args, 'keep_models', False),
                 remove_permissions=getattr(args, 'remove_permissions', False),

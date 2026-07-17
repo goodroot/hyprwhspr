@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "lib" / "src"))
 def _stub_if_missing(name, **attrs):
     """Install a stub module only if the real one cannot be imported.
 
-    cli_commands transitively imports global_shortcuts -> evdev (a hard import)
+    The cli modules transitively import global_shortcuts -> evdev (a hard import)
     and rich (prompt/console/table). On a dev machine these are installed and we
     must NOT shadow them; in a bare CI we fall back to a minimal stub so the
     import still works.
@@ -40,7 +40,7 @@ _stub_if_missing(
     UInput=object,
 )
 
-import cli_commands  # noqa: E402
+from cli import config, install, setup, systemd, uninstall  # noqa: E402
 from config_manager import ConfigManager  # noqa: E402
 
 
@@ -51,12 +51,12 @@ class SetupCommandScopeTests(unittest.TestCase):
         # UnboundLocalError at the gsettings (toolkit-accessibility) call. It must
         # resolve to the module-level helper instead.
         self.assertNotIn(
-            "run_command", cli_commands.setup_command.__code__.co_varnames
+            "run_command", setup.setup_command.__code__.co_varnames
         )
 
     def test_gnome_detection_uses_session_desktop_fallback(self):
         with mock.patch.dict(
-            cli_commands.os.environ,
+            setup.os.environ,
             {
                 "XDG_CURRENT_DESKTOP": "",
                 "XDG_SESSION_DESKTOP": "gnome",
@@ -64,7 +64,7 @@ class SetupCommandScopeTests(unittest.TestCase):
             },
             clear=True,
         ):
-            self.assertTrue(cli_commands._is_gnome_or_mutter_session())
+            self.assertTrue(setup._is_gnome_or_mutter_session())
 
 
 class ConfigDefaultTests(unittest.TestCase):
@@ -82,8 +82,8 @@ class ConfigDefaultTests(unittest.TestCase):
         self.assertEqual(defaults["applications"], {})
 
     def test_config_command_routes_focused_window_helper(self):
-        with mock.patch.object(cli_commands, "show_focused_window_config_identifiers") as helper:
-            cli_commands.config_command("focused-window")
+        with mock.patch.object(config, "show_focused_window_config_identifiers") as helper:
+            config.config_command("focused-window")
 
         helper.assert_called_once_with()
 
@@ -95,7 +95,7 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
         root = Path(tmp.name)
         user_systemd = root / "systemd"
         user_systemd.mkdir()
-        ydotool_unit = user_systemd / cli_commands.YDOTOOL_UNIT
+        ydotool_unit = user_systemd / systemd.YDOTOOL_UNIT
         ydotool_unit.write_text(unit_text, encoding="utf-8")
         return root, user_systemd, ydotool_unit
 
@@ -109,23 +109,23 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
         patches = [
-            mock.patch.object(cli_commands, "USER_SYSTEMD_DIR", user_systemd),
-            mock.patch.object(cli_commands, "USER_HOME", root / "missing-home"),
-            mock.patch.object(cli_commands, "USER_CONFIG_DIR", root / "missing-config"),
-            mock.patch.object(cli_commands, "VENV_DIR", root / "missing-venv"),
-            mock.patch.object(cli_commands, "PYWHISPERCPP_SRC_DIR", root / "missing-src"),
-            mock.patch.object(cli_commands, "PYWHISPERCPP_MODELS_DIR", root / "missing-models"),
-            mock.patch.object(cli_commands, "STATE_DIR", root / "missing-state"),
-            mock.patch.object(cli_commands, "CREDENTIALS_FILE", root / "missing-creds"),
-            mock.patch.object(cli_commands, "USER_BASE", root / "missing-user-base"),
-            mock.patch.object(cli_commands, "setup_waybar"),
-            mock.patch.object(cli_commands, "_detect_current_backend", return_value=None),
-            mock.patch.object(cli_commands, "run_command", side_effect=fake_run_command),
+            mock.patch.object(uninstall, "USER_SYSTEMD_DIR", user_systemd),
+            mock.patch.object(uninstall, "USER_HOME", root / "missing-home"),
+            mock.patch.object(uninstall, "USER_CONFIG_DIR", root / "missing-config"),
+            mock.patch.object(uninstall, "VENV_DIR", root / "missing-venv"),
+            mock.patch.object(uninstall, "PYWHISPERCPP_SRC_DIR", root / "missing-src"),
+            mock.patch.object(uninstall, "PYWHISPERCPP_MODELS_DIR", root / "missing-models"),
+            mock.patch.object(uninstall, "STATE_DIR", root / "missing-state"),
+            mock.patch.object(uninstall, "CREDENTIALS_FILE", root / "missing-creds"),
+            mock.patch.object(uninstall, "USER_BASE", root / "missing-user-base"),
+            mock.patch.object(uninstall, "setup_waybar"),
+            mock.patch.object(uninstall, "_detect_current_backend", return_value=None),
+            mock.patch.object(uninstall, "run_command", side_effect=fake_run_command),
         ]
         with contextlib.ExitStack() as stack:
             for patch in patches:
                 stack.enter_context(patch)
-            cli_commands.uninstall_command(skip_permissions=True, yes=True)
+            uninstall.uninstall_command(skip_permissions=True, yes=True)
 
         return ydotool_unit, calls
 
@@ -137,9 +137,9 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             calls.append(cmd)
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        with mock.patch.object(cli_commands, "USER_SYSTEMD_DIR", user_systemd), \
-                mock.patch.object(cli_commands, "run_command", side_effect=fake_run_command):
-            cli_commands._migrate_remove_managed_ydotool_unit()
+        with mock.patch.object(systemd, "USER_SYSTEMD_DIR", user_systemd), \
+                mock.patch.object(systemd, "run_command", side_effect=fake_run_command):
+            systemd._migrate_remove_managed_ydotool_unit()
 
         return ydotool_unit, calls
 
@@ -150,7 +150,7 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
 
         self.assertFalse(unit.exists())
         self.assertIn(
-            ["systemctl", "--user", "disable", "--now", cli_commands.YDOTOOL_UNIT],
+            ["systemctl", "--user", "disable", "--now", systemd.YDOTOOL_UNIT],
             calls,
         )
         self.assertIn(["systemctl", "--user", "daemon-reload"], calls)
@@ -169,8 +169,8 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
         )
 
         self.assertFalse(unit.exists())
-        self.assertIn(["systemctl", "--user", "stop", cli_commands.YDOTOOL_UNIT], calls)
-        self.assertIn(["systemctl", "--user", "disable", cli_commands.YDOTOOL_UNIT], calls)
+        self.assertIn(["systemctl", "--user", "stop", uninstall.YDOTOOL_UNIT], calls)
+        self.assertIn(["systemctl", "--user", "disable", uninstall.YDOTOOL_UNIT], calls)
 
     def test_uninstall_leaves_foreign_ydotool_unit_untouched(self):
         unit, calls = self._run_uninstall_with_ydotool_unit(
@@ -178,8 +178,8 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
         )
 
         self.assertTrue(unit.exists())
-        self.assertNotIn(["systemctl", "--user", "stop", cli_commands.YDOTOOL_UNIT], calls)
-        self.assertNotIn(["systemctl", "--user", "disable", cli_commands.YDOTOOL_UNIT], calls)
+        self.assertNotIn(["systemctl", "--user", "stop", uninstall.YDOTOOL_UNIT], calls)
+        self.assertNotIn(["systemctl", "--user", "disable", uninstall.YDOTOOL_UNIT], calls)
 
 
 class HyprlandBindingSetupTests(unittest.TestCase):
@@ -196,12 +196,12 @@ class HyprlandBindingSetupTests(unittest.TestCase):
                 calls.append(cmd)
                 return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-            with mock.patch.object(cli_commands, "USER_HOME", root), \
-                    mock.patch.object(cli_commands, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
-                    mock.patch.object(cli_commands.shutil, "which", return_value="/usr/bin/hyprctl"), \
-                    mock.patch.dict(cli_commands.os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, clear=True), \
-                    mock.patch.object(cli_commands, "run_command", side_effect=fake_run_command):
-                self.assertTrue(cli_commands._setup_hyprland_bindings())
+            with mock.patch.object(install, "USER_HOME", root), \
+                    mock.patch.object(install, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
+                    mock.patch.object(install.shutil, "which", return_value="/usr/bin/hyprctl"), \
+                    mock.patch.dict(install.os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, clear=True), \
+                    mock.patch.object(install, "run_command", side_effect=fake_run_command):
+                self.assertTrue(install._setup_hyprland_bindings())
 
             content = bindings_file.read_text(encoding="utf-8")
             self.assertIn("/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record", content)

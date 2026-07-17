@@ -1,26 +1,23 @@
-"""Guard for the cli_commands.py -> lib/src/cli/ package split.
+"""Guard for test patch targets on the lib/src/cli/ package.
 
 Tests in this suite monkeypatch attributes on CLI modules, e.g.
-``mock.patch.object(cli_commands, "VENV_DIR", ...)``. Such a patch only
+``mock.patch.object(uninstall, "VENV_DIR", ...)``. Such a patch only
 affects code whose global namespace is that module. When a function moves
-to another module (facade re-export), the patch still applies cleanly but
-reaches nothing: the moved code reads its own module's global. Tests then
-pass while testing nothing.
+to another module, the patch still applies cleanly but reaches nothing:
+the moved code reads its own module's global. Tests then pass while
+testing nothing.
 
-This guard makes that failure loud. For every name patched on a CLI-family
-module (cli_commands.py and, once it exists, lib/src/cli/*.py), the target
-module's source must actually READ that name somewhere — a pure re-export
-binds the name without ever reading it, so the moment a section moves
-without its test patch targets moving along, this test fails.
+This guard makes that failure loud. For every name patched on a cli
+package module, the target module's source must actually READ that name
+somewhere — a name that is bound but never read cannot be reached by a
+patch, so the moment code moves between cli modules without its test
+patch targets moving along, this test fails.
 
 Scan limitations (keep test code within them):
-- CLI-family modules must be referenced unaliased in patch calls, either as
+- CLI modules must be referenced unaliased in patch calls, either as
   ``patch.object(<module_name>, "NAME")`` or ``patch("<module_name>.NAME")``.
-- Dotted targets like ``patch.object(cli_commands.shutil, "which")`` patch a
+- Dotted targets like ``patch.object(install.shutil, "which")`` patch a
   global stdlib object, are move-safe, and are deliberately not matched.
-
-Delete this file together with the cli_commands facade once the split is
-complete and the facade is removed.
 """
 
 import ast
@@ -32,23 +29,21 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / 'lib' / 'src'
 TESTS_DIR = REPO_ROOT / 'tests'
 
-# patch.object(cli_commands, "name")  /  patch.object(keyboard, 'name')
+# patch.object(uninstall, "name")  /  patch.object(keyboard, 'name')
 _PATCH_OBJECT_RE = re.compile(
     r"patch\.object\(\s*(\w+)\s*,\s*[\"'](\w+)[\"']")
-# patch("cli_commands.name")  — string form, module path with final attr
+# patch("uninstall.name")  — string form, module path with final attr
 _PATCH_STRING_RE = re.compile(
     r"patch(?:\.dict)?\(\s*[\"']([\w.]+)\.(\w+)[\"']")
 
 
 def _cli_family_modules() -> dict:
-    """Map unaliased module identifier -> source path for CLI-family modules."""
-    modules = {'cli_commands': SRC_DIR / 'cli_commands.py'}
-    cli_pkg = SRC_DIR / 'cli'
-    if cli_pkg.is_dir():
-        for path in cli_pkg.glob('*.py'):
-            if path.stem != '__init__':
-                modules[path.stem] = path
-    return modules
+    """Map unaliased module identifier -> source path for cli package modules."""
+    return {
+        path.stem: path
+        for path in (SRC_DIR / 'cli').glob('*.py')
+        if path.stem != '__init__'
+    }
 
 
 def _collect_patch_targets(family: dict) -> set:
@@ -100,9 +95,9 @@ class PatchTargetHygieneTest(unittest.TestCase):
         self.assertEqual(
             stale, [],
             "These test patch targets are bound but never read in the target "
-            "module (probably facade re-exports after a code move — the patch "
-            "reaches nothing). Re-point the tests at the module the code now "
-            f"lives in: {stale}")
+            "module (probably left behind by a code move — the patch reaches "
+            "nothing). Re-point the tests at the module the code now lives "
+            f"in: {stale}")
 
 
 if __name__ == '__main__':

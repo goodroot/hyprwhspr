@@ -18,7 +18,7 @@ class AudioManager:
         
         # Initialize settings from config if available
         if self.config_manager:
-            self.enabled = self.config_manager.get_setting('audio_feedback', False)  # Default to disabled
+            self.enabled = self.config_manager.get_setting('audio_feedback', True)  # Default to enabled
             # General audio volume (fallback for _play_sound when volume=None)
             self.volume = self.config_manager.get_setting('audio_volume', 0.5)  # Default 50% volume
             self.start_volume = self.config_manager.get_setting('start_sound_volume', 1.0)
