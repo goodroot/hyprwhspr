@@ -191,7 +191,7 @@ def systemd_status():
 def _is_service_running_via_systemd() -> bool:
     """Check if hyprwhspr service is running via systemd"""
     try:
-        from .instance_detection import is_service_active_via_systemd
+        from instance_detection import is_service_active_via_systemd
         return is_service_active_via_systemd(SERVICE_NAME)
     except ImportError:
         # Fallback if import fails
@@ -211,7 +211,7 @@ def _is_service_running_via_systemd() -> bool:
 def _is_running_manually() -> bool:
     """Check if hyprwhspr is running manually (not via systemd)"""
     try:
-        from .instance_detection import is_running_manually
+        from instance_detection import is_running_manually
         return is_running_manually()
     except ImportError:
         # Fallback if import fails
