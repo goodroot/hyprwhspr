@@ -385,7 +385,7 @@
     },
     "audio_feedback": {
       "type": "boolean",
-      "default": false,
+      "default": true,
       "description": "Play sounds on recording start/stop/error"
     },
     "audio_volume": {

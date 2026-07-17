@@ -148,7 +148,7 @@ class ConfigManager:
             'cohere_transcribe_dtype': 'bfloat16',   # 'bfloat16' | 'float32' — bfloat16 halves VRAM without float16 overflow in attention masking
             'cohere_transcribe_compile': False,      # torch.compile encoder for faster throughput (adds warmup on first call)
             # Audio feedback settings
-            'audio_feedback': False,             # Play sounds on recording start/stop/error
+            'audio_feedback': True,              # Play sounds on recording start/stop/error
             'audio_volume': 0.5,                 # Master audio feedback volume (0.0-1.0)
             'start_sound_volume': 1.0,           # Volume multiplier for start sound
             'stop_sound_volume': 1.0,            # Volume multiplier for stop sound
@@ -212,11 +212,6 @@ class ConfigManager:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f)
                     
-                # Detect whether this is a new-style sparse config (has $schema)
-                # or a legacy full config. Legacy configs need "missing key" migrations;
-                # sparse configs omit default values intentionally.
-                is_legacy_config = '$schema' not in loaded_config
-
                 # Strip $schema key so it doesn't pollute self.config
                 loaded_config.pop('$schema', None)
 
@@ -237,13 +232,6 @@ class ConfigManager:
                     loaded_config['audio_device_id'] = loaded_config['audio_device']
                     del loaded_config['audio_device']
                     migrations.append("'audio_device' -> 'audio_device_id'")
-
-                # Migrate pre-audio-feedback configs: enable audio feedback for existing users
-                # who set up before this feature existed (previously done in setup_config).
-                # Only for legacy configs — sparse configs omit audio_feedback intentionally.
-                if is_legacy_config and 'audio_feedback' not in loaded_config:
-                    loaded_config['audio_feedback'] = True
-                    migrations.append("enabled 'audio_feedback' for legacy config")
 
                 # Merge loaded config with defaults (preserving any new default keys)
                 self.config.update(loaded_config)

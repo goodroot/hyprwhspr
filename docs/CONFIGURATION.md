@@ -740,7 +740,7 @@ Optional sound notifications:
 
 ```jsonc
 {
-    "audio_feedback": true,            // Enable audio feedback (default: false)
+    "audio_feedback": true,            // Enable audio feedback (default: true)
     "audio_volume": 0.5,               // General audio volume fallback (0.1 to 1.0, default: 0.5)
     "start_sound_volume": 1.0,         // Start recording sound volume (0.1 to 1.0, default: 1.0)
     "stop_sound_volume": 1.0,          // Stop recording sound volume (0.1 to 1.0, default: 1.0)
