@@ -287,8 +287,6 @@ def list_cohere_transcribe_models():
 
 def download_cohere_transcribe_model():
     """Download (or re-download) the Cohere Transcribe model weights."""
-    from credential_manager import get_credential
-
     hf_token = get_credential('huggingface') or None
     if not hf_token:
         log_warning("No HuggingFace token found.")
