@@ -1,12 +1,8 @@
 # Configuration guide
 
-Perform basic setup and configuration via `hyprwhspr setup`.
+Configure via `hyprwhspr setup`, the CLI, or by editing `~/.config/hyprwhspr/config.json` directly.
 
-Or use the CLI, or edit `~/.config/hyprwhspr/config.json` directly.
-
-The config file uses **sparse storage** and will only contain values you've explicitly changed from the defaults.
-
-This keeps your config clean and means upstream default changes apply automatically on update.
+The config file uses **sparse storage** — it only contains values you've changed from the defaults, so it stays clean and upstream default changes apply automatically on update.
 
 There is also a `$schema` reference for IDE autocompletion and validation:
 
@@ -52,7 +48,7 @@ Only 2 essential options:
 
 Both `config.json` and `credentials.json` support `${VAR}` tokens.
 
-Tokens are stored as-is on disk and expanded at read time
+Tokens are stored as-is on disk and expanded at read time:
 
 ```jsonc
 {
@@ -201,9 +197,7 @@ Use a different hotkey for a specific language:
 > - **Realtime WebSocket**: Fully supported (OpenAI, Google, ElevenLabs)
 > - **REST API**: Only if the endpoint accepts a `language` parameter (varies by provider/custom endpoint)
 
-The primary shortcut continues to use the `language` setting from your config (or auto-detect if set to `null`).
-
-The secondary shortcut will always use the configured `secondary_language` when pressed.
+The primary shortcut uses the `language` setting from your config (or auto-detect if `null`); the secondary always uses `secondary_language`.
 
 Configure via CLI:
 
@@ -213,7 +207,7 @@ hyprwhspr config secondary-shortcut
 
 ### Cancel shortcut
 
-Useful when you trigger the shortcut by accident or start speaking and want to bail out. Plays the error sound on cancel so you have clear audio feedback.
+Bail out of an accidental recording — discards the audio and plays the error sound:
 
 ```jsonc
 {
@@ -221,9 +215,7 @@ Useful when you trigger the shortcut by accident or start speaking and want to b
 }
 ```
 
-The cancel shortcut works in all recording modes.
-
-**In long-form mode it discards all accumulated segments and resets the session to idle.**
+Works in all recording modes; **in long-form mode it discards all accumulated segments and resets the session to idle.**
 
 You can also cancel without a dedicated shortcut:
 
@@ -367,9 +359,7 @@ Model stored in: `~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe
 
 Parakeet TDT V3 via [onnx-asr](https://github.com/istupakov/onnx-asr).
 
-Typically this model requires a large GPU —
-
-onnx-asr makes it run well on CPU with a very small accuracy trade-off.
+Typically this model requires a large GPU — onnx-asr makes it run well on CPU with a very small accuracy trade-off.
 
 **Requirements:** ~1 GB RAM (CPU) or VRAM (GPU)
 
@@ -397,13 +387,7 @@ Local Whisper via [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
 
 Run `hyprwhspr setup` and select **[2] faster-whisper** to install.
 
-**Best for:**
-
-CPU users wanting faster inference than whisper.cpp, or NVIDIA GPU users where VRAM is constrained.
-
-INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for float16.
-
-AMD/Intel GPU users should use Parakeet or whisper.cpp instead — CTranslate2 does not support Vulkan or ROCm.
+**Best for:** CPU users wanting faster inference than whisper.cpp, or NVIDIA GPU users where VRAM is constrained — INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for float16. AMD/Intel GPU users should use Parakeet or whisper.cpp instead (CTranslate2 does not support Vulkan or ROCm).
 
 Built-in Silero VAD strips silence before inference — the most effective mitigation for Whisper's hallucination loops on longer recordings.
 
@@ -437,11 +421,7 @@ Local Whisper via [pywhispercpp](https://github.com/abdeladim-s/pywhispercpp).
 
 Run `hyprwhspr setup` and select **[3] Whisper CPU**, **[4] Whisper NVIDIA**, or **[5] Whisper AMD/Intel (Vulkan)**.
 
-**Best for:**
-
-Modern NVIDIA cards or discrete AMD/Intel use (via Vulkan).
-
-Extremely fast on GPU with `large-v3` or `large-v3-turbo`.
+**Best for:** modern NVIDIA cards or discrete AMD/Intel (via Vulkan) — extremely fast on GPU with `large-v3` or `large-v3-turbo`.
 
 #### Available models
 
@@ -488,9 +468,7 @@ If the download fails (e.g. offline), the service logs a warning and continues w
 
 #### Language detection
 
-English only speakers use `.en` models which are smaller.
-
-For multi-language detection, ensure you select a model which does not say `.en`:
+English-only speakers can use the smaller `.en` models; for multi-language detection, pick a model without the `.en` suffix:
 
 ```jsonc
 {
@@ -498,17 +476,20 @@ For multi-language detection, ensure you select a model which does not say `.en`
 }
 ```
 
-Auto-detect runs an extra detection pass per utterance. Setting `language` explicitly skips it and lowers latency.
+Auto-detect (`null`, the default) runs an extra detection pass per utterance. Setting `language` explicitly skips it and lowers latency.
 
-Language options:
+Whisper accepts any of its 99 supported language codes — the core set:
 
-- **`null`** (default) - Auto-detect language from audio
-- **`"en"`** - English transcription
-- **`"nl"`** - Dutch transcription
-- **`"fr"`** - French transcription
-- **`"de"`** - German transcription
-- **`"es"`** - Spanish transcription
-- **`etc.`** - Any supported language code
+| Code | Language | Code | Language |
+|------|----------|------|----------|
+| `en` | English | `pt` | Portuguese |
+| `de` | German | `nl` | Dutch |
+| `fr` | French | `pl` | Polish |
+| `es` | Spanish | `ru` | Russian |
+| `it` | Italian | `zh` | Chinese |
+| `ja` | Japanese | `ko` | Korean |
+
+For the full list, see the [Whisper language codes](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py).
 
 #### Whisper prompt
 
@@ -523,9 +504,7 @@ Customize transcription behavior:
 The prompt influences how Whisper interprets and transcribes your audio, eg:
 
 - `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
-
 - `"Transcribe as casual conversation with natural speech patterns."`
-
 - `"Transcribe as an ornery pirate on the cusp of scurvy."`
 
 #### Translation
@@ -785,11 +764,7 @@ Custom sounds:
 
 ### Audio stream keepalive
 
-By default hyprwhspr opens the microphone only while recording.
-
-On some hardware (certain USB mics on raw ALSA), the first recording after an idle period fails with a `paTimedOut` error because the audio device suspends between uses.
-
-If you see this, enable the keepalive stream:
+By default hyprwhspr opens the microphone only while recording. On some hardware (certain USB mics on raw ALSA), the audio device suspends between uses and the first recording after an idle period fails with a `paTimedOut` error. If you see this, enable the keepalive stream:
 
 ```jsonc
 {
@@ -860,13 +835,9 @@ Remove common filler words automatically:
 }
 ```
 
-When enabled, filler words are removed before text injection. Customize the list to match your speech patterns.
-
 ### Symbol replacements
 
-Automatically converts spoken words to symbols / punctuation.
-
-Toggle this behavior in `~/.config/hyprwhspr/config.json`:
+Automatically converts spoken words to symbols and punctuation:
 
 ```jsonc
 {
@@ -1097,15 +1068,13 @@ Device name takes priority if both are set. Use `hyprwhspr keyboard list` to see
 
 ### Keyboard hotplug (docks, Bluetooth)
 
-By default (`keyboard_hotplug: true`) hyprwhspr watches for keyboards plugged in after startup and attaches them automatically.  This is controlled by the `keyboard_hotplug` flag:
+By default hyprwhspr watches for keyboards plugged in after startup and attaches them automatically:
 
 ```jsonc
 {
   "keyboard_hotplug": true   // default; set false for startup-only discovery
 }
 ```
-
-Set it to `false` if you want hyprwhspr to only ever use keyboards present when the service starts.
 
 **Restricting which keyboards are used (optional):** setting a `keyboard_device_names` allowlist limits attachment — at startup *and* on hot-plug — to just the listed devices. Use it if auto-discovery picks up a device you don't want grabbed, or to pin behavior to a known set of keyboards. Leave it unset to keep the default "attach any keyboard" behavior.
 
@@ -1171,11 +1140,7 @@ hyprwhspr record capture
 hyprwhspr record capture --lang it   # Capture with language override
 ```
 
-The `--lang` parameter overrides the default language for that recording session.
-
-This is useful for multilingual users who want different hotkeys for different languages.
-
-Then bind these commands to your preferred hotkeys in KDE, GNOME, sxhkd, or any other hotkey system:
+`--lang` overrides the default language for that recording session — handy for per-language hotkeys. Bind the commands in KDE, GNOME, sxhkd, or any other hotkey system:
 
 ```bash
 # Example: KDE custom shortcuts
@@ -1191,11 +1156,7 @@ bind = SUPER, ESCAPE, exec, hyprwhspr record cancel
 
 ### Mute detection
 
-Lets you know when you're disconnected.
-
-Note, mute detection can cause conflicts with Bluetooth microphones.
-
-To disable it, add the following to your `~/.config/hyprwhspr/config.json`:
+Lets you know when you're disconnected. Mute detection can conflict with Bluetooth microphones — disable it if so:
 
 ```jsonc
 {
@@ -1205,11 +1166,7 @@ To disable it, add the following to your `~/.config/hyprwhspr/config.json`:
 
 ## GPU resource management
 
-Free GPU VRAM without stopping the service - useful before running a game, or other GPU-intensive workload.
-
-The service keeps running with all keyboard shortcuts active.
-
-Recording is blocked while the model is unloaded, with a desktop notification on attempt.
+Free GPU VRAM without stopping the service - useful before running a game or other GPU-intensive workload. Keyboard shortcuts stay active; recording is blocked while the model is unloaded, with a desktop notification on attempt.
 
 ```bash
 # Unload model from GPU memory (service stays alive, shortcuts still active)
@@ -1219,11 +1176,7 @@ hyprwhspr model unload
 hyprwhspr model reload
 ```
 
-Only applies to local-model backends (Cohere Transcribe, `pywhispercpp`, `faster-whisper`, `onnx-asr`).
-
-No-op for `rest-api` and `realtime-ws` (those hold no local GPU memory).
-
-The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
+Only applies to local-model backends (Cohere Transcribe, `pywhispercpp`, `faster-whisper`, `onnx-asr`) — no-op for `rest-api` and `realtime-ws`, which hold no local GPU memory. The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
 
 ### Hyprland keybindings
 
@@ -1262,13 +1215,7 @@ Still weird? Proceed.
 
 #### I heard the sound but don't see text
 
-On resume/restart, often the microphone "loses connection" and requires reseating.
-
-This is a Linux quirk and not resolvable by hyprwhspr.
-
-Reseat your microphone as prompted if it fails under these conditions.
-
-Also, within sound options, ensure that the **right microphone** is indeed set.
+On resume/restart, the microphone often "loses connection" and requires reseating — a Linux quirk not resolvable by hyprwhspr. Reseat your microphone as prompted, and ensure the **right microphone** is set in sound options.
 
 #### Hotkey not working
 
@@ -1403,11 +1350,7 @@ ls -la ~/hyprwhspr/share/assets/           # Script install
 which ffplay paplay pw-play aplay
 ```
 
-**Important:**
-
-The default sounds are OGG format. `aplay` (ALSA) only supports WAV files and will produce white noise if used with OGG.
-
-Install `ffplay` (ffmpeg) or ensure `paplay` (pulseaudio-utils) or `pw-play` (pipewire) is available for OGG playback.
+**Important:** the default sounds are OGG; `aplay` (ALSA) only supports WAV and will produce white noise on OGG. Install `ffplay` (ffmpeg) or ensure `paplay` (pulseaudio-utils) or `pw-play` (pipewire) is available.
 
 #### Model not found
 
