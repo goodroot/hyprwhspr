@@ -468,6 +468,14 @@ class RealtimeWsBackend(TranscriptionBackend):
             print(f'[REALTIME] Reconnect failed: {e}', flush=True)
             return False
 
+    def discard_audio(self) -> None:
+        """Drop buffered audio client- and server-side; keep the connection alive."""
+        if self._realtime_client:
+            try:
+                self._realtime_client.clear_audio_buffer()
+            except Exception as e:
+                print(f'[REALTIME] Failed to discard audio: {e}', flush=True)
+
     def close(self) -> None:
         """Cleanup Realtime WebSocket client"""
         if self._realtime_client:

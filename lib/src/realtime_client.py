@@ -4,6 +4,7 @@ Provider-agnostic design, use whatever.
 """
 
 import json
+from collections import deque
 from typing import Optional
 
 try:
@@ -33,6 +34,10 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         # Track if buffer was committed (by VAD or manual)
         # Prevents double-commit error when VAD auto-commits on speech end
         self._buffer_committed = False
+
+        # Items from previous/cancelled takes; late transcripts for them are dropped
+        self._session_item_ids = set()
+        self._retired_item_ids = deque(maxlen=64)
 
     # ------------------------------------------------------------------
     # Transport hooks
@@ -103,6 +108,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
         # Transcription events (fallback/alternative)
         elif event_type == 'conversation.item.input_audio_transcription.completed':
+            if self._is_retired_item(event):
+                return
             transcript = event.get('transcript', '') or ''
             transcript = transcript.strip()
             with self.lock:
@@ -121,6 +128,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             self._log(f'Transcription completed ({len(transcript)} chars)')
 
         elif event_type == 'conversation.item.input_audio_transcription.delta':
+            if self._is_retired_item(event):
+                return
             delta = event.get('delta', '') or ''
             if delta:
                 with self.lock:
@@ -132,6 +141,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             self._log('Audio buffer committed')
             with self.lock:
                 self._buffer_committed = True
+                self._track_item_locked(event)
 
         elif event_type == 'input_audio_buffer.speech_started':
             self._log('Speech detected')
@@ -139,6 +149,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             with self.lock:
                 self._buffer_committed = False
                 self._partial_transcript = ""
+                self._track_item_locked(event)
             self._notify_partial_transcript("")
 
         elif event_type == 'input_audio_buffer.speech_stopped':
@@ -153,6 +164,21 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             self._notify_partial_transcript("")
             self.response_complete = True
             self.response_event.set()  # Unblock waiting thread
+
+    def _track_item_locked(self, event: dict):
+        """Record the conversation item id for the current take (call under lock)."""
+        item_id = event.get('item_id')
+        if item_id:
+            self._session_item_ids.add(item_id)
+
+    def _is_retired_item(self, event: dict) -> bool:
+        """Whether a transcription event belongs to a previous/cancelled take."""
+        item_id = event.get('item_id')
+        with self.lock:
+            if item_id and item_id in self._retired_item_ids:
+                self._log('Dropping stale transcript for retired item')
+                return True
+        return False
 
     def _send_session_update(self):
         """Send session.update event based on mode"""
@@ -263,6 +289,10 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
     def clear_audio_buffer(self):
         """Clear the server-side audio buffer before starting a new recording."""
+        with self.lock:
+            # Retire the previous take's items so late transcripts are dropped
+            self._retired_item_ids.extend(self._session_item_ids)
+            self._session_item_ids.clear()
         if not self.connected or not self.ws:
             return
         try:

@@ -98,6 +98,18 @@ class WhisperManager:
             return self._backend.get_streaming_callback()
         return None
 
+    def _active_realtime_backend(self):
+        """The realtime-ws backend when it has a live client, else None."""
+        if (self._backend is not None and self._backend.name == 'realtime-ws'
+                and self._backend.is_loaded):
+            return self._backend
+        return None
+
+    def realtime_client_missing(self) -> bool:
+        """True when the configured realtime-ws backend has no client (destructive close)."""
+        return (self._backend is not None and self._backend.name == 'realtime-ws'
+                and not self._backend.is_loaded)
+
     def set_realtime_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         """Set callback for realtime partial transcript previews."""
         self._realtime_partial_callback = callback
@@ -111,17 +123,23 @@ class WhisperManager:
 
     def update_realtime_language(self, language: Optional[str]) -> None:
         """Apply a language override to a connected realtime client (no-op otherwise)."""
-        if (self._backend is not None and self._backend.name == 'realtime-ws'
-                and self._backend.is_loaded):
-            self._backend.update_language(language)
+        backend = self._active_realtime_backend()
+        if backend:
+            backend.update_language(language)
+
+    def discard_realtime_audio(self) -> None:
+        """Discard buffered realtime audio without closing the connection (no-op otherwise)."""
+        backend = self._active_realtime_backend()
+        if backend:
+            backend.discard_audio()
 
     def close_realtime_connection(self, reason: str = '') -> None:
         """Close the realtime WebSocket if one is active (no-op otherwise)."""
-        if (self._backend is not None and self._backend.name == 'realtime-ws'
-                and self._backend.is_loaded):
+        backend = self._active_realtime_backend()
+        if backend:
             note = f' ({reason})' if reason else ''
             print(f'[CLEANUP] Closing realtime WebSocket{note}', flush=True)
-            self._backend.close()
+            backend.close()
 
     def reinitialize_after_resume(self, only_if_idle: bool = False) -> bool:
         """Recover backend state after suspend/resume or audio recovery.
