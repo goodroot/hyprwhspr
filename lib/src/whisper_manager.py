@@ -56,7 +56,9 @@ class WhisperManager:
         self._realtime_partial_callback = None
 
         # Thread safety for model operations
-        self._model_lock = threading.Lock()
+        # Serializes local model use and backend replacement.  An RLock keeps
+        # backend initialization free to call manager helpers on this thread.
+        self._model_lock = threading.RLock()
 
         # Single-flight initialize(): concurrent callers coalesce onto the
         # in-flight init instead of racing the backend swap
@@ -96,6 +98,12 @@ class WhisperManager:
                 self._init_cond.notify_all()
 
     def _initialize_backend(self) -> bool:
+        # Keep cleanup and replacement mutually exclusive with local
+        # transcription, which uses the same lock around model access.
+        with self._model_lock:
+            return self._initialize_backend_locked()
+
+    def _initialize_backend_locked(self) -> bool:
         try:
             self.temp_dir = self.config.get_temp_directory()
 

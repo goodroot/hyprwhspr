@@ -50,7 +50,7 @@ class GeminiRealtimeClient(WebSocketRealtimeClientBase):
     def _prepare_connect(self):
         self._setup_complete.clear()
 
-    def _after_open(self):
+    def _after_open(self, ws):
         """Send the setup/config message; 'connected' is set on setupComplete."""
         self._log('WebSocket opened, sending config...')
 
@@ -89,7 +89,7 @@ class GeminiRealtimeClient(WebSocketRealtimeClientBase):
         # Send setup message
         setup_message = {'setup': setup_config}
         try:
-            self.ws.send(json.dumps(setup_message))
+            ws.send(json.dumps(setup_message))
             self._log('Config sent')
         except Exception as e:
             self._log(f'Failed to send config: {e}')

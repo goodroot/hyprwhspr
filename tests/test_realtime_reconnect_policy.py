@@ -1,4 +1,5 @@
 import sys
+import json
 import threading
 import time
 import types
@@ -51,6 +52,37 @@ class ReconnectPolicyTests(unittest.TestCase):
     def test_close_before_connect_never_reconnects(self):
         client = self._client(connected=False, last_chunk_age=1)
         self.assertFalse(self._close_and_join(client))
+
+    def test_obsolete_socket_close_does_not_touch_active_connection(self):
+        client = self._client(last_chunk_age=1)
+        active_ws = object()
+        client.ws = active_ws
+        client._sender_running = True
+        client._audio_queue.append(b'audio')
+
+        client._on_close(object(), 1006, '')
+
+        self.assertTrue(client.connected)
+        self.assertTrue(client._sender_running)
+        self.assertEqual(list(client._audio_queue), [b'audio'])
+        self.assertIs(client.ws, active_ws)
+
+    def test_obsolete_socket_open_does_not_mark_client_connected(self):
+        client = self._client(connected=False, receiver_running=False)
+        client.ws = object()
+
+        client._on_open(object())
+
+        self.assertFalse(client.connected)
+        self.assertFalse(client.receiver_running)
+
+    def test_obsolete_socket_message_is_not_queued(self):
+        client = self._client()
+        client.ws = object()
+
+        client._on_message(object(), json.dumps({'type': 'stale'}))
+
+        self.assertTrue(client.event_queue.empty())
 
     def test_reconnect_loop_is_bounded_and_guarded(self):
         client = self._client()

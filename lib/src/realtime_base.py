@@ -218,7 +218,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
     def _on_connect_success(self):
         """Hook called after the connection is established."""
 
-    def _after_open(self):
+    def _after_open(self, _ws):
         """Hook called from _on_open after the receiver thread is started."""
 
     def _audio_ws_message(self, base64_audio: str) -> dict:
@@ -394,10 +394,13 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             if self.ws is attempt_ws:
                 self.ws = None
 
-    def _on_open(self, _ws):
+    def _on_open(self, ws):
         """WebSocket connection opened"""
         start_receiver = False
         with self.lock:
+            if ws is not self.ws:
+                self._log('Ignoring open from obsolete WebSocket')
+                return
             if not self.receiver_running:
                 self.receiver_running = True
                 start_receiver = True
@@ -406,13 +409,17 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             self.receiver_thread = threading.Thread(target=self._receiver_loop, daemon=True)
             self.receiver_thread.start()
 
-        self._after_open()
+        self._after_open(ws)
 
-    def _on_message(self, _ws, message):
+    def _on_message(self, ws, message):
         """Handle incoming WebSocket message"""
         try:
             event = json.loads(message)
-            self.event_queue.put(event)
+            with self.lock:
+                if ws is not self.ws:
+                    self._log('Ignoring message from obsolete WebSocket')
+                    return
+                self.event_queue.put(event)
         except json.JSONDecodeError as e:
             self._log(f'Failed to parse event: {e}')
 
@@ -420,9 +427,15 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         """Handle WebSocket error"""
         self._log(f'WebSocket error: {error}')
 
-    def _on_close(self, _ws, close_status_code, _close_msg):
+    def _on_close(self, ws, close_status_code, _close_msg):
         """Handle WebSocket close"""
         with self.lock:
+            # A failed/abandoned connection attempt may report its close after
+            # a newer socket has become active.  It must not tear down the
+            # newer connection's shared state.
+            if ws is not None and ws is not self.ws:
+                self._log(f'Ignoring close from obsolete WebSocket (code: {close_status_code})')
+                return
             was_connected = self.connected
             self.connected = False
             # Stop sender thread on disconnect; it will be restarted on next connect.

@@ -50,8 +50,10 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         # Always send session.update with audio format configuration
         self._send_session_update()
 
-    def _after_open(self):
+    def _after_open(self, ws):
         with self.lock:
+            if ws is not self.ws:
+                return
             self.connected = True
             self.connecting = False
             # Wake sender thread in case audio was queued just before connect.

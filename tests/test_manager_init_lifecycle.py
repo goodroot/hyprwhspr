@@ -132,6 +132,22 @@ class InitLifecycleTests(unittest.TestCase):
         self.assertEqual(seen_ready, [False])
         self.assertTrue(manager.ready)
 
+    def test_initialize_waits_for_active_model_operation(self):
+        events = []
+        manager = self._manager(make_fake_backend_cls(events))
+        self.assertTrue(manager.initialize())
+
+        with manager._model_lock:
+            thread = threading.Thread(target=manager.initialize)
+            thread.start()
+            threading.Event().wait(0.05)
+            self.assertTrue(thread.is_alive())
+            self.assertEqual([kind for kind, _ in events].count('cleanup'), 0)
+
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual([kind for kind, _ in events].count('cleanup'), 1)
+
 
 if __name__ == '__main__':
     unittest.main()
