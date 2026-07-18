@@ -43,12 +43,10 @@ class WaveformVisualization(BaseVisualization):
         # State manager for visualizer states (recording, paused, processing, etc.)
         self.state_manager = StateManager()
 
-        # Time tracking: recording elapsed (MM:SS) and transcription time (s)
+        # Elapsed time tracking for long-form mode
         self._recording_start_time = None
-        self._recording_elapsed = 0.0
-        self._processing_start_time = None
-        self._processing_elapsed = 0.0
-        self._timer_mode = None  # None | 'recording' | 'processing'
+        self._elapsed_seconds = 0.0
+        self._show_elapsed_time = False
     
     def update(self, level: float, samples: np.ndarray = None):
         """Update with new audio samples."""
@@ -89,15 +87,19 @@ class WaveformVisualization(BaseVisualization):
         self.state_manager.update()
     
     def draw(self, cr: cairo.Context, width: int, height: int):
-        """Draw the bar visualization."""
+        """Draw the bar visualization with recording indicator."""
         padding = 16
-
-        # Bars fill the full width (the red recording indicator dot was removed).
-        bars_start_x = padding
+        
+        # Recording indicator (just the dot) takes up left side
+        indicator_width = 30
+        bars_start_x = padding + indicator_width
         bars_width = width - bars_start_x - padding
         bars_height = height - (padding * 2)
         center_y = height / 2
-
+        
+        # Draw recording indicator (red dot + "Recording...")
+        self._draw_recording_indicator(cr, padding, center_y)
+        
         # Calculate bar dimensions to fill available space
         actual_num_bars = self.num_bars
         bar_gap = 2
@@ -187,120 +189,137 @@ class WaveformVisualization(BaseVisualization):
             cr.rectangle(x, bar_top, bar_width, bar_h)
             cr.fill()
 
-        # Draw recording elapsed / transcription time
-        self._draw_timer(cr, width, height)
+        # Draw elapsed time (for long-form mode)
+        self._draw_elapsed_time(cr, width, height)
 
     def set_state(self, state_str: str):
-        """Set the visualizer state and drive the recording/processing timers."""
+        """Set the visualizer state from a string value."""
         self.state_manager.set_state_from_string(state_str)
 
-        now = time.time()
-        prev_mode = self._timer_mode
-
+        # Start/stop elapsed time tracking based on state
         if state_str == 'recording':
-            # A new recording session begins whenever we enter recording from a
-            # non-recording state (idle, processing, result) — reset the timers.
-            if prev_mode != 'recording':
-                self._recording_elapsed = 0.0
-                self._processing_elapsed = 0.0
-                self._processing_start_time = None
-                self._recording_start_time = now
-            elif self._recording_start_time is None:
-                self._recording_start_time = now
-            self._timer_mode = 'recording'
+            if self._recording_start_time is None:
+                self._recording_start_time = time.time()
+            self._show_elapsed_time = True
         elif state_str == 'paused':
-            # Freeze the recording timer but keep it on screen.
+            # Keep showing elapsed time but don't increment
             if self._recording_start_time is not None:
-                self._recording_elapsed += now - self._recording_start_time
+                self._elapsed_seconds += time.time() - self._recording_start_time
                 self._recording_start_time = None
-            self._timer_mode = 'recording'
-        elif state_str == 'processing':
-            # Stop the recording timer, start timing the transcription.
-            if self._recording_start_time is not None:
-                self._recording_elapsed += now - self._recording_start_time
-                self._recording_start_time = None
-            self._processing_start_time = now
-            self._processing_elapsed = 0.0
-            self._timer_mode = 'processing'
-        elif state_str in ('success', 'error'):
-            # Freeze the processing time so the brief result display keeps it.
-            if self._processing_start_time is not None:
-                self._processing_elapsed = now - self._processing_start_time
-                self._processing_start_time = None
-            self._recording_start_time = None
-            self._timer_mode = 'processing' if self._processing_elapsed > 0 else None
+            self._show_elapsed_time = True
         else:
+            # Reset elapsed time for other states
             self._recording_start_time = None
-            self._processing_start_time = None
-            self._timer_mode = None
+            self._elapsed_seconds = 0.0
+            self._show_elapsed_time = False
 
-    def _timer_text(self) -> str:
-        """Current timer string, or '' when no timer should be shown."""
-        if self._timer_mode == 'recording':
-            seconds = self._recording_elapsed
-            if self._recording_start_time is not None:
-                seconds += time.time() - self._recording_start_time
-            return self._format_mmss(seconds)
-        if self._timer_mode == 'processing':
-            seconds = self._processing_elapsed
-            if self._processing_start_time is not None:
-                seconds += time.time() - self._processing_start_time
-            return self._format_processing(seconds)
-        return ""
+    def set_elapsed_time(self, seconds: float):
+        """Set the elapsed time directly (for long-form mode)."""
+        self._elapsed_seconds = seconds
+        self._show_elapsed_time = True
 
-    @staticmethod
-    def _format_mmss(seconds: float) -> str:
+    def _get_elapsed_seconds(self) -> float:
+        """Get current elapsed time in seconds."""
+        if self._recording_start_time is not None:
+            return self._elapsed_seconds + (time.time() - self._recording_start_time)
+        return self._elapsed_seconds
+
+    def _format_elapsed_time(self, seconds: float) -> str:
         """Format seconds as MM:SS."""
-        total = int(seconds)
-        return f"{total // 60:02d}:{total % 60:02d}"
+        minutes = int(seconds) // 60
+        secs = int(seconds) % 60
+        return f"{minutes:02d}:{secs:02d}"
 
-    @staticmethod
-    def _format_processing(seconds: float) -> str:
-        """Format transcription time: '1.2s' under a minute, else MM:SS."""
-        if seconds < 60:
-            return f"{seconds:.1f}s"
-        total = int(seconds)
-        return f"{total // 60:02d}:{total % 60:02d}"
-
-    def _draw_timer(self, cr: cairo.Context, width: int, height: int):
-        """Draw the recording/processing timer in the bottom-right corner."""
-        text = self._timer_text()
-        if not text:
+    def _draw_elapsed_time(self, cr: cairo.Context, width: int, height: int):
+        """Draw elapsed time in the bottom-right corner."""
+        if not self._show_elapsed_time:
             return
 
-        # Monospace so the digits don't jitter as they tick.
-        cr.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        elapsed = self._get_elapsed_seconds()
+        text = self._format_elapsed_time(elapsed)
+
+        # Set font (monospace for consistent width)
+        cr.select_font_face(
+            "monospace",
+            cairo.FONT_SLANT_NORMAL,
+            cairo.FONT_WEIGHT_NORMAL
+        )
         cr.set_font_size(11)
 
+        # Measure text
         extents = cr.text_extents(text)
         text_width = extents.width
         text_height = extents.height
 
-        # Position: bottom-right with padding.
+        # Position: bottom-right with padding
         padding = 10
         x = width - text_width - padding
         y = height - padding
 
-        # Background chip harmonized with the panel.
+        # Draw background using theme background color (harmonized with bars)
         bg_padding = 3
         bg_color = theme.background
-        bg_alpha = bg_color[3] * 0.9 if len(bg_color) == 4 else 0.9
+        # Use theme background with slightly higher opacity for better visibility
+        if len(bg_color) == 4:
+            bg_alpha = bg_color[3] * 0.9  # Slightly more opaque than main background
+        else:
+            bg_alpha = 0.9
         cr.set_source_rgba(
             bg_color[0] if len(bg_color) >= 1 else 0.1,
             bg_color[1] if len(bg_color) >= 2 else 0.1,
             bg_color[2] if len(bg_color) >= 3 else 0.15,
-            bg_alpha,
+            bg_alpha
         )
         cr.rectangle(
             x - bg_padding,
             y - text_height - bg_padding,
             text_width + bg_padding * 2,
-            text_height + bg_padding * 2,
+            text_height + bg_padding * 2
         )
         cr.fill()
 
-        # Neutral text colour (no red), readable on the dark panel.
-        text_color = theme.text
-        cr.set_source_rgba(text_color[0], text_color[1], text_color[2], 0.95)
+        # Draw text using bar colors (interpolated toward right/end for harmony)
+        # Use the right bar color (green) as it's at the end where timer is
+        bar_right = theme.bar_right
+        cr.set_source_rgba(
+            bar_right[0],
+            bar_right[1],
+            bar_right[2],
+            0.95  # High opacity for good readability
+        )
         cr.move_to(x, y)
         cr.show_text(text)
+
+    def _draw_recording_indicator(self, cr: cairo.Context, x: float, center_y: float):
+        """Draw the state indicator dot with state-appropriate color and animation."""
+        dot_radius = 6
+        dot_x = x + dot_radius + 4
+        dot_y = center_y
+
+        # Get animation value and color from state manager
+        pulse = self.state_manager.get_animation_value()
+        dot_color = self.state_manager.get_state_color()
+
+        # Skip drawing if animation has faded out completely (e.g., success state after 2s)
+        if pulse <= 0:
+            return
+
+        # Draw glow behind dot
+        cr.set_source_rgba(
+            dot_color[0],
+            dot_color[1],
+            dot_color[2],
+            0.3 * pulse
+        )
+        cr.arc(dot_x, dot_y, dot_radius + 3, 0, 2 * math.pi)
+        cr.fill()
+
+        # Draw main dot
+        cr.set_source_rgba(
+            dot_color[0],
+            dot_color[1],
+            dot_color[2],
+            pulse
+        )
+        cr.arc(dot_x, dot_y, dot_radius, 0, 2 * math.pi)
+        cr.fill()
