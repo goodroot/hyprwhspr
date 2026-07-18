@@ -966,59 +966,15 @@ def setup_command(python_path: Optional[str] = None):
         print("="*60)
         log_info("Ensuring Python virtual environment and dependencies are installed...")
         
-        from backend_installer import (
-            setup_python_venv, dependency_manifests, dependency_manifest_hash,
-            get_state, set_state,
-        )
+        from backend_installer import resolve_dependency_plan, execute_dependency_plan
 
-        manifests = dependency_manifests(backend_normalized, provider_id)
-        dependency_family = f"{backend_normalized}:{provider_id or 'default'}"
-        previous_family = get_state("dependency_family")
-        switch_family = bool(previous_family and previous_family != dependency_family)
-        if switch_family:
-            log_info(f"Backend dependency family changed ({previous_family} → {dependency_family}); recreating virtual environment...")
-        
-        # Setup venv (creates if needed, updates if exists)
-        pip_bin = setup_python_venv(force_rebuild=switch_family)
-        
-        cur_req_hash = dependency_manifest_hash(manifests)
-        stored_req_hash = get_state("dependency_manifest_hash")
-        
-        # Check if base dependencies are installed (excluding pywhispercpp)
-        deps_installed = False
         try:
-            python_bin = VENV_DIR / 'bin' / 'python'
-            result = run_command([
-                'timeout', '5s', str(python_bin), '-c',
-                'import sounddevice, numpy, soxr'
-            ], check=False, capture_output=True, show_output_on_error=False)
-            deps_installed = result.returncode == 0
-        except Exception:
-            pass
-        
-        # Install base dependencies if needed (excluding pywhispercpp)
-        if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed:
-            if not stored_req_hash:
-                # First time setup - no stored hash means venv is new
-                log_info("Installing base Python dependencies (excluding pywhispercpp)...")
-            elif cur_req_hash != stored_req_hash:
-                # Requirements actually changed
-                log_info("Requirements.txt has changed. Updating base Python dependencies...")
-            else:
-                # Dependencies missing but hash matches (shouldn't happen often)
-                log_info("Installing missing base Python dependencies...")
-            
-            try:
-                run_command([str(pip_bin), 'install', '-r', str(manifests[-1])], check=True)
-            except Exception as e:
-                log_error(f"Failed to install base dependencies: {e}")
-                log_warning("Continuing anyway - dependencies may be missing")
-            
-            set_state("dependency_manifest_hash", cur_req_hash)
-            set_state("dependency_family", dependency_family)
-            log_success("Base Python dependencies installed")
-        else:
-            log_info("Base Python dependencies up to date")
+            plan = resolve_dependency_plan(backend_normalized, provider_id)
+            execute_dependency_plan(plan, custom_python=python_path)
+        except Exception as e:
+            log_error(f"Failed to install Python dependencies: {e}")
+            return
+        log_success("Python dependencies installed and verified")
     
     # Model selection for local backends
     if not backend_install_skipped:

@@ -104,6 +104,7 @@ class BackendInstallerStateTests(unittest.TestCase):
                 mock.patch.object(backend_installer, "dependency_manifest_hash", return_value="same-hash"),
                 mock.patch.object(backend_installer, "get_state", side_effect=get_state),
                 mock.patch.object(backend_installer, "set_state", side_effect=set_state),
+                mock.patch.object(backend_installer, "commit_dependency_state") as commit_state,
                 mock.patch.object(backend_installer, "set_install_state"),
                 mock.patch.object(backend_installer, "run_command", return_value=completed),
                 mock.patch.object(backend_installer, "download_pywhispercpp_model", return_value=True),
@@ -113,7 +114,8 @@ class BackendInstallerStateTests(unittest.TestCase):
 
         install_cpu.assert_not_called()
         install_system.assert_not_called()
-        self.assertEqual(state["installed_backend"], "cpu")
+        committed_plan = commit_state.call_args.args[0]
+        self.assertEqual(committed_plan.accelerated_variant, "cpu")
 
 
 if __name__ == "__main__":

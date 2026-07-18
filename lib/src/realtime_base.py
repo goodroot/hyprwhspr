@@ -32,16 +32,6 @@ except (ImportError, ModuleNotFoundError) as e:
     print(f"ImportError: {e}", file=sys.stderr)
     sys.exit(1)
 
-try:
-    import websocket
-except (ImportError, ModuleNotFoundError) as e:
-    print("ERROR: websocket-client is not available in this Python environment.", file=sys.stderr)
-    print(f"ImportError: {e}", file=sys.stderr)
-    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
-    print("  pip install websocket-client>=1.6.0", file=sys.stderr)
-    sys.exit(1)
-
-
 class RealtimeAudioClientBase:
     """Audio queueing, backpressure and format conversion shared by all realtime clients."""
 
@@ -175,6 +165,14 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             mode: 'transcribe' for speech-to-text, 'converse' for voice-to-AI
         """
         super().__init__()
+        try:
+            import websocket as websocket_transport
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise RuntimeError(
+                'websocket-client is required for this realtime provider; '
+                'install requirements-realtime.txt'
+            ) from exc
+        self._websocket_transport = websocket_transport
         self.ws = None
         self.url = None
         self.instructions = None
@@ -335,7 +333,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             kwargs = {}
             if headers:
                 kwargs['header'] = [f'{k}: {v}' for k, v in headers.items()]
-            attempt_ws = websocket.WebSocketApp(
+            attempt_ws = self._websocket_transport.WebSocketApp(
                 target_url,
                 on_open=self._on_open,
                 on_message=self._on_message,

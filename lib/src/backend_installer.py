@@ -10,9 +10,10 @@ import subprocess
 import hashlib
 import shutil
 import urllib.request
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple, Dict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import output control system
 try:
@@ -78,22 +79,98 @@ WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
 PYWHISPERCPP_VERSION = "1.5.0"
 
 
-def dependency_manifests(backend: str, provider: Optional[str] = None) -> list[Path]:
-    """Return the minimal ordered manifest set for a backend/provider."""
-    root = Path(HYPRWHSPR_ROOT)
-    manifests = [root / 'requirements.txt']
+class DependencyPlanError(RuntimeError):
+    """The installed package is missing or has an invalid dependency manifest."""
+
+
+@dataclass(frozen=True)
+class DependencyPlan:
+    manifest: Path
+    manifests: tuple[Path, ...]
+    fingerprint: str
+    required_imports: tuple[str, ...]
+    family: str
+    accelerated_variant: Optional[str] = None
+
+
+_PLAN_SPECS = {
+    'pywhispercpp': ('requirements-pywhispercpp.txt', ('sounddevice', 'numpy', 'soxr', 'pywhispercpp'), 'pywhispercpp'),
+    'rest': ('requirements-rest.txt', ('sounddevice', 'numpy', 'soxr', 'requests'), 'rest'),
+    'realtime': ('requirements-realtime.txt', ('sounddevice', 'numpy', 'soxr', 'websocket'), 'realtime'),
+    'elevenlabs': ('requirements-realtime-elevenlabs.txt', ('sounddevice', 'numpy', 'soxr', 'elevenlabs'), 'elevenlabs'),
+    'cohere': ('requirements-cohere-transcribe.txt', ('sounddevice', 'numpy', 'soxr', 'transformers', 'torch'), 'cohere'),
+    'onnx-cpu': ('requirements-onnx-asr.txt', ('sounddevice', 'numpy', 'soxr', 'onnx_asr'), 'onnx'),
+    'onnx-gpu': ('requirements-onnx-asr-gpu.txt', ('sounddevice', 'numpy', 'soxr', 'onnx_asr'), 'onnx'),
+    'faster-cpu': ('requirements-faster-whisper.txt', ('sounddevice', 'numpy', 'soxr', 'faster_whisper'), 'faster-whisper'),
+    'faster-cuda': ('requirements-faster-whisper-cuda.txt', ('sounddevice', 'numpy', 'soxr', 'faster_whisper'), 'faster-whisper'),
+}
+
+
+def _plan_key(backend: str, provider: Optional[str], accelerated_variant: Optional[str]) -> str:
     if backend in ('cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp'):
-        manifests.append(root / 'requirements-pywhispercpp.txt')
-    elif backend in ('rest-api', 'remote'):
-        manifests.append(root / 'requirements-rest.txt')
-    elif backend == 'realtime-ws':
-        manifests.append(root / (
-            'requirements-realtime-elevenlabs.txt'
-            if provider == 'elevenlabs' else 'requirements-realtime.txt'
-        ))
-    elif backend in ('faster-whisper', 'onnx-asr', 'cohere-transcribe'):
-        manifests.append(root / f'requirements-{backend}.txt')
-    return manifests
+        return 'pywhispercpp'
+    if backend in ('rest-api', 'remote'):
+        return 'rest'
+    if backend == 'realtime-ws':
+        return 'elevenlabs' if provider == 'elevenlabs' else 'realtime'
+    if backend == 'cohere-transcribe':
+        return 'cohere'
+    if backend == 'onnx-asr':
+        return 'onnx-gpu' if accelerated_variant in ('gpu', 'cuda') else 'onnx-cpu'
+    if backend == 'faster-whisper':
+        return 'faster-cuda' if accelerated_variant in ('gpu', 'cuda') else 'faster-cpu'
+    raise DependencyPlanError(f"No dependency manifest is defined for backend {backend!r}")
+
+
+def _manifest_closure(manifest: Path) -> tuple[Path, ...]:
+    """Resolve pip -r includes, rejecting missing/cyclic files before mutation."""
+    ordered, visiting = [], set()
+
+    def visit(path: Path):
+        path = path.resolve()
+        if path in visiting:
+            raise DependencyPlanError(f"Cyclic dependency manifest include at {path}")
+        if path in ordered:
+            return
+        if not path.is_file():
+            raise DependencyPlanError(
+                f"Dependency manifest is missing: {path}. Reinstall hyprwhspr; the package payload is incomplete."
+            )
+        visiting.add(path)
+        try:
+            lines = path.read_text(encoding='utf-8').splitlines()
+        except OSError as exc:
+            raise DependencyPlanError(f"Cannot read dependency manifest {path}: {exc}") from exc
+        for raw in lines:
+            line = raw.split('#', 1)[0].strip()
+            parts = line.split()
+            if parts and parts[0] in ('-r', '--requirement'):
+                if len(parts) != 2:
+                    raise DependencyPlanError(f"Invalid include in {path}: {raw.strip()}")
+                visit(path.parent / parts[1])
+            elif line.startswith('--requirement='):
+                visit(path.parent / line.split('=', 1)[1])
+        visiting.remove(path)
+        ordered.append(path)
+
+    visit(manifest)
+    return tuple(ordered)
+
+
+def resolve_dependency_plan(backend: str, provider: Optional[str] = None,
+                            accelerated_variant: Optional[str] = None) -> DependencyPlan:
+    """Fully resolve the authoritative dependency plan without changing the host."""
+    key = _plan_key(backend, provider, accelerated_variant)
+    filename, imports, family = _PLAN_SPECS[key]
+    selected = Path(HYPRWHSPR_ROOT) / filename
+    manifests = _manifest_closure(selected)
+    return DependencyPlan(selected.resolve(), manifests, dependency_manifest_hash(list(manifests)),
+                          imports, family, accelerated_variant)
+
+
+def dependency_manifests(backend: str, provider: Optional[str] = None) -> list[Path]:
+    """Compatibility wrapper returning the selected manifest include closure."""
+    return list(resolve_dependency_plan(backend, provider).manifests)
 
 
 def dependency_manifest_hash(manifests: list[Path]) -> str:
@@ -610,6 +687,29 @@ def set_state(key: str, value: str):
             json.dump(data, f, indent=2)
     except (json.JSONDecodeError, IOError) as e:
         log_debug(f"Error writing state file: {e}")
+
+
+def commit_dependency_state(plan: DependencyPlan):
+    """Commit all dependency identity fields with one atomic replacement."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    data = get_all_state()
+    data.update({
+        'dependency_plan_fingerprint': plan.fingerprint,
+        # Retained for migration compatibility with older releases.
+        'dependency_manifest_hash': plan.fingerprint,
+        'dependency_family': plan.family,
+    })
+    if plan.family == 'pywhispercpp' and plan.accelerated_variant:
+        data['installed_backend'] = plan.accelerated_variant
+    temp_path = STATE_DIR / f'.{STATE_FILE.name}.{uuid.uuid4().hex}.tmp'
+    try:
+        temp_path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+        os.replace(temp_path, STATE_FILE)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def get_all_state() -> Dict:
@@ -1254,6 +1354,62 @@ def setup_python_venv(force_rebuild: bool = False, custom_python: Optional[str] 
     return pip_bin
 
 
+def _verify_dependency_plan(plan: DependencyPlan) -> bool:
+    imports = ', '.join(plan.required_imports)
+    result = run_command([
+        'timeout', '10s', str(VENV_DIR / 'bin' / 'python'), '-c', f'import {imports}'
+    ], check=False, capture_output=True, show_output_on_error=False)
+    return result.returncode == 0
+
+
+def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] = None,
+                            force_rebuild: bool = False) -> Path:
+    """Install and verify a plan transactionally, restoring a usable old venv on failure."""
+    # Re-resolve before any filesystem mutation; callers cannot pass a stale/malformed plan.
+    checked = _manifest_closure(plan.manifest)
+    if checked != plan.manifests or dependency_manifest_hash(list(checked)) != plan.fingerprint:
+        raise DependencyPlanError('Dependency manifests changed after planning; retry setup')
+
+    plan_fingerprint = get_state('dependency_plan_fingerprint')
+    stored = plan_fingerprint or get_state('dependency_manifest_hash')
+    if not force_rebuild and stored == plan.fingerprint and VENV_DIR.exists() and _verify_dependency_plan(plan):
+        if not plan_fingerprint:
+            try:
+                commit_dependency_state(plan)
+            except Exception as exc:
+                log_warning(f'Could not migrate dependency state: {exc}')
+        return VENV_DIR / 'bin' / 'pip'
+
+    backup = VENV_DIR.with_name(f'{VENV_DIR.name}.rollback-{uuid.uuid4().hex}')
+    had_old = VENV_DIR.exists()
+    if had_old:
+        VENV_DIR.rename(backup)
+    try:
+        pip_bin = setup_python_venv(custom_python=custom_python)
+        run_command([str(pip_bin), 'install', '-r', str(plan.manifest)], check=True)
+        if not _verify_dependency_plan(plan):
+            raise RuntimeError(
+                'Dependency installation completed but required imports failed: '
+                + ', '.join(plan.required_imports)
+            )
+    except BaseException:
+        if VENV_DIR.exists():
+            shutil.rmtree(VENV_DIR, ignore_errors=True)
+        if had_old and backup.exists():
+            backup.rename(VENV_DIR)
+        raise
+
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+    try:
+        commit_dependency_state(plan)
+    except Exception as exc:
+        # The verified environment is more valuable than bookkeeping. The next setup
+        # verifies it again and migrates state to the new fingerprint.
+        log_warning(f'Could not record dependency state: {exc}')
+    return pip_bin
+
+
 # ==================== pywhispercpp Installation ====================
 
 def _should_skip_pygobject() -> bool:
@@ -1374,7 +1530,6 @@ def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
             return False
 
         log_success("pywhispercpp installed (CPU-only mode)")
-        set_state("installed_backend", "cpu")
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to install pywhispercpp (CPU-only): {e}")
@@ -1392,7 +1547,6 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
     wheel_path = download_pywhispercpp_wheel()  # Auto-detects CUDA version
     if wheel_path:
         if install_pywhispercpp_from_wheel(pip_bin, wheel_path):
-            set_state("installed_backend", "nvidia")
             return True
         log_warning("Pre-built wheel failed, falling back to source build...")
 
@@ -1496,7 +1650,6 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
         
         run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
         log_success("pywhispercpp installed with CUDA acceleration via pip")
-        set_state("installed_backend", "nvidia")
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"pip install of pywhispercpp with CUDA failed: {e}")
@@ -1612,7 +1765,6 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
         
         run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
         log_success("pywhispercpp installed with ROCm acceleration via pip")
-        set_state("installed_backend", "rocm")
         return True, False
     except subprocess.CalledProcessError:
         # Build failed - return should_fallback=True
@@ -1730,7 +1882,6 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
 
         run_command(pip_args, check=True, env=env, verbose=verbosity.value >= VerbosityLevel.VERBOSE.value)
         log_success("pywhispercpp installed with Vulkan acceleration via pip")
-        set_state("installed_backend", "vulkan")
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to install pywhispercpp with Vulkan: {e}")
@@ -1819,169 +1970,16 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
         return False
 
 
-# ==================== ONNX-ASR Installation ====================
-
-def install_onnx_asr(pip_bin: Path, enable_gpu: bool = False) -> bool:
-    """
-    Install onnx-asr into the main venv.
-
-    onnx-asr is an ASR library using ONNX runtime, supporting both CPU and GPU.
-    It provides significantly better performance than whisper.cpp.
-
-    Args:
-        pip_bin: Path to pip binary in the venv
-        enable_gpu: If True, install GPU support (CUDA/TensorRT)
-
-    Returns:
-        True if installation succeeded, False otherwise
-    """
-    if enable_gpu:
-        log_info("Installing onnx-asr with GPU support (CUDA/TensorRT)...")
-        try:
-            # Explicitly install onnxruntime-gpu first to ensure it's available
-            log_info("Installing onnxruntime-gpu...")
-            run_command([str(pip_bin), 'install', 'onnxruntime-gpu'], check=True)
-            # Install onnx-asr with GPU backend and HuggingFace hub support
-            # [cuda] = onnxruntime-gpu for CUDA/TensorRT (but we install it explicitly above)
-            # [hub] = huggingface_hub for model downloads
-            run_command([str(pip_bin), 'install', 'onnx-asr[cuda,hub]'], check=True)
-            log_success("onnx-asr installed with GPU support")
-            return True
-        except subprocess.CalledProcessError as e:
-            log_error(f"Failed to install onnx-asr with GPU support: {e}")
-            log_warning("Falling back to CPU-only installation...")
-            # Fall back to CPU installation
-            enable_gpu = False
-    
-    if not enable_gpu:
-        log_info("Installing onnx-asr (CPU-optimized)...")
-        try:
-            # Install onnx-asr with CPU backend and HuggingFace hub support
-            # [cpu] = onnxruntime for CPU
-            # [hub] = huggingface_hub for model downloads
-            run_command([str(pip_bin), 'install', 'onnx-asr[cpu,hub]'], check=True)
-            log_success("onnx-asr installed")
-            return True
-        except subprocess.CalledProcessError as e:
-            log_error(f"Failed to install onnx-asr: {e}")
-            return False
-
-
-# ==================== faster-whisper Installation ====================
-
-def install_faster_whisper(pip_bin: Path, enable_gpu: bool = False) -> bool:
-    """Install faster-whisper into the main venv.
-
-    Args:
-        pip_bin: Path to pip executable in the target venv
-        enable_gpu: If True, also install nvidia-cublas-cu12 and nvidia-cudnn-cu12
-                    so CTranslate2 can load CUDA libs from the venv without requiring
-                    system cuda/cudnn packages.
-    """
-    log_info("Installing faster-whisper...")
-    try:
-        run_command([str(pip_bin), 'install', 'faster-whisper'], check=True)
-        if enable_gpu:
-            log_info("Installing CUDA libraries for GPU support (nvidia-cublas-cu12, nvidia-cudnn-cu12)...")
-            run_command([str(pip_bin), 'install', 'nvidia-cublas-cu12', 'nvidia-cudnn-cu12'], check=True)
-            log_success("faster-whisper installed with CUDA support")
-        else:
-            log_success("faster-whisper installed (CPU mode)")
-        return True
-    except subprocess.CalledProcessError as e:
-        log_error(f"Failed to install faster-whisper: {e}")
-        return False
-
-
-def install_cohere_transcribe(pip_bin: Path) -> bool:
-    """Install Cohere Transcribe dependencies into the main venv.
-
-    Installs torch, transformers (with version pin per Cohere's requirements),
-    and supporting packages needed for model loading and audio preprocessing.
-
-    Args:
-        pip_bin: Path to pip executable in the target venv
-    """
-    log_info("Installing Cohere Transcribe dependencies...")
-    try:
-        # torch is required for model loading and GPU inference
-        # transformers version constraint is critical: 5.0 and 5.1 break weight loading
-        run_command([
-            str(pip_bin), 'install',
-            'torch',
-            'transformers>=4.56,<5.3,!=5.0.*,!=5.1.*',
-            'huggingface_hub',
-            'sentencepiece',
-            'protobuf',
-            'librosa',
-            'soundfile',
-        ], check=True)
-        log_success("Cohere Transcribe dependencies installed")
-        return True
-    except subprocess.CalledProcessError as e:
-        log_error(f"Failed to install Cohere Transcribe dependencies: {e}")
-        return False
-
-
-# ==================== Parallel Installation Helpers ====================
-
-def _parallel_setup_gpu_and_venv(backend_type: str, force_rebuild: bool = False,
-                                 custom_python: Optional[str] = None) -> Tuple[Dict[str, bool], Optional[Path]]:
-    """
-    Run GPU detection and venv creation in parallel.
-
-    This provides ~2-5 second speedup by overlapping independent operations.
-
-    Args:
-        backend_type: One of 'nvidia', 'amd', 'vulkan' (or 'cpu' for no GPU setup)
-        force_rebuild: If True, recreate venv even if it exists
-        custom_python: Optional path to Python executable for venv creation
-
-    Returns:
-        Tuple of (gpu_status dict, pip_bin Path or None if venv setup failed)
-    """
-    gpu_status = {'cuda': False, 'rocm': False, 'vulkan': False}
-    pip_bin = None
-    errors = []
-
-    def setup_gpu():
-        """Run GPU detection/setup based on backend type"""
-        nonlocal gpu_status
-        try:
-            if backend_type == 'nvidia':
-                gpu_status['cuda'] = setup_nvidia_support()
-            elif backend_type == 'amd':
-                gpu_status['rocm'] = setup_amd_support()
-            elif backend_type == 'vulkan':
-                gpu_status['vulkan'] = setup_vulkan_support()
-        except Exception as e:
-            errors.append(f"GPU setup error: {e}")
-
-    def setup_venv():
-        """Create/verify Python venv"""
-        nonlocal pip_bin
-        try:
-            pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
-        except Exception as e:
-            errors.append(f"Venv setup error: {e}")
-
-    # Run both in parallel
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        gpu_future = executor.submit(setup_gpu)
-        venv_future = executor.submit(setup_venv)
-
-        # Wait for both to complete
-        for future in as_completed([gpu_future, venv_future]):
-            try:
-                future.result()
-            except Exception as e:
-                errors.append(str(e))
-
-    if errors:
-        for error in errors:
-            log_warning(error)
-
-    return gpu_status, pip_bin
+def _complete_pywhispercpp_cpu_fallback(created_items: dict) -> str:
+    """Clean a failed new source build and return the effective installed variant."""
+    if not created_items.get('git_clone_created'):
+        return 'cpu'
+    source_path = created_items.get('git_clone_path')
+    if source_path:
+        shutil.rmtree(Path(source_path), ignore_errors=True)
+    created_items['git_clone_created'] = False
+    created_items['git_clone_path'] = None
+    return 'cpu'
 
 
 # ==================== Main Installation Function ====================
@@ -2001,6 +1999,26 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
     Returns:
         True if installation succeeded, False otherwise
     """
+    # Validate backend type
+    if backend_type not in LOCAL_INSTALL_BACKENDS:
+        error_msg = f"Invalid backend type: {backend_type}"
+        log_error(error_msg)
+        set_install_state('failed', error_msg)
+        return False
+
+    # Packaging errors must be reported before state, GPU, venv, pip or cache mutation.
+    try:
+        initial_plan = resolve_dependency_plan(backend_type)
+        # Hardware detection chooses between these later. Validate every possible
+        # packaged selection now so a broken payload cannot mutate the host first.
+        if backend_type == 'faster-whisper':
+            resolve_dependency_plan(backend_type, accelerated_variant='cuda')
+        elif backend_type == 'onnx-asr':
+            resolve_dependency_plan(backend_type, accelerated_variant='gpu')
+    except DependencyPlanError as exc:
+        log_error(str(exc))
+        return False
+
     init_state()
     set_install_state('in_progress')
 
@@ -2011,14 +2029,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         log_warning("Warning! MISE is active. This may cause build errors.")
         log_warning("To fix: mise deactivate (or: mise unuse -g python)")
 
-    # Validate backend type
-    if backend_type not in LOCAL_INSTALL_BACKENDS:
-        error_msg = f"Invalid backend type: {backend_type}"
-        log_error(error_msg)
-        set_install_state('failed', error_msg)
-        return False
-
-    dependency_family = f"local:{backend_type}"
+    dependency_family = initial_plan.family
     previous_family = get_state("dependency_family")
     if previous_family and previous_family != dependency_family:
         log_info(f"Backend dependency family changed ({previous_family} → {dependency_family}); recreating virtual environment...")
@@ -2055,13 +2066,6 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 log_warning("Vulkan backend selected but Vulkan not available, falling back to CPU")
                 backend_type = 'cpu'
         elif backend_type == 'faster-whisper':
-            # faster-whisper uses main venv with faster-whisper package
-            venv_existed = VENV_DIR.exists()
-            pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
-            if (force_rebuild or not venv_existed) and VENV_DIR.exists():
-                created_items['venv_created'] = True
-                created_items['venv_path'] = str(VENV_DIR)
-
             # Detect NVIDIA GPU — if present, install CUDA pip libs so CTranslate2 can
             # find libcublas/libcudnn without requiring the system cuda/cudnn packages.
             # faster-whisper only supports NVIDIA CUDA (not AMD/Intel Vulkan/ROCm).
@@ -2085,65 +2089,29 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             if not enable_gpu:
                 log_info("Installing faster-whisper (CPU mode)")
 
-            # Install base requirements first
-            requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
-            log_info("Installing base dependencies...")
+            plan = resolve_dependency_plan(
+                'faster-whisper', accelerated_variant='cuda' if enable_gpu else None)
             try:
-                run_command([str(pip_bin), 'install', '-r', str(requirements_file)], check=True)
-            except subprocess.CalledProcessError as e:
-                error_msg = f"Failed to install base dependencies: {e}"
+                execute_dependency_plan(plan, custom_python=custom_python,
+                                        force_rebuild=force_rebuild)
+            except Exception as exc:
+                error_msg = f"Failed to install faster-whisper: {exc}"
                 log_error(error_msg)
-                if cleanup_on_failure:
-                    log_info("Cleaning up partial installation...")
-                    _cleanup_partial_installation(created_items, pip_bin)
                 set_install_state('failed', error_msg)
                 return False
-
-            if not install_faster_whisper(pip_bin, enable_gpu=enable_gpu):
-                error_msg = "Failed to install faster-whisper"
-                log_error(error_msg)
-                if cleanup_on_failure:
-                    log_info("Cleaning up partial installation...")
-                    _cleanup_partial_installation(created_items, pip_bin)
-                set_install_state('failed', error_msg)
-                return False
-
-            manifests = dependency_manifests('faster-whisper')
-            set_state("dependency_manifest_hash", dependency_manifest_hash(manifests))
-            set_state("dependency_family", dependency_family)
 
             set_install_state('completed')
             log_success("faster-whisper backend installation completed!")
             return True
 
         elif backend_type == 'cohere-transcribe':
-            # Cohere Transcribe uses main venv with transformers + supporting packages
-            venv_existed = VENV_DIR.exists()
-            pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
-            if (force_rebuild or not venv_existed) and VENV_DIR.exists():
-                created_items['venv_created'] = True
-                created_items['venv_path'] = str(VENV_DIR)
-
-            # Install base requirements first
-            requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
-            log_info("Installing base dependencies...")
+            plan = resolve_dependency_plan('cohere-transcribe')
             try:
-                run_command([str(pip_bin), 'install', '-r', str(requirements_file)], check=True)
-            except subprocess.CalledProcessError as e:
-                error_msg = f"Failed to install base dependencies: {e}"
+                execute_dependency_plan(plan, custom_python=custom_python,
+                                        force_rebuild=force_rebuild)
+            except Exception as exc:
+                error_msg = f"Failed to install Cohere Transcribe dependencies: {exc}"
                 log_error(error_msg)
-                if cleanup_on_failure:
-                    log_info("Cleaning up partial installation...")
-                    _cleanup_partial_installation(created_items, pip_bin)
-                set_install_state('failed', error_msg)
-                return False
-
-            if not install_cohere_transcribe(pip_bin):
-                error_msg = "Failed to install Cohere Transcribe dependencies"
-                log_error(error_msg)
-                if cleanup_on_failure:
-                    log_info("Cleaning up partial installation...")
-                    _cleanup_partial_installation(created_items, pip_bin)
                 set_install_state('failed', error_msg)
                 return False
 
@@ -2196,28 +2164,16 @@ print("Model downloaded and cached successfully", flush=True)
                 run_command([str(venv_python), '-c', download_script], check=True, timeout=900,
                             env=download_env, verbose=True)
                 log_success("Cohere Transcribe model downloaded and cached")
-            except subprocess.CalledProcessError as e:
+            except Exception as e:
                 log_warning(f"Model pre-download failed: {e}")
                 log_warning("Model will be downloaded automatically on first use instead.")
                 # Don't fail the installation — the service can still download on first start
-
-            manifests = dependency_manifests('cohere-transcribe')
-            set_state("dependency_manifest_hash", dependency_manifest_hash(manifests))
-            set_state("dependency_family", dependency_family)
 
             set_install_state('completed')
             log_success("Cohere Transcribe backend installation completed!")
             return True
 
         elif backend_type == 'onnx-asr':
-            # ONNX-ASR uses main venv with onnx-asr package
-            # Setup main venv
-            venv_existed = VENV_DIR.exists()
-            pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
-            if (force_rebuild or not venv_existed) and VENV_DIR.exists():
-                created_items['venv_created'] = True
-                created_items['venv_path'] = str(VENV_DIR)
-
             # Detect GPU availability for onnx-asr
             # Note: onnx-asr only needs NVIDIA drivers (nvidia-smi), not CUDA toolkit
             # Unlike pywhispercpp which needs nvcc to build, onnx-asr uses pre-built ONNX Runtime
@@ -2242,29 +2198,28 @@ print("Model downloaded and cached successfully", flush=True)
             if not enable_gpu:
                 log_info("Installing onnx-asr (CPU-optimized)")
 
-            # Install base requirements first
-            requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
-            log_info("Installing base dependencies...")
+            plan = resolve_dependency_plan(
+                'onnx-asr', accelerated_variant='gpu' if enable_gpu else None)
             try:
-                run_command([str(pip_bin), 'install', '-r', str(requirements_file)], check=True)
-            except subprocess.CalledProcessError as e:
-                error_msg = f"Failed to install base dependencies: {e}"
-                log_error(error_msg)
-                if cleanup_on_failure:
-                    log_info("Cleaning up partial installation...")
-                    _cleanup_partial_installation(created_items, pip_bin)
-                set_install_state('failed', error_msg)
-                return False
-
-            # Install onnx-asr on top (with GPU support if available)
-            if not install_onnx_asr(pip_bin, enable_gpu=enable_gpu):
-                error_msg = "Failed to install onnx-asr"
-                log_error(error_msg)
-                if cleanup_on_failure:
-                    log_info("Cleaning up partial installation...")
-                    _cleanup_partial_installation(created_items, pip_bin)
-                set_install_state('failed', error_msg)
-                return False
+                execute_dependency_plan(plan, custom_python=custom_python,
+                                        force_rebuild=force_rebuild)
+            except Exception as exc:
+                if not enable_gpu:
+                    error_msg = f"Failed to install onnx-asr: {exc}"
+                    log_error(error_msg)
+                    set_install_state('failed', error_msg)
+                    return False
+                log_warning(f"ONNX GPU dependencies failed: {exc}")
+                log_warning("Falling back to CPU-only ONNX installation")
+                plan = resolve_dependency_plan('onnx-asr')
+                try:
+                    execute_dependency_plan(plan, custom_python=custom_python,
+                                            force_rebuild=force_rebuild)
+                except Exception as cpu_exc:
+                    error_msg = f"Failed to install onnx-asr CPU fallback: {cpu_exc}"
+                    log_error(error_msg)
+                    set_install_state('failed', error_msg)
+                    return False
 
             # Pre-download models so they're ready on first use
             log_info("Downloading ONNX-ASR model and VAD (this may take a moment)...")
@@ -2282,43 +2237,33 @@ print("Models cached successfully", flush=True)
 '''
                 run_command([str(venv_python), '-c', download_script], check=True)
                 log_success("Models downloaded and cached")
-            except subprocess.CalledProcessError as e:
+            except Exception as e:
                 log_warning(f"Model download failed: {e}")
                 log_warning("Models will be downloaded on first use instead")
                 # Don't fail installation - models can still be downloaded on first use
-
-            manifests = dependency_manifests('onnx-asr')
-            set_state("dependency_manifest_hash", dependency_manifest_hash(manifests))
-            set_state("dependency_family", dependency_family)
 
             # Installation successful for ONNX-ASR
             set_install_state('completed')
             log_success("ONNX-ASR backend installation completed!")
             return True
 
-        # Setup Python venv (for cpu/nvidia/amd backends)
-        venv_existed = VENV_DIR.exists()
-        pip_bin = setup_python_venv(force_rebuild=force_rebuild, custom_python=custom_python)
-        if (force_rebuild or not venv_existed) and VENV_DIR.exists():
-            created_items['venv_created'] = True
-            created_items['venv_path'] = str(VENV_DIR)
-        
-        # Check if dependencies are already installed
+        # Plan the specialized pywhispercpp transaction after GPU selection.
         manifests = dependency_manifests(backend_type)
         requirements_file = manifests[-1]
         cur_req_hash = dependency_manifest_hash(manifests)
         stored_req_hash = get_state("dependency_manifest_hash")
-        
+
         deps_installed = False
-        try:
+        if VENV_DIR.exists():
             python_bin = VENV_DIR / 'bin' / 'python'
-            result = run_command([
-                'timeout', '5s', str(python_bin), '-c',
-                'import sounddevice, pywhispercpp'
-            ], check=False, capture_output=True, show_output_on_error=False)
-            deps_installed = result.returncode == 0
-        except Exception:
-            pass
+            try:
+                result = run_command([
+                    'timeout', '5s', str(python_bin), '-c',
+                    'import sounddevice, pywhispercpp'
+                ], check=False, capture_output=True, show_output_on_error=False)
+                deps_installed = result.returncode == 0
+            except Exception:
+                pass
 
         # Which pywhispercpp build variant is being requested *right now*?
         # (Differs from backend_type only inside this function: GPU setup may
@@ -2335,9 +2280,23 @@ print("Models cached successfully", flush=True)
 
         stored_installed_backend = get_state("installed_backend")
         backend_mismatch = bool(stored_installed_backend) and stored_installed_backend != requested_variant
+        needs_install = bool(
+            force_rebuild or cur_req_hash != stored_req_hash or not stored_req_hash
+            or not deps_installed or backend_mismatch
+        )
+
+        backup_path = None
+        if needs_install and VENV_DIR.exists():
+            backup_path = VENV_DIR.with_name(f'{VENV_DIR.name}.rollback-{uuid.uuid4().hex}')
+            VENV_DIR.rename(backup_path)
+            created_items['venv_backup_path'] = str(backup_path)
+        pip_bin = setup_python_venv(custom_python=custom_python)
+        if needs_install:
+            created_items['venv_created'] = True
+            created_items['venv_path'] = str(VENV_DIR)
 
         # Install pywhispercpp if needed
-        if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed or backend_mismatch:
+        if needs_install:
             if not stored_req_hash:
                 # First time setup - no stored hash means venv is new
                 log_info("Installing Python dependencies...")
@@ -2353,6 +2312,12 @@ print("Models cached successfully", flush=True)
             if enable_cuda or enable_rocm or enable_vulkan:
                 # GPU build path: install everything except pywhispercpp first
                 log_info("Installing base Python dependencies (excluding pywhispercpp)...")
+
+                # If source fallback creates this tree, remove it when this package
+                # transaction fails or is interrupted. Existing user caches are kept.
+                if not PYWHISPERCPP_SRC_DIR.exists():
+                    created_items['git_clone_created'] = True
+                    created_items['git_clone_path'] = str(PYWHISPERCPP_SRC_DIR)
 
                 # Determine packages to skip
                 skip_pygobject = _should_skip_pygobject()
@@ -2392,6 +2357,7 @@ print("Models cached successfully", flush=True)
                             except Exception:
                                 pass
                         set_install_state('failed', error_msg)
+                        _cleanup_partial_installation(created_items, pip_bin)
                         return False
                     finally:
                         # Clean up temp file
@@ -2414,6 +2380,7 @@ print("Models cached successfully", flush=True)
                             except Exception:
                                 pass
                         set_install_state('failed', error_msg)
+                        _cleanup_partial_installation(created_items, pip_bin)
                         return False
                 elif enable_rocm:
                     success, should_fallback = install_pywhispercpp_rocm(pip_bin)
@@ -2434,8 +2401,10 @@ print("Models cached successfully", flush=True)
                                 error_msg = "Failed to install pywhispercpp (CPU-only fallback)"
                                 log_error(error_msg)
                                 set_install_state('failed', error_msg)
+                                _cleanup_partial_installation(created_items, pip_bin)
                                 return False
                             log_success("pywhispercpp installed (CPU-only mode)")
+                            requested_variant = _complete_pywhispercpp_cpu_fallback(created_items)
                         else:
                             error_msg = "Failed to install pywhispercpp with ROCm support"
                             log_error(error_msg)
@@ -2447,6 +2416,7 @@ print("Models cached successfully", flush=True)
                                 except Exception:
                                     pass
                             set_install_state('failed', error_msg)
+                            _cleanup_partial_installation(created_items, pip_bin)
                             return False
                 elif enable_vulkan:
                     if not install_pywhispercpp_vulkan(pip_bin):
@@ -2457,30 +2427,49 @@ print("Models cached successfully", flush=True)
                             error_msg = "Failed to install pywhispercpp (CPU-only fallback)"
                             log_error(error_msg)
                             set_install_state('failed', error_msg)
+                            _cleanup_partial_installation(created_items, pip_bin)
                             return False
                         log_success("pywhispercpp installed (CPU-only mode)")
+                        requested_variant = _complete_pywhispercpp_cpu_fallback(created_items)
             else:
                 # CPU-only path: install everything normally
                 if not install_pywhispercpp_cpu(pip_bin, requirements_file):
                     error_msg = "Failed to install pywhispercpp (CPU-only)"
                     log_error(error_msg)
                     set_install_state('failed', error_msg)
+                    _cleanup_partial_installation(created_items, pip_bin)
                     return False
-            
-            set_state("dependency_manifest_hash", cur_req_hash)
+
             log_success("Python dependencies installed")
         else:
-            if not stored_installed_backend:
-                set_state("installed_backend", requested_variant)
             log_info("Python dependencies up to date (skipping pip install)")
         
-        # Download base model
+        plan = resolve_dependency_plan(backend_type, accelerated_variant=requested_variant)
+        if not _verify_dependency_plan(plan):
+            error_msg = "pywhispercpp installation did not provide required imports"
+            log_error(error_msg)
+            set_install_state('failed', error_msg)
+            _cleanup_partial_installation(created_items, pip_bin)
+            return False
+
+        backup_path = created_items.get('venv_backup_path')
+        if backup_path and Path(backup_path).exists():
+            shutil.rmtree(Path(backup_path), ignore_errors=True)
+        created_items['venv_backup_path'] = None
+        created_items['venv_created'] = False
+        created_items['git_clone_created'] = False
+        created_items['git_clone_path'] = None
+        try:
+            commit_dependency_state(plan)
+        except Exception as exc:
+            log_warning(f"Could not record dependency state: {exc}")
+
+        # Download base model only after the verified environment commits.
         if not download_pywhispercpp_model('base'):
             log_warning("Model download failed, but backend installation succeeded")
             # Don't fail the whole installation if model download fails
         
         # Installation successful
-        set_state("dependency_family", dependency_family)
         set_install_state('completed')
         log_success(f"{backend_type.upper()} backend installation completed!")
         return True
@@ -2489,7 +2478,8 @@ print("Models cached successfully", flush=True)
         error_msg = "Installation interrupted by user"
         log_error(error_msg)
         set_install_state('failed', error_msg)
-        if cleanup_on_failure:
+        if (cleanup_on_failure or created_items.get('venv_created')
+                or created_items.get('venv_backup_path')):
             log_info("Cleaning up partial installation...")
             _cleanup_partial_installation(created_items, pip_bin if 'pip_bin' in locals() else None)
         raise
@@ -2498,7 +2488,8 @@ print("Models cached successfully", flush=True)
         log_error(error_msg)
         log_debug(f"Full error traceback: {sys.exc_info()}")
         set_install_state('failed', error_msg)
-        if cleanup_on_failure:
+        if (cleanup_on_failure or created_items.get('venv_created')
+                or created_items.get('venv_backup_path')):
             log_info("Cleaning up partial installation...")
             _cleanup_partial_installation(created_items, pip_bin if 'pip_bin' in locals() else None)
         return False
@@ -2514,6 +2505,14 @@ def _cleanup_partial_installation(created_items: dict, pip_bin: Optional[Path]):
                 shutil.rmtree(venv_path, ignore_errors=True)
         except Exception:
             pass
+
+    backup_path = created_items.get('venv_backup_path')
+    if backup_path:
+        backup = Path(backup_path)
+        if backup.exists():
+            if VENV_DIR.exists():
+                shutil.rmtree(VENV_DIR, ignore_errors=True)
+            backup.rename(VENV_DIR)
     
     if created_items.get('git_clone_created') and created_items.get('git_clone_path'):
         log_info(f"Removing git clone at {created_items['git_clone_path']}")

@@ -1,2 +1,2 @@
 -r requirements.txt
-elevenlabs>=2.40.0
+onnx-asr[cuda,hub]
