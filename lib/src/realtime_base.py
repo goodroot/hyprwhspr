@@ -21,6 +21,11 @@ from queue import Queue, Empty
 from collections import deque
 
 try:
+    from .audio_resampler import resample_audio
+except ImportError:
+    from audio_resampler import resample_audio
+
+try:
     import numpy as np
 except (ImportError, ModuleNotFoundError) as e:
     print("ERROR: python-numpy is not available in this Python environment.", file=sys.stderr)
@@ -101,27 +106,9 @@ class RealtimeAudioClientBase:
         """Set maximum buffer size in seconds for backpressure handling"""
         self.max_buffer_seconds = max(1.0, seconds)  # Minimum 1 second
 
-    def _resample_for_output(self, audio_chunk: np.ndarray, signal_module=None) -> np.ndarray:
+    def _resample_for_output(self, audio_chunk: np.ndarray) -> np.ndarray:
         """Resample queued capture audio to the provider's configured output rate."""
-        if self.input_sample_rate == self.sample_rate:
-            return audio_chunk
-        if signal_module is None:
-            try:
-                from scipy import signal as signal_module
-            except Exception:
-                return audio_chunk
-        try:
-            from math import gcd
-            divisor = gcd(int(self.input_sample_rate), int(self.sample_rate))
-            resampled = signal_module.resample_poly(
-                audio_chunk,
-                up=int(self.sample_rate) // divisor,
-                down=int(self.input_sample_rate) // divisor,
-            )
-            return resampled.astype(np.float32, copy=False)
-        except Exception as e:
-            self._log(f'Failed to resample audio {self.input_sample_rate}Hz -> {self.sample_rate}Hz: {e}')
-            return audio_chunk
+        return resample_audio(audio_chunk, self.input_sample_rate, self.sample_rate)
 
     def _float32_to_pcm16(self, audio_data: np.ndarray) -> bytes:
         """Convert float32 numpy array to PCM16 bytes (little-endian)"""
@@ -280,11 +267,6 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
     def _sender_loop(self):
         """Background thread: drain queued audio and send over the WebSocket."""
-        try:
-            from scipy import signal as _signal
-        except Exception:
-            _signal = None
-
         while True:
             with self.lock:
                 self._queue_cond.wait_for(
@@ -307,7 +289,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                     self._queue_cond.notify_all()
 
             try:
-                resampled = self._resample_for_output(audio_chunk, _signal)
+                resampled = self._resample_for_output(audio_chunk)
                 pcm_bytes = self._float32_to_pcm16(resampled)
                 base64_audio = base64.b64encode(pcm_bytes).decode('utf-8')
                 ws.send(json.dumps(self._audio_ws_message(base64_audio)))

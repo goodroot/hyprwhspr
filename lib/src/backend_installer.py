@@ -78,6 +78,35 @@ WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
 PYWHISPERCPP_VERSION = "1.5.0"
 
 
+def dependency_manifests(backend: str, provider: Optional[str] = None) -> list[Path]:
+    """Return the minimal ordered manifest set for a backend/provider."""
+    root = Path(HYPRWHSPR_ROOT)
+    manifests = [root / 'requirements.txt']
+    if backend in ('cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp'):
+        manifests.append(root / 'requirements-pywhispercpp.txt')
+    elif backend in ('rest-api', 'remote'):
+        manifests.append(root / 'requirements-rest.txt')
+    elif backend == 'realtime-ws':
+        manifests.append(root / (
+            'requirements-realtime-elevenlabs.txt'
+            if provider == 'elevenlabs' else 'requirements-realtime.txt'
+        ))
+    elif backend in ('faster-whisper', 'onnx-asr', 'cohere-transcribe'):
+        manifests.append(root / f'requirements-{backend}.txt')
+    return manifests
+
+
+def dependency_manifest_hash(manifests: list[Path]) -> str:
+    """Hash manifest names and contents so selected dependency state is stable."""
+    digest = hashlib.sha256()
+    for manifest in manifests:
+        digest.update(manifest.name.encode('utf-8'))
+        digest.update(b'\0')
+        digest.update(manifest.read_bytes())
+        digest.update(b'\0')
+    return digest.hexdigest()
+
+
 def _safe_decode(output) -> str:
     """Safely decode output from run_command which may be string or bytes."""
     if isinstance(output, bytes):
@@ -1367,6 +1396,7 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
             return True
         log_warning("Pre-built wheel failed, falling back to source build...")
 
+    install_system_dependencies()
     log_info("Building from source (this may take several minutes)...")
 
     # Clean build artifacts if they exist (to avoid Python version mismatches)
@@ -1476,6 +1506,7 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
 def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
     """Install pywhispercpp with ROCm support. Returns (success, should_fallback)."""
     log_info("Installing pywhispercpp with ROCm support...")
+    install_system_dependencies()
     
     # Clean build artifacts if they exist (to avoid Python version mismatches)
     if PYWHISPERCPP_SRC_DIR.exists():
@@ -1599,6 +1630,7 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
         False if installation failed
     """
     log_info("Installing pywhispercpp with Vulkan support...")
+    install_system_dependencies()
 
     # Clean build artifacts if they exist (to avoid Python version mismatches)
     if PYWHISPERCPP_SRC_DIR.exists():
@@ -1985,6 +2017,12 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         log_error(error_msg)
         set_install_state('failed', error_msg)
         return False
+
+    dependency_family = f"local:{backend_type}"
+    previous_family = get_state("dependency_family")
+    if previous_family and previous_family != dependency_family:
+        log_info(f"Backend dependency family changed ({previous_family} → {dependency_family}); recreating virtual environment...")
+        force_rebuild = True
     
     # Track what we've created for cleanup
     created_items = {
@@ -1996,9 +2034,6 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
     }
     
     try:
-        # Install system dependencies
-        install_system_dependencies()
-        
         # Setup GPU support if needed
         enable_cuda = False
         enable_rocm = False
@@ -2073,8 +2108,9 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 set_install_state('failed', error_msg)
                 return False
 
-            cur_req_hash = compute_file_hash(requirements_file)
-            set_state("requirements_hash", cur_req_hash)
+            manifests = dependency_manifests('faster-whisper')
+            set_state("dependency_manifest_hash", dependency_manifest_hash(manifests))
+            set_state("dependency_family", dependency_family)
 
             set_install_state('completed')
             log_success("faster-whisper backend installation completed!")
@@ -2165,8 +2201,9 @@ print("Model downloaded and cached successfully", flush=True)
                 log_warning("Model will be downloaded automatically on first use instead.")
                 # Don't fail the installation — the service can still download on first start
 
-            cur_req_hash = compute_file_hash(requirements_file)
-            set_state("requirements_hash", cur_req_hash)
+            manifests = dependency_manifests('cohere-transcribe')
+            set_state("dependency_manifest_hash", dependency_manifest_hash(manifests))
+            set_state("dependency_family", dependency_family)
 
             set_install_state('completed')
             log_success("Cohere Transcribe backend installation completed!")
@@ -2250,9 +2287,9 @@ print("Models cached successfully", flush=True)
                 log_warning("Models will be downloaded on first use instead")
                 # Don't fail installation - models can still be downloaded on first use
 
-            # Store requirements hash
-            cur_req_hash = compute_file_hash(requirements_file)
-            set_state("requirements_hash", cur_req_hash)
+            manifests = dependency_manifests('onnx-asr')
+            set_state("dependency_manifest_hash", dependency_manifest_hash(manifests))
+            set_state("dependency_family", dependency_family)
 
             # Installation successful for ONNX-ASR
             set_install_state('completed')
@@ -2267,9 +2304,10 @@ print("Models cached successfully", flush=True)
             created_items['venv_path'] = str(VENV_DIR)
         
         # Check if dependencies are already installed
-        requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
-        cur_req_hash = compute_file_hash(requirements_file)
-        stored_req_hash = get_state("requirements_hash")
+        manifests = dependency_manifests(backend_type)
+        requirements_file = manifests[-1]
+        cur_req_hash = dependency_manifest_hash(manifests)
+        stored_req_hash = get_state("dependency_manifest_hash")
         
         deps_installed = False
         try:
@@ -2429,7 +2467,7 @@ print("Models cached successfully", flush=True)
                     set_install_state('failed', error_msg)
                     return False
             
-            set_state("requirements_hash", cur_req_hash)
+            set_state("dependency_manifest_hash", cur_req_hash)
             log_success("Python dependencies installed")
         else:
             if not stored_installed_backend:
@@ -2442,6 +2480,7 @@ print("Models cached successfully", flush=True)
             # Don't fail the whole installation if model download fails
         
         # Installation successful
+        set_state("dependency_family", dependency_family)
         set_install_state('completed')
         log_success(f"{backend_type.upper()} backend installation completed!")
         return True

@@ -295,16 +295,10 @@ install_deps_apt() {
         python3-pip \
         python3-venv \
         git \
-        cmake \
-        make \
-        build-essential \
-        python3-dev \
         libportaudio2 \
         python3-numpy \
-        python3-scipy \
         python3-evdev \
         python3-requests \
-        python3-psutil \
         python3-rich \
         python3-pulsectl \
         python3-pyudev \
@@ -355,16 +349,10 @@ install_deps_dnf() {
     sudo dnf install -y \
         python3 \
         python3-pip \
-        python3-devel \
         git \
-        cmake \
-        make \
-        gcc-c++ \
         python3-numpy \
-        python3-scipy \
         python3-evdev \
         python3-requests \
-        python3-psutil \
         python3-rich \
         python3-pulsectl \
         python3-pyudev \
@@ -407,18 +395,12 @@ install_deps_zypper() {
     sudo zypper install -y \
         python3 \
         python3-pip \
-        python3-devel \
         git \
-        cmake \
-        make \
-        gcc-c++ \
         python3-sounddevice \
         python3-numpy \
-        python3-scipy \
         python3-evdev \
         python3-pyperclip \
         python3-requests \
-        python3-psutil \
         python3-rich \
         python3-pulsectl \
         python3-pyudev \
@@ -462,6 +444,7 @@ install_pip_packages() {
     local need_pulsectl=false
     local need_pyudev=false
     local need_websocket=false
+    local need_soxr=false
 
     # Check if packages are already available (Fedora/openSUSE include them)
     if ! python3 -c "import sounddevice" 2>/dev/null; then
@@ -484,7 +467,11 @@ install_pip_packages() {
         need_websocket=true
     fi
 
-    if $need_sounddevice || $need_pyperclip || $need_pulsectl || $need_pyudev || $need_websocket; then
+    if ! python3 -c "import soxr" 2>/dev/null; then
+        need_soxr=true
+    fi
+
+    if $need_sounddevice || $need_pyperclip || $need_pulsectl || $need_pyudev || $need_websocket || $need_soxr; then
         log_info "Installing Python packages via pip..."
 
         local packages=""
@@ -493,6 +480,7 @@ install_pip_packages() {
         $need_pulsectl && packages="$packages pulsectl"
         $need_pyudev && packages="$packages pyudev"
         $need_websocket && packages="$packages websocket-client"
+        $need_soxr && packages="$packages soxr"
 
         # Try with --break-system-packages first (needed on newer systems)
         # Fall back to without it for older systems

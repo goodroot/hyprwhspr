@@ -132,11 +132,6 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
 
     def _sender_loop(self):
         """Background thread: drain queued audio and send over the connection."""
-        try:
-            from scipy import signal as _signal
-        except Exception:
-            _signal = None
-
         while True:
             with self.lock:
                 # Wait until we have work, are connected, or are shutting down
@@ -163,7 +158,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                     self._queue_cond.notify_all()
 
             try:
-                audio_chunk = self._resample_for_output(audio_chunk, _signal)
+                audio_chunk = self._resample_for_output(audio_chunk)
                 base64_audio = self._float32_to_pcm16_base64(audio_chunk)
 
                 async def _send():

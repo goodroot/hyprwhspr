@@ -15,16 +15,28 @@ import ast
 from typing import Optional, Dict, Any, List, Tuple
 
 try:
-    from .dependencies import require_package
-except ImportError:
-    from dependencies import require_package
-
-try:
     from .ydotoold_session import YdotooldSession
 except ImportError:
     from ydotoold_session import YdotooldSession
 
-pyperclip = require_package('pyperclip')
+class _LazyPyperclip:
+    """Load the optional fallback only when native clipboard tools are absent."""
+
+    _module = None
+
+    def __getattr__(self, name):
+        if self._module is None:
+            try:
+                import pyperclip as module
+            except ImportError as exc:
+                raise RuntimeError(
+                    "clipboard fallback unavailable; install pyperclip (and xclip on X11)"
+                ) from exc
+            self._module = module
+        return getattr(self._module, name)
+
+
+pyperclip = _LazyPyperclip()
 
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
 NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'

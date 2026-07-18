@@ -1,0 +1,8 @@
+-r requirements.txt
+torch
+transformers>=4.56,<5.3,!=5.0.*,!=5.1.*
+huggingface_hub
+sentencepiece
+protobuf
+librosa
+soundfile

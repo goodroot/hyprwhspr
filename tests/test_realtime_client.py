@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -167,7 +168,11 @@ class RealtimeClientTests(unittest.TestCase):
         client.sample_rate = 24000
         audio = np.zeros(4800, dtype=np.float32)
 
-        resampled = client._resample_for_output(audio)
+        fake_soxr = types.SimpleNamespace(
+            resample=lambda samples, source, target, quality="HQ": samples[::2]
+        )
+        with mock.patch.dict(sys.modules, {"soxr": fake_soxr}):
+            resampled = client._resample_for_output(audio)
 
         self.assertEqual(len(resampled), 2400)
         self.assertEqual(resampled.dtype, np.float32)

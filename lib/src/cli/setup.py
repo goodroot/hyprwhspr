@@ -966,15 +966,23 @@ def setup_command(python_path: Optional[str] = None):
         print("="*60)
         log_info("Ensuring Python virtual environment and dependencies are installed...")
         
-        from backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
+        from backend_installer import (
+            setup_python_venv, dependency_manifests, dependency_manifest_hash,
+            get_state, set_state,
+        )
+
+        manifests = dependency_manifests(backend_normalized, provider_id)
+        dependency_family = f"{backend_normalized}:{provider_id or 'default'}"
+        previous_family = get_state("dependency_family")
+        switch_family = bool(previous_family and previous_family != dependency_family)
+        if switch_family:
+            log_info(f"Backend dependency family changed ({previous_family} → {dependency_family}); recreating virtual environment...")
         
         # Setup venv (creates if needed, updates if exists)
-        pip_bin = setup_python_venv()
+        pip_bin = setup_python_venv(force_rebuild=switch_family)
         
-        # Check if requirements.txt has changed
-        requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
-        cur_req_hash = compute_file_hash(requirements_file)
-        stored_req_hash = get_state("requirements_hash")
+        cur_req_hash = dependency_manifest_hash(manifests)
+        stored_req_hash = get_state("dependency_manifest_hash")
         
         # Check if base dependencies are installed (excluding pywhispercpp)
         deps_installed = False
@@ -982,7 +990,7 @@ def setup_command(python_path: Optional[str] = None):
             python_bin = VENV_DIR / 'bin' / 'python'
             result = run_command([
                 'timeout', '5s', str(python_bin), '-c',
-                'import sounddevice, numpy, requests; import websocket; import elevenlabs'
+                'import sounddevice, numpy, soxr'
             ], check=False, capture_output=True, show_output_on_error=False)
             deps_installed = result.returncode == 0
         except Exception:
@@ -1000,31 +1008,14 @@ def setup_command(python_path: Optional[str] = None):
                 # Dependencies missing but hash matches (shouldn't happen often)
                 log_info("Installing missing base Python dependencies...")
             
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:
-                temp_req_path = Path(temp_req.name)
-                try:
-                    with open(requirements_file, 'r', encoding='utf-8') as f_in:
-                        for line in f_in:
-                            # Skip pywhispercpp - not needed for cloud backends
-                            if not line.strip().startswith('pywhispercpp'):
-                                temp_req.write(line)
-                    
-                    temp_req.flush()
-                    
-                    if temp_req_path.stat().st_size > 0:
-                        run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
-                    else:
-                        log_warning("No dependencies to install (all excluded)")
-                except Exception as e:
-                    log_error(f"Failed to install base dependencies: {e}")
-                    log_warning("Continuing anyway - dependencies may be missing")
-                finally:
-                    # Clean up temp file
-                    if temp_req_path.exists():
-                        temp_req_path.unlink()
+            try:
+                run_command([str(pip_bin), 'install', '-r', str(manifests[-1])], check=True)
+            except Exception as e:
+                log_error(f"Failed to install base dependencies: {e}")
+                log_warning("Continuing anyway - dependencies may be missing")
             
-            set_state("requirements_hash", cur_req_hash)
+            set_state("dependency_manifest_hash", cur_req_hash)
+            set_state("dependency_family", dependency_family)
             log_success("Base Python dependencies installed")
         else:
             log_info("Base Python dependencies up to date")
