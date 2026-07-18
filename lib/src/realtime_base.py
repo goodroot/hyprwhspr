@@ -336,11 +336,15 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
     def _connect_internal(self) -> bool:
         """Internal connection logic with reconnection support"""
-        if self.connecting:
-            return False
+        with self.lock:
+            if self.connecting:
+                return False
+            self.connecting = True
 
-        self.connecting = True
         self._prepare_connect()
+        # This attempt's socket. On failure, close only this — self.ws may
+        # already belong to a newer attempt started by another thread.
+        attempt_ws = None
 
         try:
             target_url, headers = self._ws_connect_params()
@@ -349,7 +353,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             kwargs = {}
             if headers:
                 kwargs['header'] = [f'{k}: {v}' for k, v in headers.items()]
-            self.ws = websocket.WebSocketApp(
+            attempt_ws = websocket.WebSocketApp(
                 target_url,
                 on_open=self._on_open,
                 on_message=self._on_message,
@@ -357,9 +361,11 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 on_close=self._on_close,
                 **kwargs,
             )
+            with self.lock:
+                self.ws = attempt_ws
 
             # Start WebSocket in a separate thread
-            ws_thread = threading.Thread(target=self.ws.run_forever, daemon=True)
+            ws_thread = threading.Thread(target=attempt_ws.run_forever, daemon=True)
             ws_thread.start()
 
             # Wait for connection (with timeout)
@@ -375,18 +381,28 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 return True
             else:
                 self._log('Connection timeout')
-                # Stop the ws thread that is still running in the background
-                try:
-                    self.ws.close()
-                except Exception:
-                    pass
+                self._abandon_attempt(attempt_ws)
                 return False
 
         except Exception as e:
             self._log(f'Connection error: {e}')
+            self._abandon_attempt(attempt_ws)
             return False
         finally:
-            self.connecting = False
+            with self.lock:
+                self.connecting = False
+
+    def _abandon_attempt(self, attempt_ws):
+        """Close a failed connection attempt's socket without touching a newer one."""
+        if attempt_ws is None:
+            return
+        try:
+            attempt_ws.close()
+        except Exception:
+            pass
+        with self.lock:
+            if self.ws is attempt_ws:
+                self.ws = None
 
     def _on_open(self, _ws):
         """WebSocket connection opened"""

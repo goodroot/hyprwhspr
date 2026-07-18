@@ -1378,7 +1378,7 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
                 self._notify_zero_volume(
-                    "Realtime backend not connected (WebSocket closed while idle?). Try again.",
+                    "Realtime backend not connected yet — try again in a moment.",
                     log_level="ERROR",
                 )
                 # Restore audio if it was ducked

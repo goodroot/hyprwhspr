@@ -6,6 +6,7 @@ during capture via the streaming callback; transcribe() then commits the
 buffered audio and waits for the final transcript.
 """
 
+import time
 from typing import Callable, Optional
 
 try:
@@ -421,6 +422,24 @@ class RealtimeWsBackend(TranscriptionBackend):
         """Reconnect realtime client using stored connect params."""
         if not self._realtime_client:
             return False
+
+        # A handshake may already be in flight (startup init or auto-reconnect).
+        # Never destroy it — wait briefly for it to land instead.
+        if getattr(self._realtime_client, 'connecting', False):
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                if self._realtime_client.connected:
+                    break
+                if not getattr(self._realtime_client, 'connecting', False):
+                    break
+                time.sleep(0.1)
+            if self._realtime_client.connected:
+                print('[REALTIME] In-flight connection landed; proceeding', flush=True)
+                return True
+            if getattr(self._realtime_client, 'connecting', False):
+                print('[REALTIME] Still connecting; try again in a moment', flush=True)
+                return False
+            # Attempt finished without connecting; fall through to reconnect.
 
         params = self._realtime_connect_params or {}
         websocket_url = params.get('websocket_url')
