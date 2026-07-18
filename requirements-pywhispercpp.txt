@@ -1,0 +1,2 @@
+-r requirements.txt
+pywhispercpp==1.5.0

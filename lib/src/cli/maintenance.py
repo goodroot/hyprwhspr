@@ -25,12 +25,14 @@ except ImportError:
 try:
     from ..backend_installer import (
         install_backend, VENV_DIR, PYWHISPERCPP_SRC_DIR, PYWHISPERCPP_MODELS_DIR,
-        get_install_state, set_install_state, get_all_state, init_state
+        get_install_state, set_install_state, get_all_state, get_state, init_state,
+        resolve_dependency_plan, execute_dependency_plan,
     )
 except ImportError:
     from backend_installer import (
         install_backend, VENV_DIR, PYWHISPERCPP_SRC_DIR, PYWHISPERCPP_MODELS_DIR,
-        get_install_state, set_install_state, get_all_state, init_state
+        get_install_state, set_install_state, get_all_state, get_state, init_state,
+        resolve_dependency_plan, execute_dependency_plan,
     )
 
 try:
@@ -290,19 +292,30 @@ def backend_repair_command():
     # Check backend module installation based on configured backend
     backend_missing = False
     backend_module = None
+    required_imports = ()
     configured_backend = None
+    config_manager = None
 
     # Get the configured backend to know which module to check
     try:
         config_manager = ConfigManager()
         configured_backend = config_manager.get_setting('transcription_backend', 'pywhispercpp')
         configured_backend = normalize_backend(configured_backend)
+        provider_key = (
+            'websocket_provider' if configured_backend == 'realtime-ws'
+            else 'rest_api_provider'
+        )
+        provider = config_manager.get_setting(provider_key, None)
+        plan = resolve_dependency_plan(configured_backend, provider)
+        required_imports = plan.required_imports
     except Exception:
         pass
 
-    # Determine which module to check based on backend
-    # (rest-api, realtime-ws have no local module to check)
-    backend_module = BACKEND_IMPORT_MODULES.get(configured_backend)
+    # The resolved plan is authoritative for local and cloud import checks.
+    if required_imports:
+        backend_module = ', '.join(required_imports)
+    else:
+        backend_module = BACKEND_IMPORT_MODULES.get(configured_backend)
 
     if backend_module and venv_python.exists() and not venv_corrupted:
         try:
@@ -337,12 +350,12 @@ def backend_repair_command():
         choice = Prompt.ask("Select option", choices=['1', '2'], default='1')
         if choice == '1':
             log_info("Recreating venv...")
-            import shutil
-            shutil.rmtree(VENV_DIR, ignore_errors=True)
-            # Recreate by calling setup_python_venv
-            from backend_installer import setup_python_venv
-            setup_python_venv()
-            log_success("Venv recreated")
+            if not _reinstall_configured_dependencies(config_manager, configured_backend):
+                log_error("Venv repair failed")
+                return False
+            log_success("Venv recreated with configured dependencies")
+            venv_corrupted = False
+            backend_missing = False
     
     if backend_missing:
         print("\nIssues found:")
@@ -353,21 +366,41 @@ def backend_repair_command():
 
         choice = Prompt.ask("Select option", choices=['1', '2'], default='1')
         if choice == '1':
-            # Use the configured backend for reinstallation
-            if configured_backend and configured_backend in LOCAL_INSTALL_BACKENDS:
-                log_info(f"Reinstalling {configured_backend.upper()} backend...")
-                # Use force_rebuild=True to ensure clean reinstall
-                if install_backend(configured_backend, force_rebuild=True):
-                    log_success("Backend reinstalled successfully")
-                else:
-                    log_error("Backend reinstallation failed")
-                    return False
-            else:
-                log_warning("Could not detect backend type. Please run 'hyprwhspr setup'")
+            log_info(f"Reinstalling {configured_backend.upper()} backend...")
+            if not _reinstall_configured_dependencies(config_manager, configured_backend):
+                log_error("Backend reinstallation failed")
                 return False
+            log_success("Backend reinstalled successfully")
     
     log_success("Repair completed")
     return True
+
+
+def _reinstall_configured_dependencies(config_manager, configured_backend: str) -> bool:
+    """Repair the configured dependency family through its normal transaction."""
+    if configured_backend == 'pywhispercpp':
+        installed = get_state('installed_backend')
+        configured_backend = installed if installed in LOCAL_INSTALL_BACKENDS else 'cpu'
+
+    if configured_backend in LOCAL_INSTALL_BACKENDS:
+        return install_backend(configured_backend, force_rebuild=True)
+
+    if configured_backend in ('rest-api', 'realtime-ws'):
+        provider_key = (
+            'websocket_provider' if configured_backend == 'realtime-ws'
+            else 'rest_api_provider'
+        )
+        provider = config_manager.get_setting(provider_key, None)
+        try:
+            plan = resolve_dependency_plan(configured_backend, provider)
+            execute_dependency_plan(plan, force_rebuild=True)
+            return True
+        except Exception as exc:
+            log_error(f"Dependency repair failed: {exc}")
+            return False
+
+    log_warning("Could not detect backend type. Please run 'hyprwhspr setup'")
+    return False
 
 
 def backend_reset_command():

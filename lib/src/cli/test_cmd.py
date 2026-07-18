@@ -29,6 +29,11 @@ try:
 except ImportError:
     from output_control import log_info, log_success, log_warning, log_error
 
+try:
+    from ..audio_resampler import resample_audio
+except ImportError:
+    from audio_resampler import resample_audio
+
 from ._shared import HYPRWHSPR_ROOT
 
 
@@ -288,8 +293,7 @@ def test_command(live: bool = False, mic_only: bool = False):
 
                         # Resample to 16kHz if needed
                         if sample_rate != 16000:
-                            from scipy import signal
-                            audio_data = signal.resample(audio_data, int(len(audio_data) * 16000 / sample_rate))
+                            audio_data = resample_audio(audio_data, sample_rate, 16000)
 
                         duration = len(audio_data) / 16000
                         log_success(f"Loaded test.wav ({duration:.1f}s)")

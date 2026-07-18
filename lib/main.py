@@ -1330,6 +1330,8 @@ class hyprwhsprApp:
                 blocked = 'init-failed'
             elif getattr(self.whisper_manager, '_model_manually_unloaded', False):
                 blocked = 'unloaded'
+            elif self.whisper_manager.realtime_client_missing():
+                blocked = 'realtime-reconnect'
             else:
                 blocked = None
                 # Set flag immediately to prevent duplicate starts
@@ -1348,6 +1350,13 @@ class hyprwhsprApp:
         if blocked == 'init-failed':
             self._notify_user("hyprwhspr", "Backend failed to load — retrying, try again shortly", urgency="normal")
             print("[CONTROL] Recording blocked: backend init failed - retrying", flush=True)
+            self._start_backend_init_background()
+            return
+
+        # Realtime client was torn down; rebuild in background instead of blocking
+        if blocked == 'realtime-reconnect':
+            self._notify_user("hyprwhspr", "Reconnecting — try again in a moment", urgency="normal")
+            print("[CONTROL] Recording blocked: realtime client not connected - reconnecting", flush=True)
             self._start_backend_init_background()
             return
 
@@ -1386,7 +1395,7 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
                 self._notify_zero_volume(
-                    "Realtime backend not connected (WebSocket closed while idle?). Try again.",
+                    "Realtime backend not connected yet — try again in a moment.",
                     log_level="ERROR",
                 )
                 # Restore audio if it was ducked
@@ -1600,8 +1609,9 @@ class hyprwhsprApp:
             # Stop capture and discard the audio data
             self.audio_capture.stop_recording()
 
-            # Close WebSocket if using realtime-ws backend (no transcription needed)
-            self.whisper_manager.close_realtime_connection("recording cancelled")
+            # Discard buffered realtime audio but keep the WebSocket alive so the
+            # next recording starts without paying a fresh handshake
+            self.whisper_manager.discard_realtime_audio()
 
             self.audio_manager.play_error_sound()
         except Exception as e:

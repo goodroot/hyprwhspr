@@ -21,26 +21,22 @@ from queue import Queue, Empty
 from collections import deque
 
 try:
+    from .audio_resampler import resample_audio
+except ImportError:
+    from audio_resampler import resample_audio
+
+try:
     import numpy as np
 except (ImportError, ModuleNotFoundError) as e:
     print("ERROR: python-numpy is not available in this Python environment.", file=sys.stderr)
     print(f"ImportError: {e}", file=sys.stderr)
     sys.exit(1)
 
-try:
-    import websocket
-except (ImportError, ModuleNotFoundError) as e:
-    print("ERROR: websocket-client is not available in this Python environment.", file=sys.stderr)
-    print(f"ImportError: {e}", file=sys.stderr)
-    print("\nThis is a required dependency. Please install it:", file=sys.stderr)
-    print("  pip install websocket-client>=1.6.0", file=sys.stderr)
-    sys.exit(1)
-
-
 class RealtimeAudioClientBase:
     """Audio queueing, backpressure and format conversion shared by all realtime clients."""
 
     LOG_TAG = '[REALTIME]'
+    IDLE_CLOSE_SECS = 10.0
 
     def __init__(self):
         self.api_key = None
@@ -77,6 +73,9 @@ class RealtimeAudioClientBase:
         self.reconnect_attempts = 0
         self.max_reconnect_attempts = 5
         self.reconnect_delays = [1, 2, 4, 8, 16]  # Exponential backoff
+        self._reconnecting = False
+        self._reconnect_lock = threading.Lock()
+        self._last_audio_chunk_time = 0.0
 
     def _log(self, msg: str):
         print(f'{self.LOG_TAG} {msg}', flush=True)
@@ -87,6 +86,12 @@ class RealtimeAudioClientBase:
 
     def _on_audio_chunk_locked(self):
         """Hook called (under lock) for each chunk entering append_audio."""
+        self._last_audio_chunk_time = time.time()
+
+    def _is_idle_close(self) -> bool:
+        """Whether a close arrived with no recent audio (idle session)."""
+        last = float(self._last_audio_chunk_time or 0.0)
+        return (not last) or ((time.time() - last) > self.IDLE_CLOSE_SECS)
 
     def set_input_sample_rate(self, sample_rate: int):
         """Set the capture rate for incoming AudioCapture chunks."""
@@ -101,27 +106,9 @@ class RealtimeAudioClientBase:
         """Set maximum buffer size in seconds for backpressure handling"""
         self.max_buffer_seconds = max(1.0, seconds)  # Minimum 1 second
 
-    def _resample_for_output(self, audio_chunk: np.ndarray, signal_module=None) -> np.ndarray:
+    def _resample_for_output(self, audio_chunk: np.ndarray) -> np.ndarray:
         """Resample queued capture audio to the provider's configured output rate."""
-        if self.input_sample_rate == self.sample_rate:
-            return audio_chunk
-        if signal_module is None:
-            try:
-                from scipy import signal as signal_module
-            except Exception:
-                return audio_chunk
-        try:
-            from math import gcd
-            divisor = gcd(int(self.input_sample_rate), int(self.sample_rate))
-            resampled = signal_module.resample_poly(
-                audio_chunk,
-                up=int(self.sample_rate) // divisor,
-                down=int(self.input_sample_rate) // divisor,
-            )
-            return resampled.astype(np.float32, copy=False)
-        except Exception as e:
-            self._log(f'Failed to resample audio {self.input_sample_rate}Hz -> {self.sample_rate}Hz: {e}')
-            return audio_chunk
+        return resample_audio(audio_chunk, self.input_sample_rate, self.sample_rate)
 
     def _float32_to_pcm16(self, audio_data: np.ndarray) -> bytes:
         """Convert float32 numpy array to PCM16 bytes (little-endian)"""
@@ -188,6 +175,14 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             mode: 'transcribe' for speech-to-text, 'converse' for voice-to-AI
         """
         super().__init__()
+        try:
+            import websocket as websocket_transport
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise RuntimeError(
+                'websocket-client is required for this realtime provider; '
+                'install requirements-realtime.txt'
+            ) from exc
+        self._websocket_transport = websocket_transport
         self.ws = None
         self.url = None
         self.instructions = None
@@ -223,7 +218,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
     def _on_connect_success(self):
         """Hook called after the connection is established."""
 
-    def _after_open(self):
+    def _after_open(self, _ws):
         """Hook called from _on_open after the receiver thread is started."""
 
     def _audio_ws_message(self, base64_audio: str) -> dict:
@@ -280,11 +275,6 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
     def _sender_loop(self):
         """Background thread: drain queued audio and send over the WebSocket."""
-        try:
-            from scipy import signal as _signal
-        except Exception:
-            _signal = None
-
         while True:
             with self.lock:
                 self._queue_cond.wait_for(
@@ -307,7 +297,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                     self._queue_cond.notify_all()
 
             try:
-                resampled = self._resample_for_output(audio_chunk, _signal)
+                resampled = self._resample_for_output(audio_chunk)
                 pcm_bytes = self._float32_to_pcm16(resampled)
                 base64_audio = base64.b64encode(pcm_bytes).decode('utf-8')
                 ws.send(json.dumps(self._audio_ws_message(base64_audio)))
@@ -336,11 +326,15 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
     def _connect_internal(self) -> bool:
         """Internal connection logic with reconnection support"""
-        if self.connecting:
-            return False
+        with self.lock:
+            if self.connecting:
+                return False
+            self.connecting = True
 
-        self.connecting = True
         self._prepare_connect()
+        # This attempt's socket. On failure, close only this — self.ws may
+        # already belong to a newer attempt started by another thread.
+        attempt_ws = None
 
         try:
             target_url, headers = self._ws_connect_params()
@@ -349,7 +343,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             kwargs = {}
             if headers:
                 kwargs['header'] = [f'{k}: {v}' for k, v in headers.items()]
-            self.ws = websocket.WebSocketApp(
+            attempt_ws = self._websocket_transport.WebSocketApp(
                 target_url,
                 on_open=self._on_open,
                 on_message=self._on_message,
@@ -357,9 +351,11 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 on_close=self._on_close,
                 **kwargs,
             )
+            with self.lock:
+                self.ws = attempt_ws
 
             # Start WebSocket in a separate thread
-            ws_thread = threading.Thread(target=self.ws.run_forever, daemon=True)
+            ws_thread = threading.Thread(target=attempt_ws.run_forever, daemon=True)
             ws_thread.start()
 
             # Wait for connection (with timeout)
@@ -375,23 +371,36 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 return True
             else:
                 self._log('Connection timeout')
-                # Stop the ws thread that is still running in the background
-                try:
-                    self.ws.close()
-                except Exception:
-                    pass
+                self._abandon_attempt(attempt_ws)
                 return False
 
         except Exception as e:
             self._log(f'Connection error: {e}')
+            self._abandon_attempt(attempt_ws)
             return False
         finally:
-            self.connecting = False
+            with self.lock:
+                self.connecting = False
 
-    def _on_open(self, _ws):
+    def _abandon_attempt(self, attempt_ws):
+        """Close a failed connection attempt's socket without touching a newer one."""
+        if attempt_ws is None:
+            return
+        try:
+            attempt_ws.close()
+        except Exception:
+            pass
+        with self.lock:
+            if self.ws is attempt_ws:
+                self.ws = None
+
+    def _on_open(self, ws):
         """WebSocket connection opened"""
         start_receiver = False
         with self.lock:
+            if ws is not self.ws:
+                self._log('Ignoring open from obsolete WebSocket')
+                return
             if not self.receiver_running:
                 self.receiver_running = True
                 start_receiver = True
@@ -400,13 +409,17 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             self.receiver_thread = threading.Thread(target=self._receiver_loop, daemon=True)
             self.receiver_thread.start()
 
-        self._after_open()
+        self._after_open(ws)
 
-    def _on_message(self, _ws, message):
+    def _on_message(self, ws, message):
         """Handle incoming WebSocket message"""
         try:
             event = json.loads(message)
-            self.event_queue.put(event)
+            with self.lock:
+                if ws is not self.ws:
+                    self._log('Ignoring message from obsolete WebSocket')
+                    return
+                self.event_queue.put(event)
         except json.JSONDecodeError as e:
             self._log(f'Failed to parse event: {e}')
 
@@ -414,9 +427,16 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         """Handle WebSocket error"""
         self._log(f'WebSocket error: {error}')
 
-    def _on_close(self, _ws, close_status_code, _close_msg):
+    def _on_close(self, ws, close_status_code, _close_msg):
         """Handle WebSocket close"""
         with self.lock:
+            # A failed/abandoned connection attempt may report its close after
+            # a newer socket has become active.  It must not tear down the
+            # newer connection's shared state.
+            if ws is not None and ws is not self.ws:
+                self._log(f'Ignoring close from obsolete WebSocket (code: {close_status_code})')
+                return
+            was_connected = self.connected
             self.connected = False
             # Stop sender thread on disconnect; it will be restarted on next connect.
             # This prevents it from waiting indefinitely after an unexpected close.
@@ -428,9 +448,14 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
         self._log(f'WebSocket closed (code: {close_status_code})')
 
-        # Attempt reconnection if not intentionally closed
-        if self.receiver_running and close_status_code != 1000:  # 1000 = normal closure
-            self._attempt_reconnect()
+        # Reconnect only on an unexpected mid-recording close; idle closes are
+        # recovered on-demand at the next recording start
+        if self.receiver_running and was_connected and close_status_code != 1000:
+            if self._is_idle_close():
+                self._log('Connection closed (idle) - will reconnect on next recording')
+            else:
+                self._log('Connection lost unexpectedly')
+                threading.Thread(target=self._attempt_reconnect, daemon=True).start()
 
     def _receiver_loop(self):
         """Background thread to process incoming events"""
@@ -445,22 +470,30 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 self._log(f'Error in receiver loop: {e}')
 
     def _attempt_reconnect(self):
-        """Attempt to reconnect with exponential backoff"""
-        if self.reconnect_attempts >= self.max_reconnect_attempts:
+        """Attempt reconnection with exponential backoff (one loop at a time)."""
+        if not self._reconnect_lock.acquire(blocking=False):
+            return False
+        try:
+            self._reconnecting = True
+            while self.reconnect_attempts < self.max_reconnect_attempts:
+                delay = self.reconnect_delays[min(self.reconnect_attempts, len(self.reconnect_delays) - 1)]
+                self.reconnect_attempts += 1
+                self._log(f'Reconnecting (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts}) in {delay}s...')
+                time.sleep(delay)
+
+                # Abort if the client was closed while we were waiting
+                if not self.receiver_running:
+                    self._log('Reconnection cancelled (closing)')
+                    return False
+
+                if self._connect_internal():
+                    return True
+
             self._log('Max reconnection attempts reached')
             return False
-
-        delay = self.reconnect_delays[min(self.reconnect_attempts, len(self.reconnect_delays) - 1)]
-        self.reconnect_attempts += 1
-
-        self._log(f'Reconnecting (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts}) in {delay}s...')
-        time.sleep(delay)
-
-        # Abort if the client was closed while we were waiting
-        if not self.receiver_running:
-            return False
-
-        return self._connect_internal()
+        finally:
+            self._reconnecting = False
+            self._reconnect_lock.release()
 
     def close(self):
         """Close WebSocket connection and cleanup"""
@@ -508,6 +541,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         self._last_transcript_audio_activity_id = 0
         self._dropped_chunks = 0
         self._last_drop_log_time = 0.0
+        self._last_audio_chunk_time = 0.0
         self._queue_cond.notify_all()
 
     def clear_audio_buffer(self):

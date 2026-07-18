@@ -65,8 +65,20 @@ class NotificationCompatibilityTests(unittest.TestCase):
 
 
 class BackendInstallerStateTests(unittest.TestCase):
+    def test_dependency_manifests_are_backend_and_provider_specific(self):
+        with mock.patch.object(backend_installer, "HYPRWHSPR_ROOT", str(ROOT)):
+            cpu = backend_installer.dependency_manifests("cpu")
+            rest = backend_installer.dependency_manifests("rest-api", "openai")
+            realtime = backend_installer.dependency_manifests("realtime-ws", "openai")
+            eleven = backend_installer.dependency_manifests("realtime-ws", "elevenlabs")
+
+        self.assertEqual(cpu[-1].name, "requirements-pywhispercpp.txt")
+        self.assertEqual(rest[-1].name, "requirements-rest.txt")
+        self.assertEqual(realtime[-1].name, "requirements-realtime.txt")
+        self.assertEqual(eleven[-1].name, "requirements-realtime-elevenlabs.txt")
+
     def test_missing_installed_backend_with_matching_hash_does_not_reinstall(self):
-        state = {"requirements_hash": "same-hash"}
+        state = {"dependency_manifest_hash": "same-hash"}
 
         def get_state(key):
             return state.get(key, "")
@@ -84,14 +96,15 @@ class BackendInstallerStateTests(unittest.TestCase):
             completed = types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
             with (
-                mock.patch.object(backend_installer, "install_system_dependencies"),
+                mock.patch.object(backend_installer, "install_system_dependencies") as install_system,
                 mock.patch.object(backend_installer, "_check_mise_active", return_value=False),
                 mock.patch.object(backend_installer, "setup_python_venv", return_value=pip_bin),
                 mock.patch.object(backend_installer, "VENV_DIR", venv_dir),
                 mock.patch.object(backend_installer, "HYPRWHSPR_ROOT", str(ROOT)),
-                mock.patch.object(backend_installer, "compute_file_hash", return_value="same-hash"),
+                mock.patch.object(backend_installer, "dependency_manifest_hash", return_value="same-hash"),
                 mock.patch.object(backend_installer, "get_state", side_effect=get_state),
                 mock.patch.object(backend_installer, "set_state", side_effect=set_state),
+                mock.patch.object(backend_installer, "commit_dependency_state") as commit_state,
                 mock.patch.object(backend_installer, "set_install_state"),
                 mock.patch.object(backend_installer, "run_command", return_value=completed),
                 mock.patch.object(backend_installer, "download_pywhispercpp_model", return_value=True),
@@ -100,7 +113,9 @@ class BackendInstallerStateTests(unittest.TestCase):
                 self.assertTrue(backend_installer.install_backend("cpu"))
 
         install_cpu.assert_not_called()
-        self.assertEqual(state["installed_backend"], "cpu")
+        install_system.assert_not_called()
+        committed_plan = commit_state.call_args.args[0]
+        self.assertEqual(committed_plan.accelerated_variant, "cpu")
 
 
 if __name__ == "__main__":

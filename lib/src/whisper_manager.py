@@ -56,7 +56,15 @@ class WhisperManager:
         self._realtime_partial_callback = None
 
         # Thread safety for model operations
-        self._model_lock = threading.Lock()
+        # Serializes local model use and backend replacement.  An RLock keeps
+        # backend initialization free to call manager helpers on this thread.
+        self._model_lock = threading.RLock()
+
+        # Single-flight initialize(): concurrent callers coalesce onto the
+        # in-flight init instead of racing the backend swap
+        self._init_cond = threading.Condition()
+        self._init_in_progress = False
+        self._last_init_result = False
 
         # State
         self.ready = False
@@ -71,7 +79,31 @@ class WhisperManager:
         self._backend = None
 
     def initialize(self) -> bool:
-        """Initialize the configured transcription backend and check dependencies"""
+        """Initialize the configured transcription backend (single-flight)."""
+        with self._init_cond:
+            if self._init_in_progress:
+                while self._init_in_progress:
+                    self._init_cond.wait()
+                return self._last_init_result
+            self._init_in_progress = True
+
+        result = False
+        try:
+            result = self._initialize_backend()
+            return result
+        finally:
+            with self._init_cond:
+                self._init_in_progress = False
+                self._last_init_result = result
+                self._init_cond.notify_all()
+
+    def _initialize_backend(self) -> bool:
+        # Keep cleanup and replacement mutually exclusive with local
+        # transcription, which uses the same lock around model access.
+        with self._model_lock:
+            return self._initialize_backend_locked()
+
+    def _initialize_backend_locked(self) -> bool:
         try:
             self.temp_dir = self.config.get_temp_directory()
 
@@ -80,6 +112,17 @@ class WhisperManager:
             # pywhispercpp hardware variants (cpu/nvidia/vulkan) and unknown
             # names fall back to the default pywhispercpp backend
             backend_cls = BACKENDS.get(backend, PywhispercppBackend)
+
+            # Close the old backend so its client/threads never outlive the swap
+            old = self._backend
+            if old is not None:
+                self._backend = None
+                self.ready = False
+                try:
+                    old.cleanup()
+                except Exception as e:
+                    print(f"[WARN] Failed to clean up previous backend: {e}", flush=True)
+
             self._backend = backend_cls(self)
             return self._backend.initialize()
 
@@ -94,15 +137,31 @@ class WhisperManager:
         Returns:
             Callback function if realtime-ws backend is active, None otherwise
         """
-        if self._backend is not None and self._backend.name == 'realtime-ws':
-            return self._backend.get_streaming_callback()
+        backend = self._backend
+        if backend is not None and backend.name == 'realtime-ws':
+            return backend.get_streaming_callback()
         return None
+
+    def _active_realtime_backend(self):
+        """The realtime-ws backend when it has a live client, else None."""
+        backend = self._backend
+        if (backend is not None and backend.name == 'realtime-ws'
+                and backend.is_loaded):
+            return backend
+        return None
+
+    def realtime_client_missing(self) -> bool:
+        """True when the configured realtime-ws backend has no client (destructive close)."""
+        backend = self._backend
+        return (backend is not None and backend.name == 'realtime-ws'
+                and not backend.is_loaded)
 
     def set_realtime_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         """Set callback for realtime partial transcript previews."""
         self._realtime_partial_callback = callback
-        if self._backend is not None and self._backend.name == 'realtime-ws':
-            self._backend.apply_partial_callback(callback)
+        backend = self._backend
+        if backend is not None and backend.name == 'realtime-ws':
+            backend.apply_partial_callback(callback)
 
     def _current_backend_name(self) -> str:
         """Normalized name of the configured transcription backend."""
@@ -111,17 +170,23 @@ class WhisperManager:
 
     def update_realtime_language(self, language: Optional[str]) -> None:
         """Apply a language override to a connected realtime client (no-op otherwise)."""
-        if (self._backend is not None and self._backend.name == 'realtime-ws'
-                and self._backend.is_loaded):
-            self._backend.update_language(language)
+        backend = self._active_realtime_backend()
+        if backend:
+            backend.update_language(language)
+
+    def discard_realtime_audio(self) -> None:
+        """Discard buffered realtime audio without closing the connection (no-op otherwise)."""
+        backend = self._active_realtime_backend()
+        if backend:
+            backend.discard_audio()
 
     def close_realtime_connection(self, reason: str = '') -> None:
         """Close the realtime WebSocket if one is active (no-op otherwise)."""
-        if (self._backend is not None and self._backend.name == 'realtime-ws'
-                and self._backend.is_loaded):
+        backend = self._active_realtime_backend()
+        if backend:
             note = f' ({reason})' if reason else ''
             print(f'[CLEANUP] Closing realtime WebSocket{note}', flush=True)
-            self._backend.close()
+            backend.close()
 
     def reinitialize_after_resume(self, only_if_idle: bool = False) -> bool:
         """Recover backend state after suspend/resume or audio recovery.
@@ -133,18 +198,19 @@ class WhisperManager:
         Returns:
             True if the backend is healthy (or needed no action), False otherwise
         """
-        if self._backend is None or not self._backend.reinit_on_resume:
+        backend = self._backend
+        if backend is None or not backend.reinit_on_resume:
             return True
 
         if only_if_idle:
-            if not (self._backend.is_local and self._backend.is_loaded):
+            if not (backend.is_local and backend.is_loaded):
                 return True
             idle = time.monotonic() - self._last_use_time
             if not (idle > 1800 and self._last_use_time > 0):
                 return True
             print(f"[RECOVERY] Reinitializing {self._current_backend_name()} model after audio recovery (suspend/resume detected)", flush=True)
 
-        return self._backend.reinitialize()
+        return backend.reinitialize()
 
     def is_ready(self) -> bool:
         """Check if whisper is ready for transcription"""
@@ -233,18 +299,21 @@ class WhisperManager:
         backend = self._current_backend_name()
 
         if backend == 'rest-api':
-            if self._backend is None:
+            active = self._backend
+            if active is None:
                 # Stateless backend; usable even if initialize() never ran
-                self._backend = BACKENDS['rest-api'](self)
-            return self._backend.transcribe(audio_data, sample_rate, language_override=language_override)
+                active = BACKENDS['rest-api'](self)
+                self._backend = active
+            return active.transcribe(audio_data, sample_rate, language_override=language_override)
 
         if backend == 'realtime-ws':
             # Audio was already streamed via callback during capture;
             # this just commits and waits for the result
-            if self._backend is None:
+            active = self._backend
+            if active is None:
                 print('[REALTIME] Backend not initialized', flush=True)
                 return ""
-            return self._backend.transcribe(audio_data, sample_rate, language_override=language_override)
+            return active.transcribe(audio_data, sample_rate, language_override=language_override)
 
         if self._backend is None:
             print('[ERROR] No transcription backend initialized', flush=True)

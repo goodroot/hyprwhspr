@@ -966,68 +966,15 @@ def setup_command(python_path: Optional[str] = None):
         print("="*60)
         log_info("Ensuring Python virtual environment and dependencies are installed...")
         
-        from backend_installer import setup_python_venv, compute_file_hash, get_state, set_state, HYPRWHSPR_ROOT
-        
-        # Setup venv (creates if needed, updates if exists)
-        pip_bin = setup_python_venv()
-        
-        # Check if requirements.txt has changed
-        requirements_file = Path(HYPRWHSPR_ROOT) / 'requirements.txt'
-        cur_req_hash = compute_file_hash(requirements_file)
-        stored_req_hash = get_state("requirements_hash")
-        
-        # Check if base dependencies are installed (excluding pywhispercpp)
-        deps_installed = False
+        from backend_installer import resolve_dependency_plan, execute_dependency_plan
+
         try:
-            python_bin = VENV_DIR / 'bin' / 'python'
-            result = run_command([
-                'timeout', '5s', str(python_bin), '-c',
-                'import sounddevice, numpy, requests; import websocket; import elevenlabs'
-            ], check=False, capture_output=True, show_output_on_error=False)
-            deps_installed = result.returncode == 0
-        except Exception:
-            pass
-        
-        # Install base dependencies if needed (excluding pywhispercpp)
-        if cur_req_hash != stored_req_hash or not stored_req_hash or not deps_installed:
-            if not stored_req_hash:
-                # First time setup - no stored hash means venv is new
-                log_info("Installing base Python dependencies (excluding pywhispercpp)...")
-            elif cur_req_hash != stored_req_hash:
-                # Requirements actually changed
-                log_info("Requirements.txt has changed. Updating base Python dependencies...")
-            else:
-                # Dependencies missing but hash matches (shouldn't happen often)
-                log_info("Installing missing base Python dependencies...")
-            
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:
-                temp_req_path = Path(temp_req.name)
-                try:
-                    with open(requirements_file, 'r', encoding='utf-8') as f_in:
-                        for line in f_in:
-                            # Skip pywhispercpp - not needed for cloud backends
-                            if not line.strip().startswith('pywhispercpp'):
-                                temp_req.write(line)
-                    
-                    temp_req.flush()
-                    
-                    if temp_req_path.stat().st_size > 0:
-                        run_command([str(pip_bin), 'install', '-r', str(temp_req_path)], check=True)
-                    else:
-                        log_warning("No dependencies to install (all excluded)")
-                except Exception as e:
-                    log_error(f"Failed to install base dependencies: {e}")
-                    log_warning("Continuing anyway - dependencies may be missing")
-                finally:
-                    # Clean up temp file
-                    if temp_req_path.exists():
-                        temp_req_path.unlink()
-            
-            set_state("requirements_hash", cur_req_hash)
-            log_success("Base Python dependencies installed")
-        else:
-            log_info("Base Python dependencies up to date")
+            plan = resolve_dependency_plan(backend_normalized, provider_id)
+            execute_dependency_plan(plan, custom_python=python_path)
+        except Exception as e:
+            log_error(f"Failed to install Python dependencies: {e}")
+            return
+        log_success("Python dependencies installed and verified")
     
     # Model selection for local backends
     if not backend_install_skipped:

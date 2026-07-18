@@ -14,6 +14,11 @@ from io import BytesIO
 from typing import Optional
 
 try:
+    from ..audio_resampler import resample_audio
+except ImportError:
+    from audio_resampler import resample_audio
+
+try:
     import numpy as np
 except (ImportError, ModuleNotFoundError) as e:
     print("ERROR: python-numpy is not available in this Python environment.", file=sys.stderr)
@@ -103,22 +108,11 @@ class TranscriptionBackend:
 
     def _resample_audio(self, audio_data: 'np.ndarray', source_rate: int, target_rate: int) -> 'np.ndarray':
         """Resample float32 mono audio when a backend requires a fixed sample rate."""
-        if source_rate == target_rate:
-            return audio_data
         try:
-            from math import gcd
-            from scipy import signal
-
-            divisor = gcd(int(source_rate), int(target_rate))
-            resampled = signal.resample_poly(
-                audio_data,
-                up=int(target_rate) // divisor,
-                down=int(source_rate) // divisor,
-            )
-            return resampled.astype(np.float32, copy=False)
+            return resample_audio(audio_data, source_rate, target_rate)
         except Exception as e:
-            print(f"[WARN] Failed to resample audio {source_rate}Hz -> {target_rate}Hz: {e}", flush=True)
-            return audio_data
+            print(f"ERROR: {e}", flush=True)
+            raise
 
     def _numpy_to_wav_bytes(self, audio_data: 'np.ndarray', sample_rate: int = 16000) -> bytes:
         """

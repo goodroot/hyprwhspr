@@ -56,18 +56,12 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         self._auto_commit_last_time = 0.0
         self._auto_commit_silence_secs = 0.45
         self._auto_commit_min_interval_secs = 2.0
-        self._last_audio_chunk_time = 0.0
 
-        # Reconnection (base holds attempt counters/delays)
+        # Reconnection (base holds attempt counters/delays and guard flags)
         self._should_stay_alive = False  # Set True after connect, False on close()
-        self._reconnecting = False
-        self._reconnect_lock = threading.Lock()
 
     def _transport_ready(self) -> bool:
         return bool(self.connected and self._connection)
-
-    def _on_audio_chunk_locked(self):
-        self._last_audio_chunk_time = time.time()
 
     def _start_sender_thread(self):
         """Start background sender thread (once)"""
@@ -132,11 +126,6 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
 
     def _sender_loop(self):
         """Background thread: drain queued audio and send over the connection."""
-        try:
-            from scipy import signal as _signal
-        except Exception:
-            _signal = None
-
         while True:
             with self.lock:
                 # Wait until we have work, are connected, or are shutting down
@@ -163,7 +152,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                     self._queue_cond.notify_all()
 
             try:
-                audio_chunk = self._resample_for_output(audio_chunk, _signal)
+                audio_chunk = self._resample_for_output(audio_chunk)
                 base64_audio = self._float32_to_pcm16_base64(audio_chunk)
 
                 async def _send():
