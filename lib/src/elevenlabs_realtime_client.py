@@ -56,18 +56,12 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         self._auto_commit_last_time = 0.0
         self._auto_commit_silence_secs = 0.45
         self._auto_commit_min_interval_secs = 2.0
-        self._last_audio_chunk_time = 0.0
 
-        # Reconnection (base holds attempt counters/delays)
+        # Reconnection (base holds attempt counters/delays and guard flags)
         self._should_stay_alive = False  # Set True after connect, False on close()
-        self._reconnecting = False
-        self._reconnect_lock = threading.Lock()
 
     def _transport_ready(self) -> bool:
         return bool(self.connected and self._connection)
-
-    def _on_audio_chunk_locked(self):
-        self._last_audio_chunk_time = time.time()
 
     def _start_sender_thread(self):
         """Start background sender thread (once)"""

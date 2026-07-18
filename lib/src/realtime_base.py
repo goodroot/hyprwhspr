@@ -36,6 +36,7 @@ class RealtimeAudioClientBase:
     """Audio queueing, backpressure and format conversion shared by all realtime clients."""
 
     LOG_TAG = '[REALTIME]'
+    IDLE_CLOSE_SECS = 10.0
 
     def __init__(self):
         self.api_key = None
@@ -72,6 +73,9 @@ class RealtimeAudioClientBase:
         self.reconnect_attempts = 0
         self.max_reconnect_attempts = 5
         self.reconnect_delays = [1, 2, 4, 8, 16]  # Exponential backoff
+        self._reconnecting = False
+        self._reconnect_lock = threading.Lock()
+        self._last_audio_chunk_time = 0.0
 
     def _log(self, msg: str):
         print(f'{self.LOG_TAG} {msg}', flush=True)
@@ -82,6 +86,12 @@ class RealtimeAudioClientBase:
 
     def _on_audio_chunk_locked(self):
         """Hook called (under lock) for each chunk entering append_audio."""
+        self._last_audio_chunk_time = time.time()
+
+    def _is_idle_close(self) -> bool:
+        """Whether a close arrived with no recent audio (idle session)."""
+        last = float(self._last_audio_chunk_time or 0.0)
+        return (not last) or ((time.time() - last) > self.IDLE_CLOSE_SECS)
 
     def set_input_sample_rate(self, sample_rate: int):
         """Set the capture rate for incoming AudioCapture chunks."""
@@ -413,6 +423,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
     def _on_close(self, _ws, close_status_code, _close_msg):
         """Handle WebSocket close"""
         with self.lock:
+            was_connected = self.connected
             self.connected = False
             # Stop sender thread on disconnect; it will be restarted on next connect.
             # This prevents it from waiting indefinitely after an unexpected close.
@@ -424,9 +435,14 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
         self._log(f'WebSocket closed (code: {close_status_code})')
 
-        # Attempt reconnection if not intentionally closed
-        if self.receiver_running and close_status_code != 1000:  # 1000 = normal closure
-            self._attempt_reconnect()
+        # Reconnect only on an unexpected mid-recording close; idle closes are
+        # recovered on-demand at the next recording start
+        if self.receiver_running and was_connected and close_status_code != 1000:
+            if self._is_idle_close():
+                self._log('Connection closed (idle) - will reconnect on next recording')
+            else:
+                self._log('Connection lost unexpectedly')
+                threading.Thread(target=self._attempt_reconnect, daemon=True).start()
 
     def _receiver_loop(self):
         """Background thread to process incoming events"""
@@ -441,22 +457,30 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 self._log(f'Error in receiver loop: {e}')
 
     def _attempt_reconnect(self):
-        """Attempt to reconnect with exponential backoff"""
-        if self.reconnect_attempts >= self.max_reconnect_attempts:
+        """Attempt reconnection with exponential backoff (one loop at a time)."""
+        if not self._reconnect_lock.acquire(blocking=False):
+            return False
+        try:
+            self._reconnecting = True
+            while self.reconnect_attempts < self.max_reconnect_attempts:
+                delay = self.reconnect_delays[min(self.reconnect_attempts, len(self.reconnect_delays) - 1)]
+                self.reconnect_attempts += 1
+                self._log(f'Reconnecting (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts}) in {delay}s...')
+                time.sleep(delay)
+
+                # Abort if the client was closed while we were waiting
+                if not self.receiver_running:
+                    self._log('Reconnection cancelled (closing)')
+                    return False
+
+                if self._connect_internal():
+                    return True
+
             self._log('Max reconnection attempts reached')
             return False
-
-        delay = self.reconnect_delays[min(self.reconnect_attempts, len(self.reconnect_delays) - 1)]
-        self.reconnect_attempts += 1
-
-        self._log(f'Reconnecting (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts}) in {delay}s...')
-        time.sleep(delay)
-
-        # Abort if the client was closed while we were waiting
-        if not self.receiver_running:
-            return False
-
-        return self._connect_internal()
+        finally:
+            self._reconnecting = False
+            self._reconnect_lock.release()
 
     def close(self):
         """Close WebSocket connection and cleanup"""
@@ -504,6 +528,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         self._last_transcript_audio_activity_id = 0
         self._dropped_chunks = 0
         self._last_drop_log_time = 0.0
+        self._last_audio_chunk_time = 0.0
         self._queue_cond.notify_all()
 
     def clear_audio_buffer(self):
