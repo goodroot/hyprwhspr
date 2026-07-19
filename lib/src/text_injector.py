@@ -24,16 +24,31 @@ class _LazyPyperclip:
 
     _module = None
 
+    def _load(self):
+        if self._module is not None:
+            return self._module
+        try:
+            import pyperclip as module
+        except ImportError as exc:
+            raise RuntimeError(
+                "clipboard fallback unavailable; install pyperclip and xclip (or xsel)"
+            ) from exc
+
+        # Avoid pyperclip's GTK fallback: mic_osd may already have selected GTK4,
+        # while pyperclip requests GTK3. Prefer subprocess-only X11 backends.
+        try:
+            if shutil.which("xclip"):
+                module.set_clipboard("xclip")
+            elif shutil.which("xsel"):
+                module.set_clipboard("xsel")
+        except Exception:
+            # Preserve pyperclip's own error for the eventual copy/paste call.
+            pass
+        self._module = module
+        return module
+
     def __getattr__(self, name):
-        if self._module is None:
-            try:
-                import pyperclip as module
-            except ImportError as exc:
-                raise RuntimeError(
-                    "clipboard fallback unavailable; install pyperclip (and xclip on X11)"
-                ) from exc
-            self._module = module
-        return getattr(self._module, name)
+        return getattr(self._load(), name)
 
 
 pyperclip = _LazyPyperclip()
@@ -158,9 +173,11 @@ class TextInjector:
         # Configuration
         self.config_manager = config_manager
 
-        # Detect available injectors
+        # Detect available injectors once for the active display protocol.
+        self.session_type = os.environ.get('XDG_SESSION_TYPE', '').lower()
         self.ydotool_available = self._check_ydotool()
-        self.wtype_available = shutil.which('wtype') is not None
+        self.wtype_available = not self._is_x11_session() and shutil.which('wtype') is not None
+        self.xdotool_available = self._is_x11_session() and shutil.which('xdotool') is not None
 
         # Private ydotoold instance (lazily started on first uinput-fallback use, so
         # wtype-only sessions never spawn it). Replaces the old shared/managed
@@ -168,14 +185,19 @@ class TextInjector:
         self._ydotoold = YdotooldSession()
         self._atspi_unavailable = False
 
-        if not self.ydotool_available and not self.wtype_available:
-            print("⚠️  No injection backend found (wtype or ydotool). hyprwhspr requires wtype or ydotool for paste injection.")
-        elif not self.wtype_available and self.ydotool_available:
+        if not self.ydotool_available and not self.wtype_available and not self.xdotool_available:
+            print("⚠️  No injection backend found. Install wtype or ydotool on Wayland, or xdotool on X11.")
+        elif not self._is_x11_session() and not self.wtype_available and self.ydotool_available:
             print("ℹ️  wtype not found. Falling back to ydotool for paste hotkey injection.")
 
     def _check_ydotool(self) -> bool:
         """Check if ydotool is usable (both the client and the ydotoold daemon)."""
         return YdotooldSession.is_available()
+
+    def _is_x11_session(self) -> bool:
+        """Use the display protocol captured when this injector was initialized."""
+        session_type = getattr(self, 'session_type', os.environ.get('XDG_SESSION_TYPE', '').lower())
+        return session_type == 'x11'
 
     def _run_ydotool(self, args, timeout):
         """Run a ydotool client command against our private ydotoold daemon.
@@ -575,13 +597,15 @@ except Exception:
         if not parsed:
             return False
         _modifiers, key = parsed
+        if getattr(self, 'xdotool_available', False):
+            return True
         if self.wtype_available and self._wtype_key_name(key) is not None:
             return True
         if self.ydotool_available and self._keycode_for_chord_key(key) is not None:
             return True
         # No injection backend at all → can't paste regardless; a parseable chord
         # shouldn't trigger a spurious misconfiguration warning.
-        return not self.wtype_available and not self.ydotool_available
+        return not self.wtype_available and not self.ydotool_available and not getattr(self, 'xdotool_available', False)
 
     def _resolve_paste_chord(self, window_info: Optional[Dict[str, Any]] = None):
         """Resolve application rule / explicit paste_mode / legacy / auto into a chord.
@@ -705,6 +729,27 @@ except Exception:
         except Exception as e:
             print(f"wtype paste failed: {e}")
             return False
+
+    def _send_paste_keys_xdotool(self, paste_chord: str) -> bool:
+        """Send a symbolic paste chord through the native X11 input path."""
+        paste_chord = PASTE_MODE_CHORDS.get(paste_chord, paste_chord)
+        parsed = self._parse_key_chord(paste_chord)
+        if not parsed:
+            return False
+        modifiers, key = parsed
+        chord = '+'.join([*modifiers, key])
+        try:
+            result = subprocess.run(
+                ['xdotool', 'key', '--clearmodifiers', chord],
+                capture_output=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return True
+            stderr = (result.stderr or b'').decode('utf-8', 'ignore')
+            print(f"  xdotool paste failed: {stderr}")
+        except Exception as e:
+            print(f"xdotool paste failed: {e}")
+        return False
 
     @staticmethod
     def _wtype_key_name(key: str) -> Optional[str]:
@@ -863,7 +908,7 @@ except Exception:
 
     def _save_clipboard(self) -> Optional[bytes]:
         """Save current clipboard contents. Returns raw bytes or None."""
-        if shutil.which("wl-paste"):
+        if not self._is_x11_session() and shutil.which("wl-paste"):
             try:
                 result = subprocess.run(["wl-paste", "--no-newline"], capture_output=True, timeout=2)
                 if result.returncode == 0:
@@ -879,16 +924,30 @@ except Exception:
             pass
         return None
 
+    def _try_wl_copy(self, data: bytes) -> Tuple[bool, Optional[str]]:
+        """Try the Wayland clipboard writer and retain a useful failure detail."""
+        if self._is_x11_session() or not shutil.which("wl-copy"):
+            return False, None
+        try:
+            result = subprocess.run(["wl-copy"], input=data, timeout=2)
+            if result.returncode == 0:
+                return True, None
+            return False, f"wl-copy exited with status {result.returncode}"
+        except Exception as exc:
+            return False, f"wl-copy failed: {exc}"
+
     def _copy_text_to_clipboard(self, text: str) -> bool:
         """Copy text to the clipboard without triggering paste."""
+        copied, wayland_error = self._try_wl_copy(text.encode("utf-8"))
+        if copied:
+            return True
+        # Fallback: pyperclip (X11, or wl-copy present but no compositor to reach)
         try:
-            if shutil.which("wl-copy"):
-                subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=2)
-            else:
-                pyperclip.copy(text)
+            pyperclip.copy(text)
             return True
         except Exception as e:
-            print(f"ERROR: Clipboard copy failed: {e}")
+            detail = f" after {wayland_error}" if wayland_error else ""
+            print(f"ERROR: Clipboard copy failed{detail}: {e}")
             return False
 
     def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 5.0):
@@ -909,16 +968,21 @@ except Exception:
                     if current != injected:
                         return
 
-                if shutil.which("wl-copy"):
-                    subprocess.run(["wl-copy"], input=saved, check=True, timeout=2)
-                else:
-                    # pyperclip is text-only; only restore if the saved bytes are
-                    # valid UTF-8 text. Binary clipboard data (images, etc.) cannot
-                    # be round-tripped through pyperclip without corruption.
+                restored, wayland_error = self._try_wl_copy(saved)
+                if not restored:
+                    # Fallback: pyperclip (X11, or wl-copy present but no compositor to
+                    # reach). It's text-only; only restore if the saved bytes are valid
+                    # UTF-8 text. Binary clipboard data (images, etc.) cannot be
+                    # round-tripped through pyperclip without corruption.
                     try:
                         pyperclip.copy(saved.decode("utf-8"))
                     except UnicodeDecodeError:
-                        pass  # Binary data — skip rather than corrupt
+                        if wayland_error:
+                            print(f"Warning: Could not restore binary clipboard: {wayland_error}")
+                        # Binary data cannot safely pass through the text fallback.
+                    except Exception as exc:
+                        detail = f" after {wayland_error}" if wayland_error else ""
+                        raise RuntimeError(f"clipboard fallback failed{detail}: {exc}") from exc
             except Exception as e:
                 print(f"Warning: Could not restore clipboard: {e}")
 
@@ -929,7 +993,15 @@ except Exception:
         if not (self.config_manager and self.config_manager.get_setting('auto_submit', False)):
             return
         try:
-            if self.ydotool_available:
+            if self._is_x11_session() and getattr(self, 'xdotool_available', False):
+                enter_result = subprocess.run(
+                    ['xdotool', 'key', '--clearmodifiers', 'Return'],
+                    capture_output=True, timeout=1,
+                )
+                if enter_result.returncode != 0:
+                    stderr = (enter_result.stderr or b'').decode('utf-8', 'ignore')
+                    print(f"  xdotool Enter key failed: {stderr}")
+            elif self.ydotool_available:
                 enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1)  # 28 = Enter
                 if enter_result is None or enter_result.returncode != 0:
                     stderr = (enter_result.stderr or b"").decode("utf-8", "ignore") if enter_result else "ydotoold unavailable"
@@ -943,7 +1015,7 @@ except Exception:
                     stderr = (enter_result.stderr or b"").decode("utf-8", "ignore")
                     print(f"  wtype Enter key failed: {stderr}")
             else:
-                print("  auto_submit enabled but no key-injection tool available (ydotool or wtype required)")
+                print("  auto_submit enabled but no key-injection tool available")
         except Exception as e:
             print(f"  auto_submit Enter key failed: {e}")
 
@@ -1189,13 +1261,16 @@ except Exception:
                 return False
             time.sleep(0.15)
 
-            # Send paste hotkey: prefer wtype (Wayland virtual-keyboard), fall back
-            # to ydotool's uinput chord. ydotool key chords DO reach Mutter (uinput
+            # Send paste hotkey through the session-native path first: xdotool on
+            # X11 or wtype on Wayland. Fall back to ydotool's uinput chord. ydotool
+            # key chords DO reach Mutter (uinput
             # is seen as a real device, unlike wtype's virtual-keyboard protocol
             # which Mutter blocks), so we use them on GNOME too — this is the path
             # taken when direct typing was skipped for a non-US layout / non-ASCII text.
             pasted = False
-            if self.wtype_available:
+            if self._is_x11_session() and getattr(self, 'xdotool_available', False):
+                pasted = self._send_paste_keys_xdotool(paste_chord)
+            elif self.wtype_available:
                 pasted = self._send_paste_keys_wtype(paste_chord)
                 if pasted:
                     # wtype sends Wayland modifier events; clear ydotool's uinput modifier
@@ -1215,7 +1290,12 @@ except Exception:
                 finally:
                     self._gnome_restore_layout(_prev_layout)
 
-            if not pasted and not self.wtype_available and not self.ydotool_available:
+            if (
+                not pasted
+                and not self.wtype_available
+                and not self.ydotool_available
+                and not getattr(self, 'xdotool_available', False)
+            ):
                 print("No key-injection tool available; text is on the clipboard.")
                 # Text is clipboard-only: don't restore old clipboard (would erase it)
                 # and don't auto-submit (nothing was pasted into the field).

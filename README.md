@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
-**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for the highest-end machines: a recent Nvidia card gets the **best possible accuracy and speed**, and everything else runs as well as the hardware you bring. Actively maintained, fully featured, works on anything with Wayland.
+**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for the highest-end machines: a recent Nvidia card gets the **best possible accuracy and speed**, and everything else runs as well as the hardware you bring. Actively maintained, fully featured, and built for both Wayland and X11.
 
 ---
 
@@ -47,7 +47,8 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 ### Prerequisites
 
 - **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, etc.)
-- **Requires a Wayland session** (GNOME, KDE Plasma Wayland, Sway, Hyprland, Niri)
+- **Wayland or X11 session** (GNOME, KDE Plasma, Sway, Hyprland, Niri, etc.). GNOME/X11 on Ubuntu 24.04 is the currently validated X11 configuration.
+- **Clipboard/window tools:** `wl-clipboard` and `wtype` on Wayland; `python-pyperclip`, `xclip`, `xdotool`, and `xprop` on X11 (installed by the dependency script)
 - **Waybar or Noctalia** (optional, for status bar)
 - **gtk4 + PyCairo** (optional, for visualizer)
 - **NVIDIA GPU** (optional, for CUDA acceleration)

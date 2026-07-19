@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 sys.modules.setdefault("pyperclip", types.SimpleNamespace(copy=lambda text: None, paste=lambda: ""))
 
-from text_injector import TextInjector
+from text_injector import TextInjector, _LazyPyperclip
 
 
 class ConfigStub:
@@ -26,8 +26,10 @@ class TextInjectorInjectionTests(unittest.TestCase):
     def _injector(self):
         injector = TextInjector.__new__(TextInjector)
         injector.config_manager = ConfigStub()
+        injector.session_type = "wayland"
         injector.ydotool_available = True
         injector.wtype_available = False
+        injector.xdotool_available = False
         # Private ydotoold daemon manager: not running by default (so
         # _clear_stuck_modifiers is a no-op), but ensure_running() succeeds when a
         # ydotool command is actually issued.
@@ -36,6 +38,113 @@ class TextInjectorInjectionTests(unittest.TestCase):
         injector._ydotoold.ensure_running.return_value = True
         injector._ydotoold.socket_env.return_value = {"YDOTOOL_SOCKET": "/run/x.sock"}
         return injector
+
+    def test_wayland_clipboard_success_does_not_use_fallback(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0)
+        with (
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-copy"),
+            mock.patch("text_injector.subprocess.run", return_value=completed) as run,
+            mock.patch("text_injector.pyperclip.copy") as fallback,
+        ):
+            self.assertTrue(injector._copy_text_to_clipboard("hello"))
+
+        run.assert_called_once()
+        fallback.assert_not_called()
+
+    def test_failed_wayland_clipboard_uses_x11_fallback(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=1)
+        with (
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-copy"),
+            mock.patch("text_injector.subprocess.run", return_value=completed),
+            mock.patch("text_injector.pyperclip.copy") as fallback,
+        ):
+            self.assertTrue(injector._copy_text_to_clipboard("hello"))
+
+        fallback.assert_called_once_with("hello")
+
+    def test_clipboard_save_falls_back_after_failed_wayland_read(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=1, stdout=b"")
+        with (
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-paste"),
+            mock.patch("text_injector.subprocess.run", return_value=completed),
+            mock.patch("text_injector.pyperclip.paste", return_value="saved") as fallback,
+        ):
+            self.assertEqual(injector._save_clipboard(), b"saved")
+
+        fallback.assert_called_once_with()
+
+    def test_restore_fallback_restores_utf8_but_skips_binary(self):
+        injector = self._injector()
+
+        class ImmediateThread:
+            def __init__(self, target, daemon):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with (
+            mock.patch("text_injector.time.sleep"),
+            mock.patch("text_injector.threading.Thread", ImmediateThread),
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy") as fallback,
+        ):
+            injector._restore_clipboard("café".encode(), delay=0)
+            injector._restore_clipboard(b"\xff\x00", delay=0)
+
+        fallback.assert_called_once_with("café")
+
+    def test_x11_skips_wayland_clipboard_tools_and_uses_xdotool_chord(self):
+        injector = self._injector()
+        injector.session_type = "x11"
+        injector.ydotool_available = False
+        injector.wtype_available = False
+        injector.xdotool_available = True
+        clipboard = types.SimpleNamespace(copy=mock.Mock(), paste=mock.Mock(return_value="old"))
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+
+        with (
+            mock.patch("text_injector.pyperclip", clipboard),
+            mock.patch("text_injector.shutil.which") as which,
+            mock.patch("text_injector.subprocess.run", return_value=completed) as run,
+        ):
+            self.assertEqual(injector._save_clipboard(), b"old")
+            self.assertTrue(injector._copy_text_to_clipboard("hello"))
+            self.assertTrue(injector._send_paste_keys_xdotool("ctrl_shift"))
+
+        which.assert_not_called()
+        clipboard.copy.assert_called_once_with("hello")
+        run.assert_called_once_with(
+            ["xdotool", "key", "--clearmodifiers", "ctrl+shift+v"],
+            capture_output=True,
+            timeout=5,
+        )
+
+    def test_x11_injection_prefers_xdotool_without_wtype_or_ydotool(self):
+        injector = self._injector()
+        injector.session_type = "x11"
+        injector.ydotool_available = False
+        injector.wtype_available = False
+        injector.xdotool_available = True
+        with (
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old"),
+            mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True),
+            mock.patch.object(injector, "_send_paste_keys_xdotool", return_value=True) as xdotool,
+            mock.patch.object(injector, "_send_paste_keys_wtype") as wtype,
+            mock.patch.object(injector, "_send_paste_keys_slow") as ydotool,
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch("text_injector.time.sleep"),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+
+        xdotool.assert_called_once_with("ctrl+v")
+        wtype.assert_not_called()
+        ydotool.assert_not_called()
 
     def test_gnome_wayland_uses_ydotool_type_instead_of_paste_chord(self):
         injector = self._injector()
@@ -677,6 +786,30 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         self.assertEqual(chord, "ctrl+y")
         self.assertEqual(buf.getvalue(), "")
+
+
+class LazyPyperclipTests(unittest.TestCase):
+    def test_selects_xclip_then_xsel_on_first_use(self):
+        for available, expected in (("xclip", "xclip"), ("xsel", "xsel")):
+            module = types.SimpleNamespace(
+                set_clipboard=mock.Mock(), copy=mock.Mock(), paste=mock.Mock(return_value="")
+            )
+            lazy = _LazyPyperclip()
+            with (
+                mock.patch.dict(sys.modules, {"pyperclip": module}),
+                mock.patch(
+                    "text_injector.shutil.which",
+                    side_effect=lambda name, selected=available: f"/usr/bin/{name}" if name == selected else None,
+                ),
+            ):
+                lazy.copy("text")
+
+            module.set_clipboard.assert_called_once_with(expected)
+            module.copy.assert_called_once_with("text")
+
+    def test_construction_does_not_import_optional_dependency(self):
+        lazy = _LazyPyperclip()
+        self.assertIsNone(lazy._module)
 
 
 if __name__ == "__main__":

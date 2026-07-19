@@ -310,6 +310,9 @@ install_deps_apt() {
         pipewire-pulse \
         pulseaudio-utils \
         wl-clipboard \
+        xclip \
+        xdotool \
+        x11-utils \
         wget
 
     # Optional Python packages (not present on all Debian/Ubuntu releases)
@@ -364,7 +367,10 @@ install_deps_dnf() {
         pipewire \
         pipewire-pulseaudio \
         ydotool \
-        wl-clipboard
+        wl-clipboard \
+        xclip \
+        xdotool \
+        xprop
 
     # Optional Python packages (not present on all Fedora releases — e.g. python3-sounddevice
     # was dropped in F43). Anything missing here is picked up by pip in install_pip_packages.
@@ -411,6 +417,24 @@ install_deps_zypper() {
         pipewire-pulseaudio \
         ydotool \
         wl-clipboard
+
+    # X11 package availability varies between Leap and Tumbleweed. Install the
+    # native equivalents when published, without adding unsupported repositories.
+    local x11_packages=()
+    local x11_pkg
+    for x11_pkg in xclip xdotool xprop; do
+        if zypper info -t package "$x11_pkg" &> /dev/null; then
+            x11_packages+=("$x11_pkg")
+        else
+            log_warning "X11 dependency $x11_pkg is unavailable in enabled repositories"
+        fi
+    done
+    if [[ ${#x11_packages[@]} -gt 0 ]]; then
+        sudo zypper install -y "${x11_packages[@]}"
+    fi
+    if [[ ${#x11_packages[@]} -lt 3 ]]; then
+        log_warning "X11 support is incomplete; enable a supported distribution repository or install xclip, xdotool, and xprop manually"
+    fi
 
     # Optional dbus package naming differs across openSUSE releases
     if sudo zypper info -t package python3-dbus-python &> /dev/null; then

@@ -2,7 +2,7 @@
 
 ## Scope
 
-This repository is a Linux/Wayland speech-to-text application. Keep changes focused: runtime behavior is hardware-, compositor-, and systemd-sensitive, while most tests are intentionally isolated with mocks.
+This repository is a Linux desktop speech-to-text application supporting Wayland and X11. Keep changes focused: runtime behavior is hardware-, compositor-, and systemd-sensitive, while most tests are intentionally isolated with mocks.
 
 ## Repository map
 

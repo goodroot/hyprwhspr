@@ -693,7 +693,7 @@ The recording-status indicator — the **mic OSD** — gives visual feedback whi
 `mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup:
 
 - **Overlay mode** — compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland) get the animated always-on-top overlay. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
-- **Notification mode** — GNOME/Mutter lacks layer-shell, so status shows as desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. Only requires `notify-send` (libnotify).
+- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Notifications require `notify-send` (libnotify).
 
 Set `mic_osd_enabled: false` to turn off both. The service log records which mode was selected:
 
@@ -879,7 +879,7 @@ Automatically converts spoken words to symbols and punctuation:
 
 ## Paste and clipboard behavior
 
-hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. The hotkey goes out via `wtype` (Wayland virtual-keyboard), falling back to `ydotool key`. Most setups need no configuration. GNOME/Mutter has a few extras — see [GNOME/Mutter notes](#gnomemutter-notes).
+hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. Wayland prefers `wl-clipboard` plus `wtype` (falling back to `ydotool key`). X11 uses `python-pyperclip` with `xclip`, and `xdotool`/`xprop` for focused-window and terminal detection. `xsel` is also accepted as a clipboard fallback when installed. Most setups need no configuration. GNOME/Mutter has a few extras — see [GNOME/Mutter notes](#gnomemutter-notes).
 
 ### Paste mode
 
@@ -954,10 +954,11 @@ hyprwhspr saves your clipboard before injection and restores it afterward — di
 
 ### GNOME/Mutter notes
 
-GNOME/Mutter lacks layer-shell and blocks `wtype`, so hyprwhspr behaves differently there:
+GNOME/Mutter lacks layer-shell, so visual feedback uses notifications. Injection depends on the session:
 
 - **Window detection** uses the AT-SPI accessibility bridge — `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). Without it, GNOME can't tell terminals apart and paste falls back to Ctrl+V. An explicit `paste_mode` (with no `applications` rules) skips the probe entirely.
-- **Direct typing:** ASCII text on a US layout is typed directly with `ydotool type`; anything else falls back to clipboard paste automatically. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
+- **GNOME Wayland direct typing:** Mutter blocks `wtype`, so ASCII text on a US layout is typed directly with `ydotool type`; anything else falls back to clipboard paste automatically. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
+- **GNOME X11 clipboard paste:** X11 uses `xclip` and a normal paste chord rather than the Wayland-only direct-typing workaround. GNOME/X11 on Ubuntu 24.04 is the currently validated X11 configuration.
 - **Non-Latin layouts** (Thai, Russian, Arabic, …): no physical key produces a `v` keysym, so hyprwhspr briefly switches to a Latin input source for the paste chord and restores your layout after — just keep a Latin source in Settings → Keyboard → Input Sources.
 
 ### Post-transcription hook
@@ -1255,8 +1256,8 @@ Check your session:
 # Verify graphical-session.target is active
 systemctl --user is-active graphical-session.target
 
-# Verify Wayland env is available to systemd services
-systemctl --user show-environment | grep -E 'WAYLAND_DISPLAY|NIRI_SOCKET'
+# Verify the active display environment is available to systemd services
+systemctl --user show-environment | grep -E 'WAYLAND_DISPLAY|DISPLAY|XAUTHORITY|NIRI_SOCKET'
 ```
 
 If `WAYLAND_DISPLAY` is missing, add to `~/.config/hypr/hyprland.conf`:
@@ -1271,6 +1272,16 @@ Wayland socket exists in `XDG_RUNTIME_DIR`, it will use the newest `wayland-*`
 socket for its own process and children. The compositor environment export above
 is still the recommended fix because it makes the correct display available to
 all systemd user services.
+
+For X11, `DISPLAY` must be present and `XAUTHORITY` should be imported when your
+session uses it:
+
+```bash
+systemctl --user import-environment DISPLAY XAUTHORITY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP
+systemctl --user show-environment | grep -E 'DISPLAY|XAUTHORITY|XDG_SESSION_TYPE'
+```
+
+Do not set `WAYLAND_DISPLAY` in an explicit `XDG_SESSION_TYPE=x11` session.
 
 **Niri:**
 

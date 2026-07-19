@@ -3,6 +3,7 @@ Maintenance commands for hyprwhspr — backend repair/reset, install-state
 management and installation validation
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,6 +40,11 @@ try:
     from ..output_control import log_info, log_success, log_warning, log_error
 except ImportError:
     from output_control import log_info, log_success, log_warning, log_error
+
+try:
+    from ..session_environment import classify_display_environment
+except ImportError:
+    from session_environment import classify_display_environment
 
 from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, _check_ydotool_version,
                       _is_niri_session, _validate_hyprwhspr_root)
@@ -772,20 +778,29 @@ def validate_command():
     except Exception:
         pass
 
-    # Check Wayland compositor environment in systemd user environment
+    # Check graphical session environment in the systemd user environment.
     try:
         result = subprocess.run(
             ['systemctl', '--user', 'show-environment'],
             capture_output=True, text=True, timeout=5, check=False
         )
         env_output = result.stdout if result.returncode == 0 else ''
-        if 'WAYLAND_DISPLAY=' in env_output:
-            log_success("✓ WAYLAND_DISPLAY set in systemd user environment")
+        display_kind = classify_display_environment(
+            env_output, os.environ.get('XDG_SESSION_TYPE', '')
+        )
+        if display_kind == 'wayland':
+            log_success("✓ Wayland display set in systemd user environment")
+        elif display_kind == 'x11':
+            log_success("✓ X11 DISPLAY set in systemd user environment")
         else:
-            log_warning("⚠ WAYLAND_DISPLAY not found in systemd user environment")
-            print("  Add the relevant compositor environment export to your startup config.")
-            print("  Hyprland example:")
-            print("    exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
+            log_warning("⚠ No Wayland or X11 display found in systemd user environment")
+            if os.environ.get('XDG_SESSION_TYPE', '').lower() == 'x11':
+                print("  Import the X11 session environment:")
+                print("    systemctl --user import-environment DISPLAY XAUTHORITY XDG_SESSION_TYPE")
+            else:
+                print("  Add the relevant compositor environment export to your startup config.")
+                print("  Hyprland example:")
+                print("    exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
 
         if _is_niri_session():
             if 'NIRI_SOCKET=' in env_output:

@@ -122,10 +122,11 @@ def setup_systemd(mode: str = 'install'):
     # Import the compositor environment visible to this setup process into the
     # systemd user manager. Niri's focused-window IPC needs NIRI_SOCKET; Hyprland
     # detection needs HYPRLAND_INSTANCE_SIGNATURE; wtype/wl-clipboard need the
-    # Wayland display environment.
+    # graphical-session environment used by Wayland and X11 integrations.
     run_command([
         'systemctl', '--user', 'import-environment',
-        'WAYLAND_DISPLAY', 'XDG_CURRENT_DESKTOP',
+        'WAYLAND_DISPLAY', 'DISPLAY', 'XAUTHORITY', 'XDG_SESSION_TYPE',
+        'XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'DESKTOP_SESSION',
         'HYPRLAND_INSTANCE_SIGNATURE', 'NIRI_SOCKET',
     ], check=False)
 

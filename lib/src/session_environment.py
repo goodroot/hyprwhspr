@@ -7,6 +7,25 @@ import stat
 from pathlib import Path
 
 
+def classify_display_environment(environment: str, expected_session_type: str = ""):
+    """Return the usable display kind exported by a systemd environment dump."""
+    values = {}
+    for line in environment.splitlines():
+        name, separator, value = line.partition("=")
+        if separator:
+            values[name] = value
+    session_type = (values.get("XDG_SESSION_TYPE") or expected_session_type).lower()
+    if session_type == "wayland":
+        return "wayland" if values.get("WAYLAND_DISPLAY") else None
+    if session_type == "x11":
+        return "x11" if values.get("DISPLAY") else None
+    if values.get("WAYLAND_DISPLAY"):
+        return "wayland"
+    if values.get("DISPLAY"):
+        return "x11"
+    return None
+
+
 def ensure_wayland_display():
     """
     Populate WAYLAND_DISPLAY from XDG_RUNTIME_DIR when systemd has not imported it.
@@ -15,6 +34,9 @@ def ensure_wayland_display():
     does not override an existing WAYLAND_DISPLAY value.
     """
     if os.environ.get("WAYLAND_DISPLAY"):
+        return
+
+    if os.environ.get("XDG_SESSION_TYPE", "").lower() == "x11":
         return
 
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
