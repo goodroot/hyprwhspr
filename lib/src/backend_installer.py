@@ -11,7 +11,6 @@ import hashlib
 import shutil
 import urllib.request
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple, Dict
 
@@ -39,6 +38,11 @@ try:
     from .backend_utils import LOCAL_INSTALL_BACKENDS, vulkaninfo_has_hardware_gpu
 except ImportError:
     from backend_utils import LOCAL_INSTALL_BACKENDS, vulkaninfo_has_hardware_gpu
+
+try:
+    from .nvidia_probe import responding_gpu_listing
+except ImportError:
+    from nvidia_probe import responding_gpu_listing
 
 
 def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None,
@@ -83,100 +87,50 @@ class DependencyPlanError(RuntimeError):
     """The installed package is missing or has an invalid dependency manifest."""
 
 
-@dataclass(frozen=True)
-class DependencyPlan:
-    manifest: Path
-    manifests: tuple[Path, ...]
-    fingerprint: str
-    required_imports: tuple[str, ...]
-    family: str
-    accelerated_variant: Optional[str] = None
+try:
+    from .dependency_manifest import (
+        canonical_name as _canonical_package_name,
+        fingerprint as _graph_fingerprint,
+        option_argument as _graph_option_argument,
+        package_name as _graph_package_name,
+        parse_graph as _parse_manifest_graph,
+        render_filtered as _render_filtered_manifest,
+    )
+except ImportError:
+    from dependency_manifest import (
+        canonical_name as _canonical_package_name,
+        fingerprint as _graph_fingerprint,
+        option_argument as _graph_option_argument,
+        package_name as _graph_package_name,
+        parse_graph as _parse_manifest_graph,
+        render_filtered as _render_filtered_manifest,
+    )
 
-
-_PLAN_SPECS = {
-    'pywhispercpp': ('requirements-pywhispercpp.txt', ('sounddevice', 'numpy', 'soxr', 'pywhispercpp'), 'pywhispercpp'),
-    'rest': ('requirements-rest.txt', ('sounddevice', 'numpy', 'soxr', 'requests'), 'rest'),
-    'realtime': ('requirements-realtime.txt', ('sounddevice', 'numpy', 'soxr', 'websocket'), 'realtime'),
-    'elevenlabs': ('requirements-realtime-elevenlabs.txt', ('sounddevice', 'numpy', 'soxr', 'elevenlabs'), 'elevenlabs'),
-    'cohere': ('requirements-cohere-transcribe.txt', ('sounddevice', 'numpy', 'soxr', 'transformers', 'torch'), 'cohere'),
-    'onnx-cpu': ('requirements-onnx-asr.txt', ('sounddevice', 'numpy', 'soxr', 'onnx_asr'), 'onnx'),
-    'onnx-gpu': ('requirements-onnx-asr-gpu.txt', ('sounddevice', 'numpy', 'soxr', 'onnx_asr'), 'onnx'),
-    'faster-cpu': ('requirements-faster-whisper.txt', ('sounddevice', 'numpy', 'soxr', 'faster_whisper'), 'faster-whisper'),
-    'faster-cuda': ('requirements-faster-whisper-cuda.txt', ('sounddevice', 'numpy', 'soxr', 'faster_whisper'), 'faster-whisper'),
-}
-
+try:
+    from .dependency_plan import DependencyPlan, PLAN_SPECS as _PLAN_SPECS, plan_key as _dependency_plan_key, resolve as _resolve_plan
+except ImportError:
+    from dependency_plan import DependencyPlan, PLAN_SPECS as _PLAN_SPECS, plan_key as _dependency_plan_key, resolve as _resolve_plan
 
 def _plan_key(backend: str, provider: Optional[str], accelerated_variant: Optional[str]) -> str:
-    if backend in ('cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp'):
-        return 'pywhispercpp'
-    if backend in ('rest-api', 'remote'):
-        return 'rest'
-    if backend == 'realtime-ws':
-        return 'elevenlabs' if provider == 'elevenlabs' else 'realtime'
-    if backend == 'cohere-transcribe':
-        return 'cohere'
-    if backend == 'onnx-asr':
-        return 'onnx-gpu' if accelerated_variant in ('gpu', 'cuda') else 'onnx-cpu'
-    if backend == 'faster-whisper':
-        return 'faster-cuda' if accelerated_variant in ('gpu', 'cuda') else 'faster-cpu'
-    raise DependencyPlanError(f"No dependency manifest is defined for backend {backend!r}")
+    return _dependency_plan_key(backend, provider, accelerated_variant, DependencyPlanError)
 
 
 def _requirements_option_argument(raw: str, short_option: str,
                                   long_option: str) -> Optional[str]:
     """Return a path argument for a pip requirements-file option, if present."""
-    line = raw.split('#', 1)[0].strip()
-    parts = line.split()
-    if parts and parts[0] in (short_option, long_option):
-        if len(parts) != 2:
-            raise DependencyPlanError(f"Invalid {long_option} directive: {raw.strip()}")
-        return parts[1]
-    if line.startswith(f'{long_option}='):
-        return line.split('=', 1)[1]
-    if line.startswith(short_option) and line != short_option:
-        return line[len(short_option):]
-    return None
+    return _graph_option_argument(raw, short_option, long_option, DependencyPlanError)
 
 
 def _manifest_closure(manifest: Path) -> tuple[Path, ...]:
     """Resolve pip -r includes, rejecting missing/cyclic files before mutation."""
-    ordered, visiting = [], set()
-
-    def visit(path: Path):
-        path = path.resolve()
-        if path in visiting:
-            raise DependencyPlanError(f"Cyclic dependency manifest include at {path}")
-        if path in ordered:
-            return
-        if not path.is_file():
-            raise DependencyPlanError(
-                f"Dependency manifest is missing: {path}. Reinstall hyprwhspr; the package payload is incomplete."
-            )
-        visiting.add(path)
-        try:
-            lines = path.read_text(encoding='utf-8').splitlines()
-        except OSError as exc:
-            raise DependencyPlanError(f"Cannot read dependency manifest {path}: {exc}") from exc
-        for raw in lines:
-            include = _requirements_option_argument(raw, '-r', '--requirement')
-            if include is not None:
-                visit(path.parent / include)
-        visiting.remove(path)
-        ordered.append(path)
-
-    visit(manifest)
-    return tuple(ordered)
+    return _parse_manifest_graph(manifest, DependencyPlanError).manifests
 
 
 def resolve_dependency_plan(backend: str, provider: Optional[str] = None,
                             accelerated_variant: Optional[str] = None) -> DependencyPlan:
     """Fully resolve the authoritative dependency plan without changing the host."""
-    key = _plan_key(backend, provider, accelerated_variant)
-    filename, imports, family = _PLAN_SPECS[key]
-    selected = Path(HYPRWHSPR_ROOT) / filename
-    manifests = _manifest_closure(selected)
-    return DependencyPlan(selected.resolve(), manifests, dependency_manifest_hash(list(manifests)),
-                          imports, family, accelerated_variant)
+    return _resolve_plan(Path(HYPRWHSPR_ROOT), backend, provider,
+                         accelerated_variant, DependencyPlanError)
 
 
 def dependency_manifests(backend: str, provider: Optional[str] = None) -> list[Path]:
@@ -186,13 +140,7 @@ def dependency_manifests(backend: str, provider: Optional[str] = None) -> list[P
 
 def dependency_manifest_hash(manifests: list[Path]) -> str:
     """Hash manifest names and contents so selected dependency state is stable."""
-    digest = hashlib.sha256()
-    for manifest in manifests:
-        digest.update(manifest.name.encode('utf-8'))
-        digest.update(b'\0')
-        digest.update(manifest.read_bytes())
-        digest.update(b'\0')
-    return digest.hexdigest()
+    return _graph_fingerprint(manifests)
 
 
 def _safe_decode(output) -> str:
@@ -881,48 +829,23 @@ def install_system_dependencies():
 
 # ==================== GPU Support Setup ====================
 
+def _detect_nvidia_gpu_listing() -> Optional[str]:
+    """Return nvidia-smi's GPU listing when real NVIDIA hardware responds."""
+    def runner(command, **kwargs):
+        kwargs.pop('text', None)
+        result = run_command(command, verbose=False, **kwargs)
+        if result is not None:
+            result.stdout = _safe_decode(result.stdout) if result.stdout else ''
+        return result
+
+    return responding_gpu_listing(runner=runner, which=shutil.which)
+
 def setup_nvidia_support() -> bool:
     """Setup NVIDIA/CUDA support. Returns True if CUDA is available."""
     log_info("GPU check…")
 
-    # First check for actual NVIDIA hardware via lspci (like Omarchy does)
-    # This prevents false positives when nvidia-utils is installed but no GPU exists
-    try:
-        result = run_command(['lspci'], capture_output=True, check=False, verbose=False)
-        if result and result.returncode == 0:
-            lspci_output = _safe_decode(result.stdout).lower()
-            if 'nvidia' not in lspci_output:
-                log_info("No NVIDIA hardware detected via lspci (CPU mode)")
-                return False
-    except Exception:
-        # If lspci fails, continue to nvidia-smi check
-        pass
-
-    if not shutil.which('nvidia-smi'):
-        log_info("No NVIDIA GPU detected (CPU mode)")
-        return False
-
-    # Test nvidia-smi
-    try:
-        result = run_command(['nvidia-smi', '-L'], check=False, capture_output=True, timeout=2)
-        if result.returncode != 0:
-            log_warning("nvidia-smi found but not responding (no GPU hardware or driver issue)")
-            return False
-
-        # Verify output actually lists a GPU
-        # nvidia-smi -L outputs: "GPU 0: NVIDIA GeForce RTX 4070..."
-        if result.stdout:
-            output = _safe_decode(result.stdout).strip()
-            output_lower = output.lower()
-            # Look for "GPU N:" pattern which indicates an actual GPU listing
-            if not ('gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower):
-                log_info("nvidia-smi present but no NVIDIA GPU hardware detected (CPU mode)")
-                return False
-        else:
-            log_warning("nvidia-smi returned no output (no GPU hardware)")
-            return False
-    except Exception:
-        log_warning("nvidia-smi found but not responding")
+    if not _detect_nvidia_gpu_listing():
+        log_info("No responding NVIDIA GPU detected (CPU mode)")
         return False
 
     log_success("NVIDIA GPU detected")
@@ -1084,52 +1007,11 @@ def detect_gpu_type() -> str:
     except ImportError:
         from output_control import log_debug, log_info
 
-    # 1. Check for NVIDIA GPU
-    # First check for actual NVIDIA hardware via lspci (like Omarchy does)
-    # This prevents false positives when nvidia-utils is installed but no GPU exists
-    try:
-        result = run_command(['lspci'], capture_output=True, check=False, verbose=False)
-        if result and result.returncode == 0:
-            lspci_output = _safe_decode(result.stdout).lower()
-            if 'nvidia' not in lspci_output:
-                # Skip nvidia-smi check entirely - no hardware present
-                pass
-            else:
-                nvidia_smi_path = shutil.which('nvidia-smi')
-                if nvidia_smi_path:
-                    # Hardware detected, now verify with nvidia-smi
-                    try:
-                        result = run_command(
-                            ['nvidia-smi', '-L'],
-                            capture_output=True,
-                            check=False,
-                            verbose=False,
-                            timeout=2
-                        )
-                        if result:
-                            log_info(f"[GPU Detection] nvidia-smi exit code: {result.returncode}")
-                            if result.returncode == 0 and result.stdout:
-                                # Verify output actually lists a GPU (not just error messages)
-                                # nvidia-smi -L outputs: "GPU 0: NVIDIA GeForce RTX 4070..."
-                                output = _safe_decode(result.stdout).strip()
-                                output_lower = output.lower()
-                                log_info(f"[GPU Detection] nvidia-smi output: {output[:100]}")
-                                # Look for "GPU N:" pattern which indicates an actual GPU listing
-                                # This won't match "No devices were found" or other error messages
-                                if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
-                                    log_info(f"[GPU Detection] ✓ NVIDIA GPU confirmed: {output.splitlines()[0][:60]}")
-                                    return 'nvidia'
-                                else:
-                                    log_info(f"[GPU Detection] nvidia-smi ran but no GPU pattern found")
-                            else:
-                                log_info(f"[GPU Detection] nvidia-smi failed or no output")
-                                if result.stderr:
-                                    stderr_str = _safe_decode(result.stderr)
-                                    log_info(f"[GPU Detection] stderr: {stderr_str[:100]}")
-                    except Exception as e:
-                        log_info(f"[GPU Detection] nvidia-smi exception: {e}")
-    except Exception as e:
-        log_debug(f"lspci check failed: {e}")
+    # 1. Check for NVIDIA GPU using the same hardware/driver probe as setup.
+    nvidia_listing = _detect_nvidia_gpu_listing()
+    if nvidia_listing:
+        log_info(f"[GPU Detection] ✓ NVIDIA GPU confirmed: {nvidia_listing.splitlines()[0][:60]}")
+        return 'nvidia'
 
     # 2. Check for ANY GPU via Vulkan
     # First check if vulkaninfo is installed
@@ -1373,6 +1255,43 @@ def _verify_dependency_plan(plan: DependencyPlan) -> bool:
     return result.returncode == 0
 
 
+class VenvTransaction:
+    """Own replacement of one venv until verification commits it."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.backup = self.path.with_name(
+            f'{self.path.name}.rollback-{uuid.uuid4().hex}'
+        )
+        self.had_old = False
+        self.active = False
+
+    def begin(self):
+        if self.active:
+            return self
+        self.had_old = self.path.exists()
+        if self.had_old:
+            self.path.rename(self.backup)
+        self.active = True
+        return self
+
+    def commit(self):
+        if not self.active:
+            return
+        if self.backup.exists():
+            shutil.rmtree(self.backup)
+        self.active = False
+
+    def rollback(self):
+        if not self.active:
+            return
+        if self.path.exists():
+            shutil.rmtree(self.path, ignore_errors=True)
+        if self.had_old and self.backup.exists():
+            self.backup.rename(self.path)
+        self.active = False
+
+
 def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] = None,
                             force_rebuild: bool = False) -> Path:
     """Install and verify a plan transactionally, restoring a usable old venv on failure."""
@@ -1391,10 +1310,7 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
                 log_warning(f'Could not migrate dependency state: {exc}')
         return VENV_DIR / 'bin' / 'pip'
 
-    backup = VENV_DIR.with_name(f'{VENV_DIR.name}.rollback-{uuid.uuid4().hex}')
-    had_old = VENV_DIR.exists()
-    if had_old:
-        VENV_DIR.rename(backup)
+    transaction = VenvTransaction(VENV_DIR).begin()
     try:
         pip_bin = setup_python_venv(custom_python=custom_python)
         run_command([str(pip_bin), 'install', '-r', str(plan.manifest)], check=True)
@@ -1404,14 +1320,10 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
                 + ', '.join(plan.required_imports)
             )
     except BaseException:
-        if VENV_DIR.exists():
-            shutil.rmtree(VENV_DIR, ignore_errors=True)
-        if had_old and backup.exists():
-            backup.rename(VENV_DIR)
+        transaction.rollback()
         raise
 
-    if backup.exists():
-        shutil.rmtree(backup, ignore_errors=True)
+    transaction.commit()
     try:
         commit_dependency_state(plan)
     except Exception as exc:
@@ -1472,11 +1384,7 @@ def _extract_package_name(requirement_line: str) -> str:
         'package>=1.0; python_version >= "3.8"' -> 'package'
         'package @ https://...' -> 'package'
     """
-    import re
-    line = requirement_line.strip().lower()
-    # Match package name: everything before version specifiers, extras, markers, or URL
-    match = re.match(r'^([a-z0-9][-a-z0-9_.]*)', line)
-    return match.group(1) if match else ''
+    return _graph_package_name(requirement_line)
 
 
 def _filter_requirements(requirements_file: Path, skip_packages: list) -> Path:
@@ -1487,43 +1395,9 @@ def _filter_requirements(requirements_file: Path, skip_packages: list) -> Path:
     Returns path to temp file (caller must clean up).
     """
     import tempfile
-    skip_packages_lower = [pkg.lower() for pkg in skip_packages]
     temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
     try:
-        visiting = set()
-
-        def render(path: Path):
-            path = path.resolve()
-            if path in visiting:
-                raise DependencyPlanError(f"Cyclic dependency manifest include at {path}")
-            if not path.is_file():
-                raise DependencyPlanError(f"Dependency manifest is missing: {path}")
-            visiting.add(path)
-            try:
-                lines = path.read_text(encoding='utf-8').splitlines()
-                for line in lines:
-                    include = _requirements_option_argument(line, '-r', '--requirement')
-                    if include is not None:
-                        render(path.parent / include)
-                        continue
-
-                    constraint = _requirements_option_argument(line, '-c', '--constraint')
-                    if constraint is not None:
-                        constraint_path = (path.parent / constraint).resolve()
-                        if not constraint_path.is_file():
-                            raise DependencyPlanError(
-                                f"Dependency constraint is missing: {constraint_path}"
-                            )
-                        temp_file.write(f'--constraint {constraint_path}\n')
-                        continue
-
-                    pkg_name = _extract_package_name(line)
-                    if pkg_name not in skip_packages_lower:
-                        temp_file.write(f'{line}\n')
-            finally:
-                visiting.remove(path)
-
-        render(requirements_file)
+        _render_filtered_manifest(requirements_file, temp_file, skip_packages, DependencyPlanError)
         temp_file.close()
         return Path(temp_file.name)
     except Exception:
@@ -2106,21 +1980,9 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             # find libcublas/libcudnn without requiring the system cuda/cudnn packages.
             # faster-whisper only supports NVIDIA CUDA (not AMD/Intel Vulkan/ROCm).
             enable_gpu = False
-            if shutil.which('nvidia-smi'):
-                try:
-                    result = run_command(['nvidia-smi', '-L'], check=False, capture_output=True, timeout=2)
-                    if result.returncode == 0 and result.stdout:
-                        output = _safe_decode(result.stdout).strip()
-                        output_lower = output.lower()
-                        if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
-                            enable_gpu = True
-                            log_info("NVIDIA GPU detected - will install faster-whisper with CUDA support")
-                        else:
-                            log_info("NVIDIA driver present but no GPU hardware detected")
-                    else:
-                        log_info("NVIDIA driver check failed - will use CPU mode")
-                except Exception:
-                    log_info("GPU detection failed - will use CPU mode")
+            if _detect_nvidia_gpu_listing():
+                enable_gpu = True
+                log_info("NVIDIA GPU detected - will install faster-whisper with CUDA support")
 
             if not enable_gpu:
                 log_info("Installing faster-whisper (CPU mode)")
@@ -2214,22 +2076,9 @@ print("Model downloaded and cached successfully", flush=True)
             # Note: onnx-asr only needs NVIDIA drivers (nvidia-smi), not CUDA toolkit
             # Unlike pywhispercpp which needs nvcc to build, onnx-asr uses pre-built ONNX Runtime
             enable_gpu = False
-            if shutil.which('nvidia-smi'):
-                try:
-                    result = run_command(['nvidia-smi', '-L'], check=False, capture_output=True, timeout=2)
-                    if result.returncode == 0 and result.stdout:
-                        output = _safe_decode(result.stdout).strip()
-                        output_lower = output.lower()
-                        # Check for "GPU N:" pattern which indicates an actual GPU listing
-                        if 'gpu 0:' in output_lower or 'gpu 1:' in output_lower or 'gpu 2:' in output_lower or 'gpu 3:' in output_lower:
-                            enable_gpu = True
-                            log_info("NVIDIA GPU detected - will install onnx-asr with GPU support")
-                        else:
-                            log_info("NVIDIA driver present but no GPU hardware detected")
-                    else:
-                        log_info("NVIDIA driver check failed - will use CPU mode")
-                except Exception:
-                    log_info("GPU detection failed - will use CPU mode")
+            if _detect_nvidia_gpu_listing():
+                enable_gpu = True
+                log_info("NVIDIA GPU detected - will install onnx-asr with GPU support")
             
             if not enable_gpu:
                 log_info("Installing onnx-asr (CPU-optimized)")
@@ -2321,11 +2170,12 @@ print("Models cached successfully", flush=True)
             or not deps_installed or backend_mismatch
         )
 
-        backup_path = None
-        if needs_install and VENV_DIR.exists():
-            backup_path = VENV_DIR.with_name(f'{VENV_DIR.name}.rollback-{uuid.uuid4().hex}')
-            VENV_DIR.rename(backup_path)
-            created_items['venv_backup_path'] = str(backup_path)
+        transaction = VenvTransaction(VENV_DIR)
+        if needs_install:
+            transaction.begin()
+            created_items['venv_transaction'] = transaction
+            if transaction.had_old:
+                created_items['venv_backup_path'] = str(transaction.backup)
         pip_bin = setup_python_venv(custom_python=custom_python)
         if needs_install:
             created_items['venv_created'] = True
@@ -2475,10 +2325,10 @@ print("Models cached successfully", flush=True)
             _cleanup_partial_installation(created_items, pip_bin)
             return False
 
-        backup_path = created_items.get('venv_backup_path')
-        if backup_path and Path(backup_path).exists():
-            shutil.rmtree(Path(backup_path), ignore_errors=True)
+        if needs_install:
+            transaction.commit()
         created_items['venv_backup_path'] = None
+        created_items['venv_transaction'] = None
         created_items['venv_created'] = False
         created_items['git_clone_created'] = False
         created_items['git_clone_path'] = None
@@ -2516,11 +2366,22 @@ print("Models cached successfully", flush=True)
             log_info("Cleaning up partial installation...")
             _cleanup_partial_installation(created_items, pip_bin if 'pip_bin' in locals() else None)
         return False
+    finally:
+        transaction = created_items.get('venv_transaction')
+        if transaction is not None and transaction.active:
+            transaction.rollback()
 
 
 def _cleanup_partial_installation(created_items: dict, pip_bin: Optional[Path]):
     """Clean up partial installation on failure"""
-    if created_items.get('venv_created') and created_items.get('venv_path'):
+    transaction = created_items.get('venv_transaction')
+    if transaction is not None:
+        transaction.rollback()
+        created_items['venv_transaction'] = None
+        created_items['venv_created'] = False
+        created_items['venv_backup_path'] = None
+
+    if transaction is None and created_items.get('venv_created') and created_items.get('venv_path'):
         log_info(f"Removing venv at {created_items['venv_path']}")
         try:
             venv_path = Path(created_items['venv_path'])

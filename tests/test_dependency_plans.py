@@ -55,6 +55,69 @@ class DependencyPlanTests(unittest.TestCase):
                 second = backend_installer.resolve_dependency_plan('rest-api')
             self.assertNotEqual(first.fingerprint, second.fingerprint)
 
+    def test_duplicate_manifest_basenames_have_distinct_identities(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            left = root / 'left' / 'shared.txt'
+            right = root / 'right' / 'shared.txt'
+            left.parent.mkdir()
+            right.parent.mkdir()
+            left.write_text('one\n', encoding='utf-8')
+            right.write_text('two\n', encoding='utf-8')
+            manifest = root / 'root.txt'
+            manifest.write_text('', encoding='utf-8')
+            first = backend_installer.dependency_manifest_hash([left, right, manifest])
+            second = backend_installer.dependency_manifest_hash([right, left, manifest])
+        self.assertNotEqual(first, second)
+
+    def test_constraint_changes_fingerprint_and_is_preflighted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            constraint = root / 'constraints.txt'
+            constraint.write_text('requests<3\n', encoding='utf-8')
+            (root / 'requirements-rest.txt').write_text(
+                '-cconstraints.txt\nrequests\n', encoding='utf-8'
+            )
+            with mock.patch.object(backend_installer, 'HYPRWHSPR_ROOT', tmp):
+                first = backend_installer.resolve_dependency_plan('rest-api')
+                constraint.write_text('requests<4\n', encoding='utf-8')
+                second = backend_installer.resolve_dependency_plan('rest-api')
+                constraint.unlink()
+                with self.assertRaisesRegex(backend_installer.DependencyPlanError, 'missing'):
+                    backend_installer.resolve_dependency_plan('rest-api')
+        self.assertNotEqual(first.fingerprint, second.fingerprint)
+
+    def test_requirement_constraint_cycle_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'requirements-rest.txt').write_text('-c constraints.txt\n', encoding='utf-8')
+            (root / 'constraints.txt').write_text('-r requirements-rest.txt\n', encoding='utf-8')
+            with mock.patch.object(backend_installer, 'HYPRWHSPR_ROOT', tmp):
+                with self.assertRaisesRegex(backend_installer.DependencyPlanError, 'Cyclic'):
+                    backend_installer.resolve_dependency_plan('rest-api')
+
+    def test_remote_manifest_is_rejected_with_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'requirements-rest.txt').write_text(
+                '--requirement=https://example.invalid/requirements.txt\n', encoding='utf-8'
+            )
+            with mock.patch.object(backend_installer, 'HYPRWHSPR_ROOT', tmp):
+                with self.assertRaisesRegex(backend_installer.DependencyPlanError, 'vendor it'):
+                    backend_installer.resolve_dependency_plan('rest-api')
+
+    def test_filter_uses_canonical_project_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / 'requirements.txt'
+            manifest.write_text('some.package>=1\nother-package\n', encoding='utf-8')
+            filtered = backend_installer._filter_requirements(manifest, ['some_package'])
+            try:
+                content = filtered.read_text(encoding='utf-8')
+            finally:
+                filtered.unlink()
+        self.assertNotIn('some.package', content)
+        self.assertIn('other-package', content)
+
     def test_filter_requirements_flattens_includes_for_temp_file_safety(self):
         """
         Regression test: _filter_requirements() used to copy `-r`/`--requirement`
