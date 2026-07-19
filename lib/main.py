@@ -88,7 +88,7 @@ from paths import (
     MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE, CONFIG_DIR, RUNTIME_DIR
 )
 from backend_utils import normalize_backend
-from segment_manager import SegmentManager
+from longform_controller import LongFormController
 
 class hyprwhsprApp:
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
@@ -206,13 +206,22 @@ class hyprwhsprApp:
         self._autostop_silence_stop = None
         self._autostop_lock = threading.Lock()  # guards thread/event bookkeeping across threads
 
-        # Long-form recording mode state
-        self._longform_state = 'IDLE'  # IDLE, RECORDING, PAUSED, PROCESSING, ERROR
-        self._longform_language_override = None  # Language override for long-form session
-        self._longform_lock = threading.Lock()
-        self._longform_segment_manager = None
-        self._longform_auto_save_timer = None
-        self._longform_error_audio = None  # Stored audio for retry on error
+        # Long-form state and transitions live in an isolated controller.
+        self._longform = LongFormController(
+            config=self.config,
+            audio_capture=self.audio_capture,
+            audio_manager=self.audio_manager,
+            whisper_manager=self.whisper_manager,
+            inject_text=self._inject_text,
+            notify_capture=self._notify_capture_subscriber,
+            set_visualizer_state=self._set_visualizer_state,
+            show_mic_osd=self._show_mic_osd,
+            hide_mic_osd=self._hide_mic_osd,
+            show_result_and_hide=self._show_result_and_hide,
+            write_recording_status=self._write_recording_status,
+            set_processing=self._set_longform_processing,
+            hallucination_markers=_HALLUCINATION_MARKERS,
+        )
         self._longform_submit_shortcuts = None  # Submit shortcut handler
 
         # Track startup time BEFORE any monitors are initialized
@@ -332,7 +341,7 @@ class hyprwhsprApp:
                 # Long-form mode: primary key toggles recording/paused, no release callback
                 self.global_shortcuts = GlobalShortcuts(
                     shortcut_key,
-                    self._on_longform_shortcut_triggered,
+                    self._longform.primary_shortcut,
                     None,  # No release callback for long_form mode
                     device_path=selected_device_path,
                     device_name=selected_device_name,
@@ -340,12 +349,7 @@ class hyprwhsprApp:
                     keyboard_device_names=keyboard_device_names,
                     keyboard_hotplug=keyboard_hotplug,
                 )
-                # Initialize segment manager for long-form mode
-                max_size_mb = self.config.get_setting('long_form_temp_limit_mb', 500)
-                self._longform_segment_manager = SegmentManager(max_size_mb=max_size_mb)
-
-                # Check for stale segments on startup and clean up if over limit
-                self._cleanup_longform_temp_on_startup()
+                self._longform.ensure_initialized()
             else:
                 # Invalid mode: default to toggle behavior (no release callback)
                 print(f"[WARNING] Invalid recording_mode '{recording_mode}', defaulting to 'toggle'")
@@ -447,7 +451,7 @@ class hyprwhsprApp:
                 if submit_shortcut_key:
                     self._longform_submit_shortcuts = GlobalShortcuts(
                         submit_shortcut_key,
-                        self._on_longform_submit_triggered,
+                        self._longform.submit_shortcut,
                         None,  # No release callback
                         device_path=selected_device_path,
                         device_name=selected_device_name,
@@ -995,348 +999,15 @@ class hyprwhsprApp:
         """Handle cancel shortcut trigger - discard recording without transcribing"""
         recording_mode = self.config.get_setting("recording_mode", "toggle")
         if recording_mode == "long_form":
-            self._ensure_longform_initialized()
-            with self._longform_lock:
-                self._cancel_longform_recording()
+            self._longform.cancel_shortcut()
         else:
             if recording_mode == "continuous":
                 self._continuous_cancelled = True
                 self._continuous_stop_silence_monitor()
             self._cancel_recording()
 
-    # Long-form recording mode handlers
-    def _ensure_longform_initialized(self):
-        """Ensure long-form segment manager is initialized (lazy initialization)"""
-        if self._longform_segment_manager is None:
-            max_size_mb = self.config.get_setting('long_form_temp_limit_mb', 500)
-            self._longform_segment_manager = SegmentManager(max_size_mb=max_size_mb)
-            print("[LONGFORM] Segment manager initialized (lazy init)", flush=True)
-            # Check for stale segments on first initialization
-            self._cleanup_longform_temp_on_startup()
-    
-    def _on_longform_shortcut_triggered(self):
-        """Handle primary shortcut in long-form mode (record/pause toggle)"""
-        self._ensure_longform_initialized()
-        with self._longform_lock:
-            if self._longform_state == 'IDLE':
-                # Start recording
-                self._longform_start_recording()
-            elif self._longform_state == 'RECORDING':
-                # Pause recording
-                self._longform_pause_recording()
-            elif self._longform_state == 'PAUSED':
-                # Resume recording
-                self._longform_resume_recording()
-            elif self._longform_state in ('PROCESSING', 'ERROR'):
-                # Ignore shortcut while processing or in error state
-                print(f"[LONGFORM] Ignoring shortcut in {self._longform_state} state")
-
-    def _on_longform_submit_triggered(self):
-        """Handle submit shortcut in long-form mode"""
-        self._ensure_longform_initialized()
-        with self._longform_lock:
-            if self._longform_state in ('RECORDING', 'PAUSED'):
-                # Stop recording if active, then submit
-                if self._longform_state == 'RECORDING':
-                    # Save current segment first
-                    audio_data = self.audio_capture.pause_recording()
-                    pending_audio = None
-                    if audio_data is not None and len(audio_data) > 0:
-                        if self._longform_segment_manager.save_segment(audio_data) is None:
-                            pending_audio = self._longform_segment_manager.concatenate_readable(audio_data)
-                    self._longform_submit(audio_data=pending_audio)
-                else:
-                    self._longform_submit()
-            elif self._longform_state == 'ERROR':
-                # Retry submission with stored audio
-                print("[LONGFORM] Retrying submission")
-                self._longform_submit(retry=True)
-            elif self._longform_state == 'IDLE':
-                print("[LONGFORM] Nothing to submit (IDLE state)")
-            elif self._longform_state == 'PROCESSING':
-                print("[LONGFORM] Already processing, please wait")
-
-    def _longform_start_recording(self, language_override=None):
-        """Start recording in long-form mode
-
-        Args:
-            language_override: Optional language code for transcription (e.g., 'en', 'it')
-        """
-        lang_info = f" (language: {language_override})" if language_override else ""
-        print(f"[LONGFORM] Starting recording session{lang_info}")
-
-        # Store language override for use during submit
-        self._longform_language_override = language_override
-
-        # Start audio capture first to verify it works
-        if not self.audio_capture.start_recording():
-            print("[LONGFORM] Failed to start audio capture")
-            return
-
-        # Only start session after confirming audio capture is active
-        self._longform_segment_manager.start_session()
-
-        self._longform_state = 'RECORDING'
-        self._write_longform_state('RECORDING')
-
-        # Show OSD in recording state
-        self._set_visualizer_state('recording')
-        self._show_mic_osd()
-
-        # Start auto-save timer
-        self._start_longform_auto_save_timer()
-
-        # Play start sound
-        self.audio_manager.play_start_sound()
-
-    def _longform_pause_recording(self):
-        """Pause recording and save current segment to disk"""
-        print("[LONGFORM] Pausing recording")
-
-        # Stop auto-save timer
-        self._stop_longform_auto_save_timer()
-
-        # Get audio data and stop stream
-        audio_data = self.audio_capture.pause_recording()
-
-        # Save segment to disk
-        if audio_data is not None and len(audio_data) > 0:
-            if self._longform_segment_manager.save_segment(audio_data) is None:
-                self._longform_persistence_failed(audio_data)
-                return
-
-        self._longform_state = 'PAUSED'
-        self._write_longform_state('PAUSED')
-
-        # Update visualizer to paused state
-        self._set_visualizer_state('paused')
-
-        # Play a brief sound to indicate pause
-        self.audio_manager.play_stop_sound()
-
-    def _longform_resume_recording(self):
-        """Resume recording from paused state"""
-        print("[LONGFORM] Resuming recording")
-
-        # Resume audio capture
-        if not self.audio_capture.resume_recording():
-            print("[LONGFORM] Failed to resume audio capture")
-            self._longform_state = 'ERROR'
-            self._write_longform_state('ERROR')
-            self._set_visualizer_state('error')
-            return
-
-        self._longform_state = 'RECORDING'
-        self._write_longform_state('RECORDING')
-
-        # Update visualizer to recording state
-        self._set_visualizer_state('recording')
-
-        # Restart auto-save timer
-        self._start_longform_auto_save_timer()
-
-        # Play start sound
-        self.audio_manager.play_start_sound()
-
-    def _cancel_longform_recording(self):
-        """Cancel long-form recording session and discard all segments"""
-        if self._longform_state not in ('RECORDING', 'PAUSED', 'ERROR'):
-            return
-
-        print("[LONGFORM] Recording cancelled (discarded)", flush=True)
-        self._notify_capture_subscriber("", final=True)
-
-        try:
-            self._stop_longform_auto_save_timer()
-            self.audio_capture.stop_recording()
-            self._longform_segment_manager.clear_session()
-            self._longform_error_audio = None
-            self._longform_language_override = None
-            self._longform_state = 'IDLE'
-            self._write_longform_state('IDLE')
-            self._hide_mic_osd()
-            self._write_recording_status(False)
-            self.audio_manager.play_error_sound()
-        except Exception as e:
-            print(f"[ERROR] Error cancelling long-form recording: {e}", flush=True)
-            try:
-                self._longform_state = 'IDLE'
-                self._write_longform_state('IDLE')
-                self._hide_mic_osd()
-                self._write_recording_status(False)
-            except Exception:
-                pass  # Best effort cleanup
-
-    def _longform_persistence_failed(self, audio_data):
-        """Freeze long-form capture and retain recoverable audio for retry."""
-        self._stop_longform_auto_save_timer()
-        self._longform_error_audio = self._longform_segment_manager.concatenate_readable(audio_data)
-        self._longform_state = 'ERROR'
-        self._write_longform_state('ERROR')
-        self._set_visualizer_state('error')
-        self.audio_manager.play_error_sound()
-
-    def _longform_submit(self, retry=False, audio_data=None):
-        """Submit all accumulated segments for transcription"""
-        print("[LONGFORM] Submitting for transcription")
-
-        # Stop auto-save timer if running
-        self._stop_longform_auto_save_timer()
-
-        # Get audio data
-        if audio_data is not None:
-            pass
-        elif retry and self._longform_error_audio is not None:
-            audio_data = self._longform_error_audio
-        else:
-            # Concatenate all segments
-            audio_data = self._longform_segment_manager.concatenate_all()
-
-        if audio_data is None or len(audio_data) == 0:
-            print("[LONGFORM] No audio data to process")
-            if self._longform_segment_manager.has_segments():
-                self._longform_error_audio = self._longform_segment_manager.concatenate_readable()
-                self._longform_state = 'ERROR'
-                self._write_longform_state('ERROR')
-                self._set_visualizer_state('error')
-            else:
-                self._longform_state = 'IDLE'
-                self._write_longform_state('IDLE')
-                self._hide_mic_osd()
-            return
-
-        self._longform_state = 'PROCESSING'
-        self._write_longform_state('PROCESSING')
-        self._set_visualizer_state('processing')
-
-        # Process audio (this will handle success/error states)
-        try:
-            self.is_processing = True
-
-            # Transcribe with language override if set
-            transcription = self.whisper_manager.transcribe_audio(
-                audio_data,
-                sample_rate=self.audio_capture.sample_rate,
-                language_override=self._longform_language_override,
-            )
-
-            if transcription and transcription.strip():
-                text = transcription.strip()
-
-                # Filter hallucinations
-                normalized = text.lower().replace('_', ' ').strip('[]().!?, ')
-                if normalized in _HALLUCINATION_MARKERS or text.startswith('♪'):
-                    print(f"[LONGFORM] Whisper hallucination detected: {text!r}")
-                    self.audio_manager.play_error_sound()
-                    self._longform_error_audio = audio_data  # Store for retry
-                    self._longform_state = 'ERROR'
-                    self._write_longform_state('ERROR')
-                    self._set_visualizer_state('error')
-                    return
-
-                # Success - inject text
-                if not self._inject_text(text):
-                    self.audio_manager.play_error_sound()
-                    self._longform_error_audio = audio_data
-                    self._longform_state = 'ERROR'
-                    self._write_longform_state('ERROR')
-                    self._set_visualizer_state('error')
-                    return
-
-                # Clear segments, error audio, and language override
-                self._longform_segment_manager.clear_session()
-                self._longform_error_audio = None
-                self._longform_language_override = None
-
-                self._longform_state = 'IDLE'
-                self._write_longform_state('IDLE')
-                self._show_result_and_hide(True)
-            else:
-                print("[LONGFORM] No transcription generated")
-                self.audio_manager.play_error_sound()
-                self._longform_error_audio = audio_data  # Store for retry
-                self._longform_state = 'ERROR'
-                self._write_longform_state('ERROR')
-                self._set_visualizer_state('error')
-
-        except Exception as e:
-            print(f"[LONGFORM] Transcription error: {e}", flush=True)
-            self.audio_manager.play_error_sound()
-            self._longform_error_audio = audio_data  # Store for retry
-            self._longform_state = 'ERROR'
-            self._write_longform_state('ERROR')
-            self._set_visualizer_state('error')
-        finally:
-            self._notify_capture_subscriber("", final=True)
-            self.is_processing = False
-
-    def _start_longform_auto_save_timer(self):
-        """Start the auto-save timer for long-form mode"""
-        interval = self.config.get_setting('long_form_auto_save_interval', 300)
-        if interval <= 0:
-            return
-
-        def auto_save_callback():
-            with self._longform_lock:
-                if self._longform_state == 'RECORDING':
-                    # Get current audio without stopping
-                    audio_data = self.audio_capture.get_current_audio_copy()
-                    if audio_data is not None and len(audio_data) > 0:
-                        if self._longform_segment_manager.save_segment(audio_data) is None:
-                            frozen_audio = self.audio_capture.pause_recording()
-                            if frozen_audio is None or len(frozen_audio) == 0:
-                                frozen_audio = audio_data
-                            self._longform_persistence_failed(frozen_audio)
-                            return
-                        else:
-                            self.audio_capture.clear_buffer()
-                            print(f"[LONGFORM] Auto-saved segment ({len(audio_data) / 16000:.1f}s)")
-                    # Restart timer
-                    self._start_longform_auto_save_timer()
-
-        self._longform_auto_save_timer = threading.Timer(interval, auto_save_callback)
-        self._longform_auto_save_timer.daemon = True
-        self._longform_auto_save_timer.start()
-
-    def _stop_longform_auto_save_timer(self):
-        """Stop the auto-save timer"""
-        if self._longform_auto_save_timer is not None:
-            self._longform_auto_save_timer.cancel()
-            self._longform_auto_save_timer = None
-
-    def _write_longform_state(self, state: str):
-        """Write long-form state to file for external monitoring"""
-        try:
-            LONGFORM_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            LONGFORM_STATE_FILE.write_text(state)
-        except Exception as e:
-            print(f"[LONGFORM] Failed to write state file: {e}", flush=True)
-
-    def _cleanup_longform_temp_on_startup(self):
-        """Check temp directory size on startup and clean up old segments if needed"""
-        if self._longform_segment_manager is None:
-            return
-
-        try:
-            total_size = self._longform_segment_manager.get_total_size()
-            max_size = self._longform_segment_manager.max_size_bytes
-
-            if total_size > max_size:
-                print(f"[LONGFORM] Temp directory over limit ({total_size / 1024 / 1024:.1f}MB > {max_size / 1024 / 1024:.1f}MB)")
-                print("[LONGFORM] Cleaning up oldest segments...")
-
-                # Clean up until under limit
-                while self._longform_segment_manager.cleanup_oldest():
-                    new_size = self._longform_segment_manager.get_total_size()
-                    if new_size <= max_size:
-                        break
-
-                final_size = self._longform_segment_manager.get_total_size()
-                print(f"[LONGFORM] Cleanup complete. New size: {final_size / 1024 / 1024:.1f}MB")
-            elif total_size > 0:
-                print(f"[LONGFORM] Found {total_size / 1024 / 1024:.1f}MB of previous segments (limit: {max_size / 1024 / 1024:.1f}MB)")
-        except Exception as e:
-            print(f"[LONGFORM] Error during startup cleanup: {e}", flush=True)
+    def _set_longform_processing(self, processing):
+        self.is_processing = processing
 
     def _start_recording(self, language_override=None):
         """Start voice recording
@@ -2293,20 +1964,7 @@ class hyprwhsprApp:
                 if action == "start":
                     lang_info = f" (language: {language_param})" if language_param else ""
                     if recording_mode == "long_form":
-                        # In long-form mode, "start" action is state-aware
-                        self._ensure_longform_initialized()
-                        with self._longform_lock:
-                            if self._longform_state == 'IDLE':
-                                print(f"[CONTROL] Long-form start requested (immediate){lang_info}", flush=True)
-                                self._longform_start_recording(language_override=language_param)
-                            elif self._longform_state == 'PAUSED':
-                                print(f"[CONTROL] Long-form resume requested (immediate){lang_info}", flush=True)
-                                # Note: resume doesn't change language - it was set at session start
-                                self._longform_resume_recording()
-                            elif self._longform_state == 'RECORDING':
-                                print("[CONTROL] Long-form already recording, ignoring start request", flush=True)
-                            else:
-                                print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring start request", flush=True)
+                        self._longform.request_start(language_override=language_param)
                     elif not self.is_recording:
                         print(f"[CONTROL] Recording start requested (immediate){lang_info}", flush=True)
                         self._start_recording(language_override=language_param)
@@ -2318,18 +1976,7 @@ class hyprwhsprApp:
                         print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
                 elif action == "stop":
                     if recording_mode == "long_form":
-                        # In long-form mode, "stop" action pauses if recording
-                        self._ensure_longform_initialized()
-                        with self._longform_lock:
-                            if self._longform_state == 'RECORDING':
-                                print("[CONTROL] Long-form pause requested (immediate)", flush=True)
-                                self._longform_pause_recording()
-                            elif self._longform_state == 'PAUSED':
-                                print("[CONTROL] Long-form already paused, ignoring stop request", flush=True)
-                            elif self._longform_state == 'IDLE':
-                                print("[CONTROL] Long-form not recording, ignoring stop request", flush=True)
-                            else:
-                                print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring stop request", flush=True)
+                        self._longform.request_pause()
                     elif self.is_recording:
                         print("[CONTROL] Recording stop requested (immediate)", flush=True)
                         if recording_mode == "continuous":
@@ -2339,13 +1986,7 @@ class hyprwhsprApp:
                         print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
                 elif action == "cancel":
                     if recording_mode == "long_form":
-                        self._ensure_longform_initialized()
-                        with self._longform_lock:
-                            if self._longform_state in ('RECORDING', 'PAUSED'):
-                                print("[CONTROL] Long-form cancel requested (immediate)", flush=True)
-                                self._cancel_longform_recording()
-                            else:
-                                print(f"[CONTROL] Long-form in {self._longform_state} state, ignoring cancel request", flush=True)
+                        self._longform.request_cancel()
                     elif self.is_recording:
                         print("[CONTROL] Recording cancel requested (immediate)", flush=True)
                         if recording_mode == "continuous":
@@ -2357,9 +1998,8 @@ class hyprwhsprApp:
                 elif action == "submit":
                     # Submit command for long-form mode submit shortcut
                     if recording_mode == "long_form":
-                        self._ensure_longform_initialized()
                         print("[CONTROL] Long-form submit requested (immediate)", flush=True)
-                        self._on_longform_submit_triggered()
+                        self._longform.submit_shortcut()
                     else:
                         print("[CONTROL] Submit command only valid in long_form mode", flush=True)
                 elif action == "model_unload":
@@ -3056,6 +2696,9 @@ class hyprwhsprApp:
 
             # Stop cancel shortcut
             cleanup_step("stop cancel shortcut", lambda: call_optional('_cancel_shortcuts', 'stop'))
+
+            # Prevent a long-form autosave callback from racing shutdown.
+            cleanup_step("stop long-form timer", self._longform.stop_auto_save_timer)
 
             # Stop audio capture
             if getattr(self, 'is_recording', False):

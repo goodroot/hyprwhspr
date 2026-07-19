@@ -1,6 +1,5 @@
-import ast
 import sys
-import threading
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,49 +9,9 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "lib"), str(ROOT / "lib" / "src")]
+sys.path.insert(0, str(ROOT / "lib" / "src"))
 
-SOURCE = ROOT / "lib" / "main.py"
-
-
-class LongformMethods:
-    pass
-
-
-tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
-method_names = {
-    "_ensure_longform_initialized",
-    "_on_longform_submit_triggered",
-    "_cancel_longform_recording",
-    "_longform_pause_recording",
-    "_longform_persistence_failed",
-    "_longform_submit",
-    "_start_longform_auto_save_timer",
-    "_stop_longform_auto_save_timer",
-}
-class_node = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "hyprwhsprApp")
-namespace = {
-    "np": np,
-    "threading": threading,
-    "_HALLUCINATION_MARKERS": {
-        "blank audio", "blank", "silence", "no speech", "you", "thank you",
-        "thanks for watching", "thank you for watching", "video playback",
-        "music", "music playing", "keyboard clicking",
-    },
-}
-for node in class_node.body:
-    if isinstance(node, ast.FunctionDef) and node.name in method_names:
-        function_node = ast.FunctionDef(
-            name=node.name,
-            args=node.args,
-            body=node.body,
-            decorator_list=[],
-            returns=node.returns,
-            type_comment=node.type_comment,
-        )
-        ast.fix_missing_locations(function_node)
-        exec(compile(ast.Module(body=[function_node], type_ignores=[]), str(SOURCE), "exec"), namespace)
-        setattr(LongformMethods, node.name, namespace[node.name])
+from longform_controller import LongFormController
 
 
 class ImmediateTimer:
@@ -68,10 +27,15 @@ class ImmediateTimer:
 
 
 class LongformReliabilityTests(unittest.TestCase):
-    def _app(self):
-        app = LongformMethods()
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _controller(self, timer_factory=ImmediateTimer):
         persisted = np.array([0.1, 0.2], dtype=np.float32)
-        app._longform_segment_manager = SimpleNamespace(
+        segment_manager = SimpleNamespace(
             save_segment=mock.Mock(return_value=None),
             concatenate_all=mock.Mock(return_value=persisted),
             concatenate_readable=mock.Mock(
@@ -81,99 +45,125 @@ class LongformReliabilityTests(unittest.TestCase):
             ),
             has_segments=mock.Mock(return_value=True),
             clear_session=mock.Mock(),
+            start_session=mock.Mock(),
         )
-        app.audio_capture = SimpleNamespace(
+        audio_capture = SimpleNamespace(
             sample_rate=16000,
+            start_recording=mock.Mock(return_value=True),
+            resume_recording=mock.Mock(return_value=True),
             pause_recording=mock.Mock(),
             stop_recording=mock.Mock(),
             get_current_audio_copy=mock.Mock(),
             clear_buffer=mock.Mock(),
         )
-        app.audio_manager = SimpleNamespace(
-            play_error_sound=mock.Mock(), play_stop_sound=mock.Mock()
+        audio_manager = SimpleNamespace(
+            play_start_sound=mock.Mock(),
+            play_stop_sound=mock.Mock(),
+            play_error_sound=mock.Mock(),
         )
-        app.whisper_manager = SimpleNamespace(transcribe_audio=mock.Mock(return_value="hello"))
-        app.config = SimpleNamespace(get_setting=lambda key, default=None: 1)
-        app._longform_state = 'RECORDING'
-        app._longform_error_audio = None
-        app._longform_language_override = None
-        app._longform_auto_save_timer = None
-        app._longform_lock = threading.Lock()
-        app._write_longform_state = mock.Mock()
-        app._set_visualizer_state = mock.Mock()
-        app._show_result_and_hide = mock.Mock()
-        app._hide_mic_osd = mock.Mock()
-        app._write_recording_status = mock.Mock()
-        app._notify_capture_subscriber = mock.Mock()
-        app.is_processing = False
-        return app, persisted
+        controller = LongFormController(
+            config=SimpleNamespace(get_setting=lambda key, default=None: 1),
+            audio_capture=audio_capture,
+            audio_manager=audio_manager,
+            whisper_manager=SimpleNamespace(
+                transcribe_audio=mock.Mock(return_value="hello")
+            ),
+            inject_text=mock.Mock(return_value=True),
+            notify_capture=mock.Mock(),
+            set_visualizer_state=mock.Mock(),
+            show_mic_osd=mock.Mock(),
+            hide_mic_osd=mock.Mock(),
+            show_result_and_hide=mock.Mock(),
+            write_recording_status=mock.Mock(),
+            set_processing=mock.Mock(),
+            hallucination_markers={"silence"},
+            timer_factory=timer_factory,
+            state_file=Path(self.temp_dir.name) / "longform_state",
+        )
+        controller.segment_manager = segment_manager
+        controller.state = 'RECORDING'
+        return controller, persisted
+
+    def test_start_pause_resume_transitions_are_owned_by_controller(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'IDLE'
+
+        controller.start_recording(language_override="en")
+        self.assertEqual(controller.state, 'RECORDING')
+        self.assertEqual(controller.language_override, "en")
+        controller.segment_manager.start_session.assert_called_once_with()
+
+        controller.segment_manager.save_segment.return_value = Path("segment.wav")
+        controller.audio_capture.pause_recording.return_value = np.array([0.3], dtype=np.float32)
+        controller.pause_recording()
+        self.assertEqual(controller.state, 'PAUSED')
+
+        controller.resume_recording()
+        self.assertEqual(controller.state, 'RECORDING')
 
     def test_pause_persistence_failure_preserves_complete_audio_and_errors(self):
-        app, persisted = self._app()
+        controller, persisted = self._controller()
         unsaved = np.array([0.3, 0.4], dtype=np.float32)
-        app.audio_capture.pause_recording.return_value = unsaved
+        controller.audio_capture.pause_recording.return_value = unsaved
 
-        app._longform_pause_recording()
+        controller.pause_recording()
 
-        np.testing.assert_array_equal(app._longform_error_audio, np.concatenate([persisted, unsaved]))
-        self.assertEqual(app._longform_state, 'ERROR')
-        app._longform_segment_manager.clear_session.assert_not_called()
+        np.testing.assert_array_equal(controller.error_audio, np.concatenate([persisted, unsaved]))
+        self.assertEqual(controller.state, 'ERROR')
+        controller.segment_manager.clear_session.assert_not_called()
 
     def test_autosave_failure_freezes_without_clearing_buffer(self):
-        app, persisted = self._app()
+        controller, persisted = self._controller()
         snapshot = np.array([0.3], dtype=np.float32)
         frozen = np.array([0.3, 0.4], dtype=np.float32)
-        app.audio_capture.get_current_audio_copy.return_value = snapshot
-        app.audio_capture.pause_recording.return_value = frozen
+        controller.audio_capture.get_current_audio_copy.return_value = snapshot
+        controller.audio_capture.pause_recording.return_value = frozen
 
-        with mock.patch.object(threading, "Timer", ImmediateTimer):
-            app._start_longform_auto_save_timer()
+        controller.start_auto_save_timer()
 
-        np.testing.assert_array_equal(app._longform_error_audio, np.concatenate([persisted, frozen]))
-        self.assertEqual(app._longform_state, 'ERROR')
-        app.audio_capture.clear_buffer.assert_not_called()
+        np.testing.assert_array_equal(controller.error_audio, np.concatenate([persisted, frozen]))
+        self.assertEqual(controller.state, 'ERROR')
+        controller.audio_capture.clear_buffer.assert_not_called()
 
     def test_failed_final_write_can_submit_combined_audio(self):
-        app, persisted = self._app()
+        controller, persisted = self._controller()
         final = np.array([0.3], dtype=np.float32)
-        combined = np.concatenate([persisted, final])
-        app.audio_capture.pause_recording.return_value = final
-        app._inject_text = mock.Mock(return_value=True)
+        controller.audio_capture.pause_recording.return_value = final
 
-        app._on_longform_submit_triggered()
+        controller.submit_shortcut()
 
-        submitted = app.whisper_manager.transcribe_audio.call_args.args[0]
-        np.testing.assert_array_equal(submitted, combined)
-        app._longform_segment_manager.clear_session.assert_called_once_with()
+        submitted = controller.whisper_manager.transcribe_audio.call_args.args[0]
+        np.testing.assert_array_equal(submitted, np.concatenate([persisted, final]))
+        controller.segment_manager.clear_session.assert_called_once_with()
 
     def test_injection_failure_retains_audio_until_successful_retry(self):
-        app, persisted = self._app()
-        app._inject_text = mock.Mock(side_effect=[False, True])
+        controller, persisted = self._controller()
+        controller.inject_text.side_effect = [False, True]
 
-        app._longform_submit()
+        controller.submit()
 
-        self.assertEqual(app._longform_state, 'ERROR')
-        np.testing.assert_array_equal(app._longform_error_audio, persisted)
-        app._longform_segment_manager.clear_session.assert_not_called()
+        self.assertEqual(controller.state, 'ERROR')
+        np.testing.assert_array_equal(controller.error_audio, persisted)
+        controller.segment_manager.clear_session.assert_not_called()
 
-        app._longform_submit(retry=True)
+        controller.submit(retry=True)
 
-        self.assertEqual(app._longform_state, 'IDLE')
-        self.assertIsNone(app._longform_error_audio)
-        app._longform_segment_manager.clear_session.assert_called_once_with()
+        self.assertEqual(controller.state, 'IDLE')
+        self.assertIsNone(controller.error_audio)
+        controller.segment_manager.clear_session.assert_called_once_with()
 
     def test_cancel_discards_unrecoverable_error_session(self):
-        app, _ = self._app()
-        app._longform_state = 'ERROR'
-        app._longform_error_audio = None
+        controller, _ = self._controller()
+        controller.state = 'ERROR'
+        controller.error_audio = None
 
-        app._cancel_longform_recording()
+        controller.request_cancel()
 
-        app.audio_capture.stop_recording.assert_called_once_with()
-        app._longform_segment_manager.clear_session.assert_called_once_with()
-        self.assertEqual(app._longform_state, 'IDLE')
-        self.assertIsNone(app._longform_error_audio)
-        app._write_longform_state.assert_called_with('IDLE')
+        controller.audio_capture.stop_recording.assert_called_once_with()
+        controller.segment_manager.clear_session.assert_called_once_with()
+        self.assertEqual(controller.state, 'IDLE')
+        self.assertIsNone(controller.error_audio)
+        self.assertEqual(controller.state_file.read_text(), 'IDLE')
 
 
 if __name__ == "__main__":
