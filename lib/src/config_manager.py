@@ -7,6 +7,7 @@ import copy
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
@@ -259,19 +260,41 @@ class ConfigManager:
     
     def save_config(self) -> bool:
         """Save current configuration to file (sparse: only non-default keys + $schema)"""
+        temp_path = None
         try:
             sparse = {"$schema": self.SCHEMA_URL}
             for key, value in self.config.items():
                 if key not in self.default_config or self.default_config[key] != value:
                     sparse[key] = value
-            with open(self.config_file, 'w', encoding='utf-8') as f:
+            # Serialize beside the destination, then atomically replace it. Writing
+            # directly to config.json can truncate the user's only configuration if
+            # serialization, disk I/O, or the process fails partway through.
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                encoding='utf-8',
+                dir=self.config_dir,
+                prefix=f'.{self.config_file.name}.',
+                suffix='.tmp',
+                delete=False,
+            ) as f:
+                temp_path = Path(f.name)
                 json.dump(sparse, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, self.config_file)
+            temp_path = None
             if self.verbose:
                 print(f"Configuration saved to {self.config_file}")
             return True
         except Exception as e:
             print(f"Error: Could not save configuration: {e}")
             return False
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
     
     def get_setting(self, key: str, default: Any = None) -> Any:
         """Get a configuration setting with environment variable expansion applied.
