@@ -342,6 +342,17 @@ class TextInjectorInjectionTests(unittest.TestCase):
         ):
             self.assertFalse(injector._is_hyprland_session())
 
+        injector.session_type = "x11"
+        with (
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {"HYPRLAND_INSTANCE_SIGNATURE": "stale", "XDG_CURRENT_DESKTOP": "Hyprland"},
+                clear=True,
+            ),
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/hyprctl"),
+        ):
+            self.assertFalse(injector._is_hyprland_session())
+
     def test_hyprland_shortcut_constructs_lua_for_named_and_function_keys(self):
         injector = self._injector()
         completed = types.SimpleNamespace(returncode=0, stderr=b"")
@@ -435,6 +446,27 @@ class TextInjectorInjectionTests(unittest.TestCase):
         wtype.assert_called_once_with("ctrl+v")
         ydotool.assert_called_once_with("ctrl+v")
 
+    def test_hyprland_failure_stops_at_successful_wtype_fallback(self):
+        injector = self._injector()
+        injector.wtype_available = True
+        with (
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old"),
+            mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True),
+            mock.patch.object(injector, "_is_hyprland_session", return_value=True),
+            mock.patch.object(injector, "_send_shortcut_hyprland", return_value=False),
+            mock.patch.object(injector, "_send_paste_keys_wtype", return_value=True) as wtype,
+            mock.patch.object(injector, "_send_paste_keys_slow") as ydotool,
+            mock.patch.object(injector, "_clear_stuck_modifiers") as clear_modifiers,
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch("text_injector.time.sleep"),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+        wtype.assert_called_once_with("ctrl+v")
+        clear_modifiers.assert_called_once_with()
+        ydotool.assert_not_called()
+
     def test_hyprland_auto_submit_uses_native_enter(self):
         injector = self._injector()
         injector.config_manager = ConfigStub({"auto_submit": True})
@@ -447,6 +479,21 @@ class TextInjectorInjectionTests(unittest.TestCase):
             injector._send_enter_if_auto_submit()
         native.assert_called_once_with("enter")
         ydotool.assert_not_called()
+        run.assert_not_called()
+
+    def test_hyprland_auto_submit_native_failure_falls_back_to_ydotool(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"auto_submit": True})
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+        with (
+            mock.patch.object(injector, "_is_hyprland_session", return_value=True),
+            mock.patch.object(injector, "_send_shortcut_hyprland", return_value=False) as native,
+            mock.patch.object(injector, "_run_ydotool", return_value=completed) as ydotool,
+            mock.patch("text_injector.subprocess.run") as run,
+        ):
+            injector._send_enter_if_auto_submit()
+        native.assert_called_once_with("enter")
+        ydotool.assert_called_once_with(["key", "28:1", "28:0"], timeout=1)
         run.assert_not_called()
 
     def test_ydotool_sends_arbitrary_single_key_chord(self):
