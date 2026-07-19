@@ -178,6 +178,7 @@ class TextInjector:
         self.ydotool_available = self._check_ydotool()
         self.wtype_available = not self._is_x11_session() and shutil.which('wtype') is not None
         self.xdotool_available = self._is_x11_session() and shutil.which('xdotool') is not None
+        self._hyprland_shortcut_syntax = None
 
         # Private ydotoold instance (lazily started on first uinput-fallback use, so
         # wtype-only sessions never spawn it). Replaces the old shared/managed
@@ -185,7 +186,12 @@ class TextInjector:
         self._ydotoold = YdotooldSession()
         self._atspi_unavailable = False
 
-        if not self.ydotool_available and not self.wtype_available and not self.xdotool_available:
+        if (
+            not self.ydotool_available
+            and not self.wtype_available
+            and not self.xdotool_available
+            and not self._is_hyprland_session()
+        ):
             print("⚠️  No injection backend found. Install wtype or ydotool on Wayland, or xdotool on X11.")
         elif not self._is_x11_session() and not self.wtype_available and self.ydotool_available:
             print("ℹ️  wtype not found. Falling back to ydotool for paste hotkey injection.")
@@ -198,6 +204,23 @@ class TextInjector:
         """Use the display protocol captured when this injector was initialized."""
         session_type = getattr(self, 'session_type', os.environ.get('XDG_SESSION_TYPE', '').lower())
         return session_type == 'x11'
+
+    def _is_hyprland_session(self) -> bool:
+        """Return whether this is an active Hyprland Wayland session with IPC."""
+        if self._is_x11_session() or shutil.which('hyprctl') is None:
+            return False
+        if os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
+            return True
+        desktop_values = (
+            os.environ.get('XDG_CURRENT_DESKTOP', ''),
+            os.environ.get('XDG_SESSION_DESKTOP', ''),
+            os.environ.get('DESKTOP_SESSION', ''),
+        )
+        return any(
+            token.strip().lower() == 'hyprland'
+            for value in desktop_values
+            for token in re.split(r'[:;,]', value)
+        )
 
     def _run_ydotool(self, args, timeout):
         """Run a ydotool client command against our private ydotoold daemon.
@@ -599,6 +622,8 @@ except Exception:
         _modifiers, key = parsed
         if getattr(self, 'xdotool_available', False):
             return True
+        if self._is_hyprland_session() and self._wtype_key_name(key) is not None:
+            return True
         if self.wtype_available and self._wtype_key_name(key) is not None:
             return True
         if self.ydotool_available and self._keycode_for_chord_key(key) is not None:
@@ -729,6 +754,44 @@ except Exception:
         except Exception as e:
             print(f"wtype paste failed: {e}")
             return False
+
+    def _send_shortcut_hyprland(self, shortcut: str) -> bool:
+        """Send a shortcut to Hyprland's active window without a virtual keyboard."""
+        shortcut = PASTE_MODE_CHORDS.get(shortcut, shortcut)
+        parsed = self._parse_key_chord(shortcut)
+        if not parsed:
+            return False
+        modifiers, key = parsed
+        key_name = self._wtype_key_name(key)
+        if key_name is None:
+            return False
+
+        hypr_modifiers = ' + '.join(modifier.upper() for modifier in modifiers)
+        lua = (
+            'hl.dsp.send_shortcut({ '
+            f'mods = "{hypr_modifiers}", key = "{key_name}", '
+            'window = "activewindow" })'
+        )
+        legacy = f'{" ".join(modifier.upper() for modifier in modifiers)}, {key_name}, activewindow'
+        commands = {
+            'lua': ['hyprctl', 'dispatch', lua],
+            'legacy': ['hyprctl', 'dispatch', 'sendshortcut', legacy],
+        }
+        cached = getattr(self, '_hyprland_shortcut_syntax', None)
+        syntaxes = [cached] if cached in commands else []
+        syntaxes.extend(syntax for syntax in ('lua', 'legacy') if syntax != cached)
+
+        for syntax in syntaxes:
+            try:
+                result = subprocess.run(commands[syntax], capture_output=True, timeout=1)
+            except Exception:
+                result = None
+            if result is not None and result.returncode == 0:
+                self._hyprland_shortcut_syntax = syntax
+                return True
+            if syntax == cached:
+                self._hyprland_shortcut_syntax = None
+        return False
 
     def _send_paste_keys_xdotool(self, paste_chord: str) -> bool:
         """Send a symbolic paste chord through the native X11 input path."""
@@ -1001,6 +1064,8 @@ except Exception:
                 if enter_result.returncode != 0:
                     stderr = (enter_result.stderr or b'').decode('utf-8', 'ignore')
                     print(f"  xdotool Enter key failed: {stderr}")
+            elif self._is_hyprland_session() and self._send_shortcut_hyprland('enter'):
+                return
             elif self.ydotool_available:
                 enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1)  # 28 = Enter
                 if enter_result is None or enter_result.returncode != 0:
@@ -1213,7 +1278,7 @@ except Exception:
     # ------------------------ Paste injection (primary method) ------------------------
 
     def _inject_via_clipboard_and_hotkey(self, text: str) -> bool:
-        """Copy text to clipboard, then trigger paste via wtype (or ydotool fallback)."""
+        """Copy text to clipboard, then trigger the compositor-native paste path."""
         try:
             window_info = (
                 self._get_active_window_info()
@@ -1262,14 +1327,21 @@ except Exception:
             time.sleep(0.15)
 
             # Send paste hotkey through the session-native path first: xdotool on
-            # X11 or wtype on Wayland. Fall back to ydotool's uinput chord. ydotool
-            # key chords DO reach Mutter (uinput
+            # X11, Hyprland's dispatcher there, or wtype on other Wayland sessions.
+            # Fall back to wtype and then ydotool if native Hyprland dispatch fails.
+            # ydotool key chords DO reach Mutter (uinput
             # is seen as a real device, unlike wtype's virtual-keyboard protocol
             # which Mutter blocks), so we use them on GNOME too — this is the path
             # taken when direct typing was skipped for a non-US layout / non-ASCII text.
             pasted = False
             if self._is_x11_session() and getattr(self, 'xdotool_available', False):
                 pasted = self._send_paste_keys_xdotool(paste_chord)
+            elif self._is_hyprland_session():
+                pasted = self._send_shortcut_hyprland(paste_chord)
+                if not pasted and self.wtype_available:
+                    pasted = self._send_paste_keys_wtype(paste_chord)
+                    if pasted:
+                        self._clear_stuck_modifiers()
             elif self.wtype_available:
                 pasted = self._send_paste_keys_wtype(paste_chord)
                 if pasted:

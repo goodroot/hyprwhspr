@@ -1,4 +1,5 @@
 import io
+import subprocess
 import sys
 import types
 import unittest
@@ -30,6 +31,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
         injector.ydotool_available = True
         injector.wtype_available = False
         injector.xdotool_available = False
+        injector._hyprland_shortcut_syntax = None
         # Private ydotoold daemon manager: not running by default (so
         # _clear_stuck_modifiers is a no-op), but ensure_running() succeeds when a
         # ydotool command is actually issued.
@@ -317,6 +319,135 @@ class TextInjectorInjectionTests(unittest.TestCase):
                 self.assertTrue(injector._send_paste_keys_wtype(chord))
             sent = run.call_args.args[0]
             self.assertEqual(sent[sent.index("-k") + 1], expected_key)
+
+    def test_hyprland_session_detection_requires_exact_desktop_or_signature(self):
+        injector = self._injector()
+        cases = (
+            ({"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, True),
+            ({"XDG_CURRENT_DESKTOP": "Hyprland:uwsm"}, True),
+            ({"XDG_SESSION_DESKTOP": "hyprland"}, True),
+            ({"XDG_CURRENT_DESKTOP": "NotHyprland"}, False),
+            ({"XDG_CURRENT_DESKTOP": "GNOME"}, False),
+        )
+        for environment, expected in cases:
+            with (
+                self.subTest(environment=environment),
+                mock.patch.dict("text_injector.os.environ", environment, clear=True),
+                mock.patch("text_injector.shutil.which", return_value="/usr/bin/hyprctl"),
+            ):
+                self.assertEqual(injector._is_hyprland_session(), expected)
+        with (
+            mock.patch.dict("text_injector.os.environ", {"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, clear=True),
+            mock.patch("text_injector.shutil.which", return_value=None),
+        ):
+            self.assertFalse(injector._is_hyprland_session())
+
+    def test_hyprland_shortcut_constructs_lua_for_named_and_function_keys(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+        cases = {
+            "ctrl+shift+enter": 'mods = "CTRL + SHIFT", key = "Return"',
+            "super+pageup": 'mods = "SUPER", key = "Page_Up"',
+            "alt+f11": 'mods = "ALT", key = "F11"',
+            "ctrl+y": 'mods = "CTRL", key = "y"',
+        }
+        for chord, fragment in cases.items():
+            injector._hyprland_shortcut_syntax = None
+            with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
+                self.assertTrue(injector._send_shortcut_hyprland(chord))
+            command = run.call_args.args[0]
+            self.assertEqual(command[:2], ["hyprctl", "dispatch"])
+            self.assertIn(fragment, command[2])
+            self.assertIn('window = "activewindow"', command[2])
+
+    def test_hyprland_shortcut_negotiates_caches_and_renegotiates(self):
+        injector = self._injector()
+        failed = types.SimpleNamespace(returncode=1, stderr=b"bad syntax")
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+        with mock.patch(
+            "text_injector.subprocess.run",
+            side_effect=[failed, completed, completed, failed, completed],
+        ) as run:
+            self.assertTrue(injector._send_shortcut_hyprland("ctrl+v"))
+            self.assertEqual(injector._hyprland_shortcut_syntax, "legacy")
+            self.assertTrue(injector._send_shortcut_hyprland("ctrl+v"))
+            self.assertTrue(injector._send_shortcut_hyprland("ctrl+v"))
+            self.assertEqual(injector._hyprland_shortcut_syntax, "lua")
+
+        self.assertEqual(run.call_args_list[1].args[0], [
+            "hyprctl", "dispatch", "sendshortcut", "CTRL, v, activewindow",
+        ])
+        self.assertEqual(run.call_args_list[2].args[0][2], "sendshortcut")
+        self.assertTrue(run.call_args_list[4].args[0][2].startswith("hl.dsp.send_shortcut"))
+
+    def test_hyprland_shortcut_rejects_invalid_chords_and_handles_timeouts(self):
+        injector = self._injector()
+        with mock.patch("text_injector.subprocess.run") as run:
+            self.assertFalse(injector._send_shortcut_hyprland("ctrl+shift"))
+            self.assertFalse(injector._send_shortcut_hyprland("ctrl+unknown-key"))
+        run.assert_not_called()
+
+        with mock.patch(
+            "text_injector.subprocess.run", side_effect=subprocess.TimeoutExpired("hyprctl", 1)
+        ) as run:
+            self.assertFalse(injector._send_shortcut_hyprland("ctrl+v"))
+        self.assertEqual(run.call_count, 2)
+        self.assertIsNone(injector._hyprland_shortcut_syntax)
+
+    def test_hyprland_native_paste_avoids_wtype(self):
+        injector = self._injector()
+        with (
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old"),
+            mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True),
+            mock.patch.object(injector, "_is_hyprland_session", return_value=True),
+            mock.patch.object(injector, "_send_shortcut_hyprland", return_value=True) as native,
+            mock.patch.object(injector, "_send_paste_keys_wtype") as wtype,
+            mock.patch.object(injector, "_send_paste_keys_slow") as ydotool,
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch("text_injector.time.sleep"),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+        native.assert_called_once_with("ctrl+v")
+        wtype.assert_not_called()
+        ydotool.assert_not_called()
+
+    def test_hyprland_failure_falls_back_to_wtype_then_ydotool(self):
+        injector = self._injector()
+        injector.wtype_available = True
+        with (
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old"),
+            mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True),
+            mock.patch.object(injector, "_is_hyprland_session", return_value=True),
+            mock.patch.object(injector, "_send_shortcut_hyprland", return_value=False),
+            mock.patch.object(injector, "_send_paste_keys_wtype", return_value=False) as wtype,
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as ydotool,
+            mock.patch.object(injector, "_clear_stuck_modifiers"),
+            mock.patch.object(injector, "_gnome_force_latin_layout", return_value=None),
+            mock.patch.object(injector, "_gnome_restore_layout"),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch("text_injector.time.sleep"),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+        wtype.assert_called_once_with("ctrl+v")
+        ydotool.assert_called_once_with("ctrl+v")
+
+    def test_hyprland_auto_submit_uses_native_enter(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"auto_submit": True})
+        with (
+            mock.patch.object(injector, "_is_hyprland_session", return_value=True),
+            mock.patch.object(injector, "_send_shortcut_hyprland", return_value=True) as native,
+            mock.patch.object(injector, "_run_ydotool") as ydotool,
+            mock.patch("text_injector.subprocess.run") as run,
+        ):
+            injector._send_enter_if_auto_submit()
+        native.assert_called_once_with("enter")
+        ydotool.assert_not_called()
+        run.assert_not_called()
 
     def test_ydotool_sends_arbitrary_single_key_chord(self):
         injector = self._injector()
