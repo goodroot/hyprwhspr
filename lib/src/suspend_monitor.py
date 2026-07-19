@@ -23,6 +23,8 @@ class SuspendMonitor:
         self._loop = None
         self._thread = None
         self._running = False
+        self._bus = None
+        self._signal_match = None
 
         if not DBUS_AVAILABLE:
             print("[SUSPEND_MONITOR] D-Bus/GLib not available, suspend monitoring disabled")
@@ -33,17 +35,25 @@ class SuspendMonitor:
             return False
 
         if self._running:
-            return True
+            if self._thread is not None and self._thread.is_alive():
+                return True
+            self._running = False
+        if self._thread is not None and self._thread.is_alive():
+            print("[SUSPEND_MONITOR] Previous monitor thread is still stopping")
+            return False
+        self._thread = None
+        self._loop = None
+        self._remove_signal_receiver()
 
         try:
             # Set up D-Bus main loop
             DBusGMainLoop(set_as_default=True)
 
             # Connect to system bus
-            bus = dbus.SystemBus()
+            self._bus = dbus.SystemBus()
 
             # Subscribe to PrepareForSleep signal from systemd-logind
-            bus.add_signal_receiver(
+            self._signal_match = self._bus.add_signal_receiver(
                 self._handle_sleep_signal,
                 signal_name='PrepareForSleep',
                 dbus_interface='org.freedesktop.login1.Manager',
@@ -64,7 +74,20 @@ class SuspendMonitor:
         except Exception as e:
             print(f"[SUSPEND_MONITOR] Failed to start: {e}")
             self._running = False
+            self._remove_signal_receiver()
+            self._loop = None
             return False
+
+    def _remove_signal_receiver(self):
+        """Unregister the logind signal subscription, if one was installed."""
+        signal_match = self._signal_match
+        self._signal_match = None
+        if signal_match is not None:
+            try:
+                signal_match.remove()
+            except Exception as e:
+                print(f"[SUSPEND_MONITOR] Error removing signal receiver: {e}")
+        self._bus = None
 
     def _run_loop(self):
         """Run GLib main loop (runs in daemon thread)"""
@@ -73,6 +96,8 @@ class SuspendMonitor:
         except Exception as e:
             print(f"[SUSPEND_MONITOR] Main loop crashed: {e}")
         finally:
+            if threading.current_thread() is self._thread:
+                self._running = False
             print("[SUSPEND_MONITOR] Main loop exited")
 
     def _handle_sleep_signal(self, entering_suspend):
@@ -82,6 +107,8 @@ class SuspendMonitor:
             entering_suspend: True when entering suspend, False when resuming
         """
         try:
+            if not self._running:
+                return
             if entering_suspend:
                 # System is about to suspend
                 # Note: Callback will log details, no need to log here
@@ -118,5 +145,10 @@ class SuspendMonitor:
         # Wait for thread to exit
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
+
+        if self._thread and not self._thread.is_alive():
+            self._thread = None
+        self._loop = None
+        self._remove_signal_receiver()
 
         print("[SUSPEND_MONITOR] Stopped monitoring")

@@ -4,7 +4,6 @@ Uses pulsectl to detect device changes and server restarts
 """
 
 import threading
-import time
 
 try:
     import pulsectl
@@ -22,6 +21,7 @@ class PulseAudioMonitor:
         self._pulse = None
         self._monitor_thread = None
         self._running = False
+        self._stop_event = threading.Event()
         self._default_source_name = None
         self._pending_server_check = False  # Flag to defer server_info() outside callback
 
@@ -42,9 +42,22 @@ class PulseAudioMonitor:
             return False
 
         if self._running:
-            return True
+            if self.is_healthy():
+                return True
+            self._running = False
+        if self._monitor_thread is not None and self._monitor_thread.is_alive():
+            print("[PULSE_MONITOR] Previous monitor thread is still stopping")
+            return False
+        self._monitor_thread = None
+        if self._pulse is not None:
+            try:
+                self._pulse.close()
+            except Exception:
+                pass
+            self._pulse = None
 
         try:
+            self._stop_event.clear()
             # Create pulse connection
             self._pulse = pulsectl.Pulse('hyprwhspr-monitor')
 
@@ -85,13 +98,17 @@ class PulseAudioMonitor:
     def _event_loop(self):
         """Event listener loop (runs in daemon thread)"""
         try:
-            while self._running:
+            while self._running and not self._stop_event.is_set():
                 try:
                     # Listen for events (blocking call with timeout)
                     self._pulse.event_listen(timeout=1.0)
 
                     # Check for pending server info check (deferred from callback to avoid threading violation)
-                    if self._pending_server_check:
+                    if (
+                        self._pending_server_check
+                        and self._running
+                        and not self._stop_event.is_set()
+                    ):
                         self._pending_server_check = False
                         self._check_default_source_change()
                 except pulsectl.PulseDisconnected:
@@ -110,16 +127,20 @@ class PulseAudioMonitor:
                 except Exception as e:
                     if self._running:  # Only log if we're supposed to be running
                         print(f"[PULSE_MONITOR] Error in event loop: {e}")
-                        time.sleep(1)  # Brief pause before retrying
+                        self._stop_event.wait(1)  # Brief pause before retrying
         except Exception as e:
             print(f"[PULSE_MONITOR] Event loop crashed: {e}")
         finally:
+            if threading.current_thread() is self._monitor_thread:
+                self._running = False
             print("[PULSE_MONITOR] Event loop exited")
 
     def _reconnect(self):
         """Attempt to reconnect to pulse server"""
         max_attempts = 5
         for attempt in range(max_attempts):
+            if not self._running or self._stop_event.is_set():
+                return False
             try:
                 print(f"[PULSE_MONITOR] Reconnecting... (attempt {attempt + 1}/{max_attempts})")
                 if self._pulse:
@@ -129,6 +150,10 @@ class PulseAudioMonitor:
                         pass
 
                 self._pulse = pulsectl.Pulse('hyprwhspr-monitor')
+                if not self._running or self._stop_event.is_set():
+                    self._pulse.close()
+                    self._pulse = None
+                    return False
                 self._pulse.event_mask_set('server', 'source')
                 self._pulse.event_callback_set(self._event_callback)
 
@@ -143,7 +168,8 @@ class PulseAudioMonitor:
                 return True
             except Exception as e:
                 if attempt < max_attempts - 1:
-                    time.sleep(2)  # Wait before retrying
+                    if self._stop_event.wait(2):
+                        return False
                 else:
                     print(f"[PULSE_MONITOR] Failed to reconnect after {max_attempts} attempts: {e}")
                     return False
@@ -170,7 +196,7 @@ class PulseAudioMonitor:
                 self._default_source_name = new_default_source
                 print(f"[PULSE_MONITOR] Default source changed: {old_default} → {new_default_source}")
 
-                if self.on_default_change:
+                if self._running and not self._stop_event.is_set() and self.on_default_change:
                     # Run callback in separate thread
                     threading.Thread(
                         target=self.on_default_change,
@@ -182,15 +208,22 @@ class PulseAudioMonitor:
 
     def stop(self):
         """Stop monitoring for pulse events"""
-        if not self._running:
+        if (
+            not self._running
+            and self._pulse is None
+            and not (self._monitor_thread and self._monitor_thread.is_alive())
+        ):
             return
 
         print("[PULSE_MONITOR] Stopping...")
         self._running = False
+        self._stop_event.set()
 
         # Wait for event loop thread to exit
         if self._monitor_thread and self._monitor_thread.is_alive():
             self._monitor_thread.join(timeout=2.0)
+        if self._monitor_thread and not self._monitor_thread.is_alive():
+            self._monitor_thread = None
 
         # Close pulse connection
         if self._pulse:
