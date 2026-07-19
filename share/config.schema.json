@@ -179,10 +179,10 @@
       "description": "Seconds to wait before clearing clipboard (only used if clipboard_behavior is true)"
     },
     "paste_mode": {
-      "type": "string",
-      "enum": ["super", "ctrl_shift", "ctrl", "alt"],
-      "default": "ctrl_shift",
-      "description": "Paste key combination: 'ctrl_shift' (Ctrl+Shift+V), 'super' (Super+V), 'ctrl' (Ctrl+V), 'alt' (Alt+V)"
+      "type": ["string", "null"],
+      "enum": ["super", "ctrl_shift", "ctrl", "alt", null],
+      "default": null,
+      "description": "Paste key combination, or null to auto-detect from the focused application."
     },
     "paste_keycode_wev": {
       "type": ["integer", "null"],
@@ -218,9 +218,9 @@
       }
     },
     "shift_paste": {
-      "type": "boolean",
-      "default": true,
-      "description": "Back-compat: true = Ctrl+Shift+V, false = Ctrl+V. Only used if paste_mode is absent."
+      "type": ["boolean", "null"],
+      "default": null,
+      "description": "Back-compat: true = Ctrl+Shift+V, false = Ctrl+V, null = auto-detect. Only used if paste_mode is absent."
     },
     "inject_mode": {
       "type": ["string", "null"],

@@ -53,8 +53,9 @@ if ! git rev-parse --git-dir > /dev/null 2>&1; then
     exit 1
 fi
 
-# Check for uncommitted changes
-if ! git diff-index --quiet HEAD --; then
+# Check tracked and untracked release inputs. In particular, do not create a
+# tag that omits a newly-added packaging validator or dependency manifest.
+if [ -n "$(git status --porcelain)" ]; then
     echo "   ⚠ Warning: You have uncommitted changes"
     echo "   Consider committing them before creating a release tag"
     read -p "   Continue anyway? (y/N) " -n 1 -r
@@ -63,6 +64,11 @@ if ! git diff-index --quiet HEAD --; then
         exit 1
     fi
 fi
+
+echo "   Validating release payload and installer syntax..."
+python scripts/validate-package-payload.py "$HYPRWHSPR_REPO"
+bash -n scripts/install.sh scripts/install-deps.sh
+echo "   ✓ Release payload contracts valid"
 
 # Step 2: Create and push git tag
 echo "2. Creating git tag v$NEW_VERSION..."
@@ -124,7 +130,10 @@ echo "   ✓ SHA256: $NEW_SHA256"
 # Step 5: Update PKGBUILD
 echo "5. Updating PKGBUILD..."
 cd "$AUR_REPO"
+# These substitutions intentionally touch only release metadata. Dependency
+# policy and package() validation commands in the AUR recipe must be preserved.
 sed -i "s/^pkgver=.*/pkgver=$NEW_VERSION/" PKGBUILD
+sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
 sed -i "s/v$OLD_VERSION/v$NEW_VERSION/g" PKGBUILD
 
 # Update SHA256 in PKGBUILD

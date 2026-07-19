@@ -896,6 +896,10 @@ Override with `paste_mode` if needed:
 }
 ```
 
+The default is `null`, which auto-detects the appropriate paste chord from the
+focused application. The legacy `shift_paste` setting also accepts `null` for
+the same auto-detection behavior.
+
 ### App-specific paste keys
 
 Some apps use non-standard paste shortcuts — GUI Emacs, for example, uses Ctrl+Y while Ctrl+V scrolls. Set per-app behavior with `applications`, keyed by window identifier:
