@@ -5,6 +5,7 @@ Stores credentials with restricted file permissions (0600)
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -36,8 +37,14 @@ def _load_credentials() -> Dict[str, str]:
     
     try:
         with open(CREDENTIALS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
+            credentials = json.load(f)
+        if not isinstance(credentials, dict) or not all(
+            isinstance(provider, str) and isinstance(key, str)
+            for provider, key in credentials.items()
+        ):
+            raise ValueError("credentials must be a string-to-string mapping")
+        return credentials
+    except (json.JSONDecodeError, OSError, ValueError) as e:
         log_warning(f"Error reading credentials file: {e}")
         return {}
 
@@ -46,28 +53,30 @@ def _save_credentials(credentials: Dict[str, str]):
     """Save credentials to file with restricted permissions"""
     _ensure_credentials_dir()
     
-    # Write to temporary file first, then move (atomic operation)
-    temp_file = CREDENTIALS_FILE.with_suffix('.tmp')
-    
+    temp_file = None
     try:
-        with open(temp_file, 'w', encoding='utf-8') as f:
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{CREDENTIALS_FILE.name}.",
+            suffix=".tmp",
+            dir=CREDENTIALS_FILE.parent,
+        )
+        temp_file = Path(temp_name)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump(credentials, f, indent=2)
-        
-        # Set permissions before moving (0600 = owner read/write only)
+            f.flush()
+            os.fsync(f.fileno())
+
         os.chmod(temp_file, 0o600)
-        
-        # Atomic move
-        if CREDENTIALS_FILE.exists():
-            CREDENTIALS_FILE.unlink()
-        temp_file.replace(CREDENTIALS_FILE)
-        
-        # Ensure permissions are correct (in case replace didn't preserve them)
-        os.chmod(CREDENTIALS_FILE, 0o600)
-        
-    except IOError as e:
+
+        os.replace(temp_file, CREDENTIALS_FILE)
+
+    except Exception as e:
         log_error(f"Failed to save credentials: {e}")
-        if temp_file.exists():
-            temp_file.unlink()
+        if temp_file is not None:
+            try:
+                temp_file.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise
 
 
@@ -168,4 +177,3 @@ def mask_api_key(key: str) -> str:
         return f"{key[:4]}...****"
     
     return f"{key[:6]}...{key[-4:]}"
-
