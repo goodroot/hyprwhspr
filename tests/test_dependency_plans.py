@@ -55,6 +55,69 @@ class DependencyPlanTests(unittest.TestCase):
                 second = backend_installer.resolve_dependency_plan('rest-api')
             self.assertNotEqual(first.fingerprint, second.fingerprint)
 
+    def test_filter_requirements_flattens_includes_for_temp_file_safety(self):
+        """
+        Regression test: _filter_requirements() used to copy `-r`/`--requirement`
+        lines from the source manifest verbatim into a NamedTemporaryFile under
+        /tmp. pip resolves such relative includes against the *including*
+        file's own directory, so a manifest like requirements-pywhispercpp.txt
+        (which starts with `-r requirements.txt`) produced a temp file whose
+        nested include silently pointed at the nonexistent
+        /tmp/requirements.txt, failing with "Could not open requirements
+        file: ... '/tmp/requirements.txt'" even though the flattened
+        dependency list was otherwise correct.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'requirements.txt').write_text(
+                'numpy\n# comment\nPyGObject>=3.50\n', encoding='utf-8'
+            )
+            (root / 'requirements-pywhispercpp.txt').write_text(
+                '-r requirements.txt\npywhispercpp==1.5.0\n', encoding='utf-8'
+            )
+            temp_path = backend_installer._filter_requirements(
+                root / 'requirements-pywhispercpp.txt', ['PyGObject']
+            )
+            try:
+                content = temp_path.read_text(encoding='utf-8')
+            finally:
+                temp_path.unlink()
+
+        self.assertNotIn('-r ', content)
+        self.assertNotIn('--requirement', content)
+        self.assertIn('numpy', content)
+        self.assertIn('pywhispercpp==1.5.0', content)
+        self.assertNotIn('PyGObject', content)
+
+    def test_filter_requirements_preserves_include_position_and_constraints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            constraints = root / 'constraints.txt'
+            constraints.write_text('numpy<3\n', encoding='utf-8')
+            (root / 'common.txt').write_text('included-package', encoding='utf-8')
+            (root / 'requirements.txt').write_text(
+                'before-package\n-rcommon.txt\nafter-package\n-c constraints.txt\n',
+                encoding='utf-8',
+            )
+
+            temp_path = backend_installer._filter_requirements(
+                root / 'requirements.txt', []
+            )
+            try:
+                content = temp_path.read_text(encoding='utf-8')
+            finally:
+                temp_path.unlink()
+
+        self.assertEqual(
+            content.splitlines(),
+            [
+                'before-package',
+                'included-package',
+                'after-package',
+                f'--constraint {constraints.resolve()}',
+            ],
+        )
+
     def test_missing_include_is_actionable(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

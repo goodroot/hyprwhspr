@@ -122,6 +122,22 @@ def _plan_key(backend: str, provider: Optional[str], accelerated_variant: Option
     raise DependencyPlanError(f"No dependency manifest is defined for backend {backend!r}")
 
 
+def _requirements_option_argument(raw: str, short_option: str,
+                                  long_option: str) -> Optional[str]:
+    """Return a path argument for a pip requirements-file option, if present."""
+    line = raw.split('#', 1)[0].strip()
+    parts = line.split()
+    if parts and parts[0] in (short_option, long_option):
+        if len(parts) != 2:
+            raise DependencyPlanError(f"Invalid {long_option} directive: {raw.strip()}")
+        return parts[1]
+    if line.startswith(f'{long_option}='):
+        return line.split('=', 1)[1]
+    if line.startswith(short_option) and line != short_option:
+        return line[len(short_option):]
+    return None
+
+
 def _manifest_closure(manifest: Path) -> tuple[Path, ...]:
     """Resolve pip -r includes, rejecting missing/cyclic files before mutation."""
     ordered, visiting = [], set()
@@ -142,14 +158,9 @@ def _manifest_closure(manifest: Path) -> tuple[Path, ...]:
         except OSError as exc:
             raise DependencyPlanError(f"Cannot read dependency manifest {path}: {exc}") from exc
         for raw in lines:
-            line = raw.split('#', 1)[0].strip()
-            parts = line.split()
-            if parts and parts[0] in ('-r', '--requirement'):
-                if len(parts) != 2:
-                    raise DependencyPlanError(f"Invalid include in {path}: {raw.strip()}")
-                visit(path.parent / parts[1])
-            elif line.startswith('--requirement='):
-                visit(path.parent / line.split('=', 1)[1])
+            include = _requirements_option_argument(raw, '-r', '--requirement')
+            if include is not None:
+                visit(path.parent / include)
         visiting.remove(path)
         ordered.append(path)
 
@@ -1470,24 +1481,49 @@ def _extract_package_name(requirement_line: str) -> str:
 
 def _filter_requirements(requirements_file: Path, skip_packages: list) -> Path:
     """
-    Create a filtered requirements file, skipping specified packages.
+    Create a filtered, self-contained requirements file. Requirement includes
+    are expanded in place and relative constraint paths are made absolute, so
+    pip can safely consume the result from a temporary directory.
     Returns path to temp file (caller must clean up).
     """
     import tempfile
     skip_packages_lower = [pkg.lower() for pkg in skip_packages]
     temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
     try:
-        with open(requirements_file, 'r', encoding='utf-8') as f_in:
-            for line in f_in:
-                line_stripped = line.strip()
-                # Skip empty lines/comments as-is
-                if not line_stripped or line_stripped.startswith('#'):
-                    temp_file.write(line)
-                    continue
-                # Extract package name and check for exact match
-                pkg_name = _extract_package_name(line_stripped)
-                if pkg_name not in skip_packages_lower:
-                    temp_file.write(line)
+        visiting = set()
+
+        def render(path: Path):
+            path = path.resolve()
+            if path in visiting:
+                raise DependencyPlanError(f"Cyclic dependency manifest include at {path}")
+            if not path.is_file():
+                raise DependencyPlanError(f"Dependency manifest is missing: {path}")
+            visiting.add(path)
+            try:
+                lines = path.read_text(encoding='utf-8').splitlines()
+                for line in lines:
+                    include = _requirements_option_argument(line, '-r', '--requirement')
+                    if include is not None:
+                        render(path.parent / include)
+                        continue
+
+                    constraint = _requirements_option_argument(line, '-c', '--constraint')
+                    if constraint is not None:
+                        constraint_path = (path.parent / constraint).resolve()
+                        if not constraint_path.is_file():
+                            raise DependencyPlanError(
+                                f"Dependency constraint is missing: {constraint_path}"
+                            )
+                        temp_file.write(f'--constraint {constraint_path}\n')
+                        continue
+
+                    pkg_name = _extract_package_name(line)
+                    if pkg_name not in skip_packages_lower:
+                        temp_file.write(f'{line}\n')
+            finally:
+                visiting.remove(path)
+
+        render(requirements_file)
         temp_file.close()
         return Path(temp_file.name)
     except Exception:
@@ -2321,48 +2357,35 @@ print("Models cached successfully", flush=True)
 
                 # Determine packages to skip
                 skip_pygobject = _should_skip_pygobject()
+                skip_packages = ['pywhispercpp'] + (['PyGObject'] if skip_pygobject else [])
 
-                # Use a writable temp directory instead of system directory
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:
-                    temp_req_path = Path(temp_req.name)
-                    try:
-                        with open(requirements_file, 'r', encoding='utf-8') as f_in:
-                            for line in f_in:
-                                line_stripped = line.strip()
-                                # Extract package name for exact matching
-                                pkg_name = _extract_package_name(line_stripped)
-                                # Skip pywhispercpp (built separately with GPU support)
-                                if pkg_name == 'pywhispercpp':
-                                    continue
-                                # Skip PyGObject if already installed as system package
-                                if skip_pygobject and pkg_name == 'pygobject':
-                                    continue
-                                temp_req.write(line)
+                # The filtered file expands requirements includes in place and
+                # anchors constraints, so it is safe to pass to pip from /tmp.
+                temp_req_path = None
+                try:
+                    temp_req_path = _filter_requirements(requirements_file, skip_packages)
 
-                        temp_req.flush()
-
-                        if temp_req_path.stat().st_size > 0:
-                            run_command([str(pip_bin), 'install', '-r', str(temp_req_path)],
-                                       check=True, verbose=OutputController.get_verbosity().value >= VerbosityLevel.VERBOSE.value)
-                    except Exception as e:
-                        error_msg = f"Failed to install base Python dependencies: {e}"
-                        log_error(error_msg)
-                        if cleanup_on_failure:
-                            log_info("Cleaning up partial installation...")
-                            # Uninstall any partially installed packages
-                            try:
-                                run_command([str(pip_bin), 'uninstall', '-y'] + created_items['packages_installed'], 
-                                          check=False, capture_output=True)
-                            except Exception:
-                                pass
-                        set_install_state('failed', error_msg)
-                        _cleanup_partial_installation(created_items, pip_bin)
-                        return False
-                    finally:
-                        # Clean up temp file
-                        if temp_req_path.exists():
-                            temp_req_path.unlink()
+                    if temp_req_path.stat().st_size > 0:
+                        run_command([str(pip_bin), 'install', '-r', str(temp_req_path)],
+                                   check=True, verbose=OutputController.get_verbosity().value >= VerbosityLevel.VERBOSE.value)
+                except Exception as e:
+                    error_msg = f"Failed to install base Python dependencies: {e}"
+                    log_error(error_msg)
+                    if cleanup_on_failure:
+                        log_info("Cleaning up partial installation...")
+                        # Uninstall any partially installed packages
+                        try:
+                            run_command([str(pip_bin), 'uninstall', '-y'] + created_items['packages_installed'],
+                                      check=False, capture_output=True)
+                        except Exception:
+                            pass
+                    set_install_state('failed', error_msg)
+                    _cleanup_partial_installation(created_items, pip_bin)
+                    return False
+                finally:
+                    # Clean up temp file
+                    if temp_req_path is not None and temp_req_path.exists():
+                        temp_req_path.unlink()
                 
                 # Remove any pre-existing pywhispercpp
                 run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'], check=False, capture_output=True)
