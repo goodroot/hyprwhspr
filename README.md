@@ -48,7 +48,9 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 - **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, etc.)
 - **Wayland or X11 session** (GNOME, KDE Plasma, Sway, Hyprland, Niri, etc.).
-- **Clipboard/window tools:** `wl-clipboard` and `wtype` on Wayland; `python-pyperclip`, `xclip`, `xdotool`, and `xprop` on X11 (installed by the dependency script)
+- **Clipboard/window tools:**
+    - `wl-clipboard` and `wtype` on Wayland
+    - `python-pyperclip`, `xclip`, `xdotool`, and `xprop` on X11 (installed by the dependency script)
 - **Waybar or Noctalia** (optional, for status bar)
 - **gtk4 + PyCairo** (optional, for visualizer)
 - **NVIDIA GPU** (optional, for CUDA acceleration)
