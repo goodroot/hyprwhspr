@@ -16,6 +16,9 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
+# Importing the real optional binding can probe PortAudio and block forever on
+# a headless test host.  These tests replace every sounddevice interaction.
+sys.modules.setdefault("sounddevice", mock.Mock())
 import audio_capture
 
 

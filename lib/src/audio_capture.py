@@ -793,15 +793,18 @@ class AudioCapture:
         if getattr(self, "recovery_in_progress", False):
             recovery_waited = self._cleanup_complete.wait(timeout=3.0)
             if not recovery_waited:
-                # Recovery is blocking - abort it and proceed
+                # Ask the recovery owner to stop, then give its finally block a
+                # bounded chance to release stream ownership.
                 print("[RECOVERY] Recording requested while recovery running - aborting recovery", flush=True)
                 self.abort_recovery()
+                recovery_waited = self._cleanup_complete.wait(timeout=3.0)
         elif not self._cleanup_complete.is_set():
             # Recovery recently ran; wait briefly for cleanup
             recovery_waited = self._cleanup_complete.wait(timeout=3.0)
         
         if not self._cleanup_complete.is_set():
-            print("[RECOVERY] Cleanup still not complete before recording, proceeding cautiously", flush=True)
+            print("[RECOVERY] Cleanup still owns the audio stream; recording refused", flush=True)
+            return False
         
         # Validate device ID still exists (works for configured and system default)
         if self.device_id is not None:
@@ -1427,12 +1430,6 @@ class AudioCapture:
                 print(f"[RECOVERY] Recovery attempted too recently (cooldown: {cooldown - (current_time - self._last_recovery_attempt_time):.1f}s remaining), skipping")
                 return False
 
-            # Check if previous recovery's cleanup is still in progress
-            if not self._cleanup_complete.is_set():
-                waited = self._cleanup_complete.wait(timeout=3.0)
-                if not waited:
-                    print(f"[RECOVERY] Previous recovery cleanup still in progress after 3s, proceeding anyway", flush=True)
-
             # Set recovery in progress and update attempt time
             self.recovery_in_progress = True
             self._last_recovery_attempt_time = current_time
@@ -1452,7 +1449,6 @@ class AudioCapture:
             # Check for abort request before proceeding
             if self._abort_recovery.is_set():
                 print("[RECOVERY] Aborted before teardown", flush=True)
-                self._cleanup_complete.set()
                 return False
 
             # Signal thread to abort cleanup if it's stuck
@@ -1500,7 +1496,6 @@ class AudioCapture:
             # Abort check after teardown
             if self._abort_recovery.is_set():
                 print("[RECOVERY] Aborted during teardown", flush=True)
-                self._cleanup_complete.set()
                 return False
 
             # Reset abort flag for next recovery
@@ -1520,18 +1515,13 @@ class AudioCapture:
                     self._initialize_sounddevice()
             except Exception as e:
                 print(f"[RECOVERY] Failed to re-enumerate devices: {e}", flush=True)
-                # Set cleanup complete flag so next recovery can proceed
-                self._cleanup_complete.set()
                 return False
 
             if self._abort_recovery.is_set():
                 print("[RECOVERY] Aborted after device re-enumeration", flush=True)
-                self._cleanup_complete.set()
                 return False
 
             # Recovery complete - device re-initialized successfully
-            # Set cleanup complete flag so next recovery attempt can proceed
-            self._cleanup_complete.set()
             print("[RECOVERY] Complete - device ready", flush=True)
             return True
 
@@ -1539,8 +1529,6 @@ class AudioCapture:
             print(f"[RECOVERY] ERROR: Exception during recovery: {e}")
             import traceback
             traceback.print_exc()
-            # Set cleanup complete flag even on error so next recovery can proceed
-            self._cleanup_complete.set()
             return False
         finally:
             # Clear recovery in progress flag
@@ -1549,16 +1537,14 @@ class AudioCapture:
             # Reset cleanup flags for next recovery attempt
             self._abort_cleanup = False
             self._abort_recovery.clear()
+            self._cleanup_complete.set()
 
     def abort_recovery(self):
-        """Abort any in-progress recovery immediately."""
+        """Request cancellation; the recovery owner publishes completion."""
         with self.recovery_lock:
             if not self.recovery_in_progress:
                 return
             self._abort_recovery.set()
-            self.recovery_in_progress = False
-        # Unblock any waits
-        self._cleanup_complete.set()
     
     def list_devices(self):
         """List available audio input devices"""

@@ -2943,100 +2943,100 @@ class hyprwhsprApp:
 
     def _cleanup(self):
         """Clean up resources when shutting down"""
+        def cleanup_step(name, action):
+            try:
+                action()
+            except Exception as exc:
+                print(f"[WARN] Cleanup step {name!r} failed: {exc}", flush=True)
+
+        def stop_recording_listener():
+            if not hasattr(self, '_recording_control_stop'):
+                return
+            self._recording_control_stop.set()
+            thread = getattr(self, '_recording_control_thread', None)
+            if thread and thread.is_alive():
+                print("[SHUTDOWN] Stopping recording control FIFO listener...", flush=True)
+                try:
+                    fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
+                    os.close(fd)
+                except (OSError, FileNotFoundError):
+                    pass
+                thread.join(timeout=1.0)
+                if thread.is_alive():
+                    print("[WARN] Recording control thread did not stop cleanly", flush=True)
+
+        def stop_thread(stop_name, thread_name, label, timeout):
+            stop = getattr(self, stop_name, None)
+            if stop is None:
+                return
+            stop.set()
+            thread = getattr(self, thread_name, None)
+            if thread and thread.is_alive():
+                print(f"[SHUTDOWN] Stopping {label}...", flush=True)
+                thread.join(timeout=timeout)
+                if thread.is_alive():
+                    print(f"[WARN] {label} did not stop cleanly", flush=True)
+
+        def call_optional(attribute, method):
+            target = getattr(self, attribute, None)
+            if target is not None:
+                getattr(target, method)()
+
         try:
             # Stop recording control FIFO listener thread
-            if hasattr(self, '_recording_control_stop'):
-                self._recording_control_stop.set()
-                if hasattr(self, '_recording_control_thread') and self._recording_control_thread and self._recording_control_thread.is_alive():
-                    print("[SHUTDOWN] Stopping recording control FIFO listener...", flush=True)
-                    # Unblock the FIFO reader by opening it for write (non-blocking) if thread is stuck
-                    try:
-                        fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
-                        os.close(fd)
-                    except (OSError, FileNotFoundError):
-                        pass  # FIFO might not exist or already closed
-                    self._recording_control_thread.join(timeout=1.0)
-                    if self._recording_control_thread.is_alive():
-                        print("[WARN] Recording control thread did not stop cleanly", flush=True)
+            cleanup_step("stop recording-control listener", stop_recording_listener)
 
             # Stop capture socket listener thread
-            if hasattr(self, '_capture_socket_stop'):
-                self._capture_socket_stop.set()
-                if hasattr(self, '_capture_socket_thread') and self._capture_socket_thread and self._capture_socket_thread.is_alive():
-                    print("[SHUTDOWN] Stopping capture socket listener...", flush=True)
-                    self._capture_socket_thread.join(timeout=2.0)
-                    if self._capture_socket_thread.is_alive():
-                        print("[WARN] Capture socket thread did not stop cleanly", flush=True)
+            cleanup_step("stop capture-socket listener", lambda: stop_thread(
+                '_capture_socket_stop', '_capture_socket_thread',
+                'capture socket listener', 2.0))
 
             # Stop background recovery thread
-            if hasattr(self, '_background_recovery_stop'):
-                self._background_recovery_stop.set()
-                if hasattr(self, '_background_recovery_thread') and self._background_recovery_thread and self._background_recovery_thread.is_alive():
-                    print("[SHUTDOWN] Stopping background recovery thread...", flush=True)
-                    self._background_recovery_thread.join(timeout=2.0)
+            cleanup_step("stop background recovery", lambda: stop_thread(
+                '_background_recovery_stop', '_background_recovery_thread',
+                'background recovery thread', 2.0))
 
             # Hide mic-osd overlay if visible
-            self._hide_mic_osd()
+            cleanup_step("hide mic-osd", self._hide_mic_osd)
             
             # Stop mic-osd daemon
-            if hasattr(self, '_mic_osd_runner') and self._mic_osd_runner:
-                try:
-                    self._mic_osd_runner.stop()
-                except Exception:
-                    pass  # Silently fail - daemon cleanup is best-effort
+            cleanup_step("stop mic-osd", lambda: call_optional('_mic_osd_runner', 'stop'))
             
             # Stop device monitor
-            if hasattr(self, 'device_monitor') and self.device_monitor:
-                self.device_monitor.stop()
+            cleanup_step("stop device monitor", lambda: call_optional('device_monitor', 'stop'))
 
             # Stop pulse monitor
-            if hasattr(self, 'pulse_monitor') and self.pulse_monitor:
-                try:
-                    self.pulse_monitor.stop()
-                except Exception:
-                    pass  # Silently fail - pulse monitor cleanup is best-effort
+            cleanup_step("stop pulse monitor", lambda: call_optional('pulse_monitor', 'stop'))
 
             # Stop suspend monitor
-            if hasattr(self, 'suspend_monitor') and self.suspend_monitor:
-                try:
-                    self.suspend_monitor.stop()
-                except Exception:
-                    pass  # Silently fail - suspend monitor cleanup is best-effort
+            cleanup_step("stop suspend monitor", lambda: call_optional('suspend_monitor', 'stop'))
 
             # Stop global shortcuts
-            if self.global_shortcuts:
-                self.global_shortcuts.stop()
+            cleanup_step("stop global shortcuts", lambda: call_optional('global_shortcuts', 'stop'))
             
             # Stop secondary shortcuts
-            if self.secondary_shortcuts:
-                self.secondary_shortcuts.stop()
+            cleanup_step("stop secondary shortcuts", lambda: call_optional('secondary_shortcuts', 'stop'))
 
             # Stop cancel shortcut
-            if self._cancel_shortcuts:
-                self._cancel_shortcuts.stop()
+            cleanup_step("stop cancel shortcut", lambda: call_optional('_cancel_shortcuts', 'stop'))
 
             # Stop audio capture
-            if self.is_recording:
-                self.audio_capture.stop_recording()
+            if getattr(self, 'is_recording', False):
+                cleanup_step("stop audio capture", lambda: call_optional('audio_capture', 'stop_recording'))
 
             # Cleanup whisper manager (closes WebSocket connections, etc.)
-            if self.whisper_manager:
-                self.whisper_manager.cleanup()
+            cleanup_step("close transcription backend", lambda: call_optional('whisper_manager', 'cleanup'))
 
             # Tear down our private ydotoold daemon (only started if the uinput
             # paste fallback was used; no-op otherwise).
-            if hasattr(self, 'text_injector') and self.text_injector:
-                try:
-                    self.text_injector.close()
-                except Exception:
-                    pass  # best-effort
+            cleanup_step("close text injector", lambda: call_optional('text_injector', 'close'))
 
             # Save configuration
-            self.config.save_config()
+            cleanup_step("save configuration", lambda: call_optional('config', 'save_config'))
 
             # Clear runtime state files so external consumers (tray, CLI)
             # don't see stale values after shutdown
-            self._reset_stale_state()
+            cleanup_step("clear runtime state", self._reset_stale_state)
 
             print("[CLEANUP] Cleanup completed", flush=True)
 

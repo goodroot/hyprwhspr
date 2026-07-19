@@ -19,6 +19,8 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from unittest import mock
 
+# Keep this dependency-free suite from probing PortAudio during module import.
+sys.modules.setdefault("sounddevice", mock.Mock())
 from mic_osd.audio import FeedLevelSource, AudioMonitor
 from mic_osd.runner import MicOSDRunner
 import mic_osd.runner as runner_module
