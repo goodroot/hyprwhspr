@@ -1471,23 +1471,31 @@ def _extract_package_name(requirement_line: str) -> str:
 def _filter_requirements(requirements_file: Path, skip_packages: list) -> Path:
     """
     Create a filtered requirements file, skipping specified packages.
+    Flattens -r/--requirement includes via _manifest_closure first, so
+    the result is self-contained and safe to write to /tmp.
     Returns path to temp file (caller must clean up).
     """
     import tempfile
     skip_packages_lower = [pkg.lower() for pkg in skip_packages]
     temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
     try:
-        with open(requirements_file, 'r', encoding='utf-8') as f_in:
-            for line in f_in:
-                line_stripped = line.strip()
-                # Skip empty lines/comments as-is
-                if not line_stripped or line_stripped.startswith('#'):
-                    temp_file.write(line)
-                    continue
-                # Extract package name and check for exact match
-                pkg_name = _extract_package_name(line_stripped)
-                if pkg_name not in skip_packages_lower:
-                    temp_file.write(line)
+        for path in _manifest_closure(requirements_file):
+            with open(path, 'r', encoding='utf-8') as f_in:
+                for line in f_in:
+                    line_stripped = line.strip()
+                    # Skip empty lines/comments as-is
+                    if not line_stripped or line_stripped.startswith('#'):
+                        temp_file.write(line)
+                        continue
+                    # Includes are already flattened above; drop the
+                    # directive itself so pip never re-resolves it.
+                    parts = line_stripped.split()
+                    if (parts and parts[0] in ('-r', '--requirement')) or line_stripped.startswith('--requirement='):
+                        continue
+                    # Extract package name and check for exact match
+                    pkg_name = _extract_package_name(line_stripped)
+                    if pkg_name not in skip_packages_lower:
+                        temp_file.write(line)
         temp_file.close()
         return Path(temp_file.name)
     except Exception:
@@ -2321,48 +2329,36 @@ print("Models cached successfully", flush=True)
 
                 # Determine packages to skip
                 skip_pygobject = _should_skip_pygobject()
+                skip_packages = ['pywhispercpp'] + (['PyGObject'] if skip_pygobject else [])
 
-                # Use a writable temp directory instead of system directory
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_req:
-                    temp_req_path = Path(temp_req.name)
-                    try:
-                        with open(requirements_file, 'r', encoding='utf-8') as f_in:
-                            for line in f_in:
-                                line_stripped = line.strip()
-                                # Extract package name for exact matching
-                                pkg_name = _extract_package_name(line_stripped)
-                                # Skip pywhispercpp (built separately with GPU support)
-                                if pkg_name == 'pywhispercpp':
-                                    continue
-                                # Skip PyGObject if already installed as system package
-                                if skip_pygobject and pkg_name == 'pygobject':
-                                    continue
-                                temp_req.write(line)
+                # _filter_requirements flattens -r/--requirement includes via
+                # _manifest_closure, so the temp file it returns is safe to
+                # pass to pip regardless of which directory it lives in.
+                temp_req_path = None
+                try:
+                    temp_req_path = _filter_requirements(requirements_file, skip_packages)
 
-                        temp_req.flush()
-
-                        if temp_req_path.stat().st_size > 0:
-                            run_command([str(pip_bin), 'install', '-r', str(temp_req_path)],
-                                       check=True, verbose=OutputController.get_verbosity().value >= VerbosityLevel.VERBOSE.value)
-                    except Exception as e:
-                        error_msg = f"Failed to install base Python dependencies: {e}"
-                        log_error(error_msg)
-                        if cleanup_on_failure:
-                            log_info("Cleaning up partial installation...")
-                            # Uninstall any partially installed packages
-                            try:
-                                run_command([str(pip_bin), 'uninstall', '-y'] + created_items['packages_installed'], 
-                                          check=False, capture_output=True)
-                            except Exception:
-                                pass
-                        set_install_state('failed', error_msg)
-                        _cleanup_partial_installation(created_items, pip_bin)
-                        return False
-                    finally:
-                        # Clean up temp file
-                        if temp_req_path.exists():
-                            temp_req_path.unlink()
+                    if temp_req_path.stat().st_size > 0:
+                        run_command([str(pip_bin), 'install', '-r', str(temp_req_path)],
+                                   check=True, verbose=OutputController.get_verbosity().value >= VerbosityLevel.VERBOSE.value)
+                except Exception as e:
+                    error_msg = f"Failed to install base Python dependencies: {e}"
+                    log_error(error_msg)
+                    if cleanup_on_failure:
+                        log_info("Cleaning up partial installation...")
+                        # Uninstall any partially installed packages
+                        try:
+                            run_command([str(pip_bin), 'uninstall', '-y'] + created_items['packages_installed'], 
+                                      check=False, capture_output=True)
+                        except Exception:
+                            pass
+                    set_install_state('failed', error_msg)
+                    _cleanup_partial_installation(created_items, pip_bin)
+                    return False
+                finally:
+                    # Clean up temp file
+                    if temp_req_path is not None and temp_req_path.exists():
+                        temp_req_path.unlink()
                 
                 # Remove any pre-existing pywhispercpp
                 run_command([str(pip_bin), 'uninstall', '-y', 'pywhispercpp'], check=False, capture_output=True)
