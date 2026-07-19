@@ -89,6 +89,35 @@ class DependencyPlanTests(unittest.TestCase):
         self.assertIn('pywhispercpp==1.5.0', content)
         self.assertNotIn('PyGObject', content)
 
+    def test_filter_requirements_preserves_include_position_and_constraints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            constraints = root / 'constraints.txt'
+            constraints.write_text('numpy<3\n', encoding='utf-8')
+            (root / 'common.txt').write_text('included-package', encoding='utf-8')
+            (root / 'requirements.txt').write_text(
+                'before-package\n-rcommon.txt\nafter-package\n-c constraints.txt\n',
+                encoding='utf-8',
+            )
+
+            temp_path = backend_installer._filter_requirements(
+                root / 'requirements.txt', []
+            )
+            try:
+                content = temp_path.read_text(encoding='utf-8')
+            finally:
+                temp_path.unlink()
+
+        self.assertEqual(
+            content.splitlines(),
+            [
+                'before-package',
+                'included-package',
+                'after-package',
+                f'--constraint {constraints.resolve()}',
+            ],
+        )
+
     def test_missing_include_is_actionable(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
