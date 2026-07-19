@@ -6,6 +6,7 @@ long-form recordings with pause/resume support.
 """
 
 import os
+import tempfile
 import time
 import wave
 import uuid
@@ -70,6 +71,7 @@ class SegmentManager:
         timestamp = int(time.time())
         filename = f"{self.session_id}_{segment_index:03d}_{timestamp}.wav"
         filepath = self.segments_dir / filename
+        temp_path = None
 
         try:
             # Convert float32 to int16 for WAV format
@@ -79,12 +81,21 @@ class SegmentManager:
             else:
                 audio_int16 = audio_data.astype(np.int16)
 
-            # Write WAV file
-            with wave.open(str(filepath), 'wb') as wav_file:
+            fd, temp_name = tempfile.mkstemp(
+                prefix=f".{filepath.name}.", suffix=".tmp", dir=self.segments_dir
+            )
+            os.close(fd)
+            temp_path = Path(temp_name)
+
+            # Write and sync a complete WAV before publishing it atomically.
+            with wave.open(str(temp_path), 'wb') as wav_file:
                 wav_file.setnchannels(self.CHANNELS)
                 wav_file.setsampwidth(2)  # 16-bit
                 wav_file.setframerate(self.SAMPLE_RATE)
                 wav_file.writeframes(audio_int16.tobytes())
+            with open(temp_path, 'rb') as completed_wav:
+                os.fsync(completed_wav.fileno())
+            os.replace(temp_path, filepath)
 
             # Track segment
             self.segments.append(filepath)
@@ -96,6 +107,11 @@ class SegmentManager:
 
         except Exception as e:
             print(f"[SEGMENT] Failed to save segment: {e}")
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
             return None
 
     def load_segment(self, filepath: Path) -> Optional[np.ndarray]:
@@ -131,13 +147,25 @@ class SegmentManager:
         all_audio = []
         for filepath in self.segments:
             audio = self.load_segment(filepath)
-            if audio is not None:
-                all_audio.append(audio)
+            if audio is None:
+                return None
+            all_audio.append(audio)
 
         if not all_audio:
             return None
 
         return np.concatenate(all_audio)
+
+    def concatenate_readable(self, extra_audio=None) -> Optional[np.ndarray]:
+        """Combine readable persisted segments and optional in-memory audio."""
+        all_audio = []
+        for filepath in self.segments:
+            audio = self.load_segment(filepath)
+            if audio is not None and len(audio) > 0:
+                all_audio.append(audio)
+        if extra_audio is not None and len(extra_audio) > 0:
+            all_audio.append(extra_audio)
+        return np.concatenate(all_audio) if all_audio else None
 
     def get_total_size(self) -> int:
         """Return total bytes of all segments in the directory."""

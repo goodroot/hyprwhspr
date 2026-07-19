@@ -1040,9 +1040,13 @@ class hyprwhsprApp:
                 if self._longform_state == 'RECORDING':
                     # Save current segment first
                     audio_data = self.audio_capture.pause_recording()
+                    pending_audio = None
                     if audio_data is not None and len(audio_data) > 0:
-                        self._longform_segment_manager.save_segment(audio_data)
-                self._longform_submit()
+                        if self._longform_segment_manager.save_segment(audio_data) is None:
+                            pending_audio = self._longform_segment_manager.concatenate_readable(audio_data)
+                    self._longform_submit(audio_data=pending_audio)
+                else:
+                    self._longform_submit()
             elif self._longform_state == 'ERROR':
                 # Retry submission with stored audio
                 print("[LONGFORM] Retrying submission")
@@ -1097,7 +1101,9 @@ class hyprwhsprApp:
 
         # Save segment to disk
         if audio_data is not None and len(audio_data) > 0:
-            self._longform_segment_manager.save_segment(audio_data)
+            if self._longform_segment_manager.save_segment(audio_data) is None:
+                self._longform_persistence_failed(audio_data)
+                return
 
         self._longform_state = 'PAUSED'
         self._write_longform_state('PAUSED')
@@ -1161,7 +1167,16 @@ class hyprwhsprApp:
             except Exception:
                 pass  # Best effort cleanup
 
-    def _longform_submit(self, retry=False):
+    def _longform_persistence_failed(self, audio_data):
+        """Freeze long-form capture and retain recoverable audio for retry."""
+        self._stop_longform_auto_save_timer()
+        self._longform_error_audio = self._longform_segment_manager.concatenate_readable(audio_data)
+        self._longform_state = 'ERROR'
+        self._write_longform_state('ERROR')
+        self._set_visualizer_state('error')
+        self.audio_manager.play_error_sound()
+
+    def _longform_submit(self, retry=False, audio_data=None):
         """Submit all accumulated segments for transcription"""
         print("[LONGFORM] Submitting for transcription")
 
@@ -1169,7 +1184,9 @@ class hyprwhsprApp:
         self._stop_longform_auto_save_timer()
 
         # Get audio data
-        if retry and self._longform_error_audio is not None:
+        if audio_data is not None:
+            pass
+        elif retry and self._longform_error_audio is not None:
             audio_data = self._longform_error_audio
         else:
             # Concatenate all segments
@@ -1177,9 +1194,15 @@ class hyprwhsprApp:
 
         if audio_data is None or len(audio_data) == 0:
             print("[LONGFORM] No audio data to process")
-            self._longform_state = 'IDLE'
-            self._write_longform_state('IDLE')
-            self._hide_mic_osd()
+            if self._longform_segment_manager.has_segments():
+                self._longform_error_audio = self._longform_segment_manager.concatenate_readable()
+                self._longform_state = 'ERROR'
+                self._write_longform_state('ERROR')
+                self._set_visualizer_state('error')
+            else:
+                self._longform_state = 'IDLE'
+                self._write_longform_state('IDLE')
+                self._hide_mic_osd()
             return
 
         self._longform_state = 'PROCESSING'
@@ -1212,7 +1235,13 @@ class hyprwhsprApp:
                     return
 
                 # Success - inject text
-                self._inject_text(text)
+                if not self._inject_text(text):
+                    self.audio_manager.play_error_sound()
+                    self._longform_error_audio = audio_data
+                    self._longform_state = 'ERROR'
+                    self._write_longform_state('ERROR')
+                    self._set_visualizer_state('error')
+                    return
 
                 # Clear segments, error audio, and language override
                 self._longform_segment_manager.clear_session()
@@ -1253,9 +1282,15 @@ class hyprwhsprApp:
                     # Get current audio without stopping
                     audio_data = self.audio_capture.get_current_audio_copy()
                     if audio_data is not None and len(audio_data) > 0:
-                        self._longform_segment_manager.save_segment(audio_data)
-                        self.audio_capture.clear_buffer()
-                        print(f"[LONGFORM] Auto-saved segment ({len(audio_data) / 16000:.1f}s)")
+                        if self._longform_segment_manager.save_segment(audio_data) is None:
+                            frozen_audio = self.audio_capture.pause_recording()
+                            if frozen_audio is None or len(frozen_audio) == 0:
+                                frozen_audio = audio_data
+                            self._longform_persistence_failed(frozen_audio)
+                            return
+                        else:
+                            self.audio_capture.clear_buffer()
+                            print(f"[LONGFORM] Auto-saved segment ({len(audio_data) / 16000:.1f}s)")
                     # Restart timer
                     self._start_longform_auto_save_timer()
 
@@ -1745,12 +1780,12 @@ class hyprwhsprApp:
         # Capture mode: route text to client instead of injecting into active app
         if self._capture_subscriber is not None:
             self._notify_capture_subscriber(text, final=True)
-            return
+            return True
 
         try:
             if not self.text_injector.inject_text(text):
                 print(f"[ERROR] Text injection failed ({len(text)} chars)", flush=True)
-                return
+                return False
 
             print(f"[INJECT] Text injected ({len(text)} chars)", flush=True)
 
@@ -1769,8 +1804,10 @@ class hyprwhsprApp:
                 self.audio_capture.abort_recovery()
             except Exception:
                 pass
+            return True
         except Exception as e:
             print(f"[ERROR] Text injection failed: {e}", flush=True)
+            return False
 
     def _is_zero_volume(self, audio_data) -> bool:
         """Check if audio data has zero or near-zero volume"""
