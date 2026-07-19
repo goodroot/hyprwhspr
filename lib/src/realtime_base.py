@@ -192,6 +192,12 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         self.connecting = False
         self.receiver_thread = None
         self.receiver_running = False
+        self._ws_threads = set()
+        self._reconnect_threads = set()
+        self._stop_event = threading.Event()
+        self._closed = False
+        self._connection_generation = 0
+        self._active_generation = 0
 
         # Event handling
         self.event_queue = Queue()
@@ -327,9 +333,12 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
     def _connect_internal(self) -> bool:
         """Internal connection logic with reconnection support"""
         with self.lock:
-            if self.connecting:
+            if self._closed or self.connecting:
                 return False
             self.connecting = True
+            self._connection_generation += 1
+            generation = self._connection_generation
+            self._active_generation = generation
 
         self._prepare_connect()
         # This attempt's socket. On failure, close only this — self.ws may
@@ -345,24 +354,34 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 kwargs['header'] = [f'{k}: {v}' for k, v in headers.items()]
             attempt_ws = self._websocket_transport.WebSocketApp(
                 target_url,
-                on_open=self._on_open,
-                on_message=self._on_message,
-                on_error=self._on_error,
-                on_close=self._on_close,
+                on_open=lambda ws: self._on_open(ws, generation),
+                on_message=lambda ws, message: self._on_message(ws, message, generation),
+                on_error=lambda ws, error: self._on_error(ws, error, generation),
+                on_close=lambda ws, code, message: self._on_close(ws, code, message, generation),
                 **kwargs,
             )
+            abandon_closed_attempt = False
             with self.lock:
-                self.ws = attempt_ws
+                if self._closed or generation != self._active_generation:
+                    abandon_closed_attempt = True
+                else:
+                    self.ws = attempt_ws
+            if abandon_closed_attempt:
+                attempt_ws.close()
+                return False
 
             # Start WebSocket in a separate thread
             ws_thread = threading.Thread(target=attempt_ws.run_forever, daemon=True)
+            with self.lock:
+                self._ws_threads.add(ws_thread)
             ws_thread.start()
 
             # Wait for connection (with timeout)
             timeout = 10.0
             start_time = time.time()
             while not self.connected and (time.time() - start_time) < timeout:
-                time.sleep(0.1)
+                if self._stop_event.wait(0.1):
+                    break
 
             if self.connected:
                 self._log('Connected successfully')
@@ -380,7 +399,8 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             return False
         finally:
             with self.lock:
-                self.connecting = False
+                if generation == self._active_generation:
+                    self.connecting = False
 
     def _abandon_attempt(self, attempt_ws):
         """Close a failed connection attempt's socket without touching a newer one."""
@@ -394,11 +414,15 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             if self.ws is attempt_ws:
                 self.ws = None
 
-    def _on_open(self, ws):
+    def _is_active_connection(self, ws, generation=None):
+        return (not self._closed and ws is self.ws and
+                (generation is None or generation == self._active_generation))
+
+    def _on_open(self, ws, generation=None):
         """WebSocket connection opened"""
         start_receiver = False
         with self.lock:
-            if ws is not self.ws:
+            if not self._is_active_connection(ws, generation):
                 self._log('Ignoring open from obsolete WebSocket')
                 return
             if not self.receiver_running:
@@ -411,29 +435,32 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
         self._after_open(ws)
 
-    def _on_message(self, ws, message):
+    def _on_message(self, ws, message, generation=None):
         """Handle incoming WebSocket message"""
         try:
             event = json.loads(message)
             with self.lock:
-                if ws is not self.ws:
+                if not self._is_active_connection(ws, generation):
                     self._log('Ignoring message from obsolete WebSocket')
                     return
                 self.event_queue.put(event)
         except json.JSONDecodeError as e:
             self._log(f'Failed to parse event: {e}')
 
-    def _on_error(self, _ws, error):
+    def _on_error(self, ws, error, generation=None):
         """Handle WebSocket error"""
+        with self.lock:
+            if not self._is_active_connection(ws, generation):
+                return
         self._log(f'WebSocket error: {error}')
 
-    def _on_close(self, ws, close_status_code, _close_msg):
+    def _on_close(self, ws, close_status_code, _close_msg, generation=None):
         """Handle WebSocket close"""
         with self.lock:
             # A failed/abandoned connection attempt may report its close after
             # a newer socket has become active.  It must not tear down the
             # newer connection's shared state.
-            if ws is not None and ws is not self.ws:
+            if not self._is_active_connection(ws, generation):
                 self._log(f'Ignoring close from obsolete WebSocket (code: {close_status_code})')
                 return
             was_connected = self.connected
@@ -455,7 +482,12 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 self._log('Connection closed (idle) - will reconnect on next recording')
             else:
                 self._log('Connection lost unexpectedly')
-                threading.Thread(target=self._attempt_reconnect, daemon=True).start()
+                reconnect_thread = threading.Thread(target=self._attempt_reconnect, daemon=True)
+                with self.lock:
+                    if self._closed:
+                        return
+                    self._reconnect_threads.add(reconnect_thread)
+                reconnect_thread.start()
 
     def _receiver_loop(self):
         """Background thread to process incoming events"""
@@ -475,14 +507,16 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             return False
         try:
             self._reconnecting = True
-            while self.reconnect_attempts < self.max_reconnect_attempts:
+            while not self._stop_event.is_set() and self.reconnect_attempts < self.max_reconnect_attempts:
                 delay = self.reconnect_delays[min(self.reconnect_attempts, len(self.reconnect_delays) - 1)]
                 self.reconnect_attempts += 1
                 self._log(f'Reconnecting (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts}) in {delay}s...')
-                time.sleep(delay)
+                if self._stop_event.wait(delay):
+                    self._log('Reconnection cancelled (closing)')
+                    return False
 
                 # Abort if the client was closed while we were waiting
-                if not self.receiver_running:
+                if self._closed or not self.receiver_running:
                     self._log('Reconnection cancelled (closing)')
                     return False
 
@@ -498,15 +532,24 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
     def close(self):
         """Close WebSocket connection and cleanup"""
         with self.lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._stop_event.set()
+            self._active_generation += 1
             self._sender_running = False
             self.receiver_running = False
             self._audio_queue.clear()
             self.audio_buffer_seconds = 0.0
             self._queue_cond.notify_all()
 
-        if self.ws:
+            active_ws = self.ws
+            self.ws = None
+            owned_threads = list(self._ws_threads | self._reconnect_threads)
+
+        if active_ws:
             try:
-                self.ws.close()
+                active_ws.close()
             except Exception:
                 pass
 
@@ -515,6 +558,11 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
         if self._sender_thread and self._sender_thread.is_alive():
             self._sender_thread.join(timeout=1.0)
+
+        current = threading.current_thread()
+        for thread in owned_threads:
+            if thread is not current and thread.is_alive():
+                thread.join(timeout=1.0)
 
         with self.lock:
             self.connected = False

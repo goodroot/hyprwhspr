@@ -89,7 +89,7 @@ class ReconnectPolicyTests(unittest.TestCase):
         calls = []
         client._connect_internal = lambda: calls.append(1) is None and False
 
-        with mock.patch('realtime_base.time.sleep'):
+        with mock.patch.object(client._stop_event, 'wait', return_value=False):
             self.assertFalse(client._attempt_reconnect())
 
         self.assertEqual(len(calls), client.max_reconnect_attempts)
@@ -105,7 +105,7 @@ class ReconnectPolicyTests(unittest.TestCase):
         calls = []
         client._connect_internal = lambda: calls.append(1) is None and next(results)
 
-        with mock.patch('realtime_base.time.sleep'):
+        with mock.patch.object(client._stop_event, 'wait', return_value=False):
             self.assertTrue(client._attempt_reconnect())
 
         self.assertEqual(len(calls), 2)
@@ -114,11 +114,24 @@ class ReconnectPolicyTests(unittest.TestCase):
         client = self._client()
         client._connect_internal = lambda: self.fail("must not connect after close")
 
-        def sleep_then_close(_delay):
-            client.receiver_running = False
+        def wait_then_close(_delay):
+            client.close()
+            return True
 
-        with mock.patch('realtime_base.time.sleep', side_effect=sleep_then_close):
+        with mock.patch.object(client._stop_event, 'wait', side_effect=wait_then_close):
             self.assertFalse(client._attempt_reconnect())
+
+    def test_late_open_after_close_is_ignored(self):
+        client = self._client(connected=False, receiver_running=False)
+        socket = object()
+        client.ws = socket
+        generation = client._active_generation
+
+        client.close()
+        client._on_open(socket, generation)
+
+        self.assertFalse(client.connected)
+        self.assertFalse(client.receiver_running)
 
     def test_append_audio_updates_last_audio_chunk_time(self):
         client = self._client()
