@@ -8,11 +8,9 @@ import time
 import math
 import threading
 import os
-import socket
 import fcntl
 import atexit
 import subprocess
-import select
 import shutil
 from pathlib import Path
 
@@ -89,6 +87,7 @@ from paths import (
 )
 from backend_utils import normalize_backend
 from longform_controller import LongFormController
+from recording_control_server import RecordingControlServer
 
 class hyprwhsprApp:
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
@@ -169,16 +168,12 @@ class hyprwhsprApp:
         self._backend_init_failed = False
         self._backend_init_lock = threading.Lock()
 
-        # Recording control FIFO (for immediate push-to-talk response)
-        self._recording_control_thread = None  # Background thread handle for FIFO listener
-        self._recording_control_stop = threading.Event()  # Signal to stop FIFO listener
-
-        # Capture socket state (for capture on the recording - streams transcription back to client)
-        self._capture_socket_thread = None  # Background thread handle for accepting socket connections
-        self._capture_socket_stop = threading.Event()  # Signal to stop for capture socket thread
-        self._capture_subscriber = None  # Active client connection, or None
-        self._capture_subscriber_lock = threading.Lock()  # Guards claim and release of subscriber connection
-        self._capture_subscriber_done = threading.Event()  # Set by notifier so that handler closes cleanly
+        self._recording_control_server = RecordingControlServer(
+            fifo_path=RECORDING_CONTROL_FILE,
+            socket_path=SOCKET_FILE,
+            on_command=self._handle_control_command,
+            is_recording=lambda: self.is_recording,
+        )
 
         # Hybrid tap/hold mode state tracking (auto mode)
         recording_mode = self.config.get_setting('recording_mode', 'toggle')
@@ -213,7 +208,7 @@ class hyprwhsprApp:
             audio_manager=self.audio_manager,
             whisper_manager=self.whisper_manager,
             inject_text=self._inject_text,
-            notify_capture=self._notify_capture_subscriber,
+            notify_capture=self._recording_control_server.notify_capture,
             set_visualizer_state=self._set_visualizer_state,
             show_mic_osd=self._show_mic_osd,
             hide_mic_osd=self._hide_mic_osd,
@@ -243,7 +238,7 @@ class hyprwhsprApp:
         self._setup_suspend_monitor()
 
         # Set up recording control FIFO (for immediate push-to-talk response)
-        self._setup_recording_control_fifo()
+        self._recording_control_server.prepare_fifo()
 
         # Pre-initialize mic-osd daemon (eliminates latency on recording)
         self._mic_osd_runner = None
@@ -989,7 +984,7 @@ class hyprwhsprApp:
             except Exception as e:
                 print(f"[CONTINUOUS] Transcription error: {e}", flush=True)
             finally:
-                self._notify_capture_subscriber("", final=True)
+                self._recording_control_server.notify_capture("", final=True)
                 self._continuous_flush_lock.release()
                 self._continuous_transcription_done.set()
 
@@ -1249,7 +1244,7 @@ class hyprwhsprApp:
 
     def _cleanup_recording_state(self):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
-        self._notify_capture_subscriber("", final=True)
+        self._recording_control_server.notify_capture("", final=True)
         self._autostop_stop_silence_monitor()
 
         try:
@@ -1364,7 +1359,7 @@ class hyprwhsprApp:
                     self._notify_zero_volume("Audio stream broke during recording - no audio data captured. Try recording again after reseating.")
                 # Show error state and hide OSD
                 self._show_result_and_hide(False)
-                self._notify_capture_subscriber("", final=True)
+                self._recording_control_server.notify_capture("", final=True)
             elif self._is_zero_volume(audio_data):
                 # Audio data exists but is all zeros - mic not producing sound
                 # Play error sound and notify user (may be intentional muting, but still inform)
@@ -1372,7 +1367,7 @@ class hyprwhsprApp:
                 self._notify_zero_volume("Microphone not producing audio (zero volume detected). This may be intentional muting, or the microphone may need to be reseated.")
                 # Show error state and hide OSD
                 self._show_result_and_hide(False)
-                self._notify_capture_subscriber("", final=True)
+                self._recording_control_server.notify_capture("", final=True)
             else:
                 # Valid audio data - process it
                 self.audio_manager.play_stop_sound()
@@ -1383,7 +1378,7 @@ class hyprwhsprApp:
                 
         except Exception as e:
             print(f"[ERROR] Error stopping recording: {e}", flush=True)
-            self._notify_capture_subscriber("", final=True)
+            self._recording_control_server.notify_capture("", final=True)
             # Ensure cleanup even if error occurs
             try:
                 self.is_recording = False
@@ -1439,7 +1434,7 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Error processing audio: {e}", flush=True)
         finally:
-            self._notify_capture_subscriber("", final=True)
+            self._recording_control_server.notify_capture("", final=True)
             self._clear_mic_osd_preview_text()
             self.is_processing = False
             # Show success/error state and hide OSD after delay
@@ -1449,8 +1444,8 @@ class hyprwhsprApp:
         """Inject transcribed text into active application"""
 
         # Capture mode: route text to client instead of injecting into active app
-        if self._capture_subscriber is not None:
-            self._notify_capture_subscriber(text, final=True)
+        if self._recording_control_server.has_capture_subscriber():
+            self._recording_control_server.notify_capture(text, final=True)
             return True
 
         try:
@@ -1867,366 +1862,75 @@ class hyprwhsprApp:
         else:
             self.audio_level_thread = None
 
-    def _setup_recording_control_fifo(self):
-        """Create named pipe (FIFO) for immediate recording control"""
-        try:
-            # Ensure config directory exists
-            RECORDING_CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-            # Retry once: a concurrent writer can create a dirent between exists() and mkfifo().
-            for _ in range(2):
-                # Check if existing file is a FIFO (if regular file, remove it)
-                if RECORDING_CONTROL_FILE.exists():
-                    if RECORDING_CONTROL_FILE.is_fifo():
-                        # Already a FIFO, we're good
-                        print("[INIT] Recording control FIFO already exists", flush=True)
-                        return
-                    # Old regular file - remove it
+    def _handle_control_command(self, action, language=None):
+        """Apply recording policy for a command received by the control server."""
+        recording_mode = self.config.get_setting("recording_mode", "toggle")
+        if action == "start":
+            lang_info = f" (language: {language})" if language else ""
+            if recording_mode == "long_form":
+                self._longform.request_start(language_override=language)
+            elif not self.is_recording:
+                print(f"[CONTROL] Recording start requested (immediate){lang_info}", flush=True)
+                self._start_recording(language_override=language)
+                if recording_mode == "continuous":
+                    self._continuous_start_silence_monitor()
+                elif recording_mode in ("toggle", "auto"):
+                    self._autostop_start_silence_monitor()
+            else:
+                print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
+        elif action == "stop":
+            if recording_mode == "long_form":
+                self._longform.request_pause()
+            elif self.is_recording:
+                print("[CONTROL] Recording stop requested (immediate)", flush=True)
+                if recording_mode == "continuous":
+                    self._continuous_stop_and_wait()
+                self._stop_recording()
+            else:
+                print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
+        elif action == "cancel":
+            if recording_mode == "long_form":
+                self._longform.request_cancel()
+            elif self.is_recording:
+                print("[CONTROL] Recording cancel requested (immediate)", flush=True)
+                if recording_mode == "continuous":
+                    self._continuous_cancelled = True
+                    self._continuous_stop_silence_monitor()
+                self._cancel_recording()
+            else:
+                print("[CONTROL] Not currently recording, ignoring cancel request", flush=True)
+        elif action == "submit":
+            if recording_mode == "long_form":
+                print("[CONTROL] Long-form submit requested (immediate)", flush=True)
+                self._longform.submit_shortcut()
+            else:
+                print("[CONTROL] Submit command only valid in long_form mode", flush=True)
+        elif action == "model_unload":
+            if self.is_recording:
+                print("[CONTROL] Cannot unload model while recording", flush=True)
+                self._notify_user("hyprwhspr", "Stop recording before unloading model", urgency="normal")
+            else:
+                print("[CONTROL] Model unload requested", flush=True)
+                if self.whisper_manager.unload_model():
                     try:
-                        RECORDING_CONTROL_FILE.unlink()
-                        print("[INIT] Removed old recording_control file (replacing with FIFO)", flush=True)
-                    except Exception as e:
-                        print(f"[WARN] Failed to remove old recording_control file: {e}", flush=True)
-                        return
-
-                try:
-                    os.mkfifo(str(RECORDING_CONTROL_FILE))
-                    print(f"[INIT] Created recording control FIFO: {RECORDING_CONTROL_FILE}", flush=True)
-                    return
-                except FileExistsError:
-                    continue
-
-            print("[WARN] Failed to create recording control FIFO: file kept reappearing", flush=True)
-            print("[WARN] Recording control will fall back to file polling (1 second delay)", flush=True)
-
-        except OSError as e:
-            # Handle permission errors, read-only filesystem, etc.
-            print(f"[WARN] Failed to create recording control FIFO: {e}", flush=True)
-            print("[WARN] Recording control will fall back to file polling (1 second delay)", flush=True)
-        except Exception as e:
-            print(f"[WARN] Unexpected error creating recording control FIFO: {e}", flush=True)
-
-    def _recording_control_listener(self):
-        """Listen on FIFO for recording control commands (blocking, immediate)"""
-        while not self._recording_control_stop.is_set():
-            try:
-                # Check if FIFO exists, recreate if needed
-                if not RECORDING_CONTROL_FILE.exists() or not RECORDING_CONTROL_FILE.is_fifo():
-                    if self._recording_control_stop.is_set():
-                        break
-                    # Recreate FIFO
-                    try:
-                        if RECORDING_CONTROL_FILE.exists():
-                            RECORDING_CONTROL_FILE.unlink()
-                        os.mkfifo(str(RECORDING_CONTROL_FILE))
-                        print("[CONTROL] Recreated recording control FIFO", flush=True)
-                    except Exception as e:
-                        print(f"[CONTROL] Failed to recreate FIFO: {e}", flush=True)
-                        # Wait a bit before retrying
-                        time.sleep(1)
-                        continue
-                
-                # Open FIFO for reading (blocks until writer appears)
-                with open(RECORDING_CONTROL_FILE, 'r') as f:
-                    raw_data = f.read()
-
-                # Handle multiple commands written to FIFO before read
-                # (e.g., user clicks rapidly during timeout - "start\nstart")
-                # Take only the last valid command (most recent intent)
-                # Commands can be: 'start', 'start:lang', 'stop', 'cancel', 'submit',
-                #                  'model_unload', 'model_reload'
-                valid_base_commands = {'start', 'stop', 'cancel', 'submit', 'model_unload', 'model_reload'}
-                lines = [line.strip() for line in raw_data.splitlines() if line.strip()]
-
-                # Parse commands - extract base command and optional language
-                parsed_commands = []
-                for line in lines:
-                    line_lower = line.lower()
-                    if ':' in line_lower and line_lower.startswith('start:'):
-                        # start:lang format - preserve language case
-                        parts = line.split(':', 1)
-                        lang = parts[1].strip() if len(parts) > 1 else None
-                        parsed_commands.append(('start', lang))
-                    elif line_lower in valid_base_commands:
-                        parsed_commands.append((line_lower, None))
-
-                if not parsed_commands:
-                    if lines:
-                        print(f"[CONTROL] No valid commands in: {lines}", flush=True)
-                    continue
-
-                action, language_param = parsed_commands[-1]  # Take the last valid command
-                
-                # Check recording mode to route to appropriate handler
-                recording_mode = self.config.get_setting("recording_mode", "toggle")
-                
-                # Process action immediately
-                if action == "start":
-                    lang_info = f" (language: {language_param})" if language_param else ""
-                    if recording_mode == "long_form":
-                        self._longform.request_start(language_override=language_param)
-                    elif not self.is_recording:
-                        print(f"[CONTROL] Recording start requested (immediate){lang_info}", flush=True)
-                        self._start_recording(language_override=language_param)
-                        if recording_mode == "continuous":
-                            self._continuous_start_silence_monitor()
-                        elif recording_mode in ("toggle", "auto"):
-                            self._autostop_start_silence_monitor()
-                    else:
-                        print("[CONTROL] Recording already in progress, ignoring start request", flush=True)
-                elif action == "stop":
-                    if recording_mode == "long_form":
-                        self._longform.request_pause()
-                    elif self.is_recording:
-                        print("[CONTROL] Recording stop requested (immediate)", flush=True)
-                        if recording_mode == "continuous":
-                            self._continuous_stop_and_wait()
-                        self._stop_recording()
-                    else:
-                        print("[CONTROL] Not currently recording, ignoring stop request", flush=True)
-                elif action == "cancel":
-                    if recording_mode == "long_form":
-                        self._longform.request_cancel()
-                    elif self.is_recording:
-                        print("[CONTROL] Recording cancel requested (immediate)", flush=True)
-                        if recording_mode == "continuous":
-                            self._continuous_cancelled = True
-                            self._continuous_stop_silence_monitor()
-                        self._cancel_recording()
-                    else:
-                        print("[CONTROL] Not currently recording, ignoring cancel request", flush=True)
-                elif action == "submit":
-                    # Submit command for long-form mode submit shortcut
-                    if recording_mode == "long_form":
-                        print("[CONTROL] Long-form submit requested (immediate)", flush=True)
-                        self._longform.submit_shortcut()
-                    else:
-                        print("[CONTROL] Submit command only valid in long_form mode", flush=True)
-                elif action == "model_unload":
-                    if self.is_recording:
-                        print("[CONTROL] Cannot unload model while recording", flush=True)
-                        self._notify_user("hyprwhspr", "Stop recording before unloading model", urgency="normal")
-                    else:
-                        print("[CONTROL] Model unload requested", flush=True)
-                        if self.whisper_manager.unload_model():
-                            try:
-                                MODEL_UNLOADED_FILE.touch()
-                            except Exception:
-                                pass
-                            self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
-                        else:
-                            self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
-                elif action == "model_reload":
-                    print("[CONTROL] Model reload requested", flush=True)
-                    if self.whisper_manager.reload_model():
-                        try:
-                            MODEL_UNLOADED_FILE.unlink(missing_ok=True)
-                        except Exception:
-                            pass
-                        self._notify_user("hyprwhspr", "Model reloaded — ready to record", urgency="low")
-                    else:
-                        self._notify_user("hyprwhspr", "Model reload failed — check logs", urgency="critical")
-                else:
-                    print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
-                    
-            except FileNotFoundError:
-                # FIFO was deleted - will be recreated on next iteration
-                if not self._recording_control_stop.is_set():
-                    print("[CONTROL] FIFO deleted, will recreate on next iteration", flush=True)
-                    time.sleep(0.1)  # Brief pause before retrying
-            except OSError as e:
-                # Permission errors, broken pipe, etc.
-                if not self._recording_control_stop.is_set():
-                    print(f"[CONTROL] FIFO error: {e}, retrying...", flush=True)
-                    time.sleep(0.1)  # Brief pause before retrying
-            except Exception as e:
-                if not self._recording_control_stop.is_set():
-                    print(f"[CONTROL] Error in FIFO listener: {e}", flush=True)
-                    time.sleep(0.1)  # Brief pause before retrying
-
-    def _notify_capture_subscriber(self, text, final):
-        """
-        Forward a transcription chunk to the active capture subscriber if any.
-
-        Handler thread owns the connection fd and is the only closer.
-        This method only writes; on final=True it signals the handler to close.
-        """
-        with self._capture_subscriber_lock:
-            subscriber = self._capture_subscriber
-            if subscriber is None:
-                if final:
-                    self._capture_subscriber_done.set()
-                return
-
-            if text:
-                try:
-                    subscriber.sendall(text.encode('utf-8'))
-                except (BrokenPipeError, ConnectionError, OSError) as e:
-                    # handler select loop will detect disconnect and clean up.
-                    print(f"[CAPTURE] Subscriber write failed: {e}", flush=True)
-
-            if final:
-                self._capture_subscriber_done.set()
-
-    def _setup_capture_socket(self):
-        """
-        Create unix-domain socket for `record capture` client requests.
-
-        Returns (sock: socket.socket or None)
-        """
-        try:
-            SOCKET_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-            # we do a cleanup at the startup to ensure no stale socket remains
-            if SOCKET_FILE.exists():
-                try:
-                    SOCKET_FILE.unlink()
-                    print("[INIT] Removed stale capture socket", flush=True)
-                except OSError as e:
-                    print(f"[WARN] Failed to remove stale capture socket: {e}", flush=True)
-                    return None
-
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.bind(str(SOCKET_FILE))
-            os.chmod(str(SOCKET_FILE), 0o600)
-            sock.listen(4)
-            sock.settimeout(1.0)
-            print(f"[INIT] Created capture socket: {SOCKET_FILE}", flush=True)
-
-            return sock
-        except OSError as e:
-            print(f"[WARN] Failed to create capture socket: {e}", flush=True)
-            print("[WARN] `record capture` will be unavailable this session", flush=True)
-
-            return None
-
-    def _capture_socket_listener(self):
-        """
-        Connection handler for the capture socket.
-        """
-        sock = self._setup_capture_socket()
-        if sock is None:
-            return
-
-        try:
-            while not self._capture_socket_stop.is_set():
-                try:
-                    conn, _ = sock.accept()
-                except socket.timeout:
-                    # proceed to check stop flag
-                    continue
-                except OSError as e:
-                    if self._capture_socket_stop.is_set():
-                        break
-                    print(f"[CAPTURE] Accept error: {e}", flush=True)
-                    time.sleep(0.1)
-                    continue
-
-                threading.Thread(
-                    target=self._handle_capture_connection,
-                    args=(conn,),
-                    daemon=True,
-                    name="CaptureConnectionHandler",
-                ).start()
-        finally:
-            try:
-                sock.close()
-            except OSError:
-                pass
-            try:
-                SOCKET_FILE.unlink(missing_ok=True)
-            except OSError:
-                pass
-
-    def _handle_capture_connection(self, conn):
-        """
-        Handle one capture client that is claiming the subscriber slot to receive transcription text.
-        """
-
-        try:
-            # fetch the request line with a timeout
-            conn.settimeout(1.0)
-            line = conn.recv(256).split(b"\n", 1)[0].decode("utf-8", errors="replace").strip()
-
-            verb, _, language = line.partition(":")
-            language = language.strip() or None
-
-            if verb != "capture":
-                print(f"[CAPTURE] Unknown request: {line!r}", flush=True)
-                return
-
-            conn.settimeout(None)
-
-            # claim the subscriber slot if available
-            with self._capture_subscriber_lock:
-                if self._capture_subscriber is not None:
-                    print("[CAPTURE] Rejecting — slot occupied", flush=True)
-                    try:
-                        conn.sendall(b"ERROR:slot_occupied\n")
-                    except OSError:
+                        MODEL_UNLOADED_FILE.touch()
+                    except Exception:
                         pass
-                    return
-                self._capture_subscriber = conn
-                self._capture_subscriber_done.clear()
-
-            # trigger recording via fifo
-            if not self.is_recording:
-                cmd = f"start:{language}\n" if language else "start\n"
+                    self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
+                else:
+                    self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
+        elif action == "model_reload":
+            print("[CONTROL] Model reload requested", flush=True)
+            if self.whisper_manager.reload_model():
                 try:
-                    fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
-                    try:
-                        os.write(fd, cmd.encode())
-                    finally:
-                        os.close(fd)
-                except OSError as e:
-                    print(f"[CAPTURE] Failed to self-trigger via FIFO: {e}", flush=True)
-
-            # either wait for recording to finish or for client disconnect
-            client_disconnected = False
-            while True:
-                if self._capture_subscriber_done.is_set():
-                    break
-                try:
-                    readable, _, _ = select.select([conn], [], [], 0.5)
-                except (OSError, ValueError):
-                    client_disconnected = True
-                    break
-                if readable:
-                    try:
-                        peek = conn.recv(1, socket.MSG_PEEK)
-                    except OSError:
-                        peek = b""
-                    if not peek:
-                        client_disconnected = True
-                        break
-
-            # we should cleanup if there was a premature disconnect
-            if client_disconnected and self.is_recording:
-                print("[CAPTURE] Client disconnected, cancelling recording", flush=True)
-                try:
-                    fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
-                    try:
-                        os.write(fd, b"cancel\n")
-                    finally:
-                        os.close(fd)
-                except OSError:
+                    MODEL_UNLOADED_FILE.unlink(missing_ok=True)
+                except Exception:
                     pass
-
-        except Exception as e:
-            print(f"[CAPTURE] Handler error: {e}", flush=True)
-        finally:
-            # clear lock since we are the owner
-            with self._capture_subscriber_lock:
-                if self._capture_subscriber is conn:
-                    self._capture_subscriber = None
-            try:
-                conn.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                conn.close()
-            except OSError:
-                pass
+                self._notify_user("hyprwhspr", "Model reloaded — ready to record", urgency="low")
+            else:
+                self._notify_user("hyprwhspr", "Model reload failed — check logs", urgency="critical")
+        else:
+            print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
 
     def _start_backend_init_background(self):
         """Initialize the transcription backend in a background thread.
@@ -2557,26 +2261,7 @@ class hyprwhsprApp:
             print("[ERROR] Global shortcuts not initialized!")
             return False
 
-        # Start FIFO listener thread for immediate recording control
-        if RECORDING_CONTROL_FILE.exists() and RECORDING_CONTROL_FILE.is_fifo():
-            self._recording_control_thread = threading.Thread(
-                target=self._recording_control_listener,
-                daemon=True,
-                name="RecordingControlListener"
-            )
-            self._recording_control_thread.start()
-            print("[INIT] Started recording control FIFO listener", flush=True)
-        else:
-            print("[WARN] Recording control FIFO not available, using fallback polling", flush=True)
-
-        # start capture socket listener thread
-        self._capture_socket_thread = threading.Thread(
-            target=self._capture_socket_listener,
-            daemon=True,
-            name="CaptureSocketListener",
-        )
-        self._capture_socket_thread.start()
-        print("[INIT] Started capture socket listener", flush=True)
+        self._recording_control_server.start()
 
         # Initialize whisper backend. Slow backends (e.g. cohere-transcribe loading a
         # 4 GB model onto the GPU) run in a background thread so shortcuts and the FIFO
@@ -2626,22 +2311,6 @@ class hyprwhsprApp:
             except Exception as exc:
                 print(f"[WARN] Cleanup step {name!r} failed: {exc}", flush=True)
 
-        def stop_recording_listener():
-            if not hasattr(self, '_recording_control_stop'):
-                return
-            self._recording_control_stop.set()
-            thread = getattr(self, '_recording_control_thread', None)
-            if thread and thread.is_alive():
-                print("[SHUTDOWN] Stopping recording control FIFO listener...", flush=True)
-                try:
-                    fd = os.open(str(RECORDING_CONTROL_FILE), os.O_WRONLY | os.O_NONBLOCK)
-                    os.close(fd)
-                except (OSError, FileNotFoundError):
-                    pass
-                thread.join(timeout=1.0)
-                if thread.is_alive():
-                    print("[WARN] Recording control thread did not stop cleanly", flush=True)
-
         def stop_thread(stop_name, thread_name, label, timeout):
             stop = getattr(self, stop_name, None)
             if stop is None:
@@ -2660,13 +2329,7 @@ class hyprwhsprApp:
                 getattr(target, method)()
 
         try:
-            # Stop recording control FIFO listener thread
-            cleanup_step("stop recording-control listener", stop_recording_listener)
-
-            # Stop capture socket listener thread
-            cleanup_step("stop capture-socket listener", lambda: stop_thread(
-                '_capture_socket_stop', '_capture_socket_thread',
-                'capture socket listener', 2.0))
+            cleanup_step("stop recording control server", self._recording_control_server.stop)
 
             # Stop background recovery thread
             cleanup_step("stop background recovery", lambda: stop_thread(
