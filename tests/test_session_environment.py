@@ -10,10 +10,26 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
-from session_environment import ensure_wayland_display
+from session_environment import classify_display_environment, ensure_wayland_display
 
 
 class SessionEnvironmentTests(unittest.TestCase):
+    def test_classifies_wayland_x11_and_missing_systemd_environments(self):
+        self.assertEqual(
+            classify_display_environment("WAYLAND_DISPLAY=wayland-1\nDISPLAY=:0\n"),
+            "wayland",
+        )
+        self.assertEqual(classify_display_environment("DISPLAY=:0\nXAUTHORITY=/tmp/auth\n"), "x11")
+        self.assertIsNone(classify_display_environment("DISPLAY=\nWAYLAND_DISPLAY=\n"))
+        self.assertIsNone(
+            classify_display_environment("XDG_SESSION_TYPE=x11\nWAYLAND_DISPLAY=wayland-0\n")
+        )
+        self.assertIsNone(
+            classify_display_environment("XDG_SESSION_TYPE=wayland\nDISPLAY=:0\n")
+        )
+        self.assertIsNone(classify_display_environment("DISPLAY=:0\n", "wayland"))
+        self.assertIsNone(classify_display_environment("WAYLAND_DISPLAY=wayland-0\n", "x11"))
+
     def _socket_file_at(self, path, mtime=100):
         path.write_text("", encoding="utf-8")
         path.chmod(0o600)
@@ -94,6 +110,20 @@ class SessionEnvironmentTests(unittest.TestCase):
 
             with (
                 mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmpdir}, clear=True),
+                self._socket_mode_patch(),
+            ):
+                ensure_wayland_display()
+                self.assertIsNone(os.environ.get("WAYLAND_DISPLAY"))
+
+    def test_explicit_x11_session_ignores_stale_wayland_socket(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._socket_file_at(Path(tmpdir) / "wayland-1")
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"XDG_SESSION_TYPE": "x11", "DISPLAY": ":0", "XDG_RUNTIME_DIR": tmpdir},
+                    clear=True,
+                ),
                 self._socket_mode_patch(),
             ):
                 ensure_wayland_display()
