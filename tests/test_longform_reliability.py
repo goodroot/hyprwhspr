@@ -23,6 +23,7 @@ tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
 method_names = {
     "_ensure_longform_initialized",
     "_on_longform_submit_triggered",
+    "_cancel_longform_recording",
     "_longform_pause_recording",
     "_longform_persistence_failed",
     "_longform_submit",
@@ -84,6 +85,7 @@ class LongformReliabilityTests(unittest.TestCase):
         app.audio_capture = SimpleNamespace(
             sample_rate=16000,
             pause_recording=mock.Mock(),
+            stop_recording=mock.Mock(),
             get_current_audio_copy=mock.Mock(),
             clear_buffer=mock.Mock(),
         )
@@ -101,6 +103,7 @@ class LongformReliabilityTests(unittest.TestCase):
         app._set_visualizer_state = mock.Mock()
         app._show_result_and_hide = mock.Mock()
         app._hide_mic_osd = mock.Mock()
+        app._write_recording_status = mock.Mock()
         app._notify_capture_subscriber = mock.Mock()
         app.is_processing = False
         return app, persisted
@@ -158,6 +161,19 @@ class LongformReliabilityTests(unittest.TestCase):
         self.assertEqual(app._longform_state, 'IDLE')
         self.assertIsNone(app._longform_error_audio)
         app._longform_segment_manager.clear_session.assert_called_once_with()
+
+    def test_cancel_discards_unrecoverable_error_session(self):
+        app, _ = self._app()
+        app._longform_state = 'ERROR'
+        app._longform_error_audio = None
+
+        app._cancel_longform_recording()
+
+        app.audio_capture.stop_recording.assert_called_once_with()
+        app._longform_segment_manager.clear_session.assert_called_once_with()
+        self.assertEqual(app._longform_state, 'IDLE')
+        self.assertIsNone(app._longform_error_audio)
+        app._write_longform_state.assert_called_with('IDLE')
 
 
 if __name__ == "__main__":

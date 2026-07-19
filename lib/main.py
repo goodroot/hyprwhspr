@@ -1140,7 +1140,7 @@ class hyprwhsprApp:
 
     def _cancel_longform_recording(self):
         """Cancel long-form recording session and discard all segments"""
-        if self._longform_state not in ('RECORDING', 'PAUSED'):
+        if self._longform_state not in ('RECORDING', 'PAUSED', 'ERROR'):
             return
 
         print("[LONGFORM] Recording cancelled (discarded)", flush=True)
