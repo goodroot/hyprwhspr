@@ -12,7 +12,8 @@ from .base import BaseVisualization, StateManager, VisualizerState
 class PillVisualization(BaseVisualization):
     """A compact black pill with white audio bars and state animations."""
 
-    show_preview = False
+    show_preview = True
+    preview_mode = "pill"
 
     PILL_WIDTH = 126
     PILL_HEIGHT = 42
@@ -120,12 +121,16 @@ class PillVisualization(BaseVisualization):
     def _pill_geometry(self, width: int, height: int):
         pill_w = min(self.PILL_WIDTH, width - 4)
         pill_h = min(self.PILL_HEIGHT, height - 4)
-        return (
-            (width - pill_w) / 2.0,
-            (height - pill_h) / 2.0,
-            pill_w,
-            pill_h,
-        )
+        x = (width - pill_w) / 2.0
+
+        # A taller surface reserves space for live text above the pill. Keep
+        # legacy standalone/preview-disabled geometry unchanged at the old size.
+        if height >= self.PILL_HEIGHT + 34:
+            y = height - pill_h - 4.0
+        else:
+            y = (height - pill_h) / 2.0
+
+        return x, y, pill_w, pill_h
 
     def _success_fade(self) -> float:
         if self.state_manager.current_state != VisualizerState.SUCCESS:

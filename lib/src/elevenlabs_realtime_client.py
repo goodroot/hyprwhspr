@@ -7,7 +7,7 @@ import base64
 import asyncio
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 try:
     from .realtime_base import RealtimeAudioClientBase
@@ -45,6 +45,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         self._partial_transcript = ''
         self._transcript_generation = 0
         self._committed_segments = []
+        self._partial_transcript_callback: Optional[Callable[[str], None]] = None
 
         # Auto-commit helper:
         # ElevenLabs punctuation often improves on committed transcripts.
@@ -290,6 +291,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                     text = data.get('text', '')
                     with self.lock:
                         self._partial_transcript = text
+                    self._emit_partial_transcript()
 
                 def on_committed_transcript(data):
                     text = data.get('text', '')
@@ -304,6 +306,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                             self._committed_segments.append(text.strip())
                         self._transcript_generation += 1
                         self._last_transcript_audio_activity_id = self._audio_activity_id
+                    self._emit_partial_transcript()
                     self._transcript_event.set()
 
                 def on_committed_transcript_with_timestamps(data):
@@ -319,6 +322,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                             self._committed_segments.append(text.strip())
                         self._transcript_generation += 1
                         self._last_transcript_audio_activity_id = self._audio_activity_id
+                    self._emit_partial_transcript()
                     self._transcript_event.set()
 
                 def on_error(error):
@@ -446,6 +450,35 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         self.language = language
         print(f'[ELEVENLABS] Language set to: {language or "auto-detect"}', flush=True)
 
+    def set_partial_transcript_callback(
+        self,
+        callback: Optional[Callable[[str], None]],
+    ) -> None:
+        """Set the live-preview callback retained across reconnects."""
+        with self.lock:
+            self._partial_transcript_callback = callback
+        if callback is not None:
+            self._emit_partial_transcript()
+
+    def _emit_partial_transcript(self) -> None:
+        with self.lock:
+            callback = self._partial_transcript_callback
+            parts = [part for part in self._committed_segments if part]
+            partial = self._partial_transcript.strip()
+            if partial:
+                parts.append(partial)
+            preview = ' '.join(parts).strip()
+
+        if callback is None:
+            return
+        try:
+            callback(preview)
+        except Exception as exc:
+            print(
+                f'[ELEVENLABS] Failed to update partial transcript preview: {exc}',
+                flush=True,
+            )
+
     def clear_audio_buffer(self):
         """Clear state before starting a new recording"""
         with self.lock:
@@ -462,6 +495,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
             self._last_drop_log_time = 0.0
             self._queue_cond.notify_all()
         self._transcript_event.clear()
+        self._emit_partial_transcript()
 
     def commit_and_get_text(self, timeout: float = 30.0) -> str:
         """

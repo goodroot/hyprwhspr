@@ -707,7 +707,7 @@ In overlay mode, `mic_osd_style` picks one of three visualizations (notification
 
 - `waveform` — the full themed waveform with transcript preview (default)
 - `vu_meter` — a VU meter
-- `pill` — a compact monochrome status pill (no transcript text): idle dots, live bars while recording, a travelling wave while processing, a pulse on error, a checkmark on success
+- `pill` — a compact monochrome status pill: idle dots, live bars while recording, a travelling wave while processing, a pulse on error, and a checkmark on success. With ElevenLabs Scribe v2 Realtime it can optionally show an animated live transcript.
 
 ![Pill OSD states](assets/pill-states.png)
 
@@ -722,6 +722,31 @@ Restart the service after changing the style:
 ```bash
 systemctl --user restart hyprwhspr
 ```
+
+#### Pill live transcript
+
+The pill can show the latest words returned by ElevenLabs while recording. The preview is opt-in and only activates when the mic OSD uses overlay mode, `mic_osd_style` is `pill`, and the backend is ElevenLabs `scribe_v2_realtime` in transcription mode. Final transcription and paste behavior are unchanged.
+
+```jsonc
+{
+  "transcription_backend": "realtime-ws",
+  "websocket_provider": "elevenlabs",
+  "websocket_model": "scribe_v2_realtime",
+  "realtime_mode": "transcribe",
+  "mic_osd_enabled": true,
+  "mic_osd_style": "pill",
+  "mic_osd_pill_transcript_enabled": true,
+  "mic_osd_pill_transcript_word_limit": 4
+}
+```
+
+The animation keeps overlapping words in place, animates new and removed words independently, and updates provider corrections to the unfinished final word without restarting. Incoming partials replace the current target instead of queuing, so the preview stays current during fast dictation.
+
+| Setting | Default | Description |
+|---|---:|---|
+| `mic_osd_pill_transcript_enabled` | `false` | Enable the pill transcript when the backend and style support it. |
+| `mic_osd_pill_transcript_word_limit` | `4` | Recent words shown, from 1 to 12. |
+| `mic_osd_pill_transcript_idle_timeout_ms` | `1400` | Hide after no new partials; `0` keeps text until cleared. |
 
 #### GNOME/Mutter waveform overlay
 

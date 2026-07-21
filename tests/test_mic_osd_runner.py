@@ -248,6 +248,43 @@ class MicOSDRunnerTests(unittest.TestCase):
         self.assertEqual(window._text_width(ObjectContext(), "abcd"), 20)
         self.assertEqual(window._text_height(ObjectContext(), "abcd"), 10)
 
+    def test_pill_word_layout_uses_space_advance_instead_of_zero_ink_width(self):
+        window_module, _ = self._import_window_with_stubs()
+        window = object.__new__(window_module.OSDWindow)
+
+        class SpaceHasNoInkContext:
+            def text_extents(self, text):
+                if text == " ":
+                    return (0, 0, 0, 0, 6, 0)
+                return (0, 0, len(text) * 5, 10, len(text) * 5, 0)
+
+        positions, total = window._word_layout(
+            SpaceHasNoInkContext(),
+            ("one", "two"),
+            100,
+        )
+
+        self.assertEqual(total, 36)
+        self.assertEqual(positions, (32, 53))
+
+    def test_pill_long_token_is_ellipsized_to_available_width(self):
+        window_module, _ = self._import_window_with_stubs()
+        window = object.__new__(window_module.OSDWindow)
+
+        class AdvanceContext:
+            def text_extents(self, text):
+                advance = len(text) * 5
+                return (0, 0, advance, 10, advance, 0)
+
+        text = window._ellipsize_pill_token(
+            AdvanceContext(),
+            "averylongunbrokentoken",
+            40,
+        )
+
+        self.assertEqual(text, "averylo…")
+        self.assertLessEqual(window._text_advance(AdvanceContext(), text), 40)
+
     def test_preview_text_draws_only_while_recording(self):
         window_module, _ = self._import_window_with_stubs()
         window = object.__new__(window_module.OSDWindow)

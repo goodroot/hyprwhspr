@@ -67,9 +67,15 @@ class PillVisualizationTests(unittest.TestCase):
         )
         self.assertGreater(float(np.ptp(visualization.bar_heights)), 0.01)
 
-    def test_compact_style_hides_transcript_preview(self):
+    def test_compact_style_exposes_pill_transcript_preview(self):
         visualization = self.PillVisualization()
-        self.assertFalse(visualization.show_preview)
+        self.assertTrue(visualization.show_preview)
+        self.assertEqual(visualization.preview_mode, "pill")
+
+    def test_tall_surface_keeps_pill_at_bottom(self):
+        visualization = self.PillVisualization()
+        _, y, _, pill_height = visualization._pill_geometry(400, 84)
+        self.assertEqual(y, 84 - pill_height - 4)
 
     def test_registry_exposes_the_pill_style(self):
         module = importlib.import_module("mic_osd.visualizations")
