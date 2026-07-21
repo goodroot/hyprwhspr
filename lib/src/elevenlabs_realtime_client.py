@@ -460,14 +460,17 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         if callback is not None:
             self._emit_partial_transcript()
 
+    def _committed_text_locked(self) -> str:
+        """Joined committed transcript. Call with self.lock held."""
+        parts = [part for part in self._committed_segments if part]
+        return ' '.join(parts).strip()
+
     def _emit_partial_transcript(self) -> None:
         with self.lock:
             callback = self._partial_transcript_callback
-            parts = [part for part in self._committed_segments if part]
+            committed = self._committed_text_locked()
             partial = self._partial_transcript.strip()
-            if partial:
-                parts.append(partial)
-            preview = ' '.join(parts).strip()
+            preview = f'{committed} {partial}'.strip() if partial else committed
 
         if callback is None:
             return
@@ -512,16 +515,10 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
             return ''
 
         try:
-            def _full_committed_text_locked() -> str:
-                """Return concatenated committed transcript for current recording."""
-                parts = [p for p in self._committed_segments if p]
-                # Use single spaces to stitch segments; preserve order.
-                return ' '.join(parts).strip()
-
             # If we already have a committed transcript AND there is no new queued audio since then,
             # we can return immediately (common case: server VAD committed before user stops).
             with self.lock:
-                existing_transcript = _full_committed_text_locked()
+                existing_transcript = self._committed_text_locked()
                 existing_generation = self._transcript_generation
                 has_new_audio_since_transcript = (
                     self._audio_activity_id != self._last_transcript_audio_activity_id
@@ -580,12 +577,12 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                         # (often where punctuation gets finalized). We wait for a short quiet window and
                         # return the latest committed text we see.
                         best_generation = self._transcript_generation
-                        best_text = _full_committed_text_locked()
+                        best_text = self._committed_text_locked()
 
                     # If we didn't have an existing transcript, accept the first one we get.
                     if existing_generation == 0 and self._transcript_generation > 0:
                         best_generation = self._transcript_generation
-                        best_text = _full_committed_text_locked()
+                        best_text = self._committed_text_locked()
 
                     if 'best_generation' in locals():
                         settle_deadline = min(deadline, time.time() + 0.6)
@@ -598,7 +595,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                             # Incorporate any newer commit
                             if self._transcript_generation > best_generation:
                                 best_generation = self._transcript_generation
-                                best_text = _full_committed_text_locked()
+                                best_text = self._committed_text_locked()
 
                         result = best_text
                         self._current_transcript = ''
@@ -620,7 +617,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
 
             # Fallback: return latest committed transcript if present, else partial, else empty.
             with self.lock:
-                full_text = _full_committed_text_locked()
+                full_text = self._committed_text_locked()
                 if full_text:
                     result = full_text
                     self._current_transcript = ''

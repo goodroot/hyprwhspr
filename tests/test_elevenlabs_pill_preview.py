@@ -155,7 +155,7 @@ class ElevenLabsRealtimePreviewTests(unittest.TestCase):
 
         self.assertIsNotNone(self.client.callback)
 
-    def test_openai_preview_is_not_shown_in_elevenlabs_only_pill(self):
+    def test_openai_preview_is_also_shown_in_pill(self):
         self.manager.config.values.update({
             "websocket_provider": "openai",
             "websocket_model": "gpt-realtime-whisper",
@@ -163,7 +163,34 @@ class ElevenLabsRealtimePreviewTests(unittest.TestCase):
         })
         previews = self._apply()
 
+        self.assertIsNotNone(self.client.callback)
+
+    def test_gemini_preview_is_shown_in_pill(self):
+        self.manager.config.values.update({
+            "websocket_provider": "google",
+            "websocket_model": "gemini-2.0-flash-live",
+            "mic_osd_style": "pill",
+        })
+        previews = self._apply()
+
+        self.assertIsNotNone(self.client.callback)
+
+    def test_gemini_preview_is_not_shown_in_waveform(self):
+        self.manager.config.values.update({
+            "websocket_provider": "google",
+            "websocket_model": "gemini-2.0-flash-live",
+            "mic_osd_style": "waveform",
+        })
+        previews = self._apply()
+
         self.assertIsNone(self.client.callback)
+        self.assertEqual(previews, [""])
+
+    def test_pill_preview_requires_client_to_support_callback(self):
+        self.backend._realtime_client = object()
+
+        previews = self._apply()
+
         self.assertEqual(previews, [""])
 
 

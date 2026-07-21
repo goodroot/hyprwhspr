@@ -424,21 +424,17 @@ class RealtimeWsBackend(TranscriptionBackend):
         ):
             return False
 
-        if provider_id == 'openai':
-            return (
-                model_id == 'gpt-realtime-whisper'
-                and self.config.get_setting('mic_osd_style', 'waveform') != 'pill'
+        # Pill: any provider with partial-transcript support qualifies.
+        if self.config.get_setting('mic_osd_style', 'waveform') == 'pill':
+            return bool(
+                self._realtime_client is not None
+                and hasattr(self._realtime_client, 'set_partial_transcript_callback')
+                and self.config.get_setting('mic_osd_pill_transcript_enabled', False)
             )
 
-        if provider_id == 'elevenlabs':
-            return (
-                str(model_id or '').startswith('scribe_v2_realtime')
-                and self.config.get_setting('mic_osd_style', 'waveform') == 'pill'
-                and self.config.get_setting(
-                    'mic_osd_pill_transcript_enabled',
-                    False,
-                )
-            )
+        # Waveform: only gpt-realtime-whisper supports this today.
+        if provider_id == 'openai':
+            return model_id == 'gpt-realtime-whisper'
 
         return False
 

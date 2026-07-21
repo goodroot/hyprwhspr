@@ -17,6 +17,8 @@ class PillVisualization(BaseVisualization):
 
     PILL_WIDTH = 126
     PILL_HEIGHT = 42
+    # Surfaces this tall are reserving space for the preview text above.
+    PREVIEW_HEIGHT_THRESHOLD = PILL_HEIGHT + 34
     NUM_BARS = 13
     BAR_WIDTH = 3.0
     BAR_GAP = 3.0
@@ -125,7 +127,7 @@ class PillVisualization(BaseVisualization):
 
         # A taller surface reserves space for live text above the pill. Keep
         # legacy standalone/preview-disabled geometry unchanged at the old size.
-        if height >= self.PILL_HEIGHT + 34:
+        if height >= self.PREVIEW_HEIGHT_THRESHOLD:
             y = height - pill_h - 4.0
         else:
             y = (height - pill_h) / 2.0

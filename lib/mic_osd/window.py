@@ -58,15 +58,13 @@ class OSDWindow(Gtk.Window):
         super().__init__()
         
         self.visualization = visualization
+        self._is_pill_preview = getattr(visualization, 'preview_mode', None) == 'pill'
         self._pill_transcript_config = (
             transcript_config
             if transcript_config is not None
             else PillTranscriptConfig.load()
         )
-        if (
-            getattr(self.visualization, 'preview_mode', None) == 'pill'
-            and self._pill_transcript_config.enabled
-        ):
+        if self._is_pill_preview and self._pill_transcript_config.enabled:
             height = max(
                 height,
                 int(
@@ -75,6 +73,8 @@ class OSDWindow(Gtk.Window):
                     + self._pill_transcript_config.offset_y
                     + 16
                 ),
+                # Must clear the pill's own preview-mode threshold.
+                getattr(self.visualization, 'PREVIEW_HEIGHT_THRESHOLD', 76) + 1,
             )
             width = max(
                 width,
@@ -86,7 +86,7 @@ class OSDWindow(Gtk.Window):
         self._preview_text = ""
         self._visualizer_state = "recording"
         self._pill_transcript_animator = None
-        if getattr(self.visualization, 'preview_mode', None) == 'pill':
+        if self._is_pill_preview:
             self._pill_transcript_animator = PillTranscriptAnimator(
                 self._pill_transcript_config
             )
@@ -159,8 +159,7 @@ class OSDWindow(Gtk.Window):
         # Draw the visualization
         self.visualization.draw(cr, width, height)
 
-        preview_mode = getattr(self.visualization, 'preview_mode', None)
-        if preview_mode == 'pill':
+        if self._is_pill_preview:
             self._draw_pill_preview_text(cr, width, height)
         elif getattr(self.visualization, 'show_preview', True):
             self._draw_preview_text(cr, width, height)
@@ -341,6 +340,18 @@ class OSDWindow(Gtk.Window):
             x += word_width + space_width
         return tuple(positions), total_width
 
+    @staticmethod
+    def _bisect_truncate(measure, available: float, length: int) -> int:
+        """Longest length in [0, length] fitting `available`."""
+        low, high = 0, length
+        while low < high:
+            mid = (low + high + 1) // 2
+            if measure(mid) <= available:
+                low = mid
+            else:
+                high = mid - 1
+        return low
+
     def _ellipsize_pill_token(
         self,
         cr: cairo.Context,
@@ -355,15 +366,9 @@ class OSDWindow(Gtk.Window):
         if available <= 0:
             return ""
 
-        low = 0
-        high = len(text)
-        while low < high:
-            mid = (low + high + 1) // 2
-            if self._text_advance(cr, text[:mid]) <= available:
-                low = mid
-            else:
-                high = mid - 1
-
+        low = self._bisect_truncate(
+            lambda n: self._text_advance(cr, text[:n]), available, len(text)
+        )
         return text[:low].rstrip() + suffix if low else suffix
 
     @staticmethod
@@ -403,14 +408,9 @@ class OSDWindow(Gtk.Window):
         if available <= 0:
             return ""
 
-        low = 0
-        high = len(text)
-        while low < high:
-            mid = (low + high + 1) // 2
-            if self._text_width(cr, text[-mid:]) <= available:
-                low = mid
-            else:
-                high = mid - 1
+        low = self._bisect_truncate(
+            lambda n: self._text_width(cr, text[-n:]) if n else 0.0, available, len(text)
+        )
 
         truncated = text[-low:].lstrip()
         return prefix + truncated if truncated else prefix
