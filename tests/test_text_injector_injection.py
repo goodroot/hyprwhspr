@@ -391,6 +391,23 @@ class TextInjectorInjectionTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[2].args[0][2], "sendshortcut")
         self.assertTrue(run.call_args_list[4].args[0][2].startswith("hl.dsp.send_shortcut"))
 
+    def test_hyprland_shortcut_falls_back_when_lua_dispatcher_is_invalid(self):
+        injector = self._injector()
+        invalid_dispatcher = types.SimpleNamespace(
+            returncode=0, stdout=b"Invalid dispatcher\n", stderr=b""
+        )
+        completed = types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        with mock.patch(
+            "text_injector.subprocess.run", side_effect=[invalid_dispatcher, completed]
+        ) as run:
+            self.assertTrue(injector._send_shortcut_hyprland("ctrl+v"))
+
+        self.assertEqual(injector._hyprland_shortcut_syntax, "legacy")
+        self.assertTrue(run.call_args_list[0].args[0][2].startswith("hl.dsp.send_shortcut"))
+        self.assertEqual(run.call_args_list[1].args[0], [
+            "hyprctl", "dispatch", "sendshortcut", "CTRL, v, activewindow",
+        ])
+
     def test_hyprland_shortcut_rejects_invalid_chords_and_handles_timeouts(self):
         injector = self._injector()
         with mock.patch("text_injector.subprocess.run") as run:

@@ -786,7 +786,15 @@ except Exception:
                 result = subprocess.run(commands[syntax], capture_output=True, timeout=1)
             except Exception:
                 result = None
-            if result is not None and result.returncode == 0:
+            output = b'' if result is None else (
+                (getattr(result, 'stdout', None) or b'')
+                + (getattr(result, 'stderr', None) or b'')
+            )
+            if (
+                result is not None
+                and result.returncode == 0
+                and b'invalid dispatcher' not in output.lower()
+            ):
                 self._hyprland_shortcut_syntax = syntax
                 return True
             if syntax == cached:
