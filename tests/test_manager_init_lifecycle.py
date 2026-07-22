@@ -44,6 +44,9 @@ def make_fake_backend_cls(events, name='pywhispercpp', init_result=True,
             if cleanup_error is not None:
                 raise cleanup_error
 
+        def apply_partial_callback(self, callback):
+            events.append(('partial_callback', callback))
+
     return FakeBackend
 
 
@@ -96,6 +99,19 @@ class InitLifecycleTests(unittest.TestCase):
         self.assertFalse(manager.initialize())
         self.assertIsNotNone(manager._backend)
         self.assertTrue(manager.realtime_client_missing())
+
+    def test_realtime_callback_is_reapplied_after_client_initializes(self):
+        events = []
+        manager = self._manager(make_fake_backend_cls(
+            events,
+            name='realtime-ws',
+        ))
+        callback = lambda text: None
+        manager.set_realtime_partial_callback(callback)
+
+        self.assertTrue(manager.initialize())
+
+        self.assertIn(('partial_callback', callback), events)
 
     def test_cleanup_exception_does_not_abort_initialize(self):
         events = []
