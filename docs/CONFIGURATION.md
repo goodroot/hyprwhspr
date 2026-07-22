@@ -707,7 +707,7 @@ In overlay mode, `mic_osd_style` picks one of three visualizations (notification
 
 - `waveform` — the full themed waveform with transcript preview (default)
 - `vu_meter` — a VU meter
-- `pill` — a compact monochrome status pill (no transcript text): idle dots, live bars while recording, a travelling wave while processing, a pulse on error, a checkmark on success
+- `pill` — a compact monochrome status pill: idle dots, live bars while recording, a travelling wave while processing, a pulse on error, and a checkmark on success. Can optionally show an animated live transcript on realtime backends that stream partial results (OpenAI, ElevenLabs).
 
 ![Pill OSD states](assets/pill-states.png)
 
@@ -722,6 +722,27 @@ Restart the service after changing the style:
 ```bash
 systemctl --user restart hyprwhspr
 ```
+
+#### Pill live transcript
+
+Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` plus a `realtime-ws` backend that streams partial transcripts (OpenAI, ElevenLabs — not Gemini yet). Final transcription and paste are unaffected.
+
+```jsonc
+{
+  "transcription_backend": "realtime-ws",
+  "websocket_provider": "elevenlabs",
+  "websocket_model": "scribe_v2_realtime",
+  "realtime_mode": "transcribe",
+  "mic_osd_style": "pill",
+  "mic_osd_pill_transcript_enabled": true
+}
+```
+
+| Setting | Default | Description |
+|---|---:|---|
+| `mic_osd_pill_transcript_enabled` | `false` | Enable the pill transcript. |
+| `mic_osd_pill_transcript_word_limit` | `4` | Recent words shown (1–12). |
+| `mic_osd_pill_transcript_idle_timeout_ms` | `1400` | Hide after this much idle time; `0` disables. |
 
 #### GNOME/Mutter waveform overlay
 

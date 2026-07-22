@@ -232,7 +232,7 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             delay = self.config.get_setting('realtime_transcription_delay', 'low')
             self._realtime_client.set_transcription_delay(delay)
-            if self._is_realtime_whisper_preview_enabled(provider_id, model_id, realtime_mode):
+            if self._is_partial_preview_enabled(provider_id, model_id, realtime_mode):
                 self._realtime_client.set_partial_transcript_callback(self._realtime_partial_callback)
             else:
                 self._realtime_client.set_partial_transcript_callback(None)
@@ -386,29 +386,57 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             # Clear server buffer before starting new recording
             self._realtime_client.clear_audio_buffer()
+            self._clear_realtime_partial_preview()
             return self._realtime_streaming_callback
         return None
 
     def apply_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
-        """Apply the partial-preview callback to a connected client (storage lives on the manager)."""
-        if self._realtime_client and hasattr(self._realtime_client, 'set_partial_transcript_callback'):
-            provider_id = self.config.get_setting('websocket_provider')
-            model_id = self.config.get_setting('websocket_model')
-            realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-            if self._is_realtime_whisper_preview_enabled(provider_id, model_id, realtime_mode):
-                self._realtime_client.set_partial_transcript_callback(callback)
-            else:
-                self._realtime_client.set_partial_transcript_callback(None)
-                self._clear_realtime_partial_preview()
+        """Apply the partial-preview callback to the active realtime provider."""
+        if not self._realtime_client:
+            return
 
-    def _is_realtime_whisper_preview_enabled(self, provider_id: str, model_id: str, realtime_mode: str) -> bool:
-        return (
-            self.config.get_setting('mic_osd_enabled', True)
-            and provider_id == 'openai'
-            and model_id == 'gpt-realtime-whisper'
-            and realtime_mode == 'transcribe'
-            and self._realtime_partial_callback is not None
+        provider_id = self.config.get_setting('websocket_provider')
+        model_id = self.config.get_setting('websocket_model')
+        realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
+        enabled = self._is_partial_preview_enabled(
+            provider_id,
+            model_id,
+            realtime_mode,
         )
+
+        if hasattr(self._realtime_client, 'set_partial_transcript_callback'):
+            self._realtime_client.set_partial_transcript_callback(
+                callback if enabled else None
+            )
+        if not enabled:
+            self._clear_realtime_partial_preview()
+
+    def _is_partial_preview_enabled(
+        self,
+        provider_id: str,
+        model_id: str,
+        realtime_mode: str,
+    ) -> bool:
+        if (
+            not self.config.get_setting('mic_osd_enabled', True)
+            or realtime_mode != 'transcribe'
+            or self._realtime_partial_callback is None
+        ):
+            return False
+
+        # Pill: any provider with partial-transcript support qualifies.
+        if self.config.get_setting('mic_osd_style', 'waveform') == 'pill':
+            return bool(
+                self._realtime_client is not None
+                and hasattr(self._realtime_client, 'set_partial_transcript_callback')
+                and self.config.get_setting('mic_osd_pill_transcript_enabled', False)
+            )
+
+        # Waveform: only gpt-realtime-whisper supports this today.
+        if provider_id == 'openai':
+            return model_id == 'gpt-realtime-whisper'
+
+        return False
 
     def _clear_realtime_partial_preview(self) -> None:
         if not self._realtime_partial_callback:
@@ -473,6 +501,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         if self._realtime_client:
             try:
                 self._realtime_client.clear_audio_buffer()
+                self._clear_realtime_partial_preview()
             except Exception as e:
                 print(f'[REALTIME] Failed to discard audio: {e}', flush=True)
 
@@ -483,6 +512,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 self._realtime_client.close()
                 self._realtime_client = None
                 self._realtime_streaming_callback = None
+                self._clear_realtime_partial_preview()
             except Exception as e:
                 print(f"[WARN] Failed to cleanup realtime client: {e}")
 

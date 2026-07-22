@@ -440,7 +440,26 @@
       "type": "string",
       "enum": ["waveform", "vu_meter", "pill"],
       "default": "waveform",
-      "description": "Visualization style for the mic OSD overlay. 'waveform' shows the full themed waveform with transcript preview, 'vu_meter' a VU meter, 'pill' a compact monochrome status pill without preview text. Restart the service after changing."
+      "description": "Visualization style for the mic OSD overlay. 'waveform' shows the full themed waveform with transcript preview, 'vu_meter' a VU meter, and 'pill' a compact monochrome status pill with optional live transcript. Restart the service after changing."
+    },
+    "mic_osd_pill_transcript_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show a live transcript above the pill OSD. Requires a realtime-ws backend that streams partial transcripts (OpenAI, ElevenLabs)."
+    },
+    "mic_osd_pill_transcript_word_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 12,
+      "default": 4,
+      "description": "Maximum number of recent words shown above the pill."
+    },
+    "mic_osd_pill_transcript_idle_timeout_ms": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 30000,
+      "default": 1400,
+      "description": "Hide the preview after this many idle milliseconds. 0 disables the timeout."
     },
     "notification_timeout_ms": {
       "type": "integer",

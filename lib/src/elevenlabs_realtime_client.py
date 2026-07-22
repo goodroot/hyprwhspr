@@ -7,7 +7,7 @@ import base64
 import asyncio
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 try:
     from .realtime_base import RealtimeAudioClientBase
@@ -45,6 +45,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         self._partial_transcript = ''
         self._transcript_generation = 0
         self._committed_segments = []
+        self._partial_transcript_callback: Optional[Callable[[str], None]] = None
 
         # Auto-commit helper:
         # ElevenLabs punctuation often improves on committed transcripts.
@@ -290,6 +291,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                     text = data.get('text', '')
                     with self.lock:
                         self._partial_transcript = text
+                    self._emit_partial_transcript()
 
                 def on_committed_transcript(data):
                     text = data.get('text', '')
@@ -304,6 +306,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                             self._committed_segments.append(text.strip())
                         self._transcript_generation += 1
                         self._last_transcript_audio_activity_id = self._audio_activity_id
+                    self._emit_partial_transcript()
                     self._transcript_event.set()
 
                 def on_committed_transcript_with_timestamps(data):
@@ -319,6 +322,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                             self._committed_segments.append(text.strip())
                         self._transcript_generation += 1
                         self._last_transcript_audio_activity_id = self._audio_activity_id
+                    self._emit_partial_transcript()
                     self._transcript_event.set()
 
                 def on_error(error):
@@ -446,6 +450,38 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         self.language = language
         print(f'[ELEVENLABS] Language set to: {language or "auto-detect"}', flush=True)
 
+    def set_partial_transcript_callback(
+        self,
+        callback: Optional[Callable[[str], None]],
+    ) -> None:
+        """Set the live-preview callback retained across reconnects."""
+        with self.lock:
+            self._partial_transcript_callback = callback
+        if callback is not None:
+            self._emit_partial_transcript()
+
+    def _committed_text_locked(self) -> str:
+        """Joined committed transcript. Call with self.lock held."""
+        parts = [part for part in self._committed_segments if part]
+        return ' '.join(parts).strip()
+
+    def _emit_partial_transcript(self) -> None:
+        with self.lock:
+            callback = self._partial_transcript_callback
+            committed = self._committed_text_locked()
+            partial = self._partial_transcript.strip()
+            preview = f'{committed} {partial}'.strip() if partial else committed
+
+        if callback is None:
+            return
+        try:
+            callback(preview)
+        except Exception as exc:
+            print(
+                f'[ELEVENLABS] Failed to update partial transcript preview: {exc}',
+                flush=True,
+            )
+
     def clear_audio_buffer(self):
         """Clear state before starting a new recording"""
         with self.lock:
@@ -462,6 +498,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
             self._last_drop_log_time = 0.0
             self._queue_cond.notify_all()
         self._transcript_event.clear()
+        self._emit_partial_transcript()
 
     def commit_and_get_text(self, timeout: float = 30.0) -> str:
         """
@@ -478,16 +515,10 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
             return ''
 
         try:
-            def _full_committed_text_locked() -> str:
-                """Return concatenated committed transcript for current recording."""
-                parts = [p for p in self._committed_segments if p]
-                # Use single spaces to stitch segments; preserve order.
-                return ' '.join(parts).strip()
-
             # If we already have a committed transcript AND there is no new queued audio since then,
             # we can return immediately (common case: server VAD committed before user stops).
             with self.lock:
-                existing_transcript = _full_committed_text_locked()
+                existing_transcript = self._committed_text_locked()
                 existing_generation = self._transcript_generation
                 has_new_audio_since_transcript = (
                     self._audio_activity_id != self._last_transcript_audio_activity_id
@@ -546,12 +577,12 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                         # (often where punctuation gets finalized). We wait for a short quiet window and
                         # return the latest committed text we see.
                         best_generation = self._transcript_generation
-                        best_text = _full_committed_text_locked()
+                        best_text = self._committed_text_locked()
 
                     # If we didn't have an existing transcript, accept the first one we get.
                     if existing_generation == 0 and self._transcript_generation > 0:
                         best_generation = self._transcript_generation
-                        best_text = _full_committed_text_locked()
+                        best_text = self._committed_text_locked()
 
                     if 'best_generation' in locals():
                         settle_deadline = min(deadline, time.time() + 0.6)
@@ -564,7 +595,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                             # Incorporate any newer commit
                             if self._transcript_generation > best_generation:
                                 best_generation = self._transcript_generation
-                                best_text = _full_committed_text_locked()
+                                best_text = self._committed_text_locked()
 
                         result = best_text
                         self._current_transcript = ''
@@ -586,7 +617,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
 
             # Fallback: return latest committed transcript if present, else partial, else empty.
             with self.lock:
-                full_text = _full_committed_text_locked()
+                full_text = self._committed_text_locked()
                 if full_text:
                     result = full_text
                     self._current_transcript = ''

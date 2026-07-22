@@ -124,7 +124,12 @@ class WhisperManager:
                     print(f"[WARN] Failed to clean up previous backend: {e}", flush=True)
 
             self._backend = backend_cls(self)
-            return self._backend.initialize()
+            initialized = self._backend.initialize()
+            if initialized and self._backend.name == 'realtime-ws':
+                self._backend.apply_partial_callback(
+                    self._realtime_partial_callback
+                )
+            return initialized
 
         except Exception as e:
             print(f"ERROR: Failed to initialize Whisper manager: {e}")
