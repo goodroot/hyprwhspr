@@ -326,6 +326,23 @@ import "../styles/global.css";
                         <div class="install-block">
                             <div class="install-label">Arch Linux</div>
                             <div class="code-block multiline">
+                                <button
+                                    class="copy-button"
+                                    type="button"
+                                    aria-label="Copy Arch Linux install commands"
+                                    aria-live="polite"
+                                >
+                                    <svg
+                                        viewBox="0 0 16 16"
+                                        width="13"
+                                        height="13"
+                                        aria-hidden="true"
+                                    >
+                                        <rect x="5" y="1" width="10" height="10" rx="2"></rect>
+                                        <rect x="1" y="5" width="10" height="10" rx="2"></rect>
+                                    </svg>
+                                    <span>copy</span>
+                                </button>
                                 <div>
                                     <span class="code-prompt">#</span>
                                     <span class="code-comment">stable</span>
@@ -357,6 +374,23 @@ import "../styles/global.css";
                                 Debian · Ubuntu · Fedora · openSUSE
                             </div>
                             <div class="code-block multiline">
+                                <button
+                                    class="copy-button"
+                                    type="button"
+                                    aria-label="Copy Debian, Ubuntu, Fedora, and openSUSE install commands"
+                                    aria-live="polite"
+                                >
+                                    <svg
+                                        viewBox="0 0 16 16"
+                                        width="13"
+                                        height="13"
+                                        aria-hidden="true"
+                                    >
+                                        <rect x="5" y="1" width="10" height="10" rx="2"></rect>
+                                        <rect x="1" y="5" width="10" height="10" rx="2"></rect>
+                                    </svg>
+                                    <span>copy</span>
+                                </button>
                                 <div>
                                     <span class="code-prompt">#</span>
                                     <span class="code-comment">clone</span>
@@ -543,6 +577,78 @@ import "../styles/global.css";
                 <a href="/privacy">Privacy</a>
             </div>
         </footer>
+
+        <script>
+            function codeBlockText(block: Element) {
+                return Array.from(block.children)
+                    .filter((row) => row instanceof HTMLDivElement)
+                    .map((row) => {
+                        if (row.classList.contains("code-spacer")) return "";
+
+                        const content = row.querySelector(
+                            ".code-line, .code-comment",
+                        );
+                        if (!(content instanceof HTMLElement)) return null;
+
+                        const text = content.innerText
+                            .trim()
+                            .replace(/\s+/g, " ");
+                        const prompt = row
+                            .querySelector(".code-prompt")
+                            ?.textContent?.trim();
+                        return prompt === "#" ? `# ${text}` : text;
+                    })
+                    .filter((line) => line !== null)
+                    .join("\n");
+            }
+
+            async function copyText(text: string) {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return;
+                }
+
+                const textarea = document.createElement("textarea");
+                textarea.value = text;
+                textarea.style.position = "fixed";
+                textarea.style.opacity = "0";
+                document.body.append(textarea);
+                textarea.select();
+                const copied = document.execCommand("copy");
+                textarea.remove();
+                if (!copied) throw new Error("Copy command failed");
+            }
+
+            document.querySelectorAll<HTMLButtonElement>(".copy-button").forEach(
+                (button) => {
+                    const defaultLabel = button.getAttribute("aria-label") ?? "Copy";
+                    let resetTimer: number | undefined;
+
+                    button.addEventListener("click", async () => {
+                        const block = button.closest(".code-block");
+                        if (!block) return;
+
+                        window.clearTimeout(resetTimer);
+                        try {
+                            await copyText(codeBlockText(block));
+                            button.querySelector("span")!.textContent = "copied";
+                            button.setAttribute("aria-label", "Copied to clipboard");
+                            button.classList.add("is-copied");
+                        } catch {
+                            button.querySelector("span")!.textContent = "failed";
+                            button.setAttribute("aria-label", "Copy failed");
+                            button.classList.add("is-copied");
+                        }
+
+                        resetTimer = window.setTimeout(() => {
+                            button.querySelector("span")!.textContent = "copy";
+                            button.setAttribute("aria-label", defaultLabel);
+                            button.classList.remove("is-copied");
+                        }, 1600);
+                    });
+                },
+            );
+        </script>
     </body>
 </html>
 
@@ -871,6 +977,7 @@ import "../styles/global.css";
     }
 
     .code-block {
+        position: relative;
         display: flex;
         align-items: center;
         gap: 0.75rem;
@@ -884,13 +991,67 @@ import "../styles/global.css";
 
     .code-block.multiline {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
         gap: 0.35rem;
     }
 
     .code-block.multiline > div {
         display: flex;
         gap: 0.75rem;
+    }
+
+    .copy-button {
+        position: absolute;
+        top: 0.55rem;
+        right: 0.65rem;
+        z-index: 1;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.25rem 0.5rem;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--surface);
+        color: var(--fg-dim);
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-2px);
+        transition:
+            opacity 0.15s,
+            transform 0.15s,
+            color 0.15s,
+            border-color 0.15s;
+    }
+
+    .copy-button svg {
+        fill: var(--surface);
+        stroke: currentColor;
+        stroke-width: 1.25;
+    }
+
+    .copy-button:hover {
+        color: var(--cyan);
+        border-color: var(--cyan);
+    }
+
+    .code-block:hover .copy-button,
+    .copy-button:focus-visible,
+    .copy-button.is-copied {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+    }
+
+    @media (hover: none) {
+        .copy-button {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(0);
+        }
     }
 
     .code-spacer {
