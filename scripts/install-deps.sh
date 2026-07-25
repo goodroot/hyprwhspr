@@ -459,6 +459,24 @@ install_deps_zypper() {
     log_success "System dependencies installed"
 }
 
+# A previous `pip install --user` (e.g. from an older run of this script, or one
+# the user ran by hand) can leave a broken/incomplete copy of a package in the
+# user site-packages directory. Python resolves user site-packages before the
+# distro's system site-packages, so that broken copy silently shadows a perfectly
+# good distro package (dnf/pacman/zypper) forever - `import` keeps failing even
+# after the distro package is confirmed installed. Clear the shadow so the distro
+# package (or a fresh pip install) can actually be picked up.
+clear_stale_user_shadow() {
+    local module_name="$1"
+    local user_site
+    user_site="$(python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null)" || return 0
+    [[ -d "$user_site" ]] || return 0
+    if compgen -G "$user_site/${module_name}*" > /dev/null 2>&1; then
+        log_warning "Found a stale user-installed '$module_name' in $user_site that may be shadowing a working system package - removing it"
+        python3 -m pip uninstall -y --user "$module_name" 2>/dev/null || true
+    fi
+}
+
 # Install Python packages that aren't in distro repos
 install_pip_packages() {
     log_info "Checking Python packages..."
@@ -471,6 +489,9 @@ install_pip_packages() {
     local need_soxr=false
 
     # Check if packages are already available (Fedora/openSUSE include them)
+    if ! python3 -c "import sounddevice" 2>/dev/null; then
+        clear_stale_user_shadow sounddevice
+    fi
     if ! python3 -c "import sounddevice" 2>/dev/null; then
         need_sounddevice=true
     fi
