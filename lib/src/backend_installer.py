@@ -1314,6 +1314,15 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
     try:
         pip_bin = setup_python_venv(custom_python=custom_python)
         run_command([str(pip_bin), 'install', '-r', str(plan.manifest)], check=True)
+        if not _verify_dependency_plan(plan) and 'sounddevice' in plan.required_imports:
+            # Some distro sounddevice>=0.5 packages (e.g. Fedora/Nobara) ship without
+            # the compiled _sounddevice extension, but still register as satisfying
+            # pip's "already installed" check via the venv's inherited system
+            # site-packages - so the plain install above silently skipped it.
+            # --ignore-installed forces pip to lay down its own working copy in the
+            # venv without trying to uninstall the (rpm-owned, unremovable) broken one.
+            log_warning('sounddevice import failed after install - retrying with --ignore-installed')
+            run_command([str(pip_bin), 'install', '--ignore-installed', 'sounddevice'], check=False)
         if not _verify_dependency_plan(plan):
             raise RuntimeError(
                 'Dependency installation completed but required imports failed: '

@@ -459,24 +459,6 @@ install_deps_zypper() {
     log_success "System dependencies installed"
 }
 
-# A previous `pip install --user` (e.g. from an older run of this script, or one
-# the user ran by hand) can leave a broken/incomplete copy of a package in the
-# user site-packages directory. Python resolves user site-packages before the
-# distro's system site-packages, so that broken copy silently shadows a perfectly
-# good distro package (dnf/pacman/zypper) forever - `import` keeps failing even
-# after the distro package is confirmed installed. Clear the shadow so the distro
-# package (or a fresh pip install) can actually be picked up.
-clear_stale_user_shadow() {
-    local module_name="$1"
-    local user_site
-    user_site="$(python3 -c 'import site; print(site.getusersitepackages())' 2>/dev/null)" || return 0
-    [[ -d "$user_site" ]] || return 0
-    if compgen -G "$user_site/${module_name}*" > /dev/null 2>&1; then
-        log_warning "Found a stale user-installed '$module_name' in $user_site that may be shadowing a working system package - removing it"
-        python3 -m pip uninstall -y --user "$module_name" 2>/dev/null || true
-    fi
-}
-
 # Install Python packages that aren't in distro repos
 install_pip_packages() {
     log_info "Checking Python packages..."
@@ -489,9 +471,6 @@ install_pip_packages() {
     local need_soxr=false
 
     # Check if packages are already available (Fedora/openSUSE include them)
-    if ! python3 -c "import sounddevice" 2>/dev/null; then
-        clear_stale_user_shadow sounddevice
-    fi
     if ! python3 -c "import sounddevice" 2>/dev/null; then
         need_sounddevice=true
     fi
@@ -520,7 +499,14 @@ install_pip_packages() {
         log_info "Installing Python packages via pip..."
 
         local packages=""
-        $need_sounddevice && packages="$packages sounddevice"
+        # sounddevice is installed separately below with --ignore-installed: some
+        # distro sounddevice>=0.5 packages (e.g. Fedora/Nobara) ship without the
+        # compiled _sounddevice extension. `import sounddevice` fails, but pip still
+        # sees a distro-owned "sounddevice" satisfying the requirement and silently
+        # skips installing anything - and --force-reinstall can't fix it either,
+        # since pip can't uninstall an rpm-owned package (no RECORD file).
+        # --ignore-installed makes pip install its own working copy into user
+        # site-packages regardless, which takes priority over the broken system one.
         $need_pyperclip && packages="$packages pyperclip"
         $need_pulsectl && packages="$packages pulsectl"
         $need_pyudev && packages="$packages pyudev"
@@ -529,8 +515,14 @@ install_pip_packages() {
 
         # Try with --break-system-packages first (needed on newer systems)
         # Fall back to without it for older systems
-        python3 -m pip install --user --break-system-packages $packages 2>/dev/null || \
-        python3 -m pip install --user $packages
+        if [[ -n "$packages" ]]; then
+            python3 -m pip install --user --break-system-packages $packages 2>/dev/null || \
+            python3 -m pip install --user $packages
+        fi
+        if $need_sounddevice; then
+            python3 -m pip install --user --ignore-installed --break-system-packages sounddevice 2>/dev/null || \
+            python3 -m pip install --user --ignore-installed sounddevice
+        fi
 
         log_success "Python packages installed"
     else
