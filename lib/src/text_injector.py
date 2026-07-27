@@ -12,6 +12,8 @@ import time
 import threading
 import json
 import ast
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional, Dict, Any, List, Tuple
 
 try:
@@ -52,6 +54,22 @@ class _LazyPyperclip:
 
 
 pyperclip = _LazyPyperclip()
+
+
+POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE = 77
+
+
+class _PostTranscriptionHookOutcome(Enum):
+    PRESERVE = "preserve"
+    REPLACE = "replace"
+    CONSUME = "consume"
+
+
+@dataclass(frozen=True)
+class _PostTranscriptionHookResult:
+    outcome: _PostTranscriptionHookOutcome
+    text: str
+
 
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
 NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'
@@ -1110,7 +1128,11 @@ except Exception:
 
         # Preprocess; also trim trailing newlines (avoid unwanted Enter)
         processed_text = self._preprocess_text(text).rstrip("\r\n")
-        processed_text = self._run_post_transcription_hook(processed_text) + ' '
+        hook_result = self._run_post_transcription_hook(processed_text)
+        if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
+            print("Post-transcription hook consumed transcription")
+            return True
+        processed_text = hook_result.text + ' '
 
         try:
             inject_mode = None
@@ -1199,18 +1221,20 @@ except Exception:
 
         return processed
 
-    def _run_post_transcription_hook(self, text: str) -> str:
-        """Pipe text through the user's post_transcription_hook shell command.
+    def _run_post_transcription_hook(self, text: str) -> _PostTranscriptionHookResult:
+        """Run the user's post_transcription_hook shell command.
 
-        Stdin = text; non-empty stdout replaces it (empty stdout = observer-only).
-        Env: HYPRWHSPR_MODEL, HYPRWHSPR_BACKEND. 5s timeout. Any error
-        preserves the original text — a broken hook must never eat a dictation.
+        Stdin = text; non-empty stdout replaces it (empty stdout preserves it).
+        Exit code 77 consumes the transcription without pasting it. Other errors
+        preserve the original text — a broken hook must never eat a dictation.
+        Env: HYPRWHSPR_MODEL, HYPRWHSPR_BACKEND. 5s timeout.
         """
+        preserve = _PostTranscriptionHookResult(_PostTranscriptionHookOutcome.PRESERVE, text)
         if not (self.config_manager and text):
-            return text
+            return preserve
         cmd = self.config_manager.get_setting('post_transcription_hook', None)
         if not (isinstance(cmd, str) and cmd.strip()):
-            return text
+            return preserve
 
         env = os.environ.copy()
         env['HYPRWHSPR_MODEL'] = str(self.config_manager.get_setting('model', '') or '')
@@ -1225,13 +1249,17 @@ except Exception:
             )
         except Exception as e:
             print(f"post_transcription_hook failed: {e}", flush=True)
-            return text
+            return preserve
+        if result.returncode == POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE:
+            return _PostTranscriptionHookResult(_PostTranscriptionHookOutcome.CONSUME, "")
         if result.returncode != 0:
             stderr = (result.stderr or '').strip()
             print(f"post_transcription_hook exited {result.returncode}: {stderr}", flush=True)
-            return text
+            return preserve
         out = result.stdout.rstrip("\r\n")
-        return out if out else text
+        if not out:
+            return preserve
+        return _PostTranscriptionHookResult(_PostTranscriptionHookOutcome.REPLACE, out)
 
     def _apply_word_overrides(self, text: str) -> str:
         """Apply user-defined word overrides to the text"""

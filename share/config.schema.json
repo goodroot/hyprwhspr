@@ -165,7 +165,7 @@
     "post_transcription_hook": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Shell command run after preprocessing, before paste. Stdin receives the transcription; non-empty stdout replaces it. Empty stdout = observer-only (original text is kept). Env vars HYPRWHSPR_MODEL and HYPRWHSPR_BACKEND are set. Subject to a 5s timeout; errors pass through the original text."
+      "description": "Shell command run after preprocessing, before paste. Stdin receives the transcription; non-empty stdout replaces it. Empty stdout preserves the original text. Exit status 77 intentionally consumes the transcription and skips paste. Env vars HYPRWHSPR_MODEL and HYPRWHSPR_BACKEND are set. Subject to a 5s timeout; other errors pass through the original text."
     },
     "clipboard_behavior": {
       "type": "boolean",
