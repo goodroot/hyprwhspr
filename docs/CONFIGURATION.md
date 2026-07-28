@@ -988,7 +988,7 @@ GNOME/Mutter lacks layer-shell, so visual feedback uses notifications. Injection
 
 ### Post-transcription hook
 
-Pipe each transcription through a shell command before it's pasted. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and fire-and-forget observers.
+Pipe each transcription through a shell command before it's pasted. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and fire-and-forget observers. A hook that exits with status `77` consumes the transcription successfully and prevents it from being pasted.
 
 ```jsonc
 {
@@ -1017,7 +1017,7 @@ Two environment variables are exported to the hook:
 - `HYPRWHSPR_MODEL` — the active whisper model
 - `HYPRWHSPR_BACKEND` — the active transcription backend
 
-The hook runs under a 5-second timeout. On timeout, non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
+The hook runs under a 5-second timeout. Exit status `77` is reserved for an intentional consume result; stdout is ignored and the transcription is not pasted. On timeout, any other non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
 
 Note: the command runs under `shell=True`, so pipes, redirects, and command chaining work as expected. Treat `post_transcription_hook` as trusted config (same threat model as the rest of `config.json`).
 

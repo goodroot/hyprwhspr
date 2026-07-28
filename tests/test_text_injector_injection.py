@@ -12,7 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 sys.modules.setdefault("pyperclip", types.SimpleNamespace(copy=lambda text: None, paste=lambda: ""))
 
-from text_injector import TextInjector, _LazyPyperclip
+from text_injector import (
+    POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE,
+    TextInjector,
+    _LazyPyperclip,
+    _PostTranscriptionHookOutcome,
+)
 
 
 class ConfigStub:
@@ -21,6 +26,9 @@ class ConfigStub:
 
     def get_setting(self, name, default=None):
         return self.settings.get(name, default)
+
+    def get_word_overrides(self):
+        return self.settings.get("word_overrides", {})
 
 
 class TextInjectorInjectionTests(unittest.TestCase):
@@ -981,6 +989,71 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         self.assertEqual(chord, "ctrl+y")
         self.assertEqual(buf.getvalue(), "")
+
+
+    def test_post_hook_consume_exit_code_returns_consume_result(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"post_transcription_hook": "command"})
+        completed = types.SimpleNamespace(
+            returncode=POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE,
+            stdout="ignored output",
+            stderr="",
+        )
+
+        with mock.patch("text_injector.subprocess.run", return_value=completed):
+            result = injector._run_post_transcription_hook("open terminal")
+
+        self.assertEqual(result.outcome, _PostTranscriptionHookOutcome.CONSUME)
+        self.assertEqual(result.text, "")
+
+    def test_post_hook_empty_output_preserves_original_text(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"post_transcription_hook": "command"})
+        completed = types.SimpleNamespace(returncode=0, stdout="\n", stderr="")
+
+        with mock.patch("text_injector.subprocess.run", return_value=completed):
+            result = injector._run_post_transcription_hook("hello")
+
+        self.assertEqual(result.outcome, _PostTranscriptionHookOutcome.PRESERVE)
+        self.assertEqual(result.text, "hello")
+
+    def test_post_hook_nonempty_output_replaces_text(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"post_transcription_hook": "command"})
+        completed = types.SimpleNamespace(returncode=0, stdout="replacement\n", stderr="")
+
+        with mock.patch("text_injector.subprocess.run", return_value=completed):
+            result = injector._run_post_transcription_hook("hello")
+
+        self.assertEqual(result.outcome, _PostTranscriptionHookOutcome.REPLACE)
+        self.assertEqual(result.text, "replacement")
+
+    def test_post_hook_failure_preserves_original_text(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"post_transcription_hook": "command"})
+        completed = types.SimpleNamespace(returncode=1, stdout="replacement", stderr="failed")
+
+        with mock.patch("text_injector.subprocess.run", return_value=completed):
+            result = injector._run_post_transcription_hook("hello")
+
+        self.assertEqual(result.outcome, _PostTranscriptionHookOutcome.PRESERVE)
+        self.assertEqual(result.text, "hello")
+
+    def test_consume_result_skips_injection(self):
+        injector = self._injector()
+        consumed = mock.Mock(
+            outcome=_PostTranscriptionHookOutcome.CONSUME,
+            text="",
+        )
+
+        with (
+            mock.patch.object(injector, "_preprocess_text", return_value="open terminal"),
+            mock.patch.object(injector, "_run_post_transcription_hook", return_value=consumed),
+            mock.patch.object(injector, "_inject_via_clipboard_and_hotkey") as inject,
+        ):
+            self.assertTrue(injector.inject_text("open terminal"))
+
+        inject.assert_not_called()
 
 
 class LazyPyperclipTests(unittest.TestCase):
