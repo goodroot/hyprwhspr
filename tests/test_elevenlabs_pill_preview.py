@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,6 +156,17 @@ class ElevenLabsRealtimePreviewTests(unittest.TestCase):
 
         self.assertIsNotNone(self.client.callback)
 
+    def test_gpt_live_transcribe_preview_is_enabled_for_waveform(self):
+        self.manager.config.values.update({
+            "websocket_provider": "openai",
+            "websocket_model": "gpt-live-transcribe",
+            "mic_osd_style": "waveform",
+        })
+
+        self._apply()
+
+        self.assertIsNotNone(self.client.callback)
+
     def test_openai_preview_is_also_shown_in_pill(self):
         self.manager.config.values.update({
             "websocket_provider": "openai",
@@ -192,6 +204,24 @@ class ElevenLabsRealtimePreviewTests(unittest.TestCase):
         previews = self._apply()
 
         self.assertEqual(previews, [""])
+
+
+class OpenAIRealtimeModeTests(unittest.TestCase):
+    def test_gpt_live_transcribe_rejects_converse_mode(self):
+        config = FakeConfig({
+            "websocket_provider": "openai",
+            "websocket_model": "gpt-live-transcribe",
+            "realtime_mode": "converse",
+        })
+        backend = RealtimeWsBackend(FakeManager(config))
+
+        with mock.patch(
+            "backends.realtime_ws_backend.get_credential",
+            return_value="sk-test-openai-key",
+        ):
+            self.assertFalse(backend.initialize())
+
+        self.assertIsNone(backend._realtime_client)
 
 
 if __name__ == "__main__":

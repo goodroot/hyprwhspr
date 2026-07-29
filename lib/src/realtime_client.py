@@ -192,11 +192,21 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             # Build transcription config - omit language for auto-detect
             model = self.model or 'gpt-4o-mini-transcribe'
             transcription_config = {'model': model}
+
+            is_live_transcribe = model == 'gpt-live-transcribe'
             if self.language:
-                transcription_config['language'] = self.language
+                if is_live_transcribe:
+                    transcription_config['languages'] = [self.language]
+                else:
+                    transcription_config['language'] = self.language
+
+            # Do not map the existing Whisper task instructions to the new
+            # model's recording-context prompt; that needs a separate config
+            # decision alongside keyword support.
 
             is_realtime_whisper = model == 'gpt-realtime-whisper'
-            if is_realtime_whisper:
+            is_streaming_transcription = is_realtime_whisper or is_live_transcribe
+            if is_streaming_transcription:
                 transcription_config['delay'] = self._validated_transcription_delay()
 
             session_data = {
@@ -208,7 +218,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                             'rate': 24000
                         },
                         'transcription': transcription_config,
-                        'turn_detection': None if is_realtime_whisper else {
+                        'turn_detection': None if is_streaming_transcription else {
                             'type': 'server_vad',
                             'threshold': 0.5,
                             'prefix_padding_ms': 300,
@@ -256,7 +266,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             self._send_session_update()
 
     def set_transcription_delay(self, delay: str):
-        """Set gpt-realtime-whisper transcription delay."""
+        """Set the OpenAI streaming transcription delay."""
         self.transcription_delay = self._normalize_transcription_delay(delay)
         if self.connected:
             self._send_session_update()

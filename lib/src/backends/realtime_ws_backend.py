@@ -28,6 +28,12 @@ except ImportError:
 from .base import TranscriptionBackend
 
 
+OPENAI_STREAMING_TRANSCRIPTION_MODELS = frozenset({
+    'gpt-live-transcribe',
+    'gpt-realtime-whisper',
+})
+
+
 class RealtimeWsBackend(TranscriptionBackend):
     """Streaming WebSocket backend; reconnects by full re-initialization on resume."""
 
@@ -195,8 +201,15 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             # Initialize RealtimeClient with mode
             realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-            if provider_id == 'openai' and model_id == 'gpt-realtime-whisper' and realtime_mode != 'transcribe':
-                print('ERROR: gpt-realtime-whisper is supported only with realtime_mode="transcribe"', flush=True)
+            if (
+                provider_id == 'openai'
+                and model_id in OPENAI_STREAMING_TRANSCRIPTION_MODELS
+                and realtime_mode != 'transcribe'
+            ):
+                print(
+                    f'ERROR: {model_id} is supported only with realtime_mode="transcribe"',
+                    flush=True,
+                )
                 return False
             self._realtime_client = RealtimeClient(mode=realtime_mode)
 
@@ -432,9 +445,9 @@ class RealtimeWsBackend(TranscriptionBackend):
                 and self.config.get_setting('mic_osd_pill_transcript_enabled', False)
             )
 
-        # Waveform: only gpt-realtime-whisper supports this today.
+        # Waveform: OpenAI's streaming transcription models emit live deltas.
         if provider_id == 'openai':
-            return model_id == 'gpt-realtime-whisper'
+            return model_id in OPENAI_STREAMING_TRANSCRIPTION_MODELS
 
         return False
 

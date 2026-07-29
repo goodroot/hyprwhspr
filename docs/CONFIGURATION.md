@@ -620,17 +620,29 @@ Two modes available (set `realtime_mode` in your config):
 - **transcribe** (default) - Pure speech-to-text, more expensive than HTTP
 - **converse** - Voice-to-AI: speak and get AI responses, configurable via `hyprwhspr config edit`
 
+Available transcription models:
+
+- **GPT Live Transcribe** (`gpt-live-transcribe`) - Recommended low-latency streaming transcription model
+- **GPT Realtime Whisper** (`gpt-realtime-whisper`) - Legacy streaming transcription model
+
+Both dedicated transcription models require `realtime_mode: "transcribe"`.
+
 ```jsonc
 {
     "transcription_backend": "realtime-ws",
     "websocket_provider": "openai",
-    "websocket_model": "gpt-realtime-whisper",
+    "websocket_model": "gpt-live-transcribe",
     "realtime_mode": "transcribe",       // "transcribe" or "converse"
     "realtime_transcription_delay": "low", // "minimal", "low", "medium", "high", or "xhigh"
     "realtime_timeout": 30,              // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
 }
 ```
+
+For GPT Live Transcribe, hyprwhspr sends the configured scalar `language` as
+OpenAI's single-entry `languages` hint, streams 24 kHz PCM audio, and explicitly
+commits the turn when recording stops. The delay setting trades partial-result
+latency for transcription accuracy.
 
 #### Google Gemini
 
