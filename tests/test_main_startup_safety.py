@@ -178,11 +178,10 @@ class MainStartupSafetyTests(unittest.TestCase):
         success_log_line = None
         for node in ast.walk(inject_func):
             if (
-                isinstance(node, ast.UnaryOp)
-                and isinstance(node.op, ast.Not)
-                and isinstance(node.operand, ast.Call)
-                and isinstance(node.operand.func, ast.Attribute)
-                and node.operand.func.attr == "inject_text"
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "inject_text"
             ):
                 result_checked_line = node.lineno
             elif (
@@ -201,6 +200,58 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertIsNotNone(result_checked_line)
         self.assertIsNotNone(success_log_line)
         self.assertLess(result_checked_line, success_log_line)
+
+    def test_process_audio_success_reflects_injection_outcome(self):
+        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
+
+        process_func = self._find_function(tree, "_process_audio")
+        self.assertIsNotNone(process_func)
+
+        hardcoded_success_after_injection = False
+        success_compares_outcome = False
+        for node in ast.walk(process_func):
+            if not (isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "success" for t in node.targets
+            )):
+                continue
+            if isinstance(node.value, ast.Constant) and node.value.value is True:
+                hardcoded_success_after_injection = True
+            if (
+                isinstance(node.value, ast.Compare)
+                and isinstance(node.value.left, ast.Name)
+                and node.value.left.id == "outcome"
+            ):
+                success_compares_outcome = True
+
+        self.assertFalse(
+            hardcoded_success_after_injection,
+            "success must be derived from _inject_text's outcome, not hardcoded True",
+        )
+        self.assertTrue(
+            success_compares_outcome,
+            "success should compare the injection outcome (e.g. against InjectionOutcome.FAILED)",
+        )
+
+    def test_continuous_flush_distinguishes_consumed_from_injected(self):
+        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
+
+        flush_func = self._find_function(tree, "_continuous_flush_audio")
+        self.assertIsNotNone(flush_func)
+
+        references_consumed = any(
+            isinstance(node, ast.Attribute) and node.attr == "CONSUMED"
+            for node in ast.walk(flush_func)
+        )
+        references_injected = any(
+            isinstance(node, ast.Attribute) and node.attr == "INJECTED"
+            for node in ast.walk(flush_func)
+        )
+
+        self.assertTrue(
+            references_consumed and references_injected,
+            "continuous-mode flush should branch on InjectionOutcome instead of "
+            "unconditionally logging every transcription as pasted",
+        )
 
 
 if __name__ == "__main__":
