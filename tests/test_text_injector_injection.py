@@ -14,6 +14,7 @@ sys.modules.setdefault("pyperclip", types.SimpleNamespace(copy=lambda text: None
 
 from text_injector import (
     POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE,
+    InjectionOutcome,
     TextInjector,
     _LazyPyperclip,
     _PostTranscriptionHookOutcome,
@@ -1051,9 +1052,29 @@ class TextInjectorInjectionTests(unittest.TestCase):
             mock.patch.object(injector, "_run_post_transcription_hook", return_value=consumed),
             mock.patch.object(injector, "_inject_via_clipboard_and_hotkey") as inject,
         ):
-            self.assertTrue(injector.inject_text("open terminal"))
+            self.assertEqual(injector.inject_text("open terminal"), InjectionOutcome.CONSUMED)
 
         inject.assert_not_called()
+
+    def test_inject_text_returns_injected_on_successful_paste(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({})
+
+        with (
+            mock.patch.object(injector, "_preprocess_text", return_value="hello"),
+            mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=True),
+        ):
+            self.assertEqual(injector.inject_text("hello"), InjectionOutcome.INJECTED)
+
+    def test_inject_text_returns_failed_on_failed_paste(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({})
+
+        with (
+            mock.patch.object(injector, "_preprocess_text", return_value="hello"),
+            mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=False),
+        ):
+            self.assertEqual(injector.inject_text("hello"), InjectionOutcome.FAILED)
 
 
 class LazyPyperclipTests(unittest.TestCase):

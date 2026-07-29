@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
 from longform_controller import LongFormController
+from text_injector import InjectionOutcome
 
 
 class ImmediateTimer:
@@ -68,7 +69,7 @@ class LongformReliabilityTests(unittest.TestCase):
             whisper_manager=SimpleNamespace(
                 transcribe_audio=mock.Mock(return_value="hello")
             ),
-            inject_text=mock.Mock(return_value=True),
+            inject_text=mock.Mock(return_value=InjectionOutcome.INJECTED),
             notify_capture=mock.Mock(),
             set_visualizer_state=mock.Mock(),
             show_mic_osd=mock.Mock(),
@@ -138,7 +139,7 @@ class LongformReliabilityTests(unittest.TestCase):
 
     def test_injection_failure_retains_audio_until_successful_retry(self):
         controller, persisted = self._controller()
-        controller.inject_text.side_effect = [False, True]
+        controller.inject_text.side_effect = [InjectionOutcome.FAILED, InjectionOutcome.INJECTED]
 
         controller.submit()
 

@@ -71,6 +71,12 @@ class _PostTranscriptionHookResult:
     text: str
 
 
+class InjectionOutcome(Enum):
+    INJECTED = "injected"
+    CONSUMED = "consumed"
+    FAILED = "failed"
+
+
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
 NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'
 
@@ -1112,7 +1118,7 @@ except Exception:
 
     # ------------------------ Public API ------------------------
 
-    def inject_text(self, text: str) -> bool:
+    def inject_text(self, text: str) -> InjectionOutcome:
         """
         Inject text into the currently focused application
 
@@ -1120,18 +1126,18 @@ except Exception:
             text: Text to inject
 
         Returns:
-            True if successful, False otherwise
+            InjectionOutcome.INJECTED if pasted, CONSUMED if a post-transcription
+            hook consumed the transcription, FAILED otherwise
         """
         if not text or text.strip() == "":
             print("No text to inject (empty or whitespace)")
-            return True
+            return InjectionOutcome.INJECTED
 
         # Preprocess; also trim trailing newlines (avoid unwanted Enter)
         processed_text = self._preprocess_text(text).rstrip("\r\n")
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
-            print("Post-transcription hook consumed transcription")
-            return True
+            return InjectionOutcome.CONSUMED
         processed_text = hook_result.text + ' '
 
         try:
@@ -1143,11 +1149,12 @@ except Exception:
                 print(f"⚠️  inject_mode='{inject_mode}' is deprecated: direct typing drops characters at speed. "
                       f"Using clipboard+paste instead.")
 
-            return self._inject_via_clipboard_and_hotkey(processed_text)
+            injected = self._inject_via_clipboard_and_hotkey(processed_text)
+            return InjectionOutcome.INJECTED if injected else InjectionOutcome.FAILED
 
         except Exception as e:
             print(f"Primary injection method failed: {e}")
-            return False
+            return InjectionOutcome.FAILED
 
     # ------------------------ Helpers ------------------------
 
