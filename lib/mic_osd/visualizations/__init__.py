@@ -4,11 +4,13 @@ Visualization modules for mic-osd.
 
 from .base import BaseVisualization
 from .pill import PillVisualization
+from .spectrum import SpectrumVisualization
 from .vu_meter import VUMeterVisualization
 from .waveform import WaveformVisualization
 
 VISUALIZATIONS = {
     "pill": PillVisualization,
+    "spectrum": SpectrumVisualization,
     "vu_meter": VUMeterVisualization,
     "waveform": WaveformVisualization,
 }
@@ -16,6 +18,7 @@ VISUALIZATIONS = {
 __all__ = [
     "BaseVisualization",
     "PillVisualization",
+    "SpectrumVisualization",
     "VUMeterVisualization",
     "WaveformVisualization",
     "VISUALIZATIONS",

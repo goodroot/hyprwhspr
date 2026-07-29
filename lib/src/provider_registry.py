@@ -140,6 +140,26 @@ PROVIDERS: Dict[str, Dict] = {
                 'hidden': True
             }
         }
+    },
+    'realtimestt': {
+        'name': 'RealtimeSTT (self-hosted)',
+        'endpoint': 'http://127.0.0.1:8010',
+        'websocket_endpoint': 'ws://127.0.0.1:8010/ws/transcribe',
+        'requires_api_key': False,
+        'api_key_prefix': None,
+        'api_key_description': 'Not required',
+        'models': {
+            # RealtimeSTT chooses both realtime and final engines server-side.
+            # This sentinel keeps setup's provider/model list uniform; runtime
+            # also accepts a null websocket_model for hand-written configs.
+            'server': {
+                'name': 'Server-managed models',
+                'description': 'Use the realtime and final models configured on the server',
+                'body': {},
+                'realtime_model': True,
+                'hidden': True,
+            },
+        },
     }
 }
 

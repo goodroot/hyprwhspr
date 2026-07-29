@@ -3,6 +3,7 @@ Audio capture module for hyprwhspr
 Handles real-time audio capture for speech recognition
 """
 
+import math
 import os
 import re
 import sys
@@ -1321,6 +1322,63 @@ class AudioCapture:
             buckets = np.abs(chunk)
         display_level = min(1.0, raw_level * 10)
         return float(display_level), [float(b) for b in buckets]
+
+    def get_spectrum_frame(
+        self,
+        num_buckets: int = 96,
+        min_frequency: float = 70.0,
+        max_frequency: float = 8000.0,
+    ):
+        """Return log-spaced FFT amplitudes from the active capture stream.
+
+        Frequency analysis belongs beside microphone capture: the OSD process
+        receives only a compact frame and never opens a second CAVA/PipeWire
+        input stream.  The renderer is responsible for visual compression and
+        temporal smoothing.
+        """
+        with self.lock:
+            chunk = self._viz_chunk
+            chunk_time = self._viz_chunk_time
+            raw_level = self.current_level
+            sample_rate = self.sample_rate
+
+        if chunk is None or (time.monotonic() - chunk_time) > 0.5:
+            return None
+        if num_buckets <= 0 or sample_rate <= 0:
+            return None
+
+        samples = np.asarray(chunk, dtype=np.float64).reshape(-1)
+        if samples.size < 8 or not np.all(np.isfinite(samples)):
+            return None
+        samples = samples - np.mean(samples)
+        window = np.hanning(samples.size)
+        window_sum = float(np.sum(window))
+        if window_sum <= 0:
+            return None
+
+        magnitudes = np.abs(np.fft.rfft(samples * window)) * (2.0 / window_sum)
+        frequencies = np.fft.rfftfreq(samples.size, d=1.0 / float(sample_rate))
+        nyquist = float(sample_rate) / 2.0
+        low = max(float(min_frequency), float(frequencies[1]))
+        high = min(float(max_frequency), nyquist)
+        if high <= low:
+            return None
+
+        edges = np.geomspace(low, high, num_buckets + 1)
+        buckets = np.zeros(num_buckets, dtype=np.float64)
+        for index in range(num_buckets):
+            if index == num_buckets - 1:
+                mask = (frequencies >= edges[index]) & (frequencies <= edges[index + 1])
+            else:
+                mask = (frequencies >= edges[index]) & (frequencies < edges[index + 1])
+            if np.any(mask):
+                buckets[index] = float(np.sqrt(np.mean(magnitudes[mask] ** 2)))
+            else:
+                center = math.sqrt(edges[index] * edges[index + 1])
+                buckets[index] = float(np.interp(center, frequencies, magnitudes))
+
+        display_level = min(1.0, raw_level * 10)
+        return float(display_level), [float(value) for value in buckets]
 
     @property
     def rolling_avg_level(self) -> float:

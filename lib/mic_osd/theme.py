@@ -33,6 +33,12 @@ DEFAULT_COLORS = {
     'bar-color-right': (0.0, 1.0, 0.6),     # Green
     'recording-dot': (1.0, 0.2, 0.33),      # Red
     'text-color': (0.8, 0.84, 0.96, 1.0),   # Light gray
+    # Spectrum gradient: center/base -> outer peak. The neon default remains
+    # CSS-overridable through the same theme boundary as every other style.
+    'spectrum-base': (57 / 255, 1.0, 20 / 255),
+    'spectrum-middle': (0.0, 217 / 255, 1.0),
+    'spectrum-high': (157 / 255, 78 / 255, 221 / 255),
+    'spectrum-peak': (1.0, 43 / 255, 214 / 255),
     # State-specific colors for visualizer
     'paused-dot': (1.0, 0.75, 0.0),         # Amber
     'processing-dot': (0.2, 0.9, 0.4),      # Green
@@ -218,6 +224,15 @@ class Theme:
         if len(color) == 3:
             return (*color, 1.0)
         return color
+
+    @property
+    def spectrum_colors(self):
+        return (
+            self.get('spectrum-base'),
+            self.get('spectrum-middle'),
+            self.get('spectrum-high'),
+            self.get('spectrum-peak'),
+        )
 
     @property
     def paused_dot(self):

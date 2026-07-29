@@ -16,6 +16,10 @@
 @define-color bar-color-right {{colors.secondary.default.hex}};
 @define-color recording-dot {{colors.error.default.hex}};
 @define-color text-color {{colors.on_surface.default.hex}};
+@define-color spectrum-base {{colors.secondary.default.hex}};
+@define-color spectrum-middle {{colors.primary.default.hex}};
+@define-color spectrum-high {{colors.tertiary.default.hex}};
+@define-color spectrum-peak {{colors.error.default.hex}};
 @define-color paused-dot {{colors.tertiary.default.hex}};
 @define-color processing-dot {{colors.secondary.default.hex}};
 @define-color error-dot {{colors.error.default.hex}};

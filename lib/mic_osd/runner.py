@@ -37,7 +37,7 @@ class MicOSDRunner:
 
     PREVIEW_WRITE_INTERVAL_SECONDS = 0.05
     LEVEL_FEED_INTERVAL_SECONDS = 1.0 / 30
-    OSD_STYLES = ('waveform', 'vu_meter', 'pill')
+    OSD_STYLES = ('waveform', 'vu_meter', 'pill', 'spectrum')
 
     def __init__(self, level_source=None, style='waveform'):
         """

@@ -125,8 +125,8 @@ class ConfigManager:
             'rest_timeout': 30,                # Request timeout in seconds
             'rest_audio_format': 'wav',        # Audio format for remote transcription
             # WebSocket realtime backend settings
-            'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai', 'google', 'elevenlabs')
-            'websocket_model': None,           # Model identifier (e.g., 'gpt-realtime-whisper')
+            'websocket_provider': None,        # Provider/protocol identifier (e.g., 'openai', 'google', 'elevenlabs', 'realtimestt')
+            'websocket_model': None,           # Model identifier; optional for server-managed RealtimeSTT
             'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
             'realtime_timeout': 30,            # Completion timeout (seconds)
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
@@ -159,7 +159,7 @@ class ConfigManager:
             'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)
             # Visual feedback settings
             'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
-            'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter' or 'pill'
+            'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter', 'pill' or 'spectrum'
             # Live transcript above the pill OSD (ElevenLabs Scribe v2 Realtime)
             'mic_osd_pill_transcript_enabled': False,
             'mic_osd_pill_transcript_word_limit': 4,

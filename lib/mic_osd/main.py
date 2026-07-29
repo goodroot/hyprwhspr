@@ -66,7 +66,7 @@ class MicOSD:
     Mic-osd application with show/hide support.
     """
     
-    def __init__(self, visualization="waveform", width=400, height=68, daemon=False):
+    def __init__(self, visualization="waveform", width=None, height=None, daemon=False):
         self.main_loop = None
         self.app = None
         self.audio_monitor = None
@@ -84,8 +84,16 @@ class MicOSD:
         # Get visualization
         viz_class = VISUALIZATIONS.get(visualization, VISUALIZATIONS["waveform"])
         self.visualization = viz_class()
-        self.width = width
-        self.height = height
+        self.width = (
+            width
+            if width is not None
+            else getattr(self.visualization, 'preferred_width', 400)
+        )
+        self.height = (
+            height
+            if height is not None
+            else getattr(self.visualization, 'preferred_height', 68)
+        )
 
     def run(self):
         """Start the OSD and run until killed."""
@@ -469,21 +477,21 @@ def main():
     )
     parser.add_argument(
         "-v", "--viz",
-        choices=["waveform", "vu_meter", "pill"],
+        choices=["waveform", "vu_meter", "pill", "spectrum"],
         default="waveform",
         help="Visualization type (default: waveform)"
     )
     parser.add_argument(
         "-w", "--width",
         type=int,
-        default=400,
-        help="Window width (default: 400)"
+        default=None,
+        help="Window width (default: style-specific)"
     )
     parser.add_argument(
         "-H", "--height",
         type=int,
-        default=68,
-        help="Window height (default: 68)"
+        default=None,
+        help="Window height (default: style-specific)"
     )
     parser.add_argument(
         "-d", "--daemon",

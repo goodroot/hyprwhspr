@@ -384,30 +384,41 @@ def _prompt_realtime_provider_model_selection():
             provider_id, provider, model_id, model_data = realtime_options[choice_num - 1]
             print(f"\n✓ Selected: {provider['name']}: {model_data['name']}")
 
-            existing_key = get_credential(provider_id)
-            if existing_key:
-                masked = mask_api_key(existing_key)
-                print(f"\nFound existing API key: {masked}")
-                use_existing = Confirm.ask("Use existing API key?", default=True)
-                if use_existing:
-                    api_key = existing_key
+            api_key = None
+            if provider.get('requires_api_key', True):
+                existing_key = get_credential(provider_id)
+                if existing_key:
+                    masked = mask_api_key(existing_key)
+                    print(f"\nFound existing API key: {masked}")
+                    use_existing = Confirm.ask("Use existing API key?", default=True)
+                    if use_existing:
+                        api_key = existing_key
+                    else:
+                        api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
                 else:
                     api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
-            else:
-                api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
 
-            is_valid, error_msg = validate_api_key(provider_id, api_key)
-            if not is_valid:
-                log_warning(f"API key validation: {error_msg}")
-                if not Confirm.ask("Continue anyway?", default=True):
-                    continue
+                is_valid, error_msg = validate_api_key(provider_id, api_key)
+                if not is_valid:
+                    log_warning(f"API key validation: {error_msg}")
+                    if not Confirm.ask("Continue anyway?", default=True):
+                        continue
 
-            if save_credential(provider_id, api_key):
-                log_success("API key saved securely")
-            else:
-                log_warning("Failed to save API key, but continuing with configuration")
+                if save_credential(provider_id, api_key):
+                    log_success("API key saved securely")
+                else:
+                    log_warning("Failed to save API key, but continuing with configuration")
 
-            return (provider_id, model_id, api_key, None)
+            custom_config = None
+            if provider_id == 'realtimestt':
+                default_url = provider['websocket_endpoint']
+                websocket_url = Prompt.ask(
+                    "RealtimeSTT WebSocket URL",
+                    default=default_url,
+                )
+                custom_config = {'websocket_url': websocket_url}
+
+            return (provider_id, model_id, api_key, custom_config)
 
         except KeyboardInterrupt:
             print("\n\nCancelled by user.")
@@ -663,8 +674,8 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
             'websocket_provider': provider_id,
             'websocket_model': model_id
         }
-        # For custom backends, include websocket_url from custom_config
-        if provider_id == 'custom' and custom_config and 'websocket_url' in custom_config:
+        # Protocol adapters and custom backends may supply an explicit URL.
+        if custom_config and 'websocket_url' in custom_config:
             config['websocket_url'] = custom_config['websocket_url']
         return config
     
@@ -1186,8 +1197,10 @@ def setup_command(python_path: Optional[str] = None):
                 if api_key:
                     masked = mask_api_key(api_key)
                     print(f"API Key: {masked}")
-                elif provider_id != 'custom':
+                elif provider_id not in ('custom', 'realtimestt'):
                     print(f"API Key: not found in credential store for provider {provider_id}")
+                else:
+                    print("API Key: not required")
         else:
             print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")
             if remote_config.get('rest_body'):

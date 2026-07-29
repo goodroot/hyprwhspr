@@ -44,3 +44,4 @@ CLAUDE.md
 
 # Local agent worktree / tooling state
 .claude/
+.ai/

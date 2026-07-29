@@ -25,6 +25,11 @@ except ImportError:
     from credential_manager import get_credential
 
 try:
+    from ..provider_registry import get_provider
+except ImportError:
+    from provider_registry import get_provider
+
+try:
     from ..output_control import log_info, log_success, log_warning, log_error
 except ImportError:
     from output_control import log_info, log_success, log_warning, log_error
@@ -148,12 +153,22 @@ def test_command(live: bool = False, mic_only: bool = False):
         if not provider_id:
             log_error("WebSocket provider not configured")
             all_passed = False
-        elif not model_id:
+        elif not model_id and provider_id != 'realtimestt':
             log_error("WebSocket model not configured")
             all_passed = False
         else:
-            api_key = get_credential(provider_id)
-            if api_key:
+            provider = get_provider(provider_id)
+            requires_api_key = bool(
+                provider.get('requires_api_key', True) if provider else True
+            )
+            api_key = get_credential(provider_id) if requires_api_key else None
+            if not requires_api_key:
+                log_success(
+                    f"Provider: {provider_id}, Model: {model_id or 'server-managed'}"
+                )
+                log_success("Credentials not required")
+                backend_ready = True
+            elif api_key:
                 log_success(f"Provider: {provider_id}, Model: {model_id}")
                 log_success("Credentials configured")
                 backend_ready = True

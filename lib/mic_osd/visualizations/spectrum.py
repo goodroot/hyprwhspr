@@ -1,0 +1,203 @@
+"""CAVA-inspired mirrored spectrum visualization for mic-osd."""
+
+from __future__ import annotations
+
+import math
+import time
+
+import cairo
+import numpy as np
+
+from .base import BaseVisualization, StateManager, VisualizerState
+from ..theme import theme
+
+
+class SpectrumVisualization(BaseVisualization):
+    """A compact, mirrored frequency spectrum in a translucent panel.
+
+    The renderer intentionally owns only presentation and animation.  Frequency
+    analysis remains in AudioCapture, beside the stream that already owns the
+    microphone; this avoids opening a second PipeWire/ALSA capture path as CAVA
+    would do.
+    """
+
+    show_preview = True
+    preferred_width = 560
+    preferred_height = 180
+
+    NUM_BARS = 96
+    PANEL_MARGIN = 6.0
+    PANEL_RADIUS = 18.0
+    INNER_PADDING_X = 14.0
+    INNER_PADDING_Y = 12.0
+    BAR_GAP = 1.2
+    MIN_BAR_HEIGHT = 1.5
+    RISE_HZ = 22.0
+    FALL_HZ = 11.0
+
+    def __init__(self):
+        super().__init__()
+        self.num_bars = self.NUM_BARS
+        self.bar_heights = np.zeros(self.num_bars, dtype=np.float64)
+        self.state_manager = StateManager()
+        self._last_update = time.monotonic()
+
+    @staticmethod
+    def _rounded_rect(
+        cr: cairo.Context,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        radius: float,
+    ):
+        radius = min(radius, width / 2.0, height / 2.0)
+        cr.new_sub_path()
+        cr.arc(x + width - radius, y + radius, radius, -math.pi / 2, 0)
+        cr.arc(
+            x + width - radius,
+            y + height - radius,
+            radius,
+            0,
+            math.pi / 2,
+        )
+        cr.arc(x + radius, y + height - radius, radius, math.pi / 2, math.pi)
+        cr.arc(x + radius, y + radius, radius, math.pi, 3 * math.pi / 2)
+        cr.close_path()
+
+    @staticmethod
+    def _resample(values, count: int) -> np.ndarray:
+        if values is None or len(values) == 0:
+            return np.zeros(count, dtype=np.float64)
+        values = np.abs(np.asarray(values, dtype=np.float64).reshape(-1))
+        if len(values) == count:
+            return values
+        source = np.linspace(0.0, 1.0, len(values))
+        target = np.linspace(0.0, 1.0, count)
+        return np.interp(target, source, values)
+
+    @staticmethod
+    def _spectrum_target(values: np.ndarray) -> np.ndarray:
+        """Compress raw FFT amplitudes into a useful visual range."""
+        if not np.any(values):
+            return np.zeros_like(values)
+        decibels = 20.0 * np.log10(np.maximum(values, 1e-7))
+        # Speech commonly lands around -55..-20 dBFS.  The curved response
+        # keeps the noise floor quiet while retaining CAVA-like small detail.
+        normalized = np.clip((decibels + 68.0) / 52.0, 0.0, 1.0)
+        return np.power(normalized, 1.35)
+
+    def set_state(self, state_str: str):
+        self.state_manager.set_state_from_string(state_str or "recording")
+
+    def update(self, level: float, samples: np.ndarray = None):
+        super().update(level, samples)
+        now = time.monotonic()
+        dt = min(0.08, max(0.001, now - self._last_update))
+        self._last_update = now
+        self.state_manager.animation_phase = (
+            self.state_manager.animation_phase + dt * 5.5
+        ) % (2 * math.pi)
+
+        state = self.state_manager.current_state
+        positions = np.linspace(0.0, 1.0, self.num_bars)
+        if state == VisualizerState.RECORDING:
+            target = self._spectrum_target(
+                self._resample(samples, self.num_bars)
+            )
+        elif state == VisualizerState.PROCESSING:
+            phase = self.state_manager.animation_phase
+            primary = 0.5 + 0.5 * np.sin(
+                phase - positions * 4.5 * math.pi
+            )
+            secondary = 0.5 + 0.5 * np.sin(
+                phase * 0.63 + positions * 2.0 * math.pi
+            )
+            target = 0.12 + 0.62 * (0.78 * primary + 0.22 * secondary)
+        elif state == VisualizerState.ERROR:
+            pulse = 0.22 + 0.78 * abs(
+                math.sin(self.state_manager.animation_phase * 2.8)
+            )
+            target = np.full(self.num_bars, pulse)
+        elif state == VisualizerState.SUCCESS:
+            envelope = np.sin(math.pi * positions)
+            target = 0.08 + 0.35 * envelope
+        else:
+            target = np.zeros(self.num_bars)
+
+        rise = 1.0 - math.exp(-dt * self.RISE_HZ)
+        fall = 1.0 - math.exp(-dt * self.FALL_HZ)
+        blend = np.where(target > self.bar_heights, rise, fall)
+        self.bar_heights += (target - self.bar_heights) * blend
+
+    def draw_background(self, cr: cairo.Context, width: int, height: int):
+        margin = self.PANEL_MARGIN
+        panel_w = max(0.0, width - margin * 2.0)
+        panel_h = max(0.0, height - margin * 2.0)
+        if panel_w <= 0 or panel_h <= 0:
+            return
+
+        self._rounded_rect(
+            cr,
+            margin,
+            margin + 2.0,
+            panel_w,
+            panel_h,
+            self.PANEL_RADIUS,
+        )
+        cr.set_source_rgba(0.0, 0.0, 0.0, 0.32)
+        cr.fill()
+
+        self._rounded_rect(
+            cr,
+            margin,
+            margin,
+            panel_w,
+            panel_h,
+            self.PANEL_RADIUS,
+        )
+        background = theme.background
+        cr.set_source_rgba(background[0], background[1], background[2], 0.38)
+        cr.fill_preserve()
+        border = theme.border
+        cr.set_source_rgba(border[0], border[1], border[2], 0.24)
+        cr.set_line_width(2.0)
+        cr.stroke()
+
+    def draw(self, cr: cairo.Context, width: int, height: int):
+        left = self.PANEL_MARGIN + self.INNER_PADDING_X
+        right = width - self.PANEL_MARGIN - self.INNER_PADDING_X
+        top = self.PANEL_MARGIN + self.INNER_PADDING_Y
+        bottom = height - self.PANEL_MARGIN - self.INNER_PADDING_Y
+        usable_width = max(0.0, right - left)
+        usable_height = max(0.0, bottom - top)
+        if usable_width <= 0 or usable_height <= 0:
+            return
+
+        center_y = top + usable_height / 2.0
+        max_bar_height = usable_height * 0.94
+        step = usable_width / self.num_bars
+        bar_width = max(1.0, step - self.BAR_GAP)
+
+        base, middle, high, peak = theme.spectrum_colors
+        gradient = cairo.LinearGradient(0.0, top, 0.0, bottom)
+        gradient.add_color_stop_rgba(0.00, peak[0], peak[1], peak[2], 0.98)
+        gradient.add_color_stop_rgba(0.15, high[0], high[1], high[2], 0.98)
+        gradient.add_color_stop_rgba(0.32, middle[0], middle[1], middle[2], 0.98)
+        gradient.add_color_stop_rgba(0.50, base[0], base[1], base[2], 0.98)
+        gradient.add_color_stop_rgba(0.68, middle[0], middle[1], middle[2], 0.98)
+        gradient.add_color_stop_rgba(0.85, high[0], high[1], high[2], 0.98)
+        gradient.add_color_stop_rgba(1.00, peak[0], peak[1], peak[2], 0.98)
+        cr.set_source(gradient)
+
+        for index, normalized in enumerate(self.bar_heights):
+            bar_height = max(
+                self.MIN_BAR_HEIGHT,
+                float(np.clip(normalized, 0.0, 1.0)) * max_bar_height,
+            )
+            x = left + index * step + (step - bar_width) / 2.0
+            y = center_y - bar_height / 2.0
+            radius = min(bar_width / 2.0, bar_height / 2.0)
+            self._rounded_rect(cr, x, y, bar_width, bar_height, radius)
+
+        cr.fill()

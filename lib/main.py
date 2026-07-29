@@ -257,12 +257,18 @@ class hyprwhsprApp:
                         print("[WARN] No layer-shell overlay and no desktop notifications; recording has no status indicator", flush=True)
 
                 if MicOSDRunner.is_available() and MicOSDRunner.layer_shell_active():
-                    # Feed the OSD meter from the capture stream (issue #205).
-                    # get_viz_frame's default num_buckets must match the
-                    # waveform visualization's num_bars (32).
+                    # Feed the OSD from the stream hyprwhspr already owns
+                    # (issue #205). Spectrum analysis also stays capture-side,
+                    # avoiding a second CAVA/PipeWire microphone connection.
+                    osd_style = self.config.get_setting('mic_osd_style', 'waveform')
+                    level_source = (
+                        self.audio_capture.get_spectrum_frame
+                        if osd_style == 'spectrum'
+                        else self.audio_capture.get_viz_frame
+                    )
                     runner = MicOSDRunner(
-                        level_source=self.audio_capture.get_viz_frame,
-                        style=self.config.get_setting('mic_osd_style', 'waveform'),
+                        level_source=level_source,
+                        style=osd_style,
                     )
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner

@@ -231,6 +231,16 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         """Build the provider-specific JSON message for one audio chunk."""
         raise NotImplementedError
 
+    def _send_audio_payload(self, ws, pcm_bytes: bytes):
+        """Encode and send one PCM chunk.
+
+        Most providers use base64 inside JSON. Protocol adapters with binary
+        framing (for example RealtimeSTT) override this at the transport
+        boundary instead of duplicating the queue/backpressure machinery.
+        """
+        base64_audio = base64.b64encode(pcm_bytes).decode('utf-8')
+        ws.send(json.dumps(self._audio_ws_message(base64_audio)))
+
     def _handle_event(self, event: dict):
         """Handle a single event from the server."""
         raise NotImplementedError
@@ -305,8 +315,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             try:
                 resampled = self._resample_for_output(audio_chunk)
                 pcm_bytes = self._float32_to_pcm16(resampled)
-                base64_audio = base64.b64encode(pcm_bytes).decode('utf-8')
-                ws.send(json.dumps(self._audio_ws_message(base64_audio)))
+                self._send_audio_payload(ws, pcm_bytes)
             except Exception as e:
                 self._log(f'Failed to send queued audio: {e}')
 

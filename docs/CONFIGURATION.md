@@ -654,6 +654,30 @@ Uses native 16kHz audio (no resampling) and server-side VAD.
 }
 ```
 
+#### Self-hosted RealtimeSTT
+
+hyprwhspr has a native adapter for RealtimeSTT's FastAPI browser-server
+protocol. hyprwhspr remains the sole microphone producer: it sends binary PCM
+packets to the session-owned `/ws/transcribe` connection, uses `realtime`
+events for the OSD preview, and returns all `final` segments for normal cursor
+insertion. Cavasik or the browser UI does not need to be running.
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "realtimestt",
+    "websocket_url": "ws://127.0.0.1:8010/ws/transcribe",
+    "realtime_mode": "transcribe",
+    "realtime_timeout": 30,
+    "realtime_buffer_max_seconds": 5
+}
+```
+
+Model and language selection remain server-side, so `websocket_model` and an API
+key are not required. The adapter expects the protocol documented by
+RealtimeSTT's `example_fastapi_server`: `start`/`stop`/`clear` commands, framed
+PCM16 binary packets, and `realtime`/`final` events.
+
 #### ElevenLabs Scribe v2
 
 Ultra-low latency (~150ms) streaming transcription.
@@ -703,17 +727,18 @@ journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status 
 
 #### Overlay styles
 
-In overlay mode, `mic_osd_style` picks one of three visualizations (notification mode ignores it):
+In overlay mode, `mic_osd_style` picks one of four visualizations (notification mode ignores it):
 
 - `waveform` — the full themed waveform with transcript preview (default)
 - `vu_meter` — a VU meter
-- `pill` — a compact monochrome status pill: idle dots, live bars while recording, a travelling wave while processing, a pulse on error, and a checkmark on success. Can optionally show an animated live transcript on realtime backends that stream partial results (OpenAI, ElevenLabs).
+- `pill` — a compact monochrome status pill: idle dots, live bars while recording, a travelling wave while processing, a pulse on error, and a checkmark on success. Can optionally show an animated live transcript on realtime backends that stream partial results.
+- `spectrum` — a larger, mirrored frequency spectrum inspired by CAVA/Cavasik. FFT analysis runs against hyprwhspr's existing capture stream; it does not launch Cavasik or open another microphone connection.
 
 ![Pill OSD states](assets/pill-states.png)
 
 ```jsonc
 {
-  "mic_osd_style": "pill"
+  "mic_osd_style": "spectrum"
 }
 ```
 
@@ -725,7 +750,7 @@ systemctl --user restart hyprwhspr
 
 #### Pill live transcript
 
-Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` plus a `realtime-ws` backend that streams partial transcripts (OpenAI, ElevenLabs — not Gemini yet). Final transcription and paste are unaffected.
+Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` plus a `realtime-ws` backend that streams partial transcripts (OpenAI, ElevenLabs, or self-hosted RealtimeSTT; not Gemini yet). Full-size `waveform` and `spectrum` previews do not require this pill-specific opt-in. Final transcription and paste are unaffected.
 
 ```jsonc
 {
@@ -743,6 +768,10 @@ Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` pl
 | `mic_osd_pill_transcript_enabled` | `false` | Enable the pill transcript. |
 | `mic_osd_pill_transcript_word_limit` | `4` | Recent words shown (1–12). |
 | `mic_osd_pill_transcript_idle_timeout_ms` | `1400` | Hide after this much idle time; `0` disables. |
+
+The spectrum's center-to-peak gradient can be overridden in the normal
+`mic-osd.css` theme file with `@define-color spectrum-base`,
+`spectrum-middle`, `spectrum-high`, and `spectrum-peak`.
 
 #### GNOME/Mutter waveform overlay
 

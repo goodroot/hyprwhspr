@@ -161,6 +161,7 @@ class GetVizFrameTests(unittest.TestCase):
         capture._viz_chunk = None
         capture._viz_chunk_time = 0.0
         capture.current_level = 0.0
+        capture.sample_rate = 16000
         return capture
 
     def test_returns_none_without_chunk(self):
@@ -211,6 +212,34 @@ class GetVizFrameTests(unittest.TestCase):
         _, buckets = frame
         self.assertEqual(len(buckets), 2)
         self.assertAlmostEqual(buckets[0], 0.2, places=5)
+
+    def test_spectrum_frame_uses_log_frequency_buckets(self):
+        capture = self._make_capture()
+        sample_count = 2048
+        times = np.arange(sample_count, dtype=np.float64) / capture.sample_rate
+        capture._viz_chunk = (
+            0.2 * np.sin(2 * np.pi * 440.0 * times)
+        ).astype(np.float32)
+        capture._viz_chunk_time = time.monotonic()
+        capture.current_level = 0.1
+
+        frame = capture.get_spectrum_frame(num_buckets=48)
+
+        self.assertIsNotNone(frame)
+        level, buckets = frame
+        self.assertEqual(level, 1.0)
+        self.assertEqual(len(buckets), 48)
+        peak_index = int(np.argmax(buckets))
+        edges = np.geomspace(70.0, 8000.0, 49)
+        self.assertLessEqual(edges[peak_index], 440.0)
+        self.assertGreaterEqual(edges[peak_index + 1], 440.0)
+
+    def test_spectrum_frame_rejects_stale_audio(self):
+        capture = self._make_capture()
+        capture._viz_chunk = np.ones(1024, dtype=np.float32)
+        capture._viz_chunk_time = time.monotonic() - 2.0
+
+        self.assertIsNone(capture.get_spectrum_frame())
 
 
 class AudioMonitorSampleRateTests(unittest.TestCase):

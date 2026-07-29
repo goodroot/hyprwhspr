@@ -281,12 +281,12 @@
     "websocket_provider": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai', 'google', 'elevenlabs')"
+      "description": "Provider/protocol identifier for WebSocket transcription (e.g., 'openai', 'google', 'elevenlabs', 'realtimestt')"
     },
     "websocket_model": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-whisper', 'gemini-3.1-flash-live-preview')"
+      "description": "Model identifier for WebSocket backend (e.g., 'gpt-realtime-whisper'). Optional when the RealtimeSTT server owns model selection."
     },
     "websocket_url": {
       "type": ["string", "null"],
@@ -438,14 +438,14 @@
     },
     "mic_osd_style": {
       "type": "string",
-      "enum": ["waveform", "vu_meter", "pill"],
+      "enum": ["waveform", "vu_meter", "pill", "spectrum"],
       "default": "waveform",
-      "description": "Visualization style for the mic OSD overlay. 'waveform' shows the full themed waveform with transcript preview, 'vu_meter' a VU meter, and 'pill' a compact monochrome status pill with optional live transcript. Restart the service after changing."
+      "description": "Visualization style for the mic OSD overlay. 'waveform' shows the full themed waveform, 'vu_meter' a VU meter, 'pill' a compact monochrome status pill, and 'spectrum' a mirrored frequency display. Restart the service after changing."
     },
     "mic_osd_pill_transcript_enabled": {
       "type": "boolean",
       "default": false,
-      "description": "Show a live transcript above the pill OSD. Requires a realtime-ws backend that streams partial transcripts (OpenAI, ElevenLabs)."
+      "description": "Show a live transcript above the pill OSD. Requires a realtime-ws backend that streams partial transcripts (OpenAI, ElevenLabs, or RealtimeSTT)."
     },
     "mic_osd_pill_transcript_word_limit": {
       "type": "integer",

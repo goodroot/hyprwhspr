@@ -14,7 +14,9 @@ class MicOSDStyleTests(unittest.TestCase):
         self.assertEqual(MicOSDRunner()._style, "waveform")
 
     def test_configured_style_is_used(self):
-        self.assertEqual(MicOSDRunner(style="pill")._style, "pill")
+        for style in ("pill", "spectrum"):
+            with self.subTest(style=style):
+                self.assertEqual(MicOSDRunner(style=style)._style, style)
 
     def test_unknown_style_falls_back_to_waveform(self):
         for style in ("unknown", "", None, ["pill"], True):
