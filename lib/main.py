@@ -75,7 +75,7 @@ from config_manager import ConfigManager
 from audio_capture import AudioCapture
 from whisper_manager import WhisperManager
 from session_environment import ensure_wayland_display
-from text_injector import TextInjector
+from text_injector import TextInjector, InjectionOutcome
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
 from audio_ducker import AudioDucker
@@ -977,8 +977,14 @@ class hyprwhsprApp:
                     if self._continuous_cancelled:
                         print("[CONTINUOUS] Cancelled — discarding transcription", flush=True)
                         return
-                    self._inject_text(text)
-                    print(f"[CONTINUOUS] Pasted: {text[:80]}{'...' if len(text) > 80 else ''}", flush=True)
+                    outcome = self._inject_text(text)
+                    preview = f"{text[:80]}{'...' if len(text) > 80 else ''}"
+                    if outcome == InjectionOutcome.INJECTED:
+                        print(f"[CONTINUOUS] Pasted: {preview}", flush=True)
+                    elif outcome == InjectionOutcome.CONSUMED:
+                        print(f"[CONTINUOUS] Consumed by hook: {preview}", flush=True)
+                    else:
+                        print(f"[CONTINUOUS] Injection failed: {preview}", flush=True)
                 else:
                     print("[CONTINUOUS] No transcription from flushed audio", flush=True)
             except Exception as e:
@@ -1425,8 +1431,8 @@ class hyprwhsprApp:
                 self.current_transcription = text
 
                 # Inject text
-                self._inject_text(self.current_transcription)
-                success = True
+                outcome = self._inject_text(self.current_transcription)
+                success = outcome != InjectionOutcome.FAILED
             else:
                 print("[WARN] No transcription generated")
                 self.audio_manager.play_error_sound()
@@ -1446,16 +1452,20 @@ class hyprwhsprApp:
         # Capture mode: route text to client instead of injecting into active app
         if self._recording_control_server.has_capture_subscriber():
             self._recording_control_server.notify_capture(text, final=True)
-            return True
+            return InjectionOutcome.INJECTED
 
         try:
-            if not self.text_injector.inject_text(text):
+            outcome = self.text_injector.inject_text(text)
+            if outcome == InjectionOutcome.FAILED:
                 print(f"[ERROR] Text injection failed ({len(text)} chars)", flush=True)
-                return False
+                return InjectionOutcome.FAILED
 
-            print(f"[INJECT] Text injected ({len(text)} chars)", flush=True)
+            if outcome == InjectionOutcome.CONSUMED:
+                print("[INJECT] Post-transcription hook consumed transcription", flush=True)
+            else:
+                print(f"[INJECT] Text injected ({len(text)} chars)", flush=True)
 
-            # Text injection succeeded - system is fully healthy
+            # Text injection succeeded (or was intentionally consumed) - system is fully healthy
             # Cancel any pending background recovery
             if self._background_recovery_needed.is_set():
                 print("[HEALTH] Successful recording detected - canceling background recovery", flush=True)
@@ -1470,10 +1480,10 @@ class hyprwhsprApp:
                 self.audio_capture.abort_recovery()
             except Exception:
                 pass
-            return True
+            return outcome
         except Exception as e:
             print(f"[ERROR] Text injection failed: {e}", flush=True)
-            return False
+            return InjectionOutcome.FAILED
 
     def _is_zero_volume(self, audio_data) -> bool:
         """Check if audio data has zero or near-zero volume"""

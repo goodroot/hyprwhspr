@@ -5,9 +5,11 @@ import threading
 try:
     from .paths import LONGFORM_STATE_FILE
     from .segment_manager import SegmentManager
+    from .text_injector import InjectionOutcome
 except ImportError:
     from paths import LONGFORM_STATE_FILE
     from segment_manager import SegmentManager
+    from text_injector import InjectionOutcome
 
 
 class LongFormController:
@@ -248,7 +250,7 @@ class LongFormController:
                     self._submission_failed(audio_data)
                     return
 
-                if not self.inject_text(text):
+                if self.inject_text(text) == InjectionOutcome.FAILED:
                     self._submission_failed(audio_data)
                     return
 
