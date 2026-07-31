@@ -224,5 +224,53 @@ class OpenAIRealtimeModeTests(unittest.TestCase):
         self.assertIsNone(backend._realtime_client)
 
 
+class OpenAIRealtimePromptTests(unittest.TestCase):
+    def test_active_language_selects_existing_whisper_prompt_fallback(self):
+        cases = (
+            (
+                "language-specific prompt",
+                {
+                    "whisper_prompt": "Global prompt",
+                    "whisper_prompt_de": "German prompt",
+                },
+                "German prompt",
+            ),
+            (
+                "global fallback",
+                {"whisper_prompt": "Global prompt"},
+                "Global prompt",
+            ),
+            (
+                "empty language-specific fallback",
+                {
+                    "whisper_prompt": "Global prompt",
+                    "whisper_prompt_de": "",
+                },
+                "Global prompt",
+            ),
+            ("omitted", {"whisper_prompt": ""}, None),
+        )
+
+        for name, prompt_config, expected_prompt in cases:
+            with self.subTest(name=name):
+                config = FakeConfig({
+                    "websocket_provider": "openai",
+                    "websocket_model": "gpt-live-transcribe",
+                    **prompt_config,
+                })
+                backend = RealtimeWsBackend(FakeManager(config))
+                client = mock.Mock()
+                client.model = "gpt-live-transcribe"
+                backend._realtime_client = client
+
+                backend.update_language("de")
+
+                client.update_transcription_config.assert_called_once_with(
+                    "de",
+                    expected_prompt,
+                )
+                client.update_language.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

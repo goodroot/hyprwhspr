@@ -622,7 +622,7 @@ Two modes available (set `realtime_mode` in your config):
 
 Available transcription models:
 
-- **GPT Live Transcribe** (`gpt-live-transcribe`) - Recommended low-latency streaming transcription model
+- **GPT Live Transcribe** (`gpt-live-transcribe`) - Live streaming with the best OSD previews; higher cost
 - **GPT Realtime Whisper** (`gpt-realtime-whisper`) - Legacy streaming transcription model
 
 Both dedicated transcription models require `realtime_mode: "transcribe"`.
@@ -643,6 +643,8 @@ For GPT Live Transcribe, hyprwhspr sends the configured scalar `language` as
 OpenAI's single-entry `languages` hint, streams 24 kHz PCM audio, and explicitly
 commits the turn when recording stops. The delay setting trades partial-result
 latency for transcription accuracy.
+
+Its `prompt` uses the existing active-language fallback: `whisper_prompt_<language>` → `whisper_prompt` → omitted.
 
 #### Google Gemini
 

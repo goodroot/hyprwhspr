@@ -28,6 +28,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         """
         super().__init__(mode=mode)
         self.transcription_delay = 'low'
+        self.transcription_prompt = None
         self.partial_transcript_callback = None
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
 
@@ -200,9 +201,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                 else:
                     transcription_config['language'] = self.language
 
-            # Do not map the existing Whisper task instructions to the new
-            # model's recording-context prompt; that needs a separate config
-            # decision alongside keyword support.
+            if is_live_transcribe and self.transcription_prompt:
+                transcription_config['prompt'] = self.transcription_prompt
 
             is_realtime_whisper = model == 'gpt-realtime-whisper'
             is_streaming_transcription = is_realtime_whisper or is_live_transcribe
@@ -255,15 +255,24 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         except Exception as e:
             self._log(f'Failed to send session.update: {e}')
 
+    def update_transcription_config(
+        self,
+        language: Optional[str],
+        prompt: Optional[str],
+    ):
+        """Update GPT Live Transcribe language and prompt together."""
+        self.language = language
+        self.transcription_prompt = prompt
+        if self.connected:
+            self._send_session_update()
+
     def update_language(self, language: Optional[str]):
         """Update the language for transcription and resend session.update
 
         Args:
             language: Language code (e.g., 'en', 'it', 'fr') or None for auto-detect
         """
-        self.language = language
-        if self.connected:
-            self._send_session_update()
+        self.update_transcription_config(language, self.transcription_prompt)
 
     def set_transcription_delay(self, delay: str):
         """Set the OpenAI streaming transcription delay."""

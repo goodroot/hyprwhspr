@@ -58,7 +58,10 @@ class RealtimeClientTests(unittest.TestCase):
 
     def test_gpt_live_transcribe_session_payload(self):
         client = self._client_with_ws("gpt-live-transcribe")
-        client.language = "en"
+        client.update_transcription_config(
+            "en",
+            "Linux and software-development dictation.",
+        )
         client.set_transcription_delay("high")
         client.ws.sent.clear()
 
@@ -77,6 +80,7 @@ class RealtimeClientTests(unittest.TestCase):
                                 "model": "gpt-live-transcribe",
                                 "languages": ["en"],
                                 "delay": "high",
+                                "prompt": "Linux and software-development dictation.",
                             },
                             "turn_detection": None,
                         }
@@ -84,6 +88,14 @@ class RealtimeClientTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_gpt_live_transcribe_omits_unset_prompt(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+
+        client._send_session_update()
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertNotIn("prompt", transcription)
 
     def test_gpt_live_transcribe_uses_languages_array(self):
         client = self._client_with_ws("gpt-live-transcribe")

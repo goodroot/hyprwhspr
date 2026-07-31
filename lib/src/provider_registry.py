@@ -19,7 +19,7 @@ PROVIDERS: Dict[str, Dict] = {
         'models': {
             'gpt-live-transcribe': {
                 'name': 'GPT Live Transcribe',
-                'description': 'Recommended low-latency streaming transcription model',
+                'description': 'Live streaming with the best OSD previews; higher cost',
                 'body': {'model': 'gpt-live-transcribe'},
                 'realtime_model': True,
                 'hidden': True
