@@ -325,7 +325,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         }
 
         try:
-            self.ws.send(json.dumps(event))
+            with self._ws_send_lock:
+                self.ws.send(json.dumps(event))
             self._log('Sent session.update')
         except Exception as e:
             self._log(f'Failed to send session.update: {e}')
@@ -409,10 +410,11 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             return
         for item_id in item_ids:
             try:
-                self.ws.send(json.dumps({
-                    'type': 'conversation.item.delete',
-                    'item_id': item_id,
-                }))
+                with self._ws_send_lock:
+                    self.ws.send(json.dumps({
+                        'type': 'conversation.item.delete',
+                        'item_id': item_id,
+                    }))
             except Exception as e:
                 self._log(f'Failed to delete conversation item: {e}')
 
@@ -430,7 +432,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             return
         try:
             event = {'type': 'input_audio_buffer.clear'}
-            self.ws.send(json.dumps(event))
+            with self._ws_send_lock:
+                self.ws.send(json.dumps(event))
             with self.lock:
                 self._reset_stream_state_locked()
                 self._buffer_committed = False  # Reset commit tracking for new recording
@@ -476,7 +479,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         if response_id:
             event['response_id'] = response_id
         try:
-            self.ws.send(json.dumps(event))
+            with self._ws_send_lock:
+                self.ws.send(json.dumps(event))
             self._log('Cancelled timed-out response')
         except Exception as e:
             self._log(f'Failed to cancel timed-out response: {e}')
@@ -485,7 +489,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         # Only send commit if buffer hasn't already been committed by VAD
         if not ctx.get('buffer_was_committed'):
             commit_event = {'type': 'input_audio_buffer.commit'}
-            self.ws.send(json.dumps(commit_event))
+            with self._ws_send_lock:
+                self.ws.send(json.dumps(commit_event))
             self._log('Committed audio buffer')
         else:
             self._log('Skipping commit (VAD already committed)')
@@ -505,7 +510,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                     'metadata': {'hyprwhspr_request_id': request_id},
                 }
             }
-            self.ws.send(json.dumps(response_event))
+            with self._ws_send_lock:
+                self.ws.send(json.dumps(response_event))
             self._log('Requested response, waiting...')
         else:
             self._log('Waiting for transcription...')

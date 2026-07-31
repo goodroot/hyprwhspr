@@ -634,7 +634,6 @@ Both dedicated transcription models require `realtime_mode: "transcribe"`.
     "websocket_model": "gpt-live-transcribe",
     "realtime_mode": "transcribe",       // "transcribe" or "converse"
     "realtime_transcription_delay": "low", // "minimal", "low", "medium", "high", or "xhigh"
-    "realtime_conversation_history": "session", // converse: "session" (context) or "turn" (cost-bounded)
     "realtime_timeout": 30,              // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
 }

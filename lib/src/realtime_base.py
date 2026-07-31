@@ -188,6 +188,9 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         self.instructions = None
         self.mode = mode
 
+        # Serializes ws.send() across threads (websocket-client isn't safe for concurrent sends).
+        self._ws_send_lock = threading.Lock()
+
         # Connection state
         self.connecting = False
         self.receiver_thread = None
@@ -309,7 +312,8 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 resampled = self._resample_for_output(audio_chunk)
                 pcm_bytes = self._float32_to_pcm16(resampled)
                 base64_audio = base64.b64encode(pcm_bytes).decode('utf-8')
-                ws.send(json.dumps(self._audio_ws_message(base64_audio)))
+                with self._ws_send_lock:
+                    ws.send(json.dumps(self._audio_ws_message(base64_audio)))
             except Exception as e:
                 self._log(f'Failed to send queued audio: {e}')
 
