@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 sys.modules.setdefault("websocket", types.SimpleNamespace(WebSocketApp=object))
 
 from backends import RealtimeWsBackend
+import backends.realtime_ws_backend as realtime_ws_backend
 from realtime_client import RealtimeClient
 from whisper_manager import WhisperManager
 import mic_osd.runner as runner_module
@@ -35,6 +36,28 @@ class FakeWebSocket:
 
 
 class RealtimePreviewIntegrationTests(unittest.TestCase):
+    def test_backend_forwards_conversation_history_to_openai_client(self):
+        config = FakeConfig(
+            {
+                "websocket_provider": "custom",
+                "websocket_model": "compatible-realtime",
+                "websocket_url": "wss://example.test/realtime",
+                "realtime_mode": "converse",
+                "realtime_conversation_history": "turn",
+            }
+        )
+        manager = types.SimpleNamespace(
+            config=config, temp_dir="/tmp", ready=False, current_model=None,
+            _last_use_time=0, _realtime_partial_callback=None,
+        )
+        backend = RealtimeWsBackend(manager)
+
+        with mock.patch.object(realtime_ws_backend, "get_credential", return_value="test-key"), \
+             mock.patch.object(RealtimeClient, "connect", return_value=True):
+            self.assertTrue(backend.initialize())
+
+        self.assertEqual(backend._realtime_client.conversation_history, "turn")
+
     def test_openai_realtime_whisper_delta_updates_preview_file(self):
         config = FakeConfig(
             {

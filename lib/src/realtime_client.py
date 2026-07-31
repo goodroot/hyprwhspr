@@ -4,6 +4,7 @@ Provider-agnostic design, use whatever.
 """
 
 import json
+import uuid
 from collections import deque
 from typing import Optional
 
@@ -39,8 +40,14 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self._buffer_committed = False
 
         # Items from previous/cancelled takes; late transcripts for them are dropped
-        self._session_item_ids = set()
+        self._take_item_ids = set()
         self._retired_item_ids = deque(maxlen=64)
+        self._active_response_request_id = None
+        self._active_response_id = None
+        self._response_output_item_ids = set()
+        self._retired_response_request_ids = deque(maxlen=64)
+        self._retired_response_ids = deque(maxlen=64)
+        self._logged_uncorrelated_response_compatibility = False
 
     # ------------------------------------------------------------------
     # Transport hooks
@@ -82,33 +89,57 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
         # Response events (conversational API)
         elif event_type == 'response.created':
+            if not self._is_active_converse_response(event):
+                return
             self._log('Response created')
             with self.lock:
+                self._active_response_id = self._event_response_id(event)
                 self.current_response_text = ""
                 self.response_complete = False
             self.response_event.clear()
 
         elif event_type == 'response.output_text.delta':
+            if not self._is_active_converse_response(event):
+                return
             # Accumulate text deltas
             delta = event.get('delta', '')
             if delta:
                 with self.lock:
                     self.current_response_text += delta
+                    self._track_output_item_locked(event)
 
         elif event_type == 'response.output_text.done':
+            if not self._is_active_converse_response(event):
+                return
             # Final text available
             text = event.get('text', '')
             with self.lock:
+                self._track_output_item_locked(event)
                 if text:
                     self.current_response_text = text
                 text_len = len(self.current_response_text)
             self._log(f'Response text done ({text_len} chars)')
 
+        elif event_type in ('response.output_item.added', 'response.output_item.done'):
+            if not self._is_active_converse_response(event):
+                return
+            with self.lock:
+                self._track_output_item_locked(event)
+
         elif event_type == 'response.done':
+            if not self._is_active_converse_response(event):
+                return
             # Response complete
             with self.lock:
                 self.response_complete = True
             self._clear_completed_turn_history(event)
+            with self.lock:
+                if self._active_response_request_id:
+                    self._retired_response_request_ids.append(self._active_response_request_id)
+                if self._active_response_id:
+                    self._retired_response_ids.append(self._active_response_id)
+                self._active_response_request_id = None
+                self._active_response_id = None
             self.response_event.set()
             self._log('Response done')
 
@@ -175,7 +206,48 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         """Record the conversation item id for the current take (call under lock)."""
         item_id = event.get('item_id')
         if item_id:
-            self._session_item_ids.add(item_id)
+            self._take_item_ids.add(item_id)
+
+    def _track_output_item_locked(self, event: dict):
+        """Record an output item seen while handling the active response."""
+        item = event.get('item') or {}
+        item_id = event.get('item_id') or item.get('id')
+        if item_id:
+            self._response_output_item_ids.add(item_id)
+
+    @staticmethod
+    def _event_response_id(event: dict):
+        response = event.get('response') or {}
+        return response.get('id') or event.get('response_id')
+
+    @staticmethod
+    def _event_response_request_id(event: dict):
+        response = event.get('response') or {}
+        metadata = response.get('metadata') or event.get('metadata') or {}
+        return metadata.get('hyprwhspr_request_id')
+
+    def _is_active_converse_response(self, event: dict) -> bool:
+        """Require request metadata or a response ID linked by response.created."""
+        if self.mode != 'converse':
+            return False
+
+        request_id = self._event_response_request_id(event)
+        response_id = self._event_response_id(event)
+        with self.lock:
+            if request_id and request_id == self._active_response_request_id:
+                if self._active_response_id and response_id and response_id != self._active_response_id:
+                    self._log('Dropping response event for a different response')
+                    return False
+                return True
+            if response_id and response_id == self._active_response_id:
+                return True
+            if request_id in self._retired_response_request_ids or response_id in self._retired_response_ids:
+                self._log('Dropping stale response event for retired request')
+                return False
+            if not self._logged_uncorrelated_response_compatibility:
+                self._logged_uncorrelated_response_compatibility = True
+                self._log('Ignoring uncorrelated response event; endpoint must echo response metadata')
+            return False
 
     def _is_retired_item(self, event: dict) -> bool:
         """Whether a transcription event belongs to a previous/cancelled take."""
@@ -328,8 +400,9 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             if isinstance(item, dict) and item.get('id')
         }
         with self.lock:
-            item_ids = self._session_item_ids | output_ids
-            self._session_item_ids.clear()
+            item_ids = self._take_item_ids | self._response_output_item_ids | output_ids
+            self._take_item_ids.clear()
+            self._response_output_item_ids.clear()
             self._retired_item_ids.extend(item_ids)
 
         if not self.connected or not self.ws:
@@ -351,8 +424,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         """Clear the server-side audio buffer before starting a new recording."""
         with self.lock:
             # Retire the previous take's items so late transcripts are dropped
-            self._retired_item_ids.extend(self._session_item_ids)
-            self._session_item_ids.clear()
+            self._retired_item_ids.extend(self._take_item_ids)
+            self._take_item_ids.clear()
         if not self.connected or not self.ws:
             return
         try:
@@ -377,6 +450,37 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self._buffer_committed = False
         return {'buffer_was_committed': buffer_was_committed}
 
+    def _on_response_timeout(self):
+        """Cancel and retire a timed-out converse response so it cannot satisfy a later take."""
+        if self.mode != 'converse':
+            return
+
+        with self.lock:
+            request_id = self._active_response_request_id
+            response_id = self._active_response_id
+            if request_id:
+                self._retired_response_request_ids.append(request_id)
+            if response_id:
+                self._retired_response_ids.append(response_id)
+            self._active_response_request_id = None
+            self._active_response_id = None
+            self.current_response_text = ""
+            self.response_complete = False
+        self.response_event.clear()
+
+        self._clear_completed_turn_history({})
+
+        if not request_id or not self.connected or not self.ws:
+            return
+        event = {'type': 'response.cancel'}
+        if response_id:
+            event['response_id'] = response_id
+        try:
+            self.ws.send(json.dumps(event))
+            self._log('Cancelled timed-out response')
+        except Exception as e:
+            self._log(f'Failed to cancel timed-out response: {e}')
+
     def _request_transcript(self, ctx: dict):
         # Only send commit if buffer hasn't already been committed by VAD
         if not ctx.get('buffer_was_committed'):
@@ -389,10 +493,16 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         # For converse mode, request a response from the model
         # For transcribe mode, transcription happens automatically via VAD
         if self.mode == 'converse':
+            request_id = uuid.uuid4().hex
+            with self.lock:
+                self._active_response_request_id = request_id
+                self._active_response_id = None
+                self._response_output_item_ids.clear()
             response_event = {
                 'type': 'response.create',
                 'response': {
-                    'output_modalities': ['text']  # Text only, no audio response
+                    'output_modalities': ['text'],  # Text only, no audio response
+                    'metadata': {'hyprwhspr_request_id': request_id},
                 }
             }
             self.ws.send(json.dumps(response_event))

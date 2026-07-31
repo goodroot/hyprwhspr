@@ -645,6 +645,18 @@ the assistant retains prior turns. Set it to `"turn"` to delete each completed
 turn from the provider while reusing the WebSocket; this prevents prior audio
 from being included as conversation context and billed again.
 
+For a stateless voice-to-AI workflow, configure converse mode explicitly:
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "openai",
+    "websocket_model": "gpt-realtime",
+    "realtime_mode": "converse",
+    "realtime_conversation_history": "turn"
+}
+```
+
 For GPT Live Transcribe, hyprwhspr sends the configured scalar `language` as
 OpenAI's single-entry `languages` hint, streams 24 kHz PCM audio, and explicitly
 commits the turn when recording stops. The delay setting trades partial-result

@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "lib" / "src"))
 sys.modules.setdefault("websocket", types.SimpleNamespace(WebSocketApp=object))
 
 from realtime_client import RealtimeClient
+import realtime_base
 
 
 class FakeWebSocket:
@@ -30,6 +31,16 @@ class RealtimeClientTests(unittest.TestCase):
         client.ws = FakeWebSocket()
         client.model = model
         return client
+
+    @staticmethod
+    def _response_created(request_id, response_id):
+        return {
+            "type": "response.created",
+            "response": {
+                "id": response_id,
+                "metadata": {"hyprwhspr_request_id": request_id},
+            },
+        }
 
     def test_gpt_realtime_whisper_session_payload(self):
         client = self._client_with_ws()
@@ -151,13 +162,19 @@ class RealtimeClientTests(unittest.TestCase):
         client.connected = True
         client.ws = FakeWebSocket()
         client._handle_event({"type": "input_audio_buffer.committed", "item_id": "input_1"})
-
+        client._request_transcript({"buffer_was_committed": True})
+        request_id = client.ws.sent[-1]["response"]["metadata"]["hyprwhspr_request_id"]
+        client._handle_event(self._response_created(request_id, "response_1"))
         client._handle_event({
             "type": "response.done",
-            "response": {"output": [{"id": "output_1"}]},
+            "response": {
+                "id": "response_1",
+                "metadata": {"hyprwhspr_request_id": request_id},
+                "output": [{"id": "output_1"}],
+            },
         })
 
-        self.assertEqual(client.ws.sent, [])
+        self.assertEqual([event for event in client.ws.sent if event["type"] == "conversation.item.delete"], [])
         self.assertTrue(client.response_complete)
 
     def test_converse_turn_history_deletes_completed_input_and_outputs(self):
@@ -166,10 +183,20 @@ class RealtimeClientTests(unittest.TestCase):
         client.ws = FakeWebSocket()
         client.set_conversation_history("turn")
         client._handle_event({"type": "input_audio_buffer.committed", "item_id": "input_1"})
+        client._request_transcript({"buffer_was_committed": True})
+        request_id = client.ws.sent[-1]["response"]["metadata"]["hyprwhspr_request_id"]
+        client._handle_event(self._response_created(request_id, "response_1"))
+        client._handle_event({
+            "type": "response.output_item.added",
+            "response_id": "response_1",
+            "item": {"id": "output_lifecycle"},
+        })
 
         client._handle_event({
             "type": "response.done",
             "response": {
+                "id": "response_1",
+                "metadata": {"hyprwhspr_request_id": request_id},
                 "output": [
                     {"id": "output_1"},
                     {"id": "output_2"},
@@ -180,12 +207,107 @@ class RealtimeClientTests(unittest.TestCase):
         })
 
         self.assertEqual(
-            {event["item_id"] for event in client.ws.sent},
-            {"input_1", "output_1", "output_2"},
+            {event["item_id"] for event in client.ws.sent if event["type"] == "conversation.item.delete"},
+            {"input_1", "output_1", "output_2", "output_lifecycle"},
         )
-        self.assertTrue(all(event["type"] == "conversation.item.delete" for event in client.ws.sent))
-        self.assertEqual(client._session_item_ids, set())
+        self.assertTrue(all(
+            event["type"] == "conversation.item.delete"
+            for event in client.ws.sent
+            if event["type"] != "response.create"
+        ))
+        self.assertEqual(client._take_item_ids, set())
         self.assertTrue(client.response_complete)
+
+    def test_converse_request_metadata_correlates_response_text(self):
+        client = RealtimeClient(mode="converse")
+        client.connected = True
+        client.ws = FakeWebSocket()
+
+        client._request_transcript({"buffer_was_committed": True})
+        request = client.ws.sent[-1]["response"]
+        request_id = request["metadata"]["hyprwhspr_request_id"]
+        self.assertEqual(request["output_modalities"], ["text"])
+
+        client._handle_event(self._response_created(request_id, "response_1"))
+        client._handle_event({
+            "type": "response.output_text.delta",
+            "response_id": "response_1",
+            "delta": "hello",
+        })
+        client._handle_event({
+            "type": "response.done",
+            "response": {
+                "id": "response_1",
+                "metadata": {"hyprwhspr_request_id": request_id},
+            },
+        })
+
+        self.assertEqual(client.current_response_text, "hello")
+        self.assertTrue(client.response_event.is_set())
+
+    def test_converse_timeout_cancels_and_stale_events_do_not_complete_next_request(self):
+        client = RealtimeClient(mode="converse")
+        client.connected = True
+        client.ws = FakeWebSocket()
+        client.set_conversation_history("turn")
+        client._handle_event({"type": "input_audio_buffer.committed", "item_id": "input_1"})
+        client._request_transcript({"buffer_was_committed": True})
+        first_request_id = client.ws.sent[-1]["response"]["metadata"]["hyprwhspr_request_id"]
+        client._handle_event(self._response_created(first_request_id, "response_1"))
+        client._handle_event({
+            "type": "response.output_text.delta", "response_id": "response_1",
+            "item_id": "output_1", "delta": "late",
+        })
+
+        client._on_response_timeout()
+
+        self.assertIn(
+            {"type": "response.cancel", "response_id": "response_1"}, client.ws.sent,
+        )
+        self.assertEqual(
+            {event["item_id"] for event in client.ws.sent if event["type"] == "conversation.item.delete"},
+            {"input_1", "output_1"},
+        )
+
+        client._request_transcript({"buffer_was_committed": True})
+        second_request_id = client.ws.sent[-1]["response"]["metadata"]["hyprwhspr_request_id"]
+        client._handle_event(self._response_created(second_request_id, "response_2"))
+        client.response_event.clear()
+        client.current_response_text = ""
+        client._handle_event({
+            "type": "response.output_text.delta", "response_id": "response_1", "delta": "stale",
+        })
+        client._handle_event({
+            "type": "response.done",
+            "response": {"id": "response_1", "metadata": {"hyprwhspr_request_id": first_request_id}},
+        })
+
+        self.assertEqual(client.current_response_text, "")
+        self.assertFalse(client.response_event.is_set())
+        self.assertFalse(client.response_complete)
+
+    def test_converse_wait_timeout_emits_response_cancel(self):
+        client = RealtimeClient(mode="converse")
+        client.connected = True
+        client.ws = FakeWebSocket()
+
+        with mock.patch.object(realtime_base.time, "sleep"):
+            self.assertEqual(client.commit_and_get_text(timeout=0), "")
+
+        self.assertEqual(client.ws.sent[-1]["type"], "response.cancel")
+
+    def test_converse_ignores_uncorrelated_provider_events(self):
+        client = RealtimeClient(mode="converse")
+        client.connected = True
+        client.ws = FakeWebSocket()
+        client._request_transcript({"buffer_was_committed": True})
+
+        client._handle_event({"type": "response.created", "response": {"id": "unknown"}})
+        client._handle_event({"type": "response.output_text.delta", "response_id": "unknown", "delta": "wrong"})
+        client._handle_event({"type": "response.done", "response": {"id": "unknown"}})
+
+        self.assertEqual(client.current_response_text, "")
+        self.assertFalse(client.response_event.is_set())
 
     def test_delta_updates_preview_and_completed_is_final_text(self):
         previews = []

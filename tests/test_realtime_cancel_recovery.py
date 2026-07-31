@@ -109,7 +109,7 @@ class StaleTranscriptGuardTests(unittest.TestCase):
         client.clear_audio_buffer()
 
         self.assertIn('item_a', client._retired_item_ids)
-        self.assertEqual(client._session_item_ids, set())
+        self.assertEqual(client._take_item_ids, set())
 
 
 class CancelRecoveryManagerTests(unittest.TestCase):

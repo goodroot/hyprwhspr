@@ -246,6 +246,9 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         """Signal end of input to the server (commit / turn complete)."""
         raise NotImplementedError
 
+    def _on_response_timeout(self):
+        """Hook for providers which need to cancel an unfinished response."""
+
     # ------------------------------------------------------------------
     # Transport
     # ------------------------------------------------------------------
@@ -724,6 +727,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 return ""
 
             self._log(f'Timeout waiting for response ({timeout}s)')
+            self._on_response_timeout()
             return ""
 
         except Exception as e:
