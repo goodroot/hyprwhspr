@@ -28,6 +28,12 @@ except ImportError:
 from .base import TranscriptionBackend
 
 
+OPENAI_STREAMING_TRANSCRIPTION_MODELS = frozenset({
+    'gpt-live-transcribe',
+    'gpt-realtime-whisper',
+})
+
+
 class RealtimeWsBackend(TranscriptionBackend):
     """Streaming WebSocket backend; reconnects by full re-initialization on resume."""
 
@@ -48,6 +54,31 @@ class RealtimeWsBackend(TranscriptionBackend):
     def _realtime_partial_callback(self):
         # Owned by the manager so it survives backend re-creation on resume
         return self._manager._realtime_partial_callback
+
+    def _resolve_whisper_prompt(self, language: Optional[str]) -> Optional[str]:
+        """Resolve the existing language-specific Whisper prompt fallback."""
+        language_prompt = None
+        if language:
+            language_prompt = self.config.get_setting(f'whisper_prompt_{language}', None)
+        return language_prompt or self.config.get_setting('whisper_prompt', None) or None
+
+    def _update_client_language(
+        self,
+        language: Optional[str],
+        model_id: Optional[str] = None,
+    ) -> None:
+        """Keep GPT Live Transcribe's language hint and prompt in sync."""
+        if not self._realtime_client:
+            return
+
+        active_model = model_id or getattr(self._realtime_client, 'model', None)
+        if active_model == 'gpt-live-transcribe':
+            self._realtime_client.update_transcription_config(
+                language,
+                self._resolve_whisper_prompt(language),
+            )
+        else:
+            self._realtime_client.update_language(language)
 
     def initialize(self) -> bool:
         """Configure the Realtime WebSocket backend and connect the client"""
@@ -195,8 +226,15 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             # Initialize RealtimeClient with mode
             realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
-            if provider_id == 'openai' and model_id == 'gpt-realtime-whisper' and realtime_mode != 'transcribe':
-                print('ERROR: gpt-realtime-whisper is supported only with realtime_mode="transcribe"', flush=True)
+            if (
+                provider_id == 'openai'
+                and model_id in OPENAI_STREAMING_TRANSCRIPTION_MODELS
+                and realtime_mode != 'transcribe'
+            ):
+                print(
+                    f'ERROR: {model_id} is supported only with realtime_mode="transcribe"',
+                    flush=True,
+                )
                 return False
             self._realtime_client = RealtimeClient(mode=realtime_mode)
 
@@ -227,8 +265,8 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             instructions = ' '.join(instructions_parts) if instructions_parts else None
 
-            # Set language in realtime client (for session.update)
-            self._realtime_client.language = language
+            # Set language and any model-specific transcription context.
+            self._update_client_language(language, model_id=model_id)
 
             delay = self.config.get_setting('realtime_transcription_delay', 'low')
             self._realtime_client.set_transcription_delay(delay)
@@ -347,7 +385,7 @@ class RealtimeWsBackend(TranscriptionBackend):
             # doing so would trigger a reconnect and silently drop the audio.
             if language_override is not None:
                 if getattr(self._realtime_client, 'supports_mid_session_language_update', True):
-                    self._realtime_client.update_language(language_override)
+                    self.update_language(language_override)
                 else:
                     print(
                         f'[REALTIME] Provider does not support mid-session language override '
@@ -432,9 +470,9 @@ class RealtimeWsBackend(TranscriptionBackend):
                 and self.config.get_setting('mic_osd_pill_transcript_enabled', False)
             )
 
-        # Waveform: only gpt-realtime-whisper supports this today.
+        # Waveform: OpenAI's streaming transcription models emit live deltas.
         if provider_id == 'openai':
-            return model_id == 'gpt-realtime-whisper'
+            return model_id in OPENAI_STREAMING_TRANSCRIPTION_MODELS
 
         return False
 
@@ -518,8 +556,7 @@ class RealtimeWsBackend(TranscriptionBackend):
 
     def update_language(self, language: Optional[str]) -> None:
         """Apply a language override to a connected client (no-op otherwise)."""
-        if self._realtime_client:
-            self._realtime_client.update_language(language)
+        self._update_client_language(language)
 
     def reinitialize(self) -> bool:
         """Re-establish the connection after suspend/resume (full re-init)."""

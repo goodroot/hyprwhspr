@@ -1,5 +1,6 @@
 import importlib
 import contextlib
+import io
 import sys
 import tempfile
 import types
@@ -65,6 +66,33 @@ class SetupCommandScopeTests(unittest.TestCase):
             clear=True,
         ):
             self.assertTrue(setup._is_gnome_or_mutter_session())
+
+    def test_gpt_live_transcribe_is_visible_in_realtime_setup_catalog(self):
+        class SelectFirstPrompt:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return "1"
+
+        class AcceptDefaultConfirm:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return True
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(setup, "Prompt", SelectFirstPrompt),
+            mock.patch.object(setup, "Confirm", AcceptDefaultConfirm),
+            mock.patch.object(setup, "get_credential", return_value="sk-existing-key"),
+            mock.patch.object(setup, "save_credential", return_value=True),
+            contextlib.redirect_stdout(output),
+        ):
+            selection = setup._prompt_realtime_provider_model_selection()
+
+        self.assertEqual(
+            selection,
+            ("openai", "gpt-live-transcribe", "sk-existing-key", None),
+        )
+        self.assertIn("OpenAI: GPT Live Transcribe", output.getvalue())
 
 
 class ConfigDefaultTests(unittest.TestCase):

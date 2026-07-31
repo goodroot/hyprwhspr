@@ -28,6 +28,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         """
         super().__init__(mode=mode)
         self.transcription_delay = 'low'
+        self.transcription_prompt = None
         self.partial_transcript_callback = None
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
 
@@ -192,11 +193,20 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             # Build transcription config - omit language for auto-detect
             model = self.model or 'gpt-4o-mini-transcribe'
             transcription_config = {'model': model}
+
+            is_live_transcribe = model == 'gpt-live-transcribe'
             if self.language:
-                transcription_config['language'] = self.language
+                if is_live_transcribe:
+                    transcription_config['languages'] = [self.language]
+                else:
+                    transcription_config['language'] = self.language
+
+            if is_live_transcribe and self.transcription_prompt:
+                transcription_config['prompt'] = self.transcription_prompt
 
             is_realtime_whisper = model == 'gpt-realtime-whisper'
-            if is_realtime_whisper:
+            is_streaming_transcription = is_realtime_whisper or is_live_transcribe
+            if is_streaming_transcription:
                 transcription_config['delay'] = self._validated_transcription_delay()
 
             session_data = {
@@ -208,7 +218,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                             'rate': 24000
                         },
                         'transcription': transcription_config,
-                        'turn_detection': None if is_realtime_whisper else {
+                        'turn_detection': None if is_streaming_transcription else {
                             'type': 'server_vad',
                             'threshold': 0.5,
                             'prefix_padding_ms': 300,
@@ -245,18 +255,27 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         except Exception as e:
             self._log(f'Failed to send session.update: {e}')
 
+    def update_transcription_config(
+        self,
+        language: Optional[str],
+        prompt: Optional[str],
+    ):
+        """Update GPT Live Transcribe language and prompt together."""
+        self.language = language
+        self.transcription_prompt = prompt
+        if self.connected:
+            self._send_session_update()
+
     def update_language(self, language: Optional[str]):
         """Update the language for transcription and resend session.update
 
         Args:
             language: Language code (e.g., 'en', 'it', 'fr') or None for auto-detect
         """
-        self.language = language
-        if self.connected:
-            self._send_session_update()
+        self.update_transcription_config(language, self.transcription_prompt)
 
     def set_transcription_delay(self, delay: str):
-        """Set gpt-realtime-whisper transcription delay."""
+        """Set the OpenAI streaming transcription delay."""
         self.transcription_delay = self._normalize_transcription_delay(delay)
         if self.connected:
             self._send_session_update()

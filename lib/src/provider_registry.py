@@ -17,6 +17,13 @@ PROVIDERS: Dict[str, Dict] = {
         'api_key_prefix': 'sk-',
         'api_key_description': 'OpenAI API key (starts with sk-)',
         'models': {
+            'gpt-live-transcribe': {
+                'name': 'GPT Live Transcribe',
+                'description': 'Live streaming with the best OSD previews; higher cost',
+                'body': {'model': 'gpt-live-transcribe'},
+                'realtime_model': True,
+                'hidden': True
+            },
             'gpt-4o-transcribe': {
                 'name': 'GPT-4o Transcribe',
                 'description': 'Latest model with best accuracy',
@@ -34,7 +41,7 @@ PROVIDERS: Dict[str, Dict] = {
             },
             'gpt-realtime-whisper': {
                 'name': 'GPT Realtime Whisper',
-                'description': 'Recommended realtime streaming transcription model',
+                'description': 'Legacy realtime streaming transcription model',
                 'body': {'model': 'gpt-realtime-whisper'},
                 'realtime_model': True,
                 'hidden': True

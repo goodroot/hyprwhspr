@@ -56,6 +56,75 @@ class RealtimeClientTests(unittest.TestCase):
             },
         )
 
+    def test_gpt_live_transcribe_session_payload(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+        client.update_transcription_config(
+            "en",
+            "Linux and software-development dictation.",
+        )
+        client.set_transcription_delay("high")
+        client.ws.sent.clear()
+
+        client._send_session_update()
+
+        self.assertEqual(
+            client.ws.sent[-1],
+            {
+                "type": "session.update",
+                "session": {
+                    "type": "transcription",
+                    "audio": {
+                        "input": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "transcription": {
+                                "model": "gpt-live-transcribe",
+                                "languages": ["en"],
+                                "delay": "high",
+                                "prompt": "Linux and software-development dictation.",
+                            },
+                            "turn_detection": None,
+                        }
+                    },
+                },
+            },
+        )
+
+    def test_gpt_live_transcribe_omits_unset_prompt(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+
+        client._send_session_update()
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertNotIn("prompt", transcription)
+
+    def test_gpt_live_transcribe_uses_languages_array(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+        client.language = "fr"
+
+        client._send_session_update()
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["languages"], ["fr"])
+        self.assertNotIn("language", transcription)
+
+    def test_gpt_live_transcribe_propagates_delay(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+        client.set_transcription_delay("xhigh")
+        client.ws.sent.clear()
+
+        client._send_session_update()
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["delay"], "xhigh")
+
+    def test_gpt_live_transcribe_uses_manual_turn_detection(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+
+        client._send_session_update()
+
+        audio_input = client.ws.sent[-1]["session"]["audio"]["input"]
+        self.assertIsNone(audio_input["turn_detection"])
+
     def test_non_whisper_transcription_session_keeps_vad_and_configured_model(self):
         client = self._client_with_ws("gpt-4o-mini-transcribe")
         client.language = "fr"
