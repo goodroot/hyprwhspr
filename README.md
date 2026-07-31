@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-    <b>Native speech-to-text for Linux</b> - Fast, accurate and private system-wide dictation
+    <b>Native speech-to-text for Linux</b> - Fast, accurate, private and hackable system-wide dictation
 </p>
 
 <p align="center">
