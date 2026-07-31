@@ -9,8 +9,18 @@ from collections import deque
 from typing import Optional
 
 try:
+    from .openai_realtime_models import (
+        OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS,
+        OPENAI_LANGUAGE_CONTEXT_MODELS,
+        OPENAI_MANUAL_COMMIT_MODELS,
+    )
     from .realtime_base import WebSocketRealtimeClientBase
 except ImportError:
+    from openai_realtime_models import (
+        OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS,
+        OPENAI_LANGUAGE_CONTEXT_MODELS,
+        OPENAI_MANUAL_COMMIT_MODELS,
+    )
     from realtime_base import WebSocketRealtimeClientBase
 
 
@@ -269,19 +279,17 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             model = self.model or 'gpt-4o-mini-transcribe'
             transcription_config = {'model': model}
 
-            is_live_transcribe = model == 'gpt-live-transcribe'
+            uses_language_context = model in OPENAI_LANGUAGE_CONTEXT_MODELS
             if self.language:
-                if is_live_transcribe:
+                if uses_language_context:
                     transcription_config['languages'] = [self.language]
                 else:
                     transcription_config['language'] = self.language
 
-            if is_live_transcribe and self.transcription_prompt:
+            if uses_language_context and self.transcription_prompt:
                 transcription_config['prompt'] = self.transcription_prompt
 
-            is_realtime_whisper = model == 'gpt-realtime-whisper'
-            is_streaming_transcription = is_realtime_whisper or is_live_transcribe
-            if is_streaming_transcription:
+            if model in OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS:
                 transcription_config['delay'] = self._validated_transcription_delay()
 
             session_data = {
@@ -293,7 +301,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                             'rate': 24000
                         },
                         'transcription': transcription_config,
-                        'turn_detection': None if is_streaming_transcription else {
+                        'turn_detection': None if model in OPENAI_MANUAL_COMMIT_MODELS else {
                             'type': 'server_vad',
                             'threshold': 0.5,
                             'prefix_padding_ms': 300,
@@ -336,7 +344,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         language: Optional[str],
         prompt: Optional[str],
     ):
-        """Update GPT Live Transcribe language and prompt together."""
+        """Update new-model transcription language and prompt together."""
         self.language = language
         self.transcription_prompt = prompt
         if self.connected:

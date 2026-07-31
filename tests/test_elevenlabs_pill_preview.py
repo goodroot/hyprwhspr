@@ -167,6 +167,18 @@ class ElevenLabsRealtimePreviewTests(unittest.TestCase):
 
         self.assertIsNotNone(self.client.callback)
 
+    def test_gpt_transcribe_preview_is_not_enabled_for_waveform(self):
+        self.manager.config.values.update({
+            "websocket_provider": "openai",
+            "websocket_model": "gpt-transcribe",
+            "mic_osd_style": "waveform",
+        })
+
+        previews = self._apply()
+
+        self.assertIsNone(self.client.callback)
+        self.assertEqual(previews, [""])
+
     def test_openai_preview_is_also_shown_in_pill(self):
         self.manager.config.values.update({
             "websocket_provider": "openai",
@@ -207,21 +219,27 @@ class ElevenLabsRealtimePreviewTests(unittest.TestCase):
 
 
 class OpenAIRealtimeModeTests(unittest.TestCase):
-    def test_gpt_live_transcribe_rejects_converse_mode(self):
-        config = FakeConfig({
-            "websocket_provider": "openai",
-            "websocket_model": "gpt-live-transcribe",
-            "realtime_mode": "converse",
-        })
-        backend = RealtimeWsBackend(FakeManager(config))
-
-        with mock.patch(
-            "backends.realtime_ws_backend.get_credential",
-            return_value="sk-test-openai-key",
+    def test_dedicated_transcription_models_reject_converse_mode(self):
+        for model in (
+            "gpt-transcribe",
+            "gpt-live-transcribe",
+            "gpt-realtime-whisper",
         ):
-            self.assertFalse(backend.initialize())
+            with self.subTest(model=model):
+                config = FakeConfig({
+                    "websocket_provider": "openai",
+                    "websocket_model": model,
+                    "realtime_mode": "converse",
+                })
+                backend = RealtimeWsBackend(FakeManager(config))
 
-        self.assertIsNone(backend._realtime_client)
+                with mock.patch(
+                    "backends.realtime_ws_backend.get_credential",
+                    return_value="sk-test-openai-key",
+                ):
+                    self.assertFalse(backend.initialize())
+
+                self.assertIsNone(backend._realtime_client)
 
 
 class OpenAIRealtimePromptTests(unittest.TestCase):
@@ -251,25 +269,26 @@ class OpenAIRealtimePromptTests(unittest.TestCase):
             ("omitted", {"whisper_prompt": ""}, None),
         )
 
-        for name, prompt_config, expected_prompt in cases:
-            with self.subTest(name=name):
-                config = FakeConfig({
-                    "websocket_provider": "openai",
-                    "websocket_model": "gpt-live-transcribe",
-                    **prompt_config,
-                })
-                backend = RealtimeWsBackend(FakeManager(config))
-                client = mock.Mock()
-                client.model = "gpt-live-transcribe"
-                backend._realtime_client = client
+        for model in ("gpt-transcribe", "gpt-live-transcribe"):
+            for name, prompt_config, expected_prompt in cases:
+                with self.subTest(model=model, name=name):
+                    config = FakeConfig({
+                        "websocket_provider": "openai",
+                        "websocket_model": model,
+                        **prompt_config,
+                    })
+                    backend = RealtimeWsBackend(FakeManager(config))
+                    client = mock.Mock()
+                    client.model = model
+                    backend._realtime_client = client
 
-                backend.update_language("de")
+                    backend.update_language("de")
 
-                client.update_transcription_config.assert_called_once_with(
-                    "de",
-                    expected_prompt,
-                )
-                client.update_language.assert_not_called()
+                    client.update_transcription_config.assert_called_once_with(
+                        "de",
+                        expected_prompt,
+                    )
+                    client.update_language.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -611,29 +611,30 @@ Connect to any backend, local or cloud, via your own custom configuration:
 
 ### Realtime WebSocket
 
-Low-latency streaming transcription.
+Persistent WebSocket transcription for committed turns and continuous streaming.
 
 #### OpenAI Realtime
 
-Two modes available (set `realtime_mode` in your config):
+Two modes are available (set `realtime_mode` in your config):
 
-- **transcribe** (default) - Pure speech-to-text, more expensive than HTTP
+- **transcribe** (default) - Pure speech-to-text; the selected model controls when transcription begins
 - **converse** - Voice-to-AI: speak and get AI responses, configurable via `hyprwhspr config edit`
 
 Available transcription models:
 
-- **GPT Live Transcribe** (`gpt-live-transcribe`) - Live streaming with the best OSD previews; higher cost
-- **GPT Realtime Whisper** (`gpt-realtime-whisper`) - Legacy streaming transcription model
+- **GPT Transcribe** (`gpt-transcribe`) - Recommended for most users; accurate, fast, inexpensive, and starts after
+  commit
+- **GPT Live Transcribe** (`gpt-live-transcribe`) - Continuous live deltas and the best OSD previews; higher cost
+- **GPT Realtime Whisper** (`gpt-realtime-whisper`) - Legacy compatibility
 
-Both dedicated transcription models require `realtime_mode: "transcribe"`.
+All three dedicated transcription models require `realtime_mode: "transcribe"`.
 
 ```jsonc
 {
     "transcription_backend": "realtime-ws",
     "websocket_provider": "openai",
-    "websocket_model": "gpt-live-transcribe",
+    "websocket_model": "gpt-transcribe",
     "realtime_mode": "transcribe",       // "transcribe" or "converse"
-    "realtime_transcription_delay": "low", // "minimal", "low", "medium", "high", or "xhigh"
     "realtime_timeout": 30,              // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
 }
@@ -656,12 +657,14 @@ For a stateless voice-to-AI workflow, configure converse mode explicitly:
 }
 ```
 
-For GPT Live Transcribe, hyprwhspr sends the configured scalar `language` as
-OpenAI's single-entry `languages` hint, streams 24 kHz PCM audio, and explicitly
-commits the turn when recording stops. The delay setting trades partial-result
-latency for transcription accuracy.
+For GPT Transcribe, hyprwhspr sends the configured scalar `language` as OpenAI's single-entry `languages` hint, streams
+24 kHz PCM audio, and explicitly commits the turn when recording stops. Transcription begins after that commit; any
+deltas arrive while OpenAI processes the committed turn, not while you are still speaking.
 
-Its `prompt` uses the existing active-language fallback: `whisper_prompt_<language>` → `whisper_prompt` → omitted.
+GPT Transcribe and GPT Live Transcribe both use the existing active-language prompt fallback:
+`whisper_prompt_<language>` → `whisper_prompt` → omitted. GPT Live Transcribe emits continuous live deltas and supports
+`realtime_transcription_delay`, which trades partial-result latency for final transcription accuracy. GPT Realtime
+Whisper remains available for legacy configurations.
 
 #### Google Gemini
 

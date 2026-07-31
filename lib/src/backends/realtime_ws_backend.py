@@ -19,19 +19,23 @@ np = require_package('numpy')
 try:
     from ..backend_utils import normalize_backend
     from ..credential_manager import get_credential
+    from ..openai_realtime_models import (
+        OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS,
+        OPENAI_LANGUAGE_CONTEXT_MODELS,
+        OPENAI_TRANSCRIPTION_ONLY_MODELS,
+    )
     from ..provider_registry import get_provider
 except ImportError:
     from backend_utils import normalize_backend
     from credential_manager import get_credential
+    from openai_realtime_models import (
+        OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS,
+        OPENAI_LANGUAGE_CONTEXT_MODELS,
+        OPENAI_TRANSCRIPTION_ONLY_MODELS,
+    )
     from provider_registry import get_provider
 
 from .base import TranscriptionBackend
-
-
-OPENAI_STREAMING_TRANSCRIPTION_MODELS = frozenset({
-    'gpt-live-transcribe',
-    'gpt-realtime-whisper',
-})
 
 
 class RealtimeWsBackend(TranscriptionBackend):
@@ -67,12 +71,12 @@ class RealtimeWsBackend(TranscriptionBackend):
         language: Optional[str],
         model_id: Optional[str] = None,
     ) -> None:
-        """Keep GPT Live Transcribe's language hint and prompt in sync."""
+        """Keep new-model transcription language hints and prompts in sync."""
         if not self._realtime_client:
             return
 
         active_model = model_id or getattr(self._realtime_client, 'model', None)
-        if active_model == 'gpt-live-transcribe':
+        if active_model in OPENAI_LANGUAGE_CONTEXT_MODELS:
             self._realtime_client.update_transcription_config(
                 language,
                 self._resolve_whisper_prompt(language),
@@ -228,7 +232,7 @@ class RealtimeWsBackend(TranscriptionBackend):
             realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
             if (
                 provider_id == 'openai'
-                and model_id in OPENAI_STREAMING_TRANSCRIPTION_MODELS
+                and model_id in OPENAI_TRANSCRIPTION_ONLY_MODELS
                 and realtime_mode != 'transcribe'
             ):
                 print(
@@ -473,9 +477,9 @@ class RealtimeWsBackend(TranscriptionBackend):
                 and self.config.get_setting('mic_osd_pill_transcript_enabled', False)
             )
 
-        # Waveform: OpenAI's streaming transcription models emit live deltas.
+        # Waveform: only continuously streaming OpenAI models emit live deltas.
         if provider_id == 'openai':
-            return model_id in OPENAI_STREAMING_TRANSCRIPTION_MODELS
+            return model_id in OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS
 
         return False
 

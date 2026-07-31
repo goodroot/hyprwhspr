@@ -317,7 +317,7 @@ def _prompt_realtime_provider_model_selection():
     print("\n" + "="*60)
     print("Realtime Provider and Model Selection")
     print("="*60)
-    print("\nChoose a realtime streaming provider and model:")
+    print("\nChoose a realtime WebSocket provider and model:")
     print()
 
     realtime_options = []

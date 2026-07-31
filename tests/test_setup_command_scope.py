@@ -67,7 +67,7 @@ class SetupCommandScopeTests(unittest.TestCase):
         ):
             self.assertTrue(setup._is_gnome_or_mutter_session())
 
-    def test_gpt_live_transcribe_is_visible_in_realtime_setup_catalog(self):
+    def test_openai_transcription_models_use_recommended_setup_order(self):
         class SelectFirstPrompt:
             @staticmethod
             def ask(*_args, **_kwargs):
@@ -90,9 +90,14 @@ class SetupCommandScopeTests(unittest.TestCase):
 
         self.assertEqual(
             selection,
-            ("openai", "gpt-live-transcribe", "sk-existing-key", None),
+            ("openai", "gpt-transcribe", "sk-existing-key", None),
         )
-        self.assertIn("OpenAI: GPT Live Transcribe", output.getvalue())
+        catalog = output.getvalue()
+        transcribe_position = catalog.index("OpenAI: GPT Transcribe")
+        live_position = catalog.index("OpenAI: GPT Live Transcribe")
+        whisper_position = catalog.index("OpenAI: GPT Realtime Whisper")
+        self.assertLess(transcribe_position, live_position)
+        self.assertLess(live_position, whisper_position)
 
 
 class ConfigDefaultTests(unittest.TestCase):

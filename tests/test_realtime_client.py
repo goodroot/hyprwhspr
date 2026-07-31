@@ -100,6 +100,51 @@ class RealtimeClientTests(unittest.TestCase):
             },
         )
 
+    def test_gpt_transcribe_session_payload(self):
+        client = self._client_with_ws("gpt-transcribe")
+        client.update_transcription_config(
+            "en",
+            "Linux and software-development dictation.",
+        )
+        client.set_transcription_delay("xhigh")
+        client.ws.sent.clear()
+
+        client._send_session_update()
+
+        self.assertEqual(
+            client.ws.sent[-1],
+            {
+                "type": "session.update",
+                "session": {
+                    "type": "transcription",
+                    "audio": {
+                        "input": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "transcription": {
+                                "model": "gpt-transcribe",
+                                "languages": ["en"],
+                                "prompt": "Linux and software-development dictation.",
+                            },
+                            "turn_detection": None,
+                        }
+                    },
+                },
+            },
+        )
+
+    def test_gpt_transcribe_omits_unconfigured_context(self):
+        client = self._client_with_ws("gpt-transcribe")
+
+        client._send_session_update()
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription, {"model": "gpt-transcribe"})
+        self.assertNotIn("language", transcription)
+        self.assertNotIn("languages", transcription)
+        self.assertNotIn("prompt", transcription)
+        self.assertNotIn("keywords", transcription)
+        self.assertNotIn("delay", transcription)
+
     def test_gpt_live_transcribe_omits_unset_prompt(self):
         client = self._client_with_ws("gpt-live-transcribe")
 
@@ -320,6 +365,37 @@ class RealtimeClientTests(unittest.TestCase):
 
         self.assertEqual(previews, ["hello", "hello wor", ""])
         self.assertEqual(client.commit_and_get_text(timeout=0.1), "hello world")
+
+    def test_gpt_transcribe_commit_accepts_detected_languages_metadata(self):
+        for detected_languages in ([{"code": "fr"}], []):
+            with self.subTest(detected_languages=detected_languages):
+                client = self._client_with_ws("gpt-transcribe")
+
+                client._request_transcript({"buffer_was_committed": False})
+                client._handle_event({
+                    "type": "input_audio_buffer.committed",
+                    "item_id": "item_003",
+                })
+                client._handle_event({
+                    "type": "conversation.item.input_audio_transcription.delta",
+                    "item_id": "item_003",
+                    "delta": "Bonjour, ",
+                })
+                client._handle_event({
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "item_id": "item_003",
+                    "transcript": "Bonjour, pouvez-vous m'entendre ?",
+                    "languages": detected_languages,
+                })
+
+                self.assertEqual(
+                    client.commit_and_get_text(timeout=0.1),
+                    "Bonjour, pouvez-vous m'entendre ?",
+                )
+                self.assertEqual(
+                    client.ws.sent,
+                    [{"type": "input_audio_buffer.commit"}],
+                )
 
     def test_completed_without_transcript_uses_accumulated_delta_text(self):
         previews = []
