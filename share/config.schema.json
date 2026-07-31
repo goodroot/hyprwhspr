@@ -317,6 +317,12 @@
       "default": "low",
       "description": "Latency/accuracy delay setting for OpenAI streaming transcription models"
     },
+    "realtime_conversation_history": {
+      "type": "string",
+      "enum": ["session", "turn"],
+      "default": "session",
+      "description": "OpenAI Realtime converse history: retain the session or delete completed turns"
+    },
     "pywhispercpp_use_vad": {
       "type": "boolean",
       "default": false,

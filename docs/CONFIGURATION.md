@@ -634,10 +634,16 @@ Both dedicated transcription models require `realtime_mode: "transcribe"`.
     "websocket_model": "gpt-live-transcribe",
     "realtime_mode": "transcribe",       // "transcribe" or "converse"
     "realtime_transcription_delay": "low", // "minimal", "low", "medium", "high", or "xhigh"
+    "realtime_conversation_history": "session", // converse: "session" (context) or "turn" (cost-bounded)
     "realtime_timeout": 30,              // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
 }
 ```
+
+For `converse` mode, `realtime_conversation_history` defaults to `"session"` so
+the assistant retains prior turns. Set it to `"turn"` to delete each completed
+turn from the provider while reusing the WebSocket; this prevents prior audio
+from being included as conversation context and billed again.
 
 For GPT Live Transcribe, hyprwhspr sends the configured scalar `language` as
 OpenAI's single-entry `languages` hint, streams 24 kHz PCM audio, and explicitly

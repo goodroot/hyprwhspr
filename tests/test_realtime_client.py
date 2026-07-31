@@ -146,6 +146,47 @@ class RealtimeClientTests(unittest.TestCase):
         transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
         self.assertEqual(transcription["delay"], "low")
 
+    def test_converse_session_history_keeps_completed_items(self):
+        client = RealtimeClient(mode="converse")
+        client.connected = True
+        client.ws = FakeWebSocket()
+        client._handle_event({"type": "input_audio_buffer.committed", "item_id": "input_1"})
+
+        client._handle_event({
+            "type": "response.done",
+            "response": {"output": [{"id": "output_1"}]},
+        })
+
+        self.assertEqual(client.ws.sent, [])
+        self.assertTrue(client.response_complete)
+
+    def test_converse_turn_history_deletes_completed_input_and_outputs(self):
+        client = RealtimeClient(mode="converse")
+        client.connected = True
+        client.ws = FakeWebSocket()
+        client.set_conversation_history("turn")
+        client._handle_event({"type": "input_audio_buffer.committed", "item_id": "input_1"})
+
+        client._handle_event({
+            "type": "response.done",
+            "response": {
+                "output": [
+                    {"id": "output_1"},
+                    {"id": "output_2"},
+                    {"id": "output_1"},
+                    {},
+                ],
+            },
+        })
+
+        self.assertEqual(
+            {event["item_id"] for event in client.ws.sent},
+            {"input_1", "output_1", "output_2"},
+        )
+        self.assertTrue(all(event["type"] == "conversation.item.delete" for event in client.ws.sent))
+        self.assertEqual(client._session_item_ids, set())
+        self.assertTrue(client.response_complete)
+
     def test_delta_updates_preview_and_completed_is_final_text(self):
         previews = []
         client = self._client_with_ws()
@@ -221,6 +262,13 @@ class RealtimeClientTests(unittest.TestCase):
 
         self.assertEqual(delay_schema["default"], "low")
         self.assertEqual(delay_schema["enum"], ["minimal", "low", "medium", "high", "xhigh"])
+
+    def test_schema_declares_realtime_conversation_history_values(self):
+        schema = json.loads((ROOT / "share" / "config.schema.json").read_text())
+        history_schema = schema["properties"]["realtime_conversation_history"]
+
+        self.assertEqual(history_schema["default"], "session")
+        self.assertEqual(history_schema["enum"], ["session", "turn"])
 
     def test_append_audio_uses_configured_input_sample_rate_for_duration(self):
         client = self._client_with_ws()

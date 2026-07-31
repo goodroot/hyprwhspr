@@ -270,6 +270,9 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             delay = self.config.get_setting('realtime_transcription_delay', 'low')
             self._realtime_client.set_transcription_delay(delay)
+            if hasattr(self._realtime_client, 'set_conversation_history'):
+                history = self.config.get_setting('realtime_conversation_history', 'session')
+                self._realtime_client.set_conversation_history(history)
             if self._is_partial_preview_enabled(provider_id, model_id, realtime_mode):
                 self._realtime_client.set_partial_transcript_callback(self._realtime_partial_callback)
             else:

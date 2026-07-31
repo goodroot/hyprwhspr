@@ -18,6 +18,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
     LOG_TAG = '[REALTIME]'
     VALID_TRANSCRIPTION_DELAYS = {'minimal', 'low', 'medium', 'high', 'xhigh'}
+    VALID_CONVERSATION_HISTORY = {'session', 'turn'}
 
     def __init__(self, mode: str = 'transcribe'):
         """
@@ -29,6 +30,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         super().__init__(mode=mode)
         self.transcription_delay = 'low'
         self.transcription_prompt = None
+        self.conversation_history = 'session'
         self.partial_transcript_callback = None
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
 
@@ -106,6 +108,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             # Response complete
             with self.lock:
                 self.response_complete = True
+            self._clear_completed_turn_history(event)
             self.response_event.set()
             self._log('Response done')
 
@@ -280,6 +283,14 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         if self.connected:
             self._send_session_update()
 
+    def set_conversation_history(self, history: str):
+        """Set whether conversational turns retain server-side history."""
+        history = (history or 'session').strip().lower()
+        if history not in self.VALID_CONVERSATION_HISTORY:
+            self._log(f"Invalid realtime_conversation_history '{history}', using 'session'")
+            history = 'session'
+        self.conversation_history = history
+
     def set_partial_transcript_callback(self, callback):
         """Register a callback for live transcription deltas."""
         self.partial_transcript_callback = callback
@@ -303,6 +314,34 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             callback(text)
         except Exception as e:
             self._log(f'Partial transcript callback failed: {e}')
+
+    def _clear_completed_turn_history(self, event: dict):
+        """Delete this completed conversational turn without closing the socket."""
+        if self.mode != 'converse' or self.conversation_history != 'turn':
+            return
+
+        response = event.get('response') or {}
+        output_items = response.get('output') or []
+        output_ids = {
+            item.get('id')
+            for item in output_items
+            if isinstance(item, dict) and item.get('id')
+        }
+        with self.lock:
+            item_ids = self._session_item_ids | output_ids
+            self._session_item_ids.clear()
+            self._retired_item_ids.extend(item_ids)
+
+        if not self.connected or not self.ws:
+            return
+        for item_id in item_ids:
+            try:
+                self.ws.send(json.dumps({
+                    'type': 'conversation.item.delete',
+                    'item_id': item_id,
+                }))
+            except Exception as e:
+                self._log(f'Failed to delete conversation item: {e}')
 
     # ------------------------------------------------------------------
     # Commit hooks
