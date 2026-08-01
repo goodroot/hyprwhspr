@@ -611,23 +611,31 @@ Connect to any backend, local or cloud, via your own custom configuration:
 
 ### Realtime WebSocket
 
-Persistent WebSocket transcription for committed turns and continuous streaming.
+Persistent WebSocket streaming. `realtime_mode` selects `transcribe` (speech-to-text, the default) or `converse`
+(voice-to-AI), but converse support varies by provider:
+
+| Provider | `transcribe` | `converse` |
+| --- | --- | --- |
+| OpenAI | Yes | Yes, on a `gpt-realtime-*` model |
+| Google Gemini | Yes | Yes |
+| ElevenLabs | Yes | No — hyprwhspr ignores `realtime_mode` |
+| Custom | Yes | Yes |
+
+Custom endpoints speak the OpenAI Realtime protocol. Set `websocket_provider: "custom"` and `websocket_url`.
 
 #### OpenAI Realtime
 
-Two modes are available (set `realtime_mode` in your config):
+Dedicated transcription models, all requiring `realtime_mode: "transcribe"`:
 
-- **transcribe** (default) - Pure speech-to-text; the selected model controls when transcription begins
-- **converse** - Voice-to-AI: speak and get AI responses, configurable via `hyprwhspr config edit`
+| Model | Transcript arrives | Notes |
+| --- | --- | --- |
+| `gpt-transcribe` | After you stop recording | Recommended: accurate, fast, inexpensive |
+| `gpt-live-transcribe` | Live, while you speak | Best OSD previews; higher cost |
+| `gpt-realtime-whisper` | Live, while you speak | Legacy |
 
-Available transcription models:
-
-- **GPT Transcribe** (`gpt-transcribe`) - Recommended for most users; accurate, fast, inexpensive, and starts after
-  commit
-- **GPT Live Transcribe** (`gpt-live-transcribe`) - Continuous live deltas and the best OSD previews; higher cost
-- **GPT Realtime Whisper** (`gpt-realtime-whisper`) - Legacy compatibility
-
-All three dedicated transcription models require `realtime_mode: "transcribe"`.
+None of the three support `converse` — that needs a `gpt-realtime-*` model, which `hyprwhspr setup` also offers.
+All three disable server-side VAD and commit the turn when recording stops. `realtime_transcription_delay`
+(partial-result latency vs. accuracy) and the continuous waveform OSD preview apply only to the two live models.
 
 ```jsonc
 {
@@ -640,31 +648,29 @@ All three dedicated transcription models require `realtime_mode: "transcribe"`.
 }
 ```
 
-For `converse` mode, `realtime_conversation_history` defaults to `"session"` so
-the assistant retains prior turns. Set it to `"turn"` to delete each completed
-turn from the provider while reusing the WebSocket; this prevents prior audio
-from being included as conversation context and billed again.
+In `converse` mode, `realtime_conversation_history` controls what the provider retains between turns:
 
-For a stateless voice-to-AI workflow, configure converse mode explicitly:
+- `"turn"` (default) - deletes each completed turn while reusing the WebSocket, so every turn starts with empty
+  context.
+- `"session"` - keeps prior turns for conversational context. The provider re-sends and bills that audio every
+  turn, so cost climbs as the session grows. Choose this only if you want a multi-turn assistant.
+
+For a stateless voice-to-AI workflow:
 
 ```jsonc
 {
     "transcription_backend": "realtime-ws",
     "websocket_provider": "openai",
-    "websocket_model": "gpt-realtime",
+    "websocket_model": "gpt-realtime-2.1",
     "realtime_mode": "converse",
     "realtime_conversation_history": "turn"
 }
 ```
 
-For GPT Transcribe, hyprwhspr sends the configured scalar `language` as OpenAI's single-entry `languages` hint, streams
-24 kHz PCM audio, and explicitly commits the turn when recording stops. Transcription begins after that commit; any
-deltas arrive while OpenAI processes the committed turn, not while you are still speaking.
-
-GPT Transcribe and GPT Live Transcribe both use the existing active-language prompt fallback:
-`whisper_prompt_<language>` → `whisper_prompt` → omitted. GPT Live Transcribe emits continuous live deltas and supports
-`realtime_transcription_delay`, which trades partial-result latency for final transcription accuracy. GPT Realtime
-Whisper remains available for legacy configurations.
+All OpenAI Realtime models stream 24 kHz PCM audio. For GPT Transcribe and GPT Live Transcribe, hyprwhspr sends the
+scalar `language` setting as OpenAI's single-entry `languages` hint and resolves the prompt through
+`whisper_prompt_<language>` → `whisper_prompt` → omitted. For GPT Realtime Whisper it sends a plain scalar
+`language` and no prompt.
 
 #### Google Gemini
 
@@ -681,7 +687,7 @@ Uses native 16kHz audio (no resampling) and server-side VAD.
 {
     "transcription_backend": "realtime-ws",
     "websocket_provider": "google",
-    "websocket_model": "gemini-3.1-flash-live-preview",
+    "websocket_model": "gemini-3.1-flash-live-preview",  // or gemini-2.5-flash-native-audio-preview-12-2025
     "realtime_mode": "transcribe",           // "transcribe" or "converse"
     "realtime_timeout": 30,                  // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5         // Advanced: max unsent audio backlog (seconds) before dropping old chunks
