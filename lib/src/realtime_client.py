@@ -41,7 +41,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         super().__init__(mode=mode)
         self.transcription_delay = 'low'
         self.transcription_prompt = None
-        self.conversation_history = 'session'
+        self.conversation_history = 'turn'
         self.partial_transcript_callback = None
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
 
@@ -366,10 +366,10 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
     def set_conversation_history(self, history: str):
         """Set whether conversational turns retain server-side history."""
-        history = (history or 'session').strip().lower()
+        history = (history or 'turn').strip().lower()
         if history not in self.VALID_CONVERSATION_HISTORY:
-            self._log(f"Invalid realtime_conversation_history '{history}', using 'session'")
-            history = 'session'
+            self._log(f"Invalid realtime_conversation_history '{history}', using 'turn'")
+            history = 'turn'
         self.conversation_history = history
 
     def set_partial_transcript_callback(self, callback):

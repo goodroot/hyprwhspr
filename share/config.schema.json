@@ -320,7 +320,7 @@
     "realtime_conversation_history": {
       "type": "string",
       "enum": ["session", "turn"],
-      "default": "session",
+      "default": "turn",
       "description": "OpenAI Realtime converse history: retain the session or delete completed turns"
     },
     "pywhispercpp_use_vad": {

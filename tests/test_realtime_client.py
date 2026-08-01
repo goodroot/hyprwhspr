@@ -206,6 +206,7 @@ class RealtimeClientTests(unittest.TestCase):
         client = RealtimeClient(mode="converse")
         client.connected = True
         client.ws = FakeWebSocket()
+        client.set_conversation_history("session")
         client._handle_event({"type": "input_audio_buffer.committed", "item_id": "input_1"})
         client._request_transcript({"buffer_was_committed": True})
         request_id = client.ws.sent[-1]["response"]["metadata"]["hyprwhspr_request_id"]
@@ -221,6 +222,11 @@ class RealtimeClientTests(unittest.TestCase):
 
         self.assertEqual([event for event in client.ws.sent if event["type"] == "conversation.item.delete"], [])
         self.assertTrue(client.response_complete)
+
+    def test_converse_defaults_to_deleting_completed_turn_history(self):
+        client = RealtimeClient(mode="converse")
+
+        self.assertEqual(client.conversation_history, "turn")
 
     def test_converse_turn_history_deletes_completed_input_and_outputs(self):
         client = RealtimeClient(mode="converse")
@@ -465,7 +471,7 @@ class RealtimeClientTests(unittest.TestCase):
         schema = json.loads((ROOT / "share" / "config.schema.json").read_text())
         history_schema = schema["properties"]["realtime_conversation_history"]
 
-        self.assertEqual(history_schema["default"], "session")
+        self.assertEqual(history_schema["default"], "turn")
         self.assertEqual(history_schema["enum"], ["session", "turn"])
 
     def test_append_audio_uses_configured_input_sample_rate_for_duration(self):
