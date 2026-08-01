@@ -6,9 +6,14 @@ Defines known providers, their models, and configuration templates
 from typing import Dict, List, Optional, Tuple
 
 
-# Provider registry with known cloud transcription providers
-# Model entries marked hidden stay out of the REST setup model list while
-# remaining selectable for provider-specific realtime setup flows.
+DEFAULT_MODEL_BACKENDS: Tuple[str, ...] = ('rest-api',)
+
+
+# Provider registry with known cloud transcription providers.
+#
+# 'backends' lists which setup pickers offer a model; it defaults to
+# DEFAULT_MODEL_BACKENDS when omitted. 'realtime' carries the model's Realtime
+# WebSocket capabilities, which drive session payloads and mode guards.
 PROVIDERS: Dict[str, Dict] = {
     'openai': {
         'name': 'OpenAI',
@@ -17,12 +22,53 @@ PROVIDERS: Dict[str, Dict] = {
         'api_key_prefix': 'sk-',
         'api_key_description': 'OpenAI API key (starts with sk-)',
         'models': {
+            'gpt-transcribe': {
+                'name': 'GPT Transcribe',
+                'description': 'Recommended: accurate, fast, and inexpensive',
+                'backends': ('realtime-ws',),
+                'realtime': {
+                    'default_mode': 'transcribe',
+                    'transcription_only': True,
+                    'manual_commit': True,
+                    'language_context': True,
+                    'continuous': False,
+                },
+            },
             'gpt-live-transcribe': {
                 'name': 'GPT Live Transcribe',
                 'description': 'Live streaming with the best OSD previews; higher cost',
-                'body': {'model': 'gpt-live-transcribe'},
-                'realtime_model': True,
-                'hidden': True
+                'backends': ('realtime-ws',),
+                'realtime': {
+                    'default_mode': 'transcribe',
+                    'transcription_only': True,
+                    'manual_commit': True,
+                    'language_context': True,
+                    'continuous': True,
+                },
+            },
+            'gpt-realtime-whisper': {
+                'name': 'GPT Realtime Whisper',
+                'description': 'Legacy realtime streaming transcription model',
+                'backends': ('realtime-ws',),
+                'realtime': {
+                    'default_mode': 'transcribe',
+                    'transcription_only': True,
+                    'manual_commit': True,
+                    'language_context': False,
+                    'continuous': True,
+                },
+            },
+            'gpt-realtime-2.1': {
+                'name': 'GPT-Realtime-2.1',
+                'description': 'Voice-to-AI: speak and get spoken replies',
+                'backends': ('realtime-ws',),
+                'realtime': {'default_mode': 'converse'},
+            },
+            'gpt-realtime-2.1-mini': {
+                'name': 'GPT-Realtime-2.1 mini',
+                'description': 'Voice-to-AI, cost-efficient',
+                'backends': ('realtime-ws',),
+                'realtime': {'default_mode': 'converse'},
             },
             'gpt-4o-transcribe': {
                 'name': 'GPT-4o Transcribe',
@@ -38,13 +84,6 @@ PROVIDERS: Dict[str, Dict] = {
                 'name': 'GPT-4o Mini Transcribe (2025-12-15)',
                 'description': 'Updated version of the faster, lighter transcription model',
                 'body': {'model': 'gpt-4o-mini-transcribe-2025-12-15'}
-            },
-            'gpt-realtime-whisper': {
-                'name': 'GPT Realtime Whisper',
-                'description': 'Legacy realtime streaming transcription model',
-                'body': {'model': 'gpt-realtime-whisper'},
-                'realtime_model': True,
-                'hidden': True
             },
             'gpt-audio-mini-2025-12-15': {
                 'name': 'GPT Audio Mini (2025-12-15)',
@@ -112,16 +151,14 @@ PROVIDERS: Dict[str, Dict] = {
             'gemini-3.1-flash-live-preview': {
                 'name': 'Gemini 3.1 Flash Live (Preview)',
                 'description': 'Fast, low-latency realtime streaming',
-                'body': {'model': 'gemini-3.1-flash-live-preview'},
-                'realtime_model': True,
-                'hidden': True
+                'backends': ('realtime-ws',),
+                'realtime': {'default_mode': 'transcribe'},
             },
-            'gemini-2.5-flash-native-audio-latest': {
-                'name': 'Gemini 2.5 Flash Native Audio',
-                'description': 'Native audio understanding, stable release',
-                'body': {'model': 'gemini-2.5-flash-native-audio-latest'},
-                'realtime_model': True,
-                'hidden': True
+            'gemini-2.5-flash-native-audio-preview-12-2025': {
+                'name': 'Gemini 2.5 Flash Native Audio (Preview)',
+                'description': 'Native audio, sub-second conversational streaming',
+                'backends': ('realtime-ws',),
+                'realtime': {'default_mode': 'transcribe'},
             },
         }
     },
@@ -137,14 +174,13 @@ PROVIDERS: Dict[str, Dict] = {
                 'name': 'Scribe v2',
                 'description': 'Batch transcription, 90+ languages',
                 'body': {'model_id': 'scribe_v2'},
-                'hidden': True
+                'backends': (),  # reference entry; no setup picker offers it
             },
             'scribe_v2_realtime': {
                 'name': 'Scribe v2 Realtime',
                 'description': 'Ultra-low latency (~150ms), 90+ languages',
-                'body': {'model_id': 'scribe_v2_realtime'},
-                'realtime_model': True,
-                'hidden': True
+                'backends': ('realtime-ws',),
+                'realtime': {'default_mode': 'transcribe'},
             }
         }
     }
@@ -176,6 +212,34 @@ def get_provider_models(provider_id: str) -> Optional[Dict[str, Dict]]:
     if provider:
         return provider.get('models')
     return None
+
+
+def model_backends(model_data: Dict) -> Tuple[str, ...]:
+    """Backends whose setup picker offers this model."""
+    return tuple(model_data.get('backends', DEFAULT_MODEL_BACKENDS))
+
+
+def get_models_for_backend(provider_id: str, backend: str) -> Dict[str, Dict]:
+    """Models a provider offers for the given transcription backend."""
+    models = get_provider_models(provider_id) or {}
+    return {
+        model_id: model_data
+        for model_id, model_data in models.items()
+        if backend in model_backends(model_data)
+    }
+
+
+def get_realtime_capabilities(provider_id: str, model_id: str) -> Dict:
+    """Realtime WebSocket capabilities for a model, empty when unknown."""
+    models = get_provider_models(provider_id) or {}
+    return (models.get(model_id) or {}).get('realtime') or {}
+
+
+def get_realtime_mode(provider_id: str, model_id: str) -> str:
+    """Mode a model expects: 'transcribe' or 'converse'."""
+    return get_realtime_capabilities(provider_id, model_id).get(
+        'default_mode', 'transcribe'
+    )
 
 
 def get_model_config(provider_id: str, model_id: str) -> Optional[Dict]:

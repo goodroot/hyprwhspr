@@ -65,6 +65,19 @@ class ConfigSchemaSyncTests(unittest.TestCase):
                 json_type = "number"
             self.assertIn(json_type, accepted, key)
 
+    def test_realtime_client_conversation_history_default_matches_schema(self):
+        # RealtimeClient carries its own fallback, so a schema-only change would
+        # otherwise ship green while the client kept the previous behaviour.
+        sys.path.insert(0, str(ROOT / "lib" / "src"))
+        from realtime_client import RealtimeClient
+
+        expected = self.schema_properties["realtime_conversation_history"]["default"]
+        self.assertEqual(RealtimeClient(mode="converse").conversation_history, expected)
+
+        client = RealtimeClient(mode="converse")
+        client.set_conversation_history("nonsense")
+        self.assertEqual(client.conversation_history, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

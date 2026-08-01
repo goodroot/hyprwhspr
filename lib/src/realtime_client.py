@@ -9,8 +9,18 @@ from collections import deque
 from typing import Optional
 
 try:
+    from .openai_realtime_models import (
+        is_continuous,
+        uses_language_context,
+        uses_manual_commit,
+    )
     from .realtime_base import WebSocketRealtimeClientBase
 except ImportError:
+    from openai_realtime_models import (
+        is_continuous,
+        uses_language_context,
+        uses_manual_commit,
+    )
     from realtime_base import WebSocketRealtimeClientBase
 
 
@@ -31,7 +41,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         super().__init__(mode=mode)
         self.transcription_delay = 'low'
         self.transcription_prompt = None
-        self.conversation_history = 'session'
+        self.conversation_history = 'turn'
         self.partial_transcript_callback = None
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
 
@@ -269,19 +279,17 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             model = self.model or 'gpt-4o-mini-transcribe'
             transcription_config = {'model': model}
 
-            is_live_transcribe = model == 'gpt-live-transcribe'
+            language_context = uses_language_context(model)
             if self.language:
-                if is_live_transcribe:
+                if language_context:
                     transcription_config['languages'] = [self.language]
                 else:
                     transcription_config['language'] = self.language
 
-            if is_live_transcribe and self.transcription_prompt:
+            if language_context and self.transcription_prompt:
                 transcription_config['prompt'] = self.transcription_prompt
 
-            is_realtime_whisper = model == 'gpt-realtime-whisper'
-            is_streaming_transcription = is_realtime_whisper or is_live_transcribe
-            if is_streaming_transcription:
+            if is_continuous(model):
                 transcription_config['delay'] = self._validated_transcription_delay()
 
             session_data = {
@@ -293,7 +301,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                             'rate': 24000
                         },
                         'transcription': transcription_config,
-                        'turn_detection': None if is_streaming_transcription else {
+                        'turn_detection': None if uses_manual_commit(model) else {
                             'type': 'server_vad',
                             'threshold': 0.5,
                             'prefix_padding_ms': 300,
@@ -336,7 +344,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         language: Optional[str],
         prompt: Optional[str],
     ):
-        """Update GPT Live Transcribe language and prompt together."""
+        """Update new-model transcription language and prompt together."""
         self.language = language
         self.transcription_prompt = prompt
         if self.connected:
@@ -358,10 +366,10 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
     def set_conversation_history(self, history: str):
         """Set whether conversational turns retain server-side history."""
-        history = (history or 'session').strip().lower()
+        history = (history or 'turn').strip().lower()
         if history not in self.VALID_CONVERSATION_HISTORY:
-            self._log(f"Invalid realtime_conversation_history '{history}', using 'session'")
-            history = 'session'
+            self._log(f"Invalid realtime_conversation_history '{history}', using 'turn'")
+            history = 'turn'
         self.conversation_history = history
 
     def set_partial_transcript_callback(self, callback):

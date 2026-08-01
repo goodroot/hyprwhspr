@@ -126,13 +126,13 @@ class ConfigManager:
             'rest_audio_format': 'wav',        # Audio format for remote transcription
             # WebSocket realtime backend settings
             'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai', 'google', 'elevenlabs')
-            'websocket_model': None,           # Model identifier (e.g., 'gpt-live-transcribe')
+            'websocket_model': None,           # Model identifier (e.g., 'gpt-transcribe')
             'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
             'realtime_timeout': 30,            # Completion timeout (seconds)
             'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
             'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
-            'realtime_transcription_delay': 'low',  # OpenAI streaming delay: minimal|low|medium|high|xhigh
-            'realtime_conversation_history': 'session',  # OpenAI converse mode: session|turn
+            'realtime_transcription_delay': 'low',  # OpenAI continuous transcription delay: minimal|low|medium|high|xhigh
+            'realtime_conversation_history': 'turn',  # OpenAI converse mode: session|turn
             # whisper.cpp (pywhispercpp) backend settings
             'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
             # ONNX-ASR backend settings (CPU-optimized)
