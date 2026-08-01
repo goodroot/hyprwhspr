@@ -45,6 +45,15 @@ from cli import config, install, setup, systemd, uninstall  # noqa: E402
 from config_manager import ConfigManager  # noqa: E402
 
 
+def _unredirected_path_globals(module, redirected):
+    """Module-level filesystem paths a sandboxed run would still act on."""
+    return sorted(
+        name
+        for name, value in vars(module).items()
+        if name.isupper() and isinstance(value, Path) and name not in redirected
+    )
+
+
 class SetupCommandScopeTests(unittest.TestCase):
     def test_run_command_is_not_function_local(self):
         # Regression: a conditional local re-import of run_command made it a
@@ -184,23 +193,38 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             calls.append(cmd)
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
+        redirected_paths = {
+            "USER_SYSTEMD_DIR": user_systemd,
+            "USER_HOME": root / "missing-home",
+            "USER_CONFIG_DIR": root / "missing-config",
+            "VENV_DIR": root / "missing-venv",
+            "PYWHISPERCPP_SRC_DIR": root / "missing-src",
+            "PYWHISPERCPP_MODELS_DIR": root / "missing-models",
+            "STATE_DIR": root / "missing-state",
+            "CREDENTIALS_FILE": root / "missing-creds",
+            "USER_BASE": root / "missing-user-base",
+        }
+        self.assertEqual(
+            _unredirected_path_globals(uninstall, redirected_paths),
+            [],
+            "uninstall gained a filesystem path this test does not redirect; it "
+            "would operate on the real machine",
+        )
+
         patches = [
-            mock.patch.object(uninstall, "USER_SYSTEMD_DIR", user_systemd),
-            mock.patch.object(uninstall, "USER_HOME", root / "missing-home"),
-            mock.patch.object(uninstall, "USER_CONFIG_DIR", root / "missing-config"),
-            mock.patch.object(uninstall, "VENV_DIR", root / "missing-venv"),
-            mock.patch.object(uninstall, "PYWHISPERCPP_SRC_DIR", root / "missing-src"),
-            mock.patch.object(uninstall, "PYWHISPERCPP_MODELS_DIR", root / "missing-models"),
-            mock.patch.object(uninstall, "STATE_DIR", root / "missing-state"),
-            mock.patch.object(uninstall, "CREDENTIALS_FILE", root / "missing-creds"),
-            mock.patch.object(uninstall, "USER_BASE", root / "missing-user-base"),
+            mock.patch.object(uninstall, name, value)
+            for name, value in redirected_paths.items()
+        ]
+        patches += [
             mock.patch.object(uninstall, "setup_waybar"),
             mock.patch.object(uninstall, "_detect_current_backend", return_value=None),
             mock.patch.object(uninstall, "run_command", side_effect=fake_run_command),
+            mock.patch.object(systemd, "run_command", side_effect=fake_run_command),
         ]
         with contextlib.ExitStack() as stack:
             for patch in patches:
                 stack.enter_context(patch)
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             uninstall.uninstall_command(skip_permissions=True, yes=True)
 
         return ydotool_unit, calls
