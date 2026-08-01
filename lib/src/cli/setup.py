@@ -37,13 +37,13 @@ except ImportError:
 
 try:
     from ..provider_registry import (
-        PROVIDERS, get_provider, list_providers, get_provider_models,
-        get_model_config, validate_api_key
+        PROVIDERS, get_provider, list_providers, get_model_config,
+        validate_api_key, get_models_for_backend, get_realtime_mode
     )
 except ImportError:
     from provider_registry import (
-        PROVIDERS, get_provider, list_providers, get_provider_models,
-        get_model_config, validate_api_key
+        PROVIDERS, get_provider, list_providers, get_model_config,
+        validate_api_key, get_models_for_backend, get_realtime_mode
     )
 
 try:
@@ -325,9 +325,7 @@ def _prompt_realtime_provider_model_selection():
         if not provider.get('websocket_endpoint'):
             continue
 
-        for model_id, model_data in provider.get('models', {}).items():
-            if not model_data.get('realtime_model', False):
-                continue
+        for model_id, model_data in get_models_for_backend(provider_id, 'realtime-ws').items():
             realtime_options.append((provider_id, provider, model_id, model_data))
             print(
                 f"  [{len(realtime_options)}] "
@@ -446,25 +444,14 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
                 continue
 
             # Only show providers that have realtime-capable models
-            models = get_provider_models(provider_id) or {}
-            realtime_model_ids = [
-                model_id
-                for model_id, model_data in models.items()
-                if model_data.get('realtime_model', False)
-            ]
+            realtime_model_ids = list(get_models_for_backend(provider_id, 'realtime-ws'))
             if realtime_model_ids:
                 providers_list.append((provider_id, provider_name, realtime_model_ids))
     else:
-        # REST providers: only include providers with at least one REST-visible model
-        # (i.e. not marked hidden in provider_registry)
+        # REST providers: only include providers offering at least one REST model
         providers_list = []
         for provider_id, provider_name, _model_ids in all_providers_list:
-            models = get_provider_models(provider_id) or {}
-            visible_model_ids = [
-                model_id
-                for model_id, model_data in models.items()
-                if not model_data.get('hidden', False)
-            ]
+            visible_model_ids = list(get_models_for_backend(provider_id, 'rest-api'))
             if visible_model_ids:
                 providers_list.append((provider_id, provider_name, visible_model_ids))
     
@@ -498,19 +485,10 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
                 print("="*60)
                 print()
                 
-                models = get_provider_models(provider_id)
+                backend = 'realtime-ws' if filter_realtime else 'rest-api'
                 model_list = []
-                
-                # Filter models based on backend type
-                for model_id, model_data in models.items():
-                    if filter_realtime:
-                        # Only include realtime models (marked with realtime_model flag)
-                        if not model_data.get('realtime_model', False):
-                            continue
-                    else:
-                        # For REST API, hide models marked as hidden
-                        if model_data.get('hidden', False):
-                            continue
+
+                for model_id, model_data in get_models_for_backend(provider_id, backend).items():
                     model_list.append((model_id, model_data))
                     print(f"  [{len(model_list)}] {model_data['name']} - {model_data['description']}")
                 
@@ -956,8 +934,12 @@ def setup_command(python_path: Optional[str] = None):
             log_error(f"Failed to generate realtime configuration: {e}")
             return
         
-        remote_config['realtime_mode'] = 'transcribe'
-        log_info("Realtime mode: transcribe")
+        realtime_mode = get_realtime_mode(provider_id, model_id)
+        remote_config['realtime_mode'] = realtime_mode
+        if realtime_mode == 'converse':
+            log_info("Realtime mode: converse (spoken AI replies)")
+        else:
+            log_info("Realtime mode: transcribe (speech-to-text)")
     
     # Step 1.4: Ensure venv and base dependencies for cloud backends
     if backend_normalized in ['rest-api', 'remote', 'realtime-ws']:

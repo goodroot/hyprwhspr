@@ -20,18 +20,18 @@ try:
     from ..backend_utils import normalize_backend
     from ..credential_manager import get_credential
     from ..openai_realtime_models import (
-        OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS,
-        OPENAI_LANGUAGE_CONTEXT_MODELS,
-        OPENAI_TRANSCRIPTION_ONLY_MODELS,
+        is_continuous,
+        is_transcription_only,
+        uses_language_context,
     )
     from ..provider_registry import get_provider
 except ImportError:
     from backend_utils import normalize_backend
     from credential_manager import get_credential
     from openai_realtime_models import (
-        OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS,
-        OPENAI_LANGUAGE_CONTEXT_MODELS,
-        OPENAI_TRANSCRIPTION_ONLY_MODELS,
+        is_continuous,
+        is_transcription_only,
+        uses_language_context,
     )
     from provider_registry import get_provider
 
@@ -76,7 +76,7 @@ class RealtimeWsBackend(TranscriptionBackend):
             return
 
         active_model = model_id or getattr(self._realtime_client, 'model', None)
-        if active_model in OPENAI_LANGUAGE_CONTEXT_MODELS:
+        if uses_language_context(active_model):
             self._realtime_client.update_transcription_config(
                 language,
                 self._resolve_whisper_prompt(language),
@@ -232,7 +232,7 @@ class RealtimeWsBackend(TranscriptionBackend):
             realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
             if (
                 provider_id == 'openai'
-                and model_id in OPENAI_TRANSCRIPTION_ONLY_MODELS
+                and is_transcription_only(model_id)
                 and realtime_mode != 'transcribe'
             ):
                 print(
@@ -479,7 +479,7 @@ class RealtimeWsBackend(TranscriptionBackend):
 
         # Waveform: only continuously streaming OpenAI models emit live deltas.
         if provider_id == 'openai':
-            return model_id in OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS
+            return is_continuous(model_id)
 
         return False
 

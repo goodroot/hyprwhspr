@@ -100,6 +100,49 @@ class SetupCommandScopeTests(unittest.TestCase):
         self.assertLess(live_position, whisper_position)
 
 
+class RealtimeSetupCatalogTests(unittest.TestCase):
+    def _catalog(self):
+        class SelectFirstPrompt:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return "1"
+
+        class AcceptDefaultConfirm:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return True
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(setup, "Prompt", SelectFirstPrompt),
+            mock.patch.object(setup, "Confirm", AcceptDefaultConfirm),
+            mock.patch.object(setup, "get_credential", return_value="sk-existing-key"),
+            mock.patch.object(setup, "save_credential", return_value=True),
+            contextlib.redirect_stdout(output),
+        ):
+            setup._prompt_realtime_provider_model_selection()
+        return output.getvalue()
+
+    def test_transcription_models_are_listed_before_conversational_ones(self):
+        catalog = self._catalog()
+        last_transcription = catalog.index("OpenAI: GPT Realtime Whisper")
+        first_converse = catalog.index("OpenAI: GPT-Realtime-2.1")
+        self.assertLess(last_transcription, first_converse)
+
+    def test_rest_only_models_stay_out_of_the_realtime_catalog(self):
+        catalog = self._catalog()
+        self.assertNotIn("Whisper 1", catalog)
+        self.assertNotIn("GPT-4o Transcribe", catalog)
+
+    def test_selecting_a_conversational_model_configures_converse_mode(self):
+        self.assertEqual(
+            setup.get_realtime_mode("openai", "gpt-realtime-2.1"), "converse"
+        )
+        self.assertEqual(
+            setup.get_realtime_mode("openai", "gpt-transcribe"), "transcribe"
+        )
+
+
 class ConfigDefaultTests(unittest.TestCase):
     def test_defaults_match_schema_for_new_settings(self):
         with mock.patch.object(ConfigManager, "_ensure_config_dir"), \

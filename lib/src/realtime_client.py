@@ -10,16 +10,16 @@ from typing import Optional
 
 try:
     from .openai_realtime_models import (
-        OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS,
-        OPENAI_LANGUAGE_CONTEXT_MODELS,
-        OPENAI_MANUAL_COMMIT_MODELS,
+        is_continuous,
+        uses_language_context,
+        uses_manual_commit,
     )
     from .realtime_base import WebSocketRealtimeClientBase
 except ImportError:
     from openai_realtime_models import (
-        OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS,
-        OPENAI_LANGUAGE_CONTEXT_MODELS,
-        OPENAI_MANUAL_COMMIT_MODELS,
+        is_continuous,
+        uses_language_context,
+        uses_manual_commit,
     )
     from realtime_base import WebSocketRealtimeClientBase
 
@@ -279,17 +279,17 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             model = self.model or 'gpt-4o-mini-transcribe'
             transcription_config = {'model': model}
 
-            uses_language_context = model in OPENAI_LANGUAGE_CONTEXT_MODELS
+            language_context = uses_language_context(model)
             if self.language:
-                if uses_language_context:
+                if language_context:
                     transcription_config['languages'] = [self.language]
                 else:
                     transcription_config['language'] = self.language
 
-            if uses_language_context and self.transcription_prompt:
+            if language_context and self.transcription_prompt:
                 transcription_config['prompt'] = self.transcription_prompt
 
-            if model in OPENAI_CONTINUOUS_TRANSCRIPTION_MODELS:
+            if is_continuous(model):
                 transcription_config['delay'] = self._validated_transcription_delay()
 
             session_data = {
@@ -301,7 +301,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                             'rate': 24000
                         },
                         'transcription': transcription_config,
-                        'turn_detection': None if model in OPENAI_MANUAL_COMMIT_MODELS else {
+                        'turn_detection': None if uses_manual_commit(model) else {
                             'type': 'server_vad',
                             'threshold': 0.5,
                             'prefix_padding_ms': 300,
