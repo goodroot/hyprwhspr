@@ -1267,6 +1267,17 @@ hyprwhspr uninstall
 hyprwhspr setup
 ```
 
+### CUDA host compiler rejected
+
+When CUDA rejects your system GCC as too new, setup automatically selects the
+newest compatible versioned `g++` it can find. If your compiler is installed in
+a non-standard location, select it explicitly before running setup:
+
+```bash
+export HYPRWHSPR_CUDA_HOST=/path/to/g++
+hyprwhspr setup
+```
+
 ### Common issues
 
 #### Something is weird

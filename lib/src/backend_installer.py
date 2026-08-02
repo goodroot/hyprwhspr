@@ -9,6 +9,7 @@ import json
 import subprocess
 import hashlib
 import shutil
+import re
 import urllib.request
 import uuid
 from pathlib import Path
@@ -428,12 +429,8 @@ def _detect_venv_python_version() -> str:
 
 def _detect_cuda_version() -> Optional[str]:
     """Detect installed CUDA version from nvcc or nvidia-smi"""
-    import re
-
     # Try nvcc first (more reliable for build compatibility)
-    nvcc_path = shutil.which('nvcc')
-    if not nvcc_path:
-        nvcc_path = '/opt/cuda/bin/nvcc' if Path('/opt/cuda/bin/nvcc').exists() else None
+    nvcc_path = _cuda_nvcc_path()
 
     if nvcc_path:
         try:
@@ -750,31 +747,147 @@ def check_model_validity(model_file: Path) -> bool:
 
 # ==================== Helper Functions ====================
 
+_MIN_CUDA_GCC_MAJOR = 6  # CUDA's host_config.h rejects GCC versions below 6.
+
+
+def _cuda_nvcc_path() -> Optional[str]:
+    """Return an existing nvcc path using the same lookup order as CUDA setup."""
+    configured = os.environ.get('CUDACXX')
+    if configured:
+        configured_path = shutil.which(configured) if '/' not in configured else configured
+        if configured_path and Path(configured_path).exists():
+            return configured_path
+
+    path_nvcc = shutil.which('nvcc')
+    if path_nvcc:
+        return path_nvcc
+
+    for candidate in ('/opt/cuda/bin/nvcc', '/usr/bin/nvcc'):
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+def _cuda_host_config_paths():
+    """Yield likely host_config.h paths for the active CUDA toolkit."""
+    nvcc_path = _cuda_nvcc_path()
+    if not nvcc_path:
+        return
+
+    toolkit_root = Path(nvcc_path).resolve().parent.parent
+    yield toolkit_root / 'include' / 'crt' / 'host_config.h'
+    yield toolkit_root / 'targets' / 'x86_64-linux' / 'include' / 'crt' / 'host_config.h'
+    yield from sorted(toolkit_root.glob('targets/*/include/crt/host_config.h'))
+
+
+def _cuda_max_supported_gcc_version() -> Optional[Tuple[int, Optional[int]]]:
+    """Read CUDA's GCC (major, optional minor) ceiling, or None if unknown."""
+    for host_config in _cuda_host_config_paths():
+        try:
+            contents = host_config.read_text(encoding='utf-8', errors='ignore')
+        except OSError:
+            continue
+
+        # Only trust the preprocessor guard that emits NVCC's unsupported GNU
+        # version error.  host_config.h also contains unrelated GCC feature
+        # checks, which are not compatibility ceilings.
+        guards = re.finditer(
+            r'^\s*#\s*(?:if|elif)\s+(?P<condition>[^\n]*\b__GNUC__\s*>\s*\d+[^\n]*)$',
+            contents,
+            re.MULTILINE,
+        )
+        for guard in guards:
+            body = re.split(
+                r'^\s*#\s*(?:if|elif|else|endif)\b',
+                contents[guard.end():],
+                maxsplit=1,
+                flags=re.MULTILINE,
+            )[0]
+            if 'unsupported GNU version' not in body:
+                continue
+            condition = guard.group('condition')
+            major_match = re.search(r'__GNUC__\s*>\s*(\d+)', condition)
+            if not major_match:
+                continue
+            major = int(major_match.group(1))
+            if major < _MIN_CUDA_GCC_MAJOR:
+                continue
+            minor_match = re.search(
+                r'__GNUC__\s*==\s*' + re.escape(major_match.group(1)) +
+                r'.*?__GNUC_MINOR__\s*>\s*(\d+)',
+                condition,
+            )
+            return major, int(minor_match.group(1)) if minor_match else None
+    return None
+
+
+def _compiler_version(compiler: str) -> Optional[Tuple[int, int]]:
+    """Return a compiler's reported (major, minor) version, if available."""
+    try:
+        result = run_command([compiler, '-dumpfullversion'], check=False, capture_output=True)
+        if result and result.returncode == 0:
+            match = re.match(r'\s*(\d+)(?:\.(\d+))?', _safe_decode(result.stdout))
+            if match:
+                return int(match.group(1)), int(match.group(2) or 0)
+    except Exception:
+        pass
+    return None
+
+
+def _is_cuda_gcc_compatible(
+    version: Optional[Tuple[int, int]], max_version: Tuple[int, Optional[int]]
+) -> bool:
+    """Whether a GCC version fits CUDA's parsed host-compiler ceiling."""
+    if version is None or version[0] < _MIN_CUDA_GCC_MAJOR:
+        return False
+    max_major, max_minor = max_version
+    return version[0] < max_major or (
+        version[0] == max_major and (max_minor is None or version[1] <= max_minor)
+    )
+
+
 def detect_cuda_host_compiler() -> Optional[str]:
-    """Detect appropriate CUDA host compiler"""
+    """Select CUDA's newest supported GCC, returning None when none is installed.
+
+    An unknown toolkit ceiling retains the system g++ optimistically; a known
+    ceiling without a compatible compiler returns None so CUDA setup uses CPU.
+    """
     # Allow explicit override
     cuda_host = os.environ.get('HYPRWHSPR_CUDA_HOST')
     if cuda_host and Path(cuda_host).exists() and os.access(cuda_host, os.X_OK):
         return cuda_host
-    
-    # Check GCC version
-    try:
-        result = run_command(['gcc', '-dumpfullversion'], check=False, capture_output=True)
-        if result.returncode == 0:
-            gcc_version = _safe_decode(result.stdout).strip()
-            gcc_major = int(gcc_version.split('.')[0])
-            
-            # If GCC >= 15, prefer gcc14 if present
-            if gcc_major >= 15:
-                if shutil.which('g++-14'):
-                    return '/usr/bin/g++-14'
-    except Exception:
-        pass
-    
-    # Default to g++
-    if shutil.which('g++'):
-        return shutil.which('g++')
-    
+    if cuda_host:
+        log_warning(f"HYPRWHSPR_CUDA_HOST is not an executable file: {cuda_host}; auto-detecting")
+
+    default_compiler = shutil.which('g++')
+    max_version = _cuda_max_supported_gcc_version()
+    if max_version is None:
+        if default_compiler:
+            log_warning(
+                "Could not determine CUDA's supported GCC version; using system g++ "
+                "(set HYPRWHSPR_CUDA_HOST to override)"
+            )
+        return default_compiler
+
+    max_major, max_minor = max_version
+    max_display = f"{max_major}.{max_minor}" if max_minor is not None else str(max_major)
+
+    if default_compiler:
+        default_version = _compiler_version(default_compiler)
+        if _is_cuda_gcc_compatible(default_version, max_version):
+            return default_compiler
+
+    for major in range(max_major, _MIN_CUDA_GCC_MAJOR - 1, -1):
+        candidate = shutil.which(f'g++-{major}')
+        if not candidate:
+            continue
+        candidate_version = _compiler_version(candidate)
+        if _is_cuda_gcc_compatible(candidate_version, max_version):
+            return candidate
+
+    log_warning(f"No installed g++ is compatible with CUDA's GCC <= {max_display} requirement")
+    log_warning(f"Install a GCC {max_major} toolchain (on Arch: yay -S gcc{max_major} gcc{max_major}-libs)")
+    log_warning("Or set HYPRWHSPR_CUDA_HOST to a compatible g++ executable")
     return None
 
 
@@ -851,11 +964,7 @@ def setup_nvidia_support() -> bool:
     log_success("NVIDIA GPU detected")
     
     # Check for nvcc
-    nvcc_path = None
-    if Path('/opt/cuda/bin/nvcc').exists():
-        nvcc_path = '/opt/cuda/bin/nvcc'
-    elif shutil.which('nvcc'):
-        nvcc_path = shutil.which('nvcc')
+    nvcc_path = _cuda_nvcc_path()
     
     if nvcc_path:
         # Set environment variables
@@ -891,13 +1000,7 @@ def setup_nvidia_support() -> bool:
             return False
 
         # Check for nvcc after installation attempt
-        nvcc_path_after_install = None
-        if Path('/opt/cuda/bin/nvcc').exists():
-            nvcc_path_after_install = '/opt/cuda/bin/nvcc'
-        elif Path('/usr/bin/nvcc').exists():
-            nvcc_path_after_install = '/usr/bin/nvcc'
-        elif shutil.which('nvcc'):
-            nvcc_path_after_install = shutil.which('nvcc')
+        nvcc_path_after_install = _cuda_nvcc_path()
         
         if nvcc_path_after_install:
             # Use the directory where nvcc was actually found
@@ -914,19 +1017,6 @@ def setup_nvidia_support() -> bool:
     if host_compiler:
         os.environ['CUDAHOSTCXX'] = host_compiler
         log_info(f"CUDA host compiler: {host_compiler}")
-        
-        if host_compiler == '/usr/bin/g++':
-            try:
-                result = run_command(['gcc', '-dumpfullversion'], check=False, capture_output=True)
-                if result.returncode == 0:
-                    gcc_version = _safe_decode(result.stdout).strip()
-                    gcc_major = int(gcc_version.split('.')[0])
-                    if gcc_major >= 15:
-                        log_warning(f"GCC {gcc_major} with NVCC can fail; consider:")
-                        log_warning("  yay -S gcc14 gcc14-libs")
-                        log_warning("  export HYPRWHSPR_CUDA_HOST=/usr/bin/g++-14")
-            except Exception:
-                pass
     else:
         log_warning("No suitable host compiler found; will build CPU-only")
         return False
