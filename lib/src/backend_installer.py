@@ -764,10 +764,13 @@ def detect_cuda_host_compiler() -> Optional[str]:
             gcc_version = _safe_decode(result.stdout).strip()
             gcc_major = int(gcc_version.split('.')[0])
             
-            # If GCC >= 15, prefer gcc14 if present
+            # If GCC is newer than the CUDA toolkit accepts, fall back to the
+            # newest older g++ that is actually installed.
             if gcc_major >= 15:
-                if shutil.which('g++-14'):
-                    return '/usr/bin/g++-14'
+                for major in range(gcc_major - 1, 12, -1):
+                    candidate = shutil.which(f'g++-{major}')
+                    if candidate:
+                        return candidate
     except Exception:
         pass
     
