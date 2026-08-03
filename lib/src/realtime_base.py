@@ -335,6 +335,12 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         self.model = model
         self.instructions = instructions
 
+        with self.lock:
+            # An explicit connect() reopens a client that close() latched shut;
+            # the backend's on-demand reconnect closes stale state first.
+            self._closed = False
+            self._stop_event.clear()
+
         return self._connect_internal()
 
     def _connect_internal(self) -> bool:
