@@ -151,7 +151,29 @@ class FasterWhisperBackend(TranscriptionBackend):
         audio_data = self._resample_audio(audio_data, sample_rate, 16000)
 
         language = language_override if language_override is not None else self.config.get_setting('language', None)
-        whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
+
+        # Detect before transcribing so the prompt matches the spoken language.
+        # faster-whisper otherwise detects internally, too late to choose one;
+        # passing the result back as `language` skips that pass, not adds one.
+        detected_prob = None
+        if not language:
+            multilingual = getattr(
+                getattr(self._faster_whisper_model, 'model', None), 'is_multilingual',
+                not str(self.current_model or '').endswith('.en'),
+            )
+            if not multilingual:
+                language = 'en'
+        if not language:
+            try:
+                language, detected_prob = self._faster_whisper_model.detect_language(audio_data)[:2]
+            except Exception as e:
+                print(f'[WARN] language auto-detect failed: {e}; letting faster-whisper detect', flush=True)
+                language = None
+
+        whisper_prompt, prompt_source = self.resolve_whisper_prompt(language)
+        if detected_prob is not None:
+            print(f'[LANG] auto-detected: {language} (p={detected_prob:.2f}), prompt={prompt_source}', flush=True)
+
         vad_filter = self.config.get_setting('faster_whisper_vad_filter', True)
         task = self.config.get_setting('task', 'transcribe')
 

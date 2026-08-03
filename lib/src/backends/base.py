@@ -102,6 +102,29 @@ class TranscriptionBackend:
         return False
 
     # ------------------------------------------------------------------
+    # Shared prompt resolution
+    # ------------------------------------------------------------------
+
+    def resolve_whisper_prompt(self, language: Optional[str]) -> 'tuple[Optional[str], str]':
+        """Return (prompt, source key) for `language`.
+
+        A configured prompt wins, language-specific first. Otherwise the shipped
+        English default applies only to English or unknown-language audio, so a
+        non-English speaker is never handed an English prompt. An unknown
+        language is treated as English: backends that cannot detect one have
+        nothing better to assume.
+        """
+        language = (language or '').lower() or None
+        lang_key = f'whisper_prompt_{language or "en"}'
+        defaults = getattr(self.config, 'default_config', None) or {}
+        for key in (lang_key, 'whisper_prompt'):
+            value = self.config.get_setting(key, None)
+            if value and value != defaults.get(key):
+                return value, key
+        fallback = self.config.get_setting(lang_key, None) if language in (None, 'en') else None
+        return (fallback or None), (lang_key if fallback else 'none')
+
+    # ------------------------------------------------------------------
     # Shared audio helpers (used by multiple backends; names preserved
     # so code moved from WhisperManager keeps working verbatim)
     # ------------------------------------------------------------------

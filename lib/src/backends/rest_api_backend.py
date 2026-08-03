@@ -197,11 +197,7 @@ class RestApiBackend(TranscriptionBackend):
 
             # Fill prompt from config - use language-specific prompt if available
             if 'prompt' not in data:
-                whisper_prompt = None
-                if language:
-                    whisper_prompt = self.config.get_setting(f'whisper_prompt_{language}', None)
-                if not whisper_prompt:
-                    whisper_prompt = self.config.get_setting('whisper_prompt', None)
+                whisper_prompt, _ = self.resolve_whisper_prompt(language)
                 if whisper_prompt:
                     data['prompt'] = whisper_prompt
 

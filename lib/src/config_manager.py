@@ -16,6 +16,10 @@ from typing import Any, Dict
 # Applied lazily in get_setting() so save_config preserves the original tokens.
 _ENV_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
+# Shipped as 'whisper_prompt' until it moved to 'whisper_prompt_en'; configs
+# written before sparse saving still carry a literal copy.
+ENGLISH_PROMPT = 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.'
+
 
 def expand_env(value: Any) -> Any:
     """Recursively expand ${VAR} in strings. Non-strings pass through."""
@@ -79,7 +83,10 @@ class ConfigManager:
             'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
             'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
             'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
-            'whisper_prompt': 'Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.',
+            # A prompt written in one language pulls the decoder toward that
+            # language, so the shipped default is scoped to English audio.
+            'whisper_prompt': '',
+            'whisper_prompt_en': ENGLISH_PROMPT,
             'task': 'transcribe',  # "transcribe" (source language) or "translate" (to English)
             'sampling_strategy': 'beam_search',  # "beam_search" or "greedy" for Whisper decoding
             'beam_size': 5,  # Number of candidates tracked when using beam search
@@ -238,6 +245,12 @@ class ConfigManager:
                     loaded_config['audio_device_id'] = loaded_config['audio_device']
                     del loaded_config['audio_device']
                     migrations.append("'audio_device' -> 'audio_device_id'")
+
+                # Drop an inherited copy of the old English default so it stops
+                # being read as a deliberate all-languages prompt
+                if loaded_config.get('whisper_prompt') == ENGLISH_PROMPT:
+                    del loaded_config['whisper_prompt']
+                    migrations.append("'whisper_prompt' -> 'whisper_prompt_en'")
 
                 # Merge loaded config with defaults (preserving any new default keys)
                 self.config.update(loaded_config)

@@ -5,6 +5,12 @@
   "description": "Configuration schema for hyprwhspr speech-to-text system",
   "type": "object",
   "additionalProperties": true,
+  "patternProperties": {
+    "^whisper_prompt_[a-z]{2}$": {
+      "type": "string",
+      "description": "Prompt used when transcribing this language, eg whisper_prompt_de"
+    }
+  },
   "properties": {
     "$schema": {
       "type": "string",
@@ -141,8 +147,13 @@
     },
     "whisper_prompt": {
       "type": "string",
+      "default": "",
+      "description": "Prompt passed to Whisper to guide transcription style, for every language"
+    },
+    "whisper_prompt_en": {
+      "type": "string",
       "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
-      "description": "Prompt passed to Whisper to guide transcription style"
+      "description": "Prompt used for English audio; add whisper_prompt_<lang> keys for other languages"
     },
     "task": {
       "type": "string",

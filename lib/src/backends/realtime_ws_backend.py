@@ -59,13 +59,6 @@ class RealtimeWsBackend(TranscriptionBackend):
         # Owned by the manager so it survives backend re-creation on resume
         return self._manager._realtime_partial_callback
 
-    def _resolve_whisper_prompt(self, language: Optional[str]) -> Optional[str]:
-        """Resolve the existing language-specific Whisper prompt fallback."""
-        language_prompt = None
-        if language:
-            language_prompt = self.config.get_setting(f'whisper_prompt_{language}', None)
-        return language_prompt or self.config.get_setting('whisper_prompt', None) or None
-
     def _update_client_language(
         self,
         language: Optional[str],
@@ -79,7 +72,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         if uses_language_context(active_model):
             self._realtime_client.update_transcription_config(
                 language,
-                self._resolve_whisper_prompt(language),
+                self.resolve_whisper_prompt(language)[0],
             )
         else:
             self._realtime_client.update_language(language)
@@ -125,12 +118,12 @@ class RealtimeWsBackend(TranscriptionBackend):
                     websocket_url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
 
             # Build instructions
+            language = self.config.get_setting('language', None)
             instructions_parts = []
-            whisper_prompt = self.config.get_setting('whisper_prompt', None)
+            whisper_prompt, _ = self.resolve_whisper_prompt(language)
             if whisper_prompt:
                 instructions_parts.append(whisper_prompt)
 
-            language = self.config.get_setting('language', None)
             if language:
                 instructions_parts.append(f"Transcribe in {language} language.")
 
@@ -258,12 +251,12 @@ class RealtimeWsBackend(TranscriptionBackend):
                     return False
 
             # Build instructions from whisper_prompt and language
+            language = self.config.get_setting('language', None)
             instructions_parts = []
-            whisper_prompt = self.config.get_setting('whisper_prompt', None)
+            whisper_prompt, _ = self.resolve_whisper_prompt(language)
             if whisper_prompt:
                 instructions_parts.append(whisper_prompt)
 
-            language = self.config.get_setting('language', None)
             if language:
                 instructions_parts.append(f"Transcribe in {language} language.")
 

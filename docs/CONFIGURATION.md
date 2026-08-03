@@ -497,7 +497,7 @@ Customize transcription behavior:
 
 ```jsonc
 {
-    "whisper_prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+    "whisper_prompt": "Transcribe as technical documentation, keeping acronyms uppercase."
 }
 ```
 
@@ -506,6 +506,10 @@ The prompt influences how Whisper interprets and transcribes your audio, eg:
 - `"Transcribe as technical documentation with proper capitalization, acronyms and technical terminology."`
 - `"Transcribe as casual conversation with natural speech patterns."`
 - `"Transcribe as an ornery pirate on the cusp of scurvy."`
+
+A `whisper_prompt` applies to every language, and a prompt written in one language pulls
+transcription toward that language. That is why the shipped capitalization default lives in
+`whisper_prompt_en` instead — see below.
 
 #### Translation
 
@@ -529,13 +533,15 @@ Set a per-language prompt using `whisper_prompt_{lang}`:
 
 ```jsonc
 {
-    "whisper_prompt": "Transcribe with proper capitalization.",
     "whisper_prompt_de": "Transkribiere auf Deutsch. Verwende Schweizer Rechtschreibung: kein ß, immer ss."
 }
 ```
 
+- The language comes from `language`, `secondary_language` or `--lang`; `pywhispercpp` and
+  `faster-whisper` auto-detect it when unset
 - Falls back to `whisper_prompt` if no language-specific prompt is configured
-- Only applies when a language is active (via `language`, `secondary_language`, or `--lang`)
+- With neither set, English audio gets the shipped `whisper_prompt_en` capitalization prompt and
+  other languages get no prompt
 
 #### Decoding strategy
 
@@ -669,7 +675,8 @@ For a stateless voice-to-AI workflow:
 
 All OpenAI Realtime models stream 24 kHz PCM audio. For GPT Transcribe and GPT Live Transcribe, hyprwhspr sends the
 scalar `language` setting as OpenAI's single-entry `languages` hint and resolves the prompt through
-`whisper_prompt_<language>` → `whisper_prompt` → omitted. For GPT Realtime Whisper it sends a plain scalar
+`whisper_prompt_<language>` → `whisper_prompt` → `whisper_prompt_en` when the language is English or
+unset → omitted. For GPT Realtime Whisper it sends a plain scalar
 `language` and no prompt.
 
 #### Google Gemini

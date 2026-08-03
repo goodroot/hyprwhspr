@@ -52,6 +52,33 @@ class ConfigManagerPersistenceTests(unittest.TestCase):
             self.assertEqual(config_file.read_bytes(), previous)
             self.assertFalse(list(root.glob(".config.json.*.tmp")))
 
+    def test_inherited_english_prompt_is_migrated_off_whisper_prompt(self):
+        """Configs predating sparse saving carry the old default verbatim (#233)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.json").write_text(
+                json.dumps({"whisper_prompt": config_manager.ENGLISH_PROMPT, "language": None}),
+                encoding="utf-8",
+            )
+
+            manager = self._manager(root)
+
+            self.assertEqual(manager.get_setting("whisper_prompt"), "")
+            self.assertEqual(manager.get_setting("whisper_prompt_en"), config_manager.ENGLISH_PROMPT)
+            saved = json.loads((root / "config.json").read_text(encoding="utf-8"))
+            self.assertNotIn("whisper_prompt", saved)
+
+    def test_a_customised_prompt_survives_the_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.json").write_text(
+                json.dumps({"whisper_prompt": "Talk like a pirate."}), encoding="utf-8"
+            )
+
+            manager = self._manager(root)
+
+            self.assertEqual(manager.get_setting("whisper_prompt"), "Talk like a pirate.")
+
 
 if __name__ == "__main__":
     unittest.main()

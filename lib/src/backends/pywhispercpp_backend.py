@@ -371,16 +371,19 @@ class PywhispercppBackend(TranscriptionBackend):
             # pywhispercpp doesn't auto-detect language when no language kwarg is passed —
             # it keeps whisper.cpp's compiled-in default of "en". Call auto_detect_language()
             # explicitly so a null config value behaves as documented.
+            detected_prob = None
             if not language:
                 try:
                     (detected, prob), _ = self._pywhisper_model.auto_detect_language(audio_data)
                     language = detected
-                    print(f'[LANG] auto-detected: {detected} (p={prob:.2f})', flush=True)
+                    detected_prob = prob
                 except Exception as e:
                     print(f'[WARN] language auto-detect failed: {e}; falling back to en', flush=True)
                     language = 'en'
 
-            whisper_prompt = (self.config.get_setting(f'whisper_prompt_{language}', None) if language else None) or self.config.get_setting('whisper_prompt', None)
+            whisper_prompt, prompt_source = self.resolve_whisper_prompt(language)
+            if detected_prob is not None:
+                print(f'[LANG] auto-detected: {language} (p={detected_prob:.2f}), prompt={prompt_source}', flush=True)
 
             task = self.config.get_setting('task', 'transcribe')
 
