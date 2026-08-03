@@ -70,12 +70,12 @@
     "audio_device_id": {
       "type": ["integer", "string", "null"],
       "default": null,
-      "description": "PortAudio device index, or a PulseAudio/PipeWire source name (from `pactl list short sources`). The index can change on reboot; the source name is matched against PortAudio devices."
+      "description": "PortAudio device index, or a PulseAudio/PipeWire source name (from `pactl list short sources`). The index can change on reboot; a source name is captured through the sound server, keeping any processing applied to it."
     },
     "audio_device_name": {
       "type": ["string", "null"],
       "default": null,
-      "description": "PortAudio/PulseAudio device-name substring (more stable across reboots). A PulseAudio/PipeWire source name is also accepted."
+      "description": "Device or source name substring (more stable across reboots); a full PulseAudio/PipeWire source name is also accepted. Captured through the sound server so EasyEffects/noise suppression still apply. Prefix with `hw:` to open raw ALSA hardware instead, bypassing all sound-server processing."
     },
     "audio_device_vendor_id": {
       "type": ["string", "null"],

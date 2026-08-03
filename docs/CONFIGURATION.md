@@ -26,7 +26,7 @@ hyprwhspr config show --all  # Show all settings including defaults
 - [Recording modes](#recording-modes) -- toggle, push-to-talk, auto, silence auto-stop, continuous, long-form
 - [Custom hotkeys](#custom-hotkeys) -- key support, secondary shortcuts, cancel, Hyprland bindings
 - [Backends](#backends) -- Cohere Transcribe, Parakeet, faster-whisper, whisper.cpp, REST API, Realtime WebSocket
-- [Audio and visual feedback](#audio-and-visual-feedback) -- themed visualizer, audio feedback, keepalive, ducking
+- [Audio and visual feedback](#audio-and-visual-feedback) -- themed visualizer, audio feedback, microphone selection, keepalive, ducking
 - [Text processing](#text-processing) -- word overrides, filler words, symbol replacements
 - [Paste and clipboard behavior](#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit, post-transcription hook
 - [Integrations](#integrations) -- Waybar, Noctalia, keyboard devices, external hotkey systems
@@ -822,6 +822,50 @@ Custom sounds:
 
 - **Supported formats**: `.ogg`, `.wav`, `.mp3`
 - **Fallback**: Uses defaults if custom files don't exist
+
+### Microphone selection
+
+By default hyprwhspr follows your system's default input source, so changing your microphone in desktop sound settings just works. To pin one instead:
+
+```jsonc
+{
+  "audio_device_name": "Elgato"
+}
+```
+
+`audio_device_name` and `audio_device_id` accept the same three forms:
+
+- **A source name** — `alsa_input.usb-Elgato_Systems_Elgato_Wave_XLR_ABC123-00.analog-stereo`. Most reliable; list yours with `pactl list short sources`.
+- **A name substring** — `Elgato`. Convenient and stable across reboots. If it matches several sources, your default source wins the tie; otherwise hyprwhspr refuses to guess and falls back.
+- **A device index** — `"audio_device_id": 2`. Indices move across reboots, so prefer a name.
+
+On PipeWire/PulseAudio a pinned mic is captured *through* the sound server:
+
+```text
+microphone → PipeWire/PulseAudio source → processing (EasyEffects, noise suppression, echo cancellation) → hyprwhspr
+```
+
+So anything applied to that source reaches hyprwhspr, and you can pin a virtual source directly:
+
+```jsonc
+{
+  "audio_device_name": "easyeffects_source"
+}
+```
+
+If your mic feeds a filter chain, pin the chain's source rather than the hardware. A chain is a separate source, so pinning `Elgato` captures the Elgato source itself — in the graph, but upstream of the processing.
+
+#### Capturing raw hardware
+
+An `hw:` (or `plughw:`) prefix opens the ALSA device directly instead:
+
+```jsonc
+{
+  "audio_device_name": "hw:1,0"
+}
+```
+
+Raw capture skips **all** sound-server processing and takes the card exclusively, so other apps cannot use the microphone at the same time. When a sound server is running, hyprwhspr warns at startup whenever capture lands on a raw `hw:` device — including when it falls back to one because nothing matched your setting.
 
 ### Audio stream keepalive
 

@@ -181,10 +181,21 @@ class AudioDeviceRefreshTests(unittest.TestCase):
                 if self._saved_sounddevice is not None and self._saved_numpy is not None:
                     importlib.reload(self._saved_audio_capture)
 
-    def _run_sources(self, sources):
+    def _run_sources(self, sources, listed=()):
+        """Fake `pactl`, one default-source answer per get-default-source call.
+
+        Dispatches on argv: `list short sources` answers from `listed` (empty by
+        default, so device selection skips sound-server routing) while
+        `get-default-source` walks `sources` in order.
+        """
         source_iter = iter(sources)
 
-        def run(*args, **kwargs):
+        def run(args, *rest, **kwargs):
+            if 'list' in args:
+                return FakeCompleted('\n'.join(
+                    f"{idx}\t{name}\tmodule\ts16le 2ch 48000Hz\tRUNNING"
+                    for idx, name in enumerate(listed)
+                ))
             return FakeCompleted(next(source_iter))
 
         return run

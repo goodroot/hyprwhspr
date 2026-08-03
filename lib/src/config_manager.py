@@ -70,7 +70,7 @@ class ConfigManager:
             'keyboard_device_names': None,
             # Audio device persistence (for reliable device matching across reboots)
             'audio_device_id': None,        # PortAudio index, or a PulseAudio/PipeWire source name (pactl list short sources)
-            'audio_device_name': None,      # PortAudio/PulseAudio device-name substring (more stable across reboots)
+            'audio_device_name': None,      # Device/source name substring (more stable across reboots); 'hw:' prefix opts into raw ALSA
             'audio_device_vendor_id': None, # USB vendor ID (most stable, from udev)
             'audio_device_model_id': None,  # USB model ID (most stable, from udev)
             'model': 'base',

@@ -121,6 +121,8 @@ class AudioCapture:
         self._keepalive_stream = None
         self._keepalive_lock = threading.Lock()  # Protects _keepalive_stream across threads
         self._last_pulse_default_source_name = None
+        # Last source a configured mic resolved to; survives a server restart.
+        self._pinned_pulse_source = None
         # Callable reporting whether an external event monitor (PulseMonitor)
         # keeps the default-input binding fresh; lets record start skip its poll
         self._default_monitor_check = None
@@ -136,6 +138,9 @@ class AudioCapture:
             sd.default.channels = self.channels
             sd.default.dtype = self.dtype
             
+            # Re-derived below; drop any stale pin.
+            self._clear_pulse_source_env()
+
             # Set the preferred device if specified
             device_found = False
             if self.preferred_device_id is not None:
@@ -146,20 +151,27 @@ class AudioCapture:
                 # understands integer indices or PortAudio device-name substrings.
                 resolved_device_id = self.preferred_device_id
                 if isinstance(self.preferred_device_id, str):
-                    matched = self._match_pulse_source_to_portaudio(self.preferred_device_id, fuzzy=True)
-                    if matched is not None:
-                        resolved_device_id = matched
+                    # Prefer the sound server over raw hardware (#234).
+                    routed = self._resolve_via_sound_server(self.preferred_device_id)
+                    if routed is not None:
+                        resolved_device_id = routed
+                    else:
+                        matched = self._match_pulse_source_to_portaudio(self.preferred_device_id, fuzzy=True)
+                        if matched is not None:
+                            resolved_device_id = matched
                 try:
                     # Validate that the device exists and has input channels
                     device_info = sd.query_devices(device=resolved_device_id, kind='input')
                     if device_info['max_input_channels'] > 0:
                         self._set_sd_default_input(resolved_device_id)
                         print(f"Using configured audio device: {device_info['name']} (ID: {resolved_device_id})")
+                        self._warn_if_raw_alsa(device_info['name'])
                         device_found = True
                     else:
                         print(f"⚠ Configured device {self.preferred_device_id} has no input channels")
                 except Exception as e:
                     print(f"⚠ Configured audio device ID {self.preferred_device_id} not available: {e}")
+                    self._clear_pulse_source_env()
                     # Try fallback to system default
                     pulse_default_id = self._get_pulse_default_source_device_id()
                     if pulse_default_id is not None:
@@ -177,27 +189,26 @@ class AudioCapture:
                 configured_name = self.config.get_setting('audio_device_name')
                 if configured_name:
                     print(f"Searching for device by name: {configured_name}")
-                    devices = sd.query_devices()
-                    for i, device in enumerate(devices):
-                        if device['max_input_channels'] > 0 and configured_name in device['name']:
-                            self._set_sd_default_input(i)
-                            print(f"Found device by name: {device['name']} (ID: {i})")
-                            device_found = True
-                            break
+
+                    # Prefer the sound server over raw hardware (#234).
+                    routed = self._resolve_via_sound_server(configured_name)
+                    if routed is not None:
+                        device_found = self._bind_input_device(routed, "Found device via sound server")
+                        if not device_found:
+                            self._clear_pulse_source_env()
+
+                    if not device_found:
+                        for i, device in enumerate(sd.query_devices()):
+                            if device['max_input_channels'] > 0 and configured_name in device['name']:
+                                device_found = self._bind_input_device(i, "Found device by name")
+                                break
 
                     # Also accept a PulseAudio/PipeWire source name here, mapping
                     # it to a PortAudio device the same way audio_device_id does.
                     if not device_found:
                         matched = self._match_pulse_source_to_portaudio(configured_name, fuzzy=True)
                         if matched is not None:
-                            try:
-                                device_info = sd.query_devices(device=matched, kind='input')
-                                if device_info['max_input_channels'] > 0:
-                                    self._set_sd_default_input(matched)
-                                    print(f"Found device by source name: {device_info['name']} (ID: {matched})")
-                                    device_found = True
-                            except Exception:
-                                pass
+                            device_found = self._bind_input_device(matched, "Found device by source name")
 
                     # If name search failed, try fallback to system default
                     if not device_found:
@@ -453,13 +464,18 @@ class AudioCapture:
                 return False
             # 'default' (and other ALSA virtual devices) silently route through
             # PipeWire or PulseAudio when running — check their runtime sockets.
-            uid = os.getuid()
-            return (
-                os.path.exists(f"/run/user/{uid}/pipewire-0") or
-                os.path.exists(f"/run/user/{uid}/pulse/native")
-            )
+            return self._sound_server_running()
         except Exception:
             return False
+
+    @staticmethod
+    def _sound_server_running() -> bool:
+        """True when a PipeWire or PulseAudio runtime socket is present."""
+        uid = os.getuid()
+        return (
+            os.path.exists(f"/run/user/{uid}/pipewire-0") or
+            os.path.exists(f"/run/user/{uid}/pulse/native")
+        )
 
     def _start_keepalive(self, _attempt: int = 0):
         """Open a silent stream to prevent ALSA from suspending the device between recordings.
@@ -592,6 +608,8 @@ class AudioCapture:
                 # Validate device exists and has input channels
                 device_info = sd.query_devices(device=device_id, kind='input')
                 if device_info['max_input_channels'] > 0:
+                    # Binding a concrete index overrides any source pin.
+                    self._clear_pulse_source_env()
                     self.preferred_device_id = device_id
                     self._set_sd_default_input(device_id)
                     self.device_info = device_info
@@ -631,6 +649,194 @@ class AudioCapture:
                 continue
             tokens.append(tok)
         return tokens
+
+    # Naming a card this way is an explicit request for raw hardware.
+    _RAW_ALSA_PREFIXES = ('hw:', 'plughw:')
+
+    @staticmethod
+    def _list_pulse_sources() -> list:
+        """List PulseAudio/PipeWire capture sources, or [] when unavailable."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ['pactl', 'list', 'short', 'sources'],
+                capture_output=True, text=True, timeout=2
+            )
+            if result.returncode != 0:
+                return []
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
+            print(f"[PULSE] Could not list sources: {e}")
+            return []
+
+        sources = []
+        for line in result.stdout.splitlines():
+            fields = line.split('\t')
+            if len(fields) < 2:
+                continue
+            name = fields[1].strip()
+            # Monitors mirror an output, never a mic.
+            if not name or name.endswith('.monitor'):
+                continue
+            sources.append(name)
+        return sources
+
+    @staticmethod
+    def _get_pulse_default_source_name() -> Optional[str]:
+        """Name of the server's current default source, or None."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ['pactl', 'get-default-source'],
+                capture_output=True, text=True, timeout=2
+            )
+            if result.returncode != 0:
+                return None
+            return result.stdout.strip() or None
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            return None
+
+    @classmethod
+    def _match_config_to_pulse_source(cls, configured: str, sources: list) -> Optional[str]:
+        """Map a configured device string to a PulseAudio/PipeWire source name.
+
+        Same two-tier discipline as _match_pulse_source_to_portaudio, run in the
+        other direction: what the user typed against the server's sources.
+        Returns None rather than guessing an ambiguous match, leaving the caller
+        on its existing PortAudio matching.
+        """
+        if not configured or not sources:
+            return None
+
+        wanted = configured.strip().lower()
+
+        # Tier 1: exact source name, then substring.
+        for source in sources:
+            if source.lower() == wanted:
+                return source
+        hits = [source for source in sources if wanted in source.lower()]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            # One card can expose several sources (analog + iec958); let the
+            # server default break the tie, else refuse to guess.
+            default_source = cls._get_pulse_default_source_name()
+            if default_source in hits:
+                return default_source
+            print(f"[PULSE] Ambiguous source match for '{configured}': "
+                  f"{len(hits)} sources match; not guessing")
+            return None
+
+        # Tier 2: distinctive model tokens, requiring an unambiguous winner.
+        tokens = cls._extract_source_tokens(wanted)
+        if not tokens:
+            return None
+        scores = [(source, sum(1 for tok in tokens if tok in source.lower()))
+                  for source in sources]
+        best_score = max(score for _, score in scores)
+        if best_score < 2:
+            return None
+        winners = [source for source, score in scores if score == best_score]
+        if len(winners) > 1:
+            print(f"[PULSE] Ambiguous source token match for '{configured}': "
+                  f"{len(winners)} sources tie at score {best_score}; not guessing")
+            return None
+        return winners[0]
+
+    @staticmethod
+    def _find_pulse_portaudio_device(devices) -> Optional[int]:
+        """Index of the ALSA "pulse" device, which routes through the sound server.
+
+        Matched exactly: only that plugin honours PULSE_SOURCE. "default" and
+        "pipewire" are usually the pipewire-alsa plugin, which ignores it, and
+        hardware can carry "pulse" in its model name (Sony Pulse 3D) — binding
+        either would silently capture the wrong microphone.
+        """
+        for idx, device in enumerate(devices):
+            if device['max_input_channels'] > 0 and device['name'].strip().lower() == 'pulse':
+                return idx
+        return None
+
+    def _bind_input_device(self, index, label: str) -> bool:
+        """Validate an input device index, make it the default, and announce it."""
+        try:
+            device_info = sd.query_devices(device=index, kind='input')
+        except Exception:
+            return False
+        if device_info['max_input_channels'] <= 0:
+            return False
+        self._set_sd_default_input(index)
+        print(f"{label}: {device_info['name']} (ID: {index})")
+        self._warn_if_raw_alsa(device_info['name'])
+        return True
+
+    @staticmethod
+    def _clear_pulse_source_env():
+        """Drop any PULSE_SOURCE pin from a previous resolution."""
+        os.environ.pop('PULSE_SOURCE', None)
+
+    @staticmethod
+    def _warn_if_raw_alsa(device_name: str):
+        """Warn when a configured device resolved to raw hardware, which
+        silently hands the user the unprocessed signal."""
+        name = (device_name or '').lower()
+        if '(hw:' not in name and not name.startswith(('hw:', 'plughw:')):
+            return
+        # Without a sound server there is nothing to bypass.
+        if not AudioCapture._sound_server_running():
+            return
+        print(
+            f"⚠ Configured microphone resolved to raw ALSA hardware: {device_name}\n"
+            "  Capture bypasses PipeWire/PulseAudio — EasyEffects, noise suppression,\n"
+            "  echo cancellation and virtual sources will NOT be applied.\n"
+            "  Name a source from `pactl list short sources` to route through the sound server."
+        )
+
+    def _resolve_via_sound_server(self, configured) -> Optional[int]:
+        """Bind a configured microphone through PipeWire/PulseAudio (#234).
+
+        PortAudio lists raw ALSA devices ahead of the "pulse" aggregate, so
+        matching a configured name against its device list pins the hardware and
+        skips all server-side processing. Resolve against the server's source
+        list instead and open "pulse" with PULSE_SOURCE pinned, which libpulse
+        honours for record streams (pipewire-pulse included — it is client-side).
+
+        Returns None, leaving the caller's PortAudio matching intact, for raw
+        ALSA requests and anything not confidently resolvable.
+        """
+        if not isinstance(configured, str) or not configured.strip():
+            return None
+        if configured.strip().lower().startswith(self._RAW_ALSA_PREFIXES):
+            return None
+
+        try:
+            devices = sd.query_devices()
+        except Exception:
+            return None
+        pulse_index = self._find_pulse_portaudio_device(devices)
+        if pulse_index is None:
+            return None
+
+        remembered = getattr(self, '_pinned_pulse_source', None)
+        sources = self._list_pulse_sources()
+        if not sources:
+            # A "pulse" device exists, so the server is configured and most
+            # likely mid-restart (the common recovery trigger). Falling through
+            # would rebind raw ALSA and hold the card exclusively.
+            if remembered is None:
+                return None
+            os.environ['PULSE_SOURCE'] = remembered
+            print(f"[PULSE] Sound server unreachable; keeping pinned source: {remembered}")
+            return pulse_index
+
+        source_name = self._match_config_to_pulse_source(configured, sources)
+        if source_name is None:
+            return None
+
+        os.environ['PULSE_SOURCE'] = source_name
+        self._pinned_pulse_source = source_name
+        print(f"[PULSE] Routing '{configured}' through {devices[pulse_index]['name']} "
+              f"(ID: {pulse_index}), source: {source_name}")
+        return pulse_index
 
     def _match_pulse_source_to_portaudio(self, pulse_source_name: str,
                                          fuzzy: bool = False,
