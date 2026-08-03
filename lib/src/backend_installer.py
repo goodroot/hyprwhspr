@@ -1157,11 +1157,15 @@ def setup_vulkan_support() -> bool:
                 check=False
             )
             if not result or result.returncode != 0:
-                log_warning("Failed to install some Vulkan packages")
-                return False
+                # Not fatal. These packages are frequently already installed, and
+                # the call can fail for reasons unrelated to Vulkan support: no
+                # cached sudo credential in a non-interactive setup, a locked
+                # pacman database, a mirror timeout. Step 2 below is the
+                # authoritative capability check, so fall through and let it
+                # decide rather than silently downgrading a working GPU to CPU.
+                log_warning("Could not install Vulkan packages, checking for an existing Vulkan setup")
         except Exception as e:
-            log_error(f"Failed to install Vulkan dependencies: {e}")
-            return False
+            log_warning(f"Could not install Vulkan dependencies ({e}), checking for an existing Vulkan setup")
     else:
         # Check if Vulkan development files are available
         log_info("Checking for Vulkan development files...")
