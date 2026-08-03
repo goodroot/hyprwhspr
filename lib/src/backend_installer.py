@@ -1157,11 +1157,9 @@ def setup_vulkan_support() -> bool:
                 check=False
             )
             if not result or result.returncode != 0:
-                log_warning("Failed to install some Vulkan packages")
-                return False
+                log_warning("Could not install Vulkan packages, checking for an existing Vulkan setup")
         except Exception as e:
-            log_error(f"Failed to install Vulkan dependencies: {e}")
-            return False
+            log_warning(f"Could not install Vulkan dependencies ({e}), checking for an existing Vulkan setup")
     else:
         # Check if Vulkan development files are available
         log_info("Checking for Vulkan development files...")
