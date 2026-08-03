@@ -1550,7 +1550,8 @@ class hyprwhsprApp:
         if reason == 'failed':
             return "Realtime connection failed — check network or provider status"
         if reason == 'cooldown':
-            return "Realtime backend reconnecting — retrying shortly"
+            # Nothing retries in the background — the next attempt is the user's.
+            return "Realtime connection failed — try again in a few seconds"
         return "Realtime backend not connected yet — try again in a moment."
 
     def _notify_zero_volume(self, message: str, log_level: str = "WARN"):

@@ -514,7 +514,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         now = time.monotonic()
         last = self._last_rebuild_attempt
         if last is not None and (now - last) < self.REBUILD_COOLDOWN_SECS:
-            print('[REALTIME] Rebuild attempted recently; waiting before retry', flush=True)
+            print('[REALTIME] Rebuild failed recently; waiting before retry', flush=True)
             self._last_connect_failure = 'cooldown'
             return False
 
@@ -533,6 +533,9 @@ class RealtimeWsBackend(TranscriptionBackend):
             self._last_connect_failure = 'failed'
             return False
 
+        # Only failures should hold the cooldown, or a teardown shortly after a
+        # good rebuild would be stalled by the previous success.
+        self._last_rebuild_attempt = None
         self._last_connect_failure = None
         return True
 

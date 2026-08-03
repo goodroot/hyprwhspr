@@ -199,6 +199,8 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         self._reconnect_threads = set()
         self._stop_event = threading.Event()
         self._closed = False
+        # Set by the transport callbacks when the in-flight attempt dies.
+        self._attempt_failed = None
         self._connection_generation = 0
         self._active_generation = 0
 
@@ -373,12 +375,18 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 on_close=lambda ws, code, message: self._on_close(ws, code, message, generation),
                 **kwargs,
             )
+            # Lets the transport's error/close callbacks end this attempt's wait
+            # early instead of burning the full timeout on an endpoint that has
+            # already refused us.
+            attempt_failed = threading.Event()
+
             abandon_closed_attempt = False
             with self.lock:
                 if self._closed or generation != self._active_generation:
                     abandon_closed_attempt = True
                 else:
                     self.ws = attempt_ws
+                    self._attempt_failed = attempt_failed
             if abandon_closed_attempt:
                 attempt_ws.close()
                 return False
@@ -395,6 +403,8 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             while not self.connected and (time.time() - start_time) < timeout:
                 if self._stop_event.wait(0.1):
                     break
+                if attempt_failed.is_set():
+                    break
 
             if self.connected:
                 self._log('Connected successfully')
@@ -402,7 +412,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                 self._on_connect_success()
                 return True
             else:
-                self._log('Connection timeout')
+                self._log('Connection failed' if attempt_failed.is_set() else 'Connection timeout')
                 self._abandon_attempt(attempt_ws)
                 return False
 
@@ -465,7 +475,13 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
         with self.lock:
             if not self._is_active_connection(ws, generation):
                 return
+            self._fail_pending_attempt_locked()
         self._log(f'WebSocket error: {error}')
+
+    def _fail_pending_attempt_locked(self):
+        """Mark the in-flight connect attempt dead (no-op once connected)."""
+        if not self.connected and self._attempt_failed is not None:
+            self._attempt_failed.set()
 
     def _on_close(self, ws, close_status_code, _close_msg, generation=None):
         """Handle WebSocket close"""
@@ -476,6 +492,9 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             if not self._is_active_connection(ws, generation):
                 self._log(f'Ignoring close from obsolete WebSocket (code: {close_status_code})')
                 return
+            # A close before the handshake lands is a failed attempt, not an
+            # idle drop — don't make the caller wait out the connect timeout.
+            self._fail_pending_attempt_locked()
             was_connected = self.connected
             self.connected = False
             # Stop sender thread on disconnect; it will be restarted on next connect.
@@ -572,6 +591,8 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             # Any in-flight attempt is abandoned by the generation bump, and its
             # own finally clause won't clear this flag once generations diverge.
             self.connecting = False
+            # reset() sets no stop signal, so wake a waiting attempt explicitly.
+            self._fail_pending_attempt_locked()
             self._sender_running = False
             self.receiver_running = False
             self._audio_queue.clear()
@@ -601,9 +622,10 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
         with self.lock:
             self.connected = False
-            if not latch:
+            if not latch and not self._closed:
                 # Leave the client usable: no latch, and no lingering stop signal
-                # for the next attempt's wait loops to trip over.
+                # for the next attempt's wait loops to trip over. A client that
+                # was already closed for good keeps its stop signal.
                 self._stop_event.clear()
 
         self._log('Connection closed' if latch else 'Connection reset for reconnect')

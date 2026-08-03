@@ -61,6 +61,22 @@ class DeadTransport:
             raise ConnectionRefusedError("endpoint down")
 
 
+class RefusedTransport:
+    """Transport that reports a refused connection through the WS callbacks."""
+
+    class WebSocketApp:
+        def __init__(self, url, on_open=None, on_error=None, on_close=None, **kwargs):
+            self.on_error = on_error
+            self.on_close = on_close
+
+        def run_forever(self):
+            self.on_error(self, ConnectionRefusedError("endpoint down"))
+            self.on_close(self, None, "")
+
+        def close(self):
+            pass
+
+
 def _client():
     """A RealtimeClient wired to the fake transport, with I/O stubbed out."""
     client = RealtimeClient(mode="transcribe")
@@ -117,12 +133,31 @@ class ClientReopenTests(unittest.TestCase):
         self.assertFalse(client._connect_internal())
         self.assertFalse(client.connected)
 
+    def test_reset_does_not_unlatch_a_closed_client(self):
+        """reset() is teardown, not resurrection — only connect() reopens."""
+        client = _connected_client()
+        client.close()
+        client.reset()
+
+        self.assertTrue(client._closed)
+        self.assertTrue(client._stop_event.is_set())
+        self.assertFalse(client._connect_internal())
+
     def test_attempt_reconnect_aborts_after_close(self):
         client = _connected_client()
         client.reconnect_delays = [0]
         client.close()
 
         self.assertFalse(client._attempt_reconnect())
+
+    def test_refused_connection_fails_fast(self):
+        """A refused socket must not cost the caller the full 10s connect timeout."""
+        client = _client()
+        client._websocket_transport = RefusedTransport()
+
+        started = time.monotonic()
+        self.assertFalse(client.connect("wss://example.test/rt", "key", "model"))
+        self.assertLess(time.monotonic() - started, 3.0)
 
     def test_teardown_clears_stuck_connecting_flag(self):
         """An abandoned attempt must not leave `connecting` latched True.
