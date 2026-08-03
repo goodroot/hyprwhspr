@@ -45,6 +45,9 @@ class RealtimeWsBackend(TranscriptionBackend):
     is_local = False
     reinit_on_resume = True
 
+    # Don't rebuild a torn-down client on every keypress while an endpoint is down.
+    REBUILD_COOLDOWN_SECS = 5.0
+
     def __init__(self, manager):
         super().__init__(manager)
         # Realtime WebSocket client
@@ -53,6 +56,10 @@ class RealtimeWsBackend(TranscriptionBackend):
         # Connection parameters used for reconnect-on-demand.
         # (Stored in-memory only; do not log API keys.)
         self._realtime_connect_params = None
+        # Why the last recovery attempt failed, for an honest user-facing message:
+        # 'connecting' | 'cooldown' | 'failed' | None
+        self._last_connect_failure = None
+        self._last_rebuild_attempt = None
 
     @property
     def _realtime_partial_callback(self):
@@ -415,18 +422,19 @@ class RealtimeWsBackend(TranscriptionBackend):
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
         backend = normalize_backend(backend)
         
-        if backend == 'realtime-ws' and self._realtime_client:
-            # If the server closed the socket while idle, reconnect on-demand here
-            # (before we start capturing audio) to avoid dropping the first chunks.
-            if not self._realtime_client.connected:
-                if not self._reconnect_realtime_client():
-                    return None
+        if backend != 'realtime-ws':
+            return None
 
-            # Clear server buffer before starting new recording
-            self._realtime_client.clear_audio_buffer()
-            self._clear_realtime_partial_preview()
-            return self._realtime_streaming_callback
-        return None
+        # Recover here — before we start capturing audio — so the first chunks
+        # aren't dropped, whether the socket went idle or the client was torn
+        # down entirely by an earlier failure.
+        if not self._ensure_client():
+            return None
+
+        # Clear server buffer before starting new recording
+        self._realtime_client.clear_audio_buffer()
+        self._clear_realtime_partial_preview()
+        return self._realtime_streaming_callback
 
     def apply_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         """Apply the partial-preview callback to the active realtime provider."""
@@ -484,6 +492,50 @@ class RealtimeWsBackend(TranscriptionBackend):
         except Exception as e:
             print(f'[REALTIME] Failed to clear partial transcript preview: {e}', flush=True)
 
+    @property
+    def last_connect_failure(self) -> Optional[str]:
+        """Why the last recovery attempt failed: 'connecting', 'cooldown', 'failed', or None."""
+        return self._last_connect_failure
+
+    def _ensure_client(self) -> bool:
+        """Make the realtime client usable for a new recording.
+
+        Single recovery entry point for the three states a client can be in:
+        connected, disconnected (idle close), or gone entirely — the last one
+        happens whenever close_realtime_connection() runs on a recording failure
+        or suspend, and nothing outside the resume path rebuilds it.
+        """
+        if self._realtime_client:
+            if self._realtime_client.connected:
+                self._last_connect_failure = None
+                return True
+            return self._reconnect_realtime_client()
+
+        now = time.monotonic()
+        last = self._last_rebuild_attempt
+        if last is not None and (now - last) < self.REBUILD_COOLDOWN_SECS:
+            print('[REALTIME] Rebuild attempted recently; waiting before retry', flush=True)
+            self._last_connect_failure = 'cooldown'
+            return False
+
+        # initialize() can block on the connect timeout, so don't retry it on
+        # every keypress while the endpoint is down.
+        self._last_rebuild_attempt = now
+        print('[REALTIME] Rebuilding client after teardown', flush=True)
+        try:
+            rebuilt = self.initialize()
+        except Exception as e:
+            print(f'[REALTIME] Rebuild failed: {e}', flush=True)
+            self._last_connect_failure = 'failed'
+            return False
+
+        if not rebuilt or not self._realtime_client:
+            self._last_connect_failure = 'failed'
+            return False
+
+        self._last_connect_failure = None
+        return True
+
     def _reconnect_realtime_client(self) -> bool:
         """Reconnect realtime client using stored connect params."""
         if not self._realtime_client:
@@ -501,9 +553,11 @@ class RealtimeWsBackend(TranscriptionBackend):
                 time.sleep(0.1)
             if self._realtime_client.connected:
                 print('[REALTIME] In-flight connection landed; proceeding', flush=True)
+                self._last_connect_failure = None
                 return True
             if getattr(self._realtime_client, 'connecting', False):
                 print('[REALTIME] Still connecting; try again in a moment', flush=True)
+                self._last_connect_failure = 'connecting'
                 return False
             # Attempt finished without connecting; fall through to reconnect.
 
@@ -515,23 +569,33 @@ class RealtimeWsBackend(TranscriptionBackend):
 
         if not (websocket_url and api_key and model_id):
             print('[REALTIME] Missing connection parameters; cannot reconnect', flush=True)
+            self._last_connect_failure = 'failed'
             return False
 
         try:
-            # Best-effort: close any stale connection first
+            # Best-effort: drop stale socket/thread state first. Use reset() where
+            # available — close() latches the client shut and would make every
+            # reconnect from here fail instantly (issue #229). ElevenLabs has no
+            # reset(); its close() is already a transient teardown.
             try:
-                self._realtime_client.close()
+                teardown = getattr(self._realtime_client, 'reset', None)
+                if teardown is None:
+                    teardown = self._realtime_client.close
+                teardown()
             except Exception:
                 pass
 
             if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
                 print('[REALTIME] Reconnect failed', flush=True)
+                self._last_connect_failure = 'failed'
                 return False
 
             print('[REALTIME] Reconnected on-demand', flush=True)
+            self._last_connect_failure = None
             return True
         except Exception as e:
             print(f'[REALTIME] Reconnect failed: {e}', flush=True)
+            self._last_connect_failure = 'failed'
             return False
 
     def discard_audio(self) -> None:

@@ -147,6 +147,17 @@ class WhisperManager:
             return backend.get_streaming_callback()
         return None
 
+    def realtime_connect_failure(self) -> Optional[str]:
+        """Why realtime recovery last failed ('connecting'/'cooldown'/'failed'), else None.
+
+        Reads the backend directly rather than _active_realtime_backend(), which
+        excludes exactly the torn-down case we most need to explain.
+        """
+        backend = self._backend
+        if backend is not None and backend.name == 'realtime-ws':
+            return getattr(backend, 'last_connect_failure', None)
+        return None
+
     def _active_realtime_backend(self):
         """The realtime-ws backend when it has a live client, else None."""
         backend = self._backend

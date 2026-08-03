@@ -528,8 +528,12 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                     self._log('Reconnection cancelled (closing)')
                     return False
 
-                # Abort if the client was closed while we were waiting
-                if self._closed or not self.receiver_running:
+                # Abort if the client was closed or torn down while we were waiting.
+                # Read under the lock: _closed can flip both ways now that an
+                # explicit connect() reopens a latched client.
+                with self.lock:
+                    cancelled = self._closed or not self.receiver_running
+                if cancelled:
                     self._log('Reconnection cancelled (closing)')
                     return False
 
@@ -543,13 +547,31 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             self._reconnect_lock.release()
 
     def close(self):
-        """Close WebSocket connection and cleanup"""
+        """Close WebSocket connection and cleanup (permanent: latches the client shut)."""
+        self._shutdown(latch=True)
+
+    def reset(self):
+        """Tear the connection down without latching, so connect() can reopen it.
+
+        close() latches `_closed` so background reconnect loops stand down during
+        a real shutdown. Reconnect paths want the same teardown *without* that
+        latch — see issue #229, where closing before reconnecting left the client
+        permanently unusable.
+        """
+        self._shutdown(latch=False)
+
+    def _shutdown(self, latch: bool):
+        """Shared teardown. `_closed` is mutated only under self.lock."""
         with self.lock:
-            if self._closed:
+            if self._closed and latch:
                 return
-            self._closed = True
-            self._stop_event.set()
+            if latch:
+                self._closed = True
+                self._stop_event.set()
             self._active_generation += 1
+            # Any in-flight attempt is abandoned by the generation bump, and its
+            # own finally clause won't clear this flag once generations diverge.
+            self.connecting = False
             self._sender_running = False
             self.receiver_running = False
             self._audio_queue.clear()
@@ -579,8 +601,12 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
         with self.lock:
             self.connected = False
+            if not latch:
+                # Leave the client usable: no latch, and no lingering stop signal
+                # for the next attempt's wait loops to trip over.
+                self._stop_event.clear()
 
-        self._log('Connection closed')
+        self._log('Connection closed' if latch else 'Connection reset for reconnect')
 
     # ------------------------------------------------------------------
     # Transcript assembly / commit
