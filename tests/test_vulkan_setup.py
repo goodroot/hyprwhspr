@@ -19,13 +19,7 @@ GPU_SUMMARY = b"GPU0:\n\tapiVersion = 1.4.354\n\tdeviceName = Radeon RX 9070 XT\
 
 
 class SetupVulkanSupportTests(unittest.TestCase):
-    """The package install is a convenience; `vulkaninfo` is the real check.
-
-    A failed `pacman` call must not be treated as "this machine has no Vulkan",
-    because the packages are commonly already installed and the call can fail
-    for unrelated reasons (no cached sudo credential, locked database, mirror
-    timeout). Bailing early silently downgrades a working GPU to CPU.
-    """
+    """The package install is a convenience; `vulkaninfo` is the real check."""
 
     def _run(self, pacman_result=None, pacman_exc=None, has_gpu=True):
         def fake_which(name):
