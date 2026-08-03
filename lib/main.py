@@ -1094,7 +1094,7 @@ class hyprwhsprApp:
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
                 self._notify_zero_volume(
-                    "Realtime backend not connected yet — try again in a moment.",
+                    self._realtime_unavailable_message(),
                     log_level="ERROR",
                 )
                 # Restore audio if it was ducked
@@ -1539,6 +1539,20 @@ class hyprwhsprApp:
                 print(f"[ERROR] Stream open failed: {open_error}", flush=True)
             return "Microphone unavailable - input device missing or still initializing - check the connection and try again"
         return fallback
+
+    def _realtime_unavailable_message(self) -> str:
+        """Explain why realtime couldn't start, based on what recovery actually hit.
+
+        "try again in a moment" is only true while a handshake is in flight; for a
+        failed connect it invites the user to keep retrying against a dead endpoint.
+        """
+        reason = self.whisper_manager.realtime_connect_failure()
+        if reason == 'failed':
+            return "Realtime connection failed — check network or provider status"
+        if reason == 'cooldown':
+            # Nothing retries in the background — the next attempt is the user's.
+            return "Realtime connection failed — try again in a few seconds"
+        return "Realtime backend not connected yet — try again in a moment."
 
     def _notify_zero_volume(self, message: str, log_level: str = "WARN"):
         """Log a mic failure, signal waybar, and show a coalesced desktop notification"""
