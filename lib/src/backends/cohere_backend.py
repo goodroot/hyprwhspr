@@ -20,6 +20,11 @@ try:
 except ImportError:
     from credential_manager import get_credential
 
+try:
+    from ..backend_utils import COHERE_LANGUAGES
+except ImportError:
+    from backend_utils import COHERE_LANGUAGES
+
 from .base import TranscriptionBackend
 
 
@@ -35,6 +40,8 @@ class CohereBackend(TranscriptionBackend):
         self._cohere_model = None
         self._cohere_processor = None
         self._cohere_compile_done = False  # True after first torch.compile run; suppression no longer needed
+        self._autodetect_notice_shown = False   # "cannot auto-detect" is said once per model load
+        self._rejected_languages = set()        # unsupported codes already reported
 
     def initialize(self) -> bool:
         """Configure Cohere Transcribe backend (transformers, CUDA/CPU)"""
@@ -96,10 +103,43 @@ class CohereBackend(TranscriptionBackend):
             traceback.print_exc()
             return False
 
+        # Surface a broken language at startup rather than on first recording.
+        # Never fail init over it: an unusable secondary shortcut must not take
+        # the whole service down.
+        checked = ['language']
+        if self.config.get_setting('secondary_shortcut', None):
+            checked.append('secondary_language')  # dead config otherwise
+        for setting in checked:
+            value = (self.config.get_setting(setting, None) or '').lower()
+            if value and value not in self._supported_languages():
+                self._reject_language(value, setting)
+
         self.current_model = model_id
         self.ready = True
         self._last_use_time = time.monotonic()
         return True
+
+    def _supported_languages(self) -> tuple:
+        """The loaded model's own list when available, else the shipped copy."""
+        configured = getattr(getattr(self._cohere_model, 'config', None), 'supported_languages', None)
+        return tuple(configured) if configured else COHERE_LANGUAGES
+
+    def _reject_language(self, language: str, setting: str) -> None:
+        """Report an unsupported language; the model would only raise on it."""
+        supported = ' '.join(sorted(self._supported_languages()))
+        print(f"[ERROR] cohere-transcribe does not support {setting} '{language}'", flush=True)
+        print(f"        supported: {supported}", flush=True)
+
+        if language in self._rejected_languages:
+            return
+        self._rejected_languages.add(language)
+        try:
+            from desktop_notify import notify
+            notify("hyprwhspr",
+                   f"Unsupported language '{language}' for cohere-transcribe.\nSupported: {supported}",
+                   urgency="critical")
+        except Exception:
+            pass  # Best effort notification
 
     def transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000,
                    language_override: Optional[str] = None) -> str:
@@ -109,8 +149,18 @@ class CohereBackend(TranscriptionBackend):
             return ''
 
         language = language_override if language_override is not None else self.config.get_setting('language', None)
+        language = (language or '').lower()
         if not language:
+            # The language becomes decoder tokens; the model cannot detect it.
             language = 'en'
+            if not self._autodetect_notice_shown:
+                self._autodetect_notice_shown = True
+                print('[LANG] cohere-transcribe cannot auto-detect; using en '
+                      '(set "language" for other languages)', flush=True)
+
+        if language not in self._supported_languages():
+            self._reject_language(language, 'language')
+            return ''
 
         use_compile = self.config.get_setting('cohere_transcribe_compile', False)
 

@@ -84,7 +84,7 @@ def status_command():
         elif backend == 'onnx-asr':
             onnx_asr_model_status()
         elif backend == 'cohere-transcribe':
-            cohere_transcribe_model_status()
+            cohere_transcribe_model_status(config)
         else:
             model_status()
     except Exception:

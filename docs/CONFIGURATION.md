@@ -328,6 +328,10 @@ Models are downloaded automatically during `hyprwhspr setup`; use `model downloa
 
 **Supported languages:** English, German, French, Italian, Spanish, Portuguese, Greek, Dutch, Polish, Arabic, Vietnamese, Chinese, Japanese, Korean
 
+This model has no language detection, so `language` must be set: `null` transcribes as English, and
+any code outside the list above is refused rather than transcribed. `hyprwhspr status` shows which
+language is in effect.
+
 **Requirements:** ~4 GB VRAM (bfloat16), or CPU with ~8 GB RAM (float32) — slower on CPU
 
 #### Setup

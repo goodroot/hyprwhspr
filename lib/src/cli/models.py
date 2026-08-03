@@ -23,9 +23,9 @@ except ImportError:
     from backend_installer import VENV_DIR, PYWHISPERCPP_MODELS_DIR
 
 try:
-    from ..backend_utils import normalize_backend
+    from ..backend_utils import normalize_backend, COHERE_LANGUAGES
 except ImportError:
-    from backend_utils import normalize_backend
+    from backend_utils import normalize_backend, COHERE_LANGUAGES
 
 try:
     from ..credential_manager import get_credential
@@ -158,7 +158,7 @@ def model_command(action: str, model_name: str = 'base'):
         if action == 'list':
             list_cohere_transcribe_models()
         elif action == 'status':
-            cohere_transcribe_model_status()
+            cohere_transcribe_model_status(config)
         elif action == 'download':
             download_cohere_transcribe_model()
         else:
@@ -260,7 +260,7 @@ def list_onnx_asr_models():
 
 # ==================== Cohere Transcribe Model Commands ====================
 
-def cohere_transcribe_model_status():
+def cohere_transcribe_model_status(config=None):
     """Check Cohere Transcribe model in Hugging Face cache (~/.cache/huggingface/hub/)"""
     hf_hub_dir = Path.home() / '.cache' / 'huggingface' / 'hub'
     model_cache = hf_hub_dir / 'models--CohereLabs--cohere-transcribe-03-2026'
@@ -273,6 +273,18 @@ def cohere_transcribe_model_status():
     total_bytes = sum(f.stat().st_size for f in model_cache.rglob('*') if f.is_file())
     size_gb = total_bytes / (1024 ** 3)
     log_success(f"  {model_cache.name} ({size_gb:.1f} GB)")
+
+    # This model has no language detection, so the effective language is worth
+    # showing: it is otherwise only visible in the journal.
+    config = config or ConfigManager(verbose=False)
+    language = (config.get_setting('language', None) or '').lower()
+    if not language:
+        log_info("  Language: en (default; this model cannot auto-detect)")
+    elif language in COHERE_LANGUAGES:
+        log_info(f"  Language: {language}")
+    else:
+        log_warning(f"  Language: {language} - unsupported, transcription will fail")
+        log_info(f"  Supported: {' '.join(COHERE_LANGUAGES)}")
 
 
 def list_cohere_transcribe_models():

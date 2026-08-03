@@ -65,6 +65,11 @@ BACKEND_IMPORT_MODULES = {
     'cohere-transcribe': 'transformers',
 }
 
+# Languages CohereLabs/cohere-transcribe accepts. The model has no language
+# detection, so an unset or unsupported language is a user-visible problem;
+# kept here so the CLI can name them without loading the model.
+COHERE_LANGUAGES = ('ar', 'de', 'el', 'en', 'es', 'fr', 'it', 'ja', 'ko', 'nl', 'pl', 'pt', 'vi', 'zh')
+
 # Backend display names for CLI output
 # Single source of truth for user-facing backend names
 BACKEND_DISPLAY_NAMES = {
