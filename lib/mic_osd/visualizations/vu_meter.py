@@ -3,7 +3,7 @@ VU Meter visualization - shows microphone input level as a horizontal bar.
 """
 
 import cairo
-from .base import BaseVisualization
+from .base import AutoGain, BaseVisualization
 from ..theme import theme
 
 
@@ -23,11 +23,15 @@ class VUMeterVisualization(BaseVisualization):
         self.peak_level = 0.0
         self.peak_decay = 0.95  # How fast peak indicator falls
         self.smooth_factor = 0.3  # Smoothing for main bar
-    
+        # level arrives pre-scaled (raw RMS x10), so 1.0 is the old fixed gain
+        self.auto_gain = AutoGain(min_gain=1.0, noise_floor=0.02)
+
     def update(self, level: float, samples=None):
         """Update with smoothing and peak hold."""
         super().update(level, samples)
-        
+
+        level = min(1.0, level * self.auto_gain.update(level))
+
         # Smooth the main level
         self.smoothed_level = (
             self.smooth_factor * level + 

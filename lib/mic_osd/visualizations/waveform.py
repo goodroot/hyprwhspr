@@ -6,7 +6,7 @@ import math
 import time
 import cairo
 import numpy as np
-from .base import BaseVisualization, StateManager, VisualizerState
+from .base import AutoGain, BaseVisualization, StateManager, VisualizerState
 from ..theme import theme
 
 
@@ -29,8 +29,8 @@ class WaveformVisualization(BaseVisualization):
         self.bar_gap = 2
         self.min_bar_height = 2
 
-        # Amplification for more visible response
-        self.amplification = 4.0
+        # Adaptive amplification; 4.0 was the old fixed value, now the floor
+        self.auto_gain = AutoGain(min_gain=4.0, noise_floor=0.002)
 
         # Smoothing for bar heights (makes animation smoother)
         self.bar_heights = np.zeros(self.num_bars)
@@ -57,15 +57,14 @@ class WaveformVisualization(BaseVisualization):
             # Divide samples into chunks for each bar
             chunk_size = len(samples) // self.num_bars
             if chunk_size > 0:
-                new_heights = np.zeros(self.num_bars)
-                for i in range(self.num_bars):
-                    start = i * chunk_size
-                    end = start + chunk_size
-                    chunk = samples[start:end]
-                    # Use RMS of chunk for smoother visualization
-                    rms = np.sqrt(np.mean(chunk ** 2))
-                    new_heights[i] = min(1.0, rms * self.amplification)
-                
+                # Use RMS of each chunk for smoother visualization
+                usable = samples[:chunk_size * self.num_bars]
+                rms = np.sqrt(np.mean(
+                    usable.reshape(self.num_bars, chunk_size) ** 2, axis=1
+                ))
+                gain = self.auto_gain.update(float(rms.max()))
+                new_heights = np.minimum(1.0, rms * gain)
+
                 # Smooth transitions - rise fast, fall slow
                 for i in range(self.num_bars):
                     if new_heights[i] > self.bar_heights[i]:

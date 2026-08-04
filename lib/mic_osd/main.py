@@ -221,6 +221,13 @@ class MicOSD:
             print(f"[MIC-OSD] Audio monitoring unavailable, showing without waveform: {e}", flush=True)
             self.audio_monitor = None
 
+        # Each recording starts the gain fresh; the meter is frozen while
+        # hidden, so a stale envelope would flatten a quiet mic that follows
+        # a loud recording.
+        auto_gain = getattr(self.visualization, 'auto_gain', None)
+        if auto_gain is not None:
+            auto_gain.reset()
+
         # Start update timer (60 FPS)
         if not self.update_timer_id:
             self.update_timer_id = GLib.timeout_add(16, self._update)

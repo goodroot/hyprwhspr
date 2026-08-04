@@ -96,6 +96,59 @@ class StateManager:
         return 1.0
 
 
+class AutoGain:
+    """Adaptive input gain for the meters.
+
+    Mic amplitude spans ~30 dB across hardware: a USB condenser with internal
+    makeup gain peaks near full scale, while a distant XLR mic through an
+    interface preamp can sit two orders of magnitude lower. A fixed multiplier
+    tuned for the former renders the latter as a flat line: a distant XLR mic
+    on a Focusrite Scarlett peaked at 0.031 per bucket, which the waveform's
+    old fixed 4.0 turned into a 12% bar, under its 2px floor.
+
+    Tracks a peak envelope with instant attack and slow release, then scales it
+    toward target_peak. min_gain preserves the previous fixed-gain behaviour for
+    hot mics, so only quiet inputs are boosted. Room tone is left alone: an
+    envelope under noise_floor means nobody is speaking, so no amplification.
+    """
+
+    TARGET_PEAK = 0.7
+    MAX_GAIN = 80.0
+    RELEASE = 0.995  # Per-frame decay; ~3s time constant at 60 FPS
+    GATE_FRACTION = 0.2  # Relaxed gate as a share of the envelope
+
+    def __init__(self, min_gain: float, noise_floor: float):
+        self.min_gain = min_gain
+        self.noise_floor = noise_floor
+        self.envelope = 0.0
+
+    def update(self, peak: float) -> float:
+        """Feed this frame's peak amplitude, get the gain to apply to it."""
+        if peak > self.envelope:
+            self.envelope = peak
+        else:
+            self.envelope *= self.RELEASE
+
+        if self.envelope <= self.noise_floor:
+            return self.min_gain
+        gain = self.TARGET_PEAK / self.envelope
+        return max(self.min_gain, min(self.MAX_GAIN, gain))
+
+    def reset(self):
+        """Forget the tracked envelope. The meter only runs while the OSD is
+        visible, so the envelope would otherwise carry a previous recording's
+        loudest moment into the next one and hold the gain down there."""
+        self.envelope = 0.0
+
+    def gate(self, default: float) -> float:
+        """Scale a fixed noise gate down for quiet inputs, whose speech would
+        otherwise sit entirely beneath it. Silence keeps the full gate, so
+        room tone is still held down rather than boosted into the meter."""
+        if self.envelope <= self.noise_floor:
+            return default
+        return min(default, self.envelope * self.GATE_FRACTION)
+
+
 class BaseVisualization(ABC):
     """
     Abstract base class for audio visualizations.

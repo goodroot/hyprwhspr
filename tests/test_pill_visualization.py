@@ -50,11 +50,27 @@ class PillVisualizationTests(unittest.TestCase):
         visualization.update(0.05, np.full(13, 0.05))
         self.assertGreater(float(np.max(visualization.bar_heights)), 0.2)
 
-    def test_below_noise_gate_remains_idle(self):
+    def test_below_noise_floor_remains_idle(self):
         visualization = self.PillVisualization()
         self._advance(visualization)
-        visualization.update(0.004, np.full(13, 0.004))
+        visualization.update(0.0015, np.full(13, 0.0015))
         np.testing.assert_allclose(visualization.bar_heights, 0.0)
+
+    def test_level_substitute_stays_out_of_gain_envelope(self):
+        """With no samples the pill falls back to level, which is pre-scaled
+        (raw RMS x10); feeding that to auto-gain reads as a 10x louder mic."""
+        visualization = self.PillVisualization()
+        self._advance(visualization)
+        visualization.update(0.15, np.zeros(13))
+        self.assertEqual(visualization.auto_gain.envelope, 0.0)
+
+    def test_quiet_mic_lifts_bars(self):
+        """A distant XLR mic peaks near 0.01, under the old fixed gate of
+        0.006 once averaged; auto-gain must still show it."""
+        visualization = self.PillVisualization()
+        self._advance(visualization)
+        visualization.update(0.04, np.full(13, 0.0108))
+        self.assertGreater(float(np.max(visualization.bar_heights)), 0.2)
 
     def test_processing_state_generates_animated_wave(self):
         visualization = self.PillVisualization()
