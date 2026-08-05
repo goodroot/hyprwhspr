@@ -1081,7 +1081,17 @@ def setup_command(python_path: Optional[str] = None):
 
     setup_audio_ducking_choice = Confirm.ask("Enable audio ducking?", default=_bool_default(existing_cfg, 'audio_ducking', True))
     audio_ducking_percent = 50  # Default
+    audio_ducking_mode = 'duck'
     if setup_audio_ducking_choice:
+        print("\nHow should other audio be quieted?")
+        print("  duck  = lower the volume of every app (recommended)")
+        print("  pause = pause media players (browser, Spotify, mpv) and resume after,")
+        print("          then duck whatever has no player controls")
+        existing_mode = str(existing_cfg.get('audio_ducking_mode', 'duck')).lower()
+        if existing_mode not in ('duck', 'pause'):
+            existing_mode = 'duck'
+        audio_ducking_mode = Prompt.ask("Mode", choices=['duck', 'pause'], default=existing_mode)
+
         print("\nHow much to reduce volume BY during recording?")
         print("  50 = reduce to 50% of original (recommended)")
         print("  70 = reduce to 30% of original (aggressive)")
@@ -1206,7 +1216,7 @@ def setup_command(python_path: Optional[str] = None):
     else:
         print(f"{_status_label}: {'Yes' if setup_mic_osd_choice else 'No'}")
     if setup_audio_ducking_choice:
-        print(f"Audio ducking: Yes ({audio_ducking_percent}% reduction)")
+        print(f"Audio ducking: Yes ({audio_ducking_mode} mode, {audio_ducking_percent}% reduction)")
     else:
         print("Audio ducking: No")
     print(f"Hyprland compositor bindings: {'Yes' if setup_hyprland_choice else 'No'}")
@@ -1281,8 +1291,9 @@ def setup_command(python_path: Optional[str] = None):
         config = ConfigManager()
         config.set_setting('audio_ducking', setup_audio_ducking_choice)
         if setup_audio_ducking_choice:
+            config.set_setting('audio_ducking_mode', audio_ducking_mode)
             config.set_setting('audio_ducking_percent', audio_ducking_percent)
-            log_success(f"Audio ducking enabled ({audio_ducking_percent}% reduction)")
+            log_success(f"Audio ducking enabled ({audio_ducking_mode} mode, {audio_ducking_percent}% reduction)")
         else:
             log_info("Audio ducking disabled")
         config.save_config()

@@ -35,7 +35,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Multi-lingual** - Great performance in many languages
 - **Long form mode with saving** - Pause, think, resume, pause: submit... Bam!
 - **Auto-paste anywhere** - Instant paste into any active buffer, or even auto enter (optional)
-- **Audio ducking 🦆** - Reduces system volume on record (optional)
+- **Audio ducking 🦆** - Reduces or pauses other audio on record (optional)
 
 ---
 

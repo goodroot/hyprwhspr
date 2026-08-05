@@ -492,7 +492,13 @@
     "audio_ducking": {
       "type": "boolean",
       "default": false,
-      "description": "Reduce system volume during recording"
+      "description": "Quiet other audio during recording"
+    },
+    "audio_ducking_mode": {
+      "type": "string",
+      "enum": ["duck", "pause"],
+      "default": "duck",
+      "description": "How to quiet other audio: 'duck' lowers every application stream's volume; 'pause' pauses MPRIS media players (browser, Spotify, mpv) and resumes them afterwards, ducking only what is left"
     },
     "audio_ducking_percent": {
       "type": "integer",

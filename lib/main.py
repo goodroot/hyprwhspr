@@ -78,7 +78,7 @@ from session_environment import ensure_wayland_display
 from text_injector import TextInjector, InjectionOutcome
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
-from audio_ducker import AudioDucker
+from playback_suppressor import PlaybackSuppressor
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
@@ -106,9 +106,9 @@ class hyprwhsprApp:
         # Initialize audio feedback manager
         self.audio_manager = AudioManager(self.config)
 
-        # Initialize audio ducker for reducing system volume during recording
+        # Initialize playback suppression (duck volume or pause players while recording)
         ducking_percent = self.config.get_setting('audio_ducking_percent', 50)
-        self.audio_ducker = AudioDucker(reduction_percent=ducking_percent)
+        self.playback_suppressor = PlaybackSuppressor(reduction_percent=ducking_percent)
 
         # Initialize whisper manager with shared config
         self.whisper_manager = WhisperManager(config_manager=self.config)
@@ -1097,9 +1097,9 @@ class hyprwhsprApp:
                     self._realtime_unavailable_message(),
                     log_level="ERROR",
                 )
-                # Restore audio if it was ducked
-                if self.audio_ducker.is_ducked:
-                    self.audio_ducker.restore()
+                # Restore audio if it was ducked or paused
+                if self.playback_suppressor.is_active:
+                    self.playback_suppressor.restore()
                 return
             
             # Helper function to verify stream is working and play sound
@@ -1157,9 +1157,9 @@ class hyprwhsprApp:
                         "Microphone not responding - please unplug and replug USB microphone, then try recording again")
                     self._notify_zero_volume(message, log_level="ERROR")
 
-                    # Restore audio if it was ducked
-                    if self.audio_ducker.is_ducked:
-                        self.audio_ducker.restore()
+                    # Restore audio if it was ducked or paused
+                    if self.playback_suppressor.is_active:
+                        self.playback_suppressor.restore()
                     return  # Don't attempt recovery during user-initiated recording
 
                 # Stream is verified working - show mic-osd visualization
@@ -1181,9 +1181,9 @@ class hyprwhsprApp:
                     message = self._mic_failure_message(fallback)
                     self._notify_zero_volume(message, log_level="WARN" if message == fallback else "ERROR")
 
-                    # Restore audio if it was ducked
-                    if self.audio_ducker.is_ducked:
-                        self.audio_ducker.restore()
+                    # Restore audio if it was ducked or paused
+                    if self.playback_suppressor.is_active:
+                        self.playback_suppressor.restore()
                     return
                 
                 # Recording is confirmed working - abort any in-progress recovery and clear background retries
@@ -1195,9 +1195,11 @@ class hyprwhsprApp:
                     print("[HEALTH] Recording succeeded - canceling background recovery", flush=True)
                     self._background_recovery_needed.clear()
                 
-                # Duck system audio now that stream is confirmed working
+                # Quiet other audio now that stream is confirmed working
                 if self.config.get_setting('audio_ducking', False):
-                    self.audio_ducker.duck()
+                    self.playback_suppressor.suppress(
+                        mode=self.config.get_setting('audio_ducking_mode', 'duck'),
+                        reduction_percent=self.config.get_setting('audio_ducking_percent', 50))
 
                 # Stream is working and stable - start monitoring
                 self._start_audio_level_monitoring()
@@ -1226,9 +1228,9 @@ class hyprwhsprApp:
                         "Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again"),
                     log_level="ERROR")
 
-                # Restore audio if it was ducked
-                if self.audio_ducker.is_ducked:
-                    self.audio_ducker.restore()
+                # Restore audio if it was ducked or paused
+                if self.playback_suppressor.is_active:
+                    self.playback_suppressor.restore()
                 return
 
         except Exception as e:
@@ -1244,9 +1246,9 @@ class hyprwhsprApp:
                 self.is_recording = False
             self._write_recording_status(False)
 
-            # Restore audio if it was ducked
-            if self.audio_ducker.is_ducked:
-                self.audio_ducker.restore()
+            # Restore audio if it was ducked or paused
+            if self.playback_suppressor.is_active:
+                self.playback_suppressor.restore()
 
     def _cleanup_recording_state(self):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
@@ -1270,8 +1272,8 @@ class hyprwhsprApp:
         except Exception:
             pass
         try:
-            if self.audio_ducker.is_ducked:
-                self.audio_ducker.restore()
+            if self.playback_suppressor.is_active:
+                self.playback_suppressor.restore()
         except Exception:
             pass
 
@@ -1340,9 +1342,9 @@ class hyprwhsprApp:
             # Write recording status to file for tray script
             self._write_recording_status(False)
 
-            # Restore system audio if it was ducked
-            if self.audio_ducker.is_ducked:
-                self.audio_ducker.restore()
+            # Restore system audio if it was ducked or paused
+            if self.playback_suppressor.is_active:
+                self.playback_suppressor.restore()
 
             # Check backend type
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
@@ -2390,6 +2392,9 @@ class hyprwhsprApp:
             # Stop audio capture
             if getattr(self, 'is_recording', False):
                 cleanup_step("stop audio capture", lambda: call_optional('audio_capture', 'stop_recording'))
+
+            # Shutting down mid-recording must not leave other apps ducked or paused
+            cleanup_step("restore playback", lambda: call_optional('playback_suppressor', 'restore'))
 
             # Cleanup whisper manager (closes WebSocket connections, etc.)
             cleanup_step("close transcription backend", lambda: call_optional('whisper_manager', 'cleanup'))

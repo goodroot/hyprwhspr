@@ -894,19 +894,25 @@ This holds a silent input stream open in the background so the device stays warm
 
 ### Audio ducking
 
-Quiet system volume on record:
+Quiet other audio on record:
 
 ```jsonc
 {
   "audio_ducking": true,
+  "audio_ducking_mode": "duck",
   "audio_ducking_percent": 50
 }
 ```
 
-- `audio_ducking: true` — set true to enable audio ducking
+- `audio_ducking: true` — set true to quiet other audio while recording
+- `audio_ducking_mode: "duck"` — `"duck"` lowers volume; `"pause"` pauses media players instead
 - `audio_ducking_percent: 50` — how much to reduce volume BY (default 50 = reduce to 50% of original; 70 = reduce to 30%)
 
 Ducking lowers each application stream's volume, not the device master — your speaker setting is untouched and shell volume OSDs don't fire on every recording. Streams that start mid-recording aren't ducked.
+
+Halving a podcast's volume doesn't help; you still miss what was said. Pause mode pauses your players instead and resumes them afterwards, at the same position, with no volume change at all. It uses MPRIS (Firefox, Chromium, Spotify, mpv, VLC, most players); anything without it — game audio, calls, system sounds — is ducked as usual.
+
+Pause mode needs `dbus-python`, an optional dependency installed by `scripts/install-deps.sh`; without it, it falls back to ducking. Only players hyprwhspr paused are resumed, and only if they're still paused when you stop.
 
 ## Text processing
 

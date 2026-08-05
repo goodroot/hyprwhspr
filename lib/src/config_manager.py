@@ -178,7 +178,8 @@ class ConfigManager:
             'notification_timeout_ms': 5000,
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
             # Audio ducking settings
-            'audio_ducking': False,              # Reduce system volume during recording
+            'audio_ducking': False,              # Quiet other audio during recording
+            'audio_ducking_mode': 'duck',        # 'duck' (lower volume) or 'pause' (pause MPRIS players, duck the rest)
             'audio_ducking_percent': 50,         # How much to reduce BY (50 = reduce to 50% of original)
             # Post-paste behavior
             'auto_submit': False,                # Send Enter key after pasting text (for chat/search inputs)

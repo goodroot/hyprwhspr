@@ -29,6 +29,32 @@ except ImportError:
 # that races the duck snapshot gets caught and restored to a ducked level.
 _OWN_PLAYBACK_BINARIES = {'paplay', 'pw-play', 'ffplay', 'aplay'}
 
+# How far up the process tree to look when matching a stream against a paused
+# MPRIS player. Browsers play audio from a child process, not the process that
+# owns the MPRIS bus name, so a direct PID match alone misses them.
+_PID_ANCESTOR_DEPTH = 4
+
+
+def _pid_ancestry(pid: int, depth: int = _PID_ANCESTOR_DEPTH) -> list:
+    """[pid, parent, grandparent, ...] read from /proc, best-effort."""
+    chain = []
+    current = pid
+    for _ in range(depth):
+        if current is None or current <= 1:
+            break
+        chain.append(current)
+        try:
+            with open(f'/proc/{current}/status', 'r') as handle:
+                for line in handle:
+                    if line.startswith('PPid:'):
+                        current = int(line.split()[1])
+                        break
+                else:
+                    break
+        except (OSError, ValueError):
+            break
+    return chain
+
 
 class AudioDucker:
     """Manages audio ducking (volume reduction) during recording"""
@@ -75,16 +101,37 @@ class AudioDucker:
         app_name = (props.get('application.name') or '').lower()
         return binary in _OWN_PLAYBACK_BINARIES or app_name in _OWN_PLAYBACK_BINARIES
 
-    def duck(self) -> bool:
+    @staticmethod
+    def _belongs_to_pids(sink_input, pids: set) -> bool:
+        """True if the stream's process is (or descends from) one of `pids`."""
+        raw_pid = sink_input.proplist.get('application.process.id')
+        try:
+            pid = int(raw_pid)
+        except (TypeError, ValueError):
+            return False
+        return any(ancestor in pids for ancestor in _pid_ancestry(pid))
+
+    def duck(self, skip_pids=None) -> bool:
         """
         Reduce playback volume of running application streams.
         Stores original volumes for later restoration.
+
+        Args:
+            skip_pids: PIDs whose streams must be left alone (players already
+                       paused via MPRIS).
+
+        A paused stream is worth nothing to duck and costs something: if it goes
+        away before restore() runs, PulseAudio's stream-restore database keeps the
+        ducked volume against that app and hands it back to its next stream. So
+        anything corked, or belonging to a player we just paused, is skipped.
 
         Returns:
             True if ducking was applied, False otherwise
         """
         if not PULSECTL_AVAILABLE:
             return False
+
+        skip_pids = set(skip_pids or ())
 
         with self._lock:
             if self._is_ducked:
@@ -96,6 +143,11 @@ class AudioDucker:
 
                     for stream in pulse.sink_input_list():
                         if self._is_own_stream(stream):
+                            continue
+
+                        if getattr(stream, 'corked', False):
+                            continue
+                        if skip_pids and self._belongs_to_pids(stream, skip_pids):
                             continue
 
                         # Store original volume (average of channels)
@@ -113,7 +165,10 @@ class AudioDucker:
 
             except Exception as e:
                 print(f"[AUDIO_DUCKER] Failed to duck audio: {e}", flush=True)
-                self._original_volumes.clear()
+                # Whatever was lowered before the failure still needs restoring,
+                # so keep the snapshot and stay "ducked" - dropping it here would
+                # leave those streams quiet for good.
+                self._is_ducked = bool(self._original_volumes)
                 return False
 
     def restore(self) -> bool:
