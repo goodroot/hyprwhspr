@@ -211,6 +211,23 @@ class MediaPauserTests(unittest.TestCase):
 
         self.assertEqual(player.paused, 1)
 
+    def test_bus_is_opened_once_and_never_closed(self):
+        # A connection closed (or GC'd) under DBusGMainLoop leaves the GLib loop
+        # dispatching on freed memory and segfaults the service mid-recording.
+        player = FakePlayer(pid=111)
+        bus = FakeBus({"org.mpris.MediaPlayer2.mpv": player})
+        pauser = media_pauser.MediaPauser()
+        fake = fake_dbus(bus)
+
+        with mock.patch.multiple(media_pauser, DBUS_AVAILABLE=True, dbus=fake, create=True):
+            pauser.pause_all()
+            pauser.resume_all()
+            pauser.pause_all()
+            pauser.resume_all()
+
+        self.assertEqual(fake.SessionBus.call_count, 1)
+        self.assertFalse(getattr(bus, "closed", False))
+
     def test_no_dbus_is_a_clean_noop(self):
         with mock.patch.object(media_pauser, "DBUS_AVAILABLE", False):
             pauser = media_pauser.MediaPauser()

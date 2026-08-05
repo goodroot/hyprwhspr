@@ -12,7 +12,6 @@ must not be handed a Play() it never asked for.
 """
 
 import threading
-from contextlib import contextmanager
 
 try:
     import dbus
@@ -31,24 +30,6 @@ PROPERTIES_IFACE = 'org.freedesktop.DBus.Properties'
 CALL_TIMEOUT = 1.0
 
 
-@contextmanager
-def _session_bus():
-    """A short-lived private session-bus connection.
-
-    Private, because these calls are made from the recording thread while
-    suspend_monitor.py runs a GLib main loop on the shared connections; a
-    connection of our own keeps blocking calls out of that machinery.
-    """
-    bus = dbus.SessionBus(private=True)
-    try:
-        yield bus
-    finally:
-        try:
-            bus.close()
-        except Exception:
-            pass
-
-
 class MediaPauser:
     """Pauses/resumes MPRIS media players around a recording"""
 
@@ -57,9 +38,31 @@ class MediaPauser:
         self._paused_players = []
         self._lock = threading.Lock()
         self._is_paused = False
+        self._bus = None
 
         if not DBUS_AVAILABLE:
             print("[MEDIA_PAUSER] dbus-python not available, media pausing disabled")
+
+    def _session_bus(self):
+        """The shared session-bus connection, opened once and never closed.
+
+        suspend_monitor.py installs DBusGMainLoop as the default main loop, so
+        every connection this process opens gets watches attached to the GLib
+        loop running in that thread. Closing one - or letting dbus-python close
+        a private connection during garbage collection - leaves the loop
+        dispatching on freed memory, which segfaults the service on the next
+        recording. The shared connection is owned by dbus-python for the life of
+        the process, so nothing can pull it out from under the loop.
+        """
+        if self._bus is None:
+            bus = dbus.SessionBus()
+            try:
+                # A dead session bus must not take the dictation service with it
+                bus.set_exit_on_disconnect(False)
+            except Exception:
+                pass
+            self._bus = bus
+        return self._bus
 
     @staticmethod
     def _player_proxies(bus, name):
@@ -96,31 +99,31 @@ class MediaPauser:
 
             paused_pids = []
             try:
-                with _session_bus() as bus:
-                    names = [n for n in bus.list_names() if str(n).startswith(MPRIS_NAME_PREFIX)]
+                bus = self._session_bus()
+                names = [n for n in bus.list_names() if str(n).startswith(MPRIS_NAME_PREFIX)]
 
-                    for name in names:
-                        name = str(name)
-                        try:
-                            props, player = self._player_proxies(bus, name)
-                            status = props.Get(MPRIS_PLAYER_IFACE, 'PlaybackStatus',
-                                               timeout=CALL_TIMEOUT)
-                            if str(status) != 'Playing':
-                                continue
-                            if not bool(props.Get(MPRIS_PLAYER_IFACE, 'CanPause',
-                                                  timeout=CALL_TIMEOUT)):
-                                continue
+                for name in names:
+                    name = str(name)
+                    try:
+                        props, player = self._player_proxies(bus, name)
+                        status = props.Get(MPRIS_PLAYER_IFACE, 'PlaybackStatus',
+                                           timeout=CALL_TIMEOUT)
+                        if str(status) != 'Playing':
+                            continue
+                        if not bool(props.Get(MPRIS_PLAYER_IFACE, 'CanPause',
+                                              timeout=CALL_TIMEOUT)):
+                            continue
 
-                            owner = str(bus.get_name_owner(name))
-                            player.Pause(timeout=CALL_TIMEOUT)
-                            self._paused_players.append((name, owner))
+                        owner = str(bus.get_name_owner(name))
+                        player.Pause(timeout=CALL_TIMEOUT)
+                        self._paused_players.append((name, owner))
 
-                            pid = self._connection_pid(bus, name)
-                            if pid is not None:
-                                paused_pids.append(pid)
-                        except Exception as e:
-                            # One uncooperative player must not abort the sweep
-                            print(f"[MEDIA_PAUSER] Could not pause {name}: {e}", flush=True)
+                        pid = self._connection_pid(bus, name)
+                        if pid is not None:
+                            paused_pids.append(pid)
+                    except Exception as e:
+                        # One uncooperative player must not abort the sweep
+                        print(f"[MEDIA_PAUSER] Could not pause {name}: {e}", flush=True)
 
                 self._is_paused = bool(self._paused_players)
                 if self._paused_players:
@@ -151,27 +154,27 @@ class MediaPauser:
 
             ok = True
             try:
-                with _session_bus() as bus:
-                    resumed = 0
-                    for name, owner in self._paused_players:
-                        try:
-                            if not bus.name_has_owner(name):
-                                continue  # Player quit while we recorded
-                            if str(bus.get_name_owner(name)) != owner:
-                                continue  # Player restarted; not ours to resume
-                            props, player = self._player_proxies(bus, name)
-                            status = props.Get(MPRIS_PLAYER_IFACE, 'PlaybackStatus',
-                                               timeout=CALL_TIMEOUT)
-                            if str(status) != 'Paused':
-                                continue  # User already moved on
-                            player.Play(timeout=CALL_TIMEOUT)
-                            resumed += 1
-                        except Exception as e:
-                            print(f"[MEDIA_PAUSER] Could not resume {name}: {e}", flush=True)
-                            ok = False
+                bus = self._session_bus()
+                resumed = 0
+                for name, owner in self._paused_players:
+                    try:
+                        if not bus.name_has_owner(name):
+                            continue  # Player quit while we recorded
+                        if str(bus.get_name_owner(name)) != owner:
+                            continue  # Player restarted; not ours to resume
+                        props, player = self._player_proxies(bus, name)
+                        status = props.Get(MPRIS_PLAYER_IFACE, 'PlaybackStatus',
+                                           timeout=CALL_TIMEOUT)
+                        if str(status) != 'Paused':
+                            continue  # User already moved on
+                        player.Play(timeout=CALL_TIMEOUT)
+                        resumed += 1
+                    except Exception as e:
+                        print(f"[MEDIA_PAUSER] Could not resume {name}: {e}", flush=True)
+                        ok = False
 
-                    if resumed > 0:
-                        print(f"[MEDIA_PAUSER] Resumed {resumed} player(s)", flush=True)
+                if resumed > 0:
+                    print(f"[MEDIA_PAUSER] Resumed {resumed} player(s)", flush=True)
 
             except Exception as e:
                 print(f"[MEDIA_PAUSER] Failed to resume media: {e}", flush=True)
