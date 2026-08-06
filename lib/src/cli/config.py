@@ -131,7 +131,11 @@ def show_config(show_all: bool = False):
     """Display current config"""
     try:
         if show_all:
-            config = ConfigManager().get_all_settings()
+            manager = ConfigManager(verbose=False)
+            config = {
+                "$schema": manager.SCHEMA_URL,
+                **manager.get_all_settings(),
+            }
         else:
             config_file = USER_CONFIG_DIR / 'config.json'
             if not config_file.exists():

@@ -19,6 +19,21 @@ hyprwhspr config show        # Show your overrides only
 hyprwhspr config show --all  # Show all settings including defaults
 ```
 
+`show --all` emits clean JSON, including `$schema`, so you can temporarily
+materialize every resolved default into the editable file. Always write through
+a temporary file: redirecting directly to `config.json` would truncate it before
+hyprwhspr can read the existing overrides.
+
+```bash
+config="$HOME/.config/hyprwhspr/config.json"
+tmp="$(mktemp "$HOME/.config/hyprwhspr/.config.json.XXXXXX")"
+hyprwhspr config show --all > "$tmp" && mv "$tmp" "$config"
+```
+
+This is optional: absent settings are already active through the defaults. A
+later hyprwhspr command that saves configuration may compact the file back to
+sparse form by design.
+
 ## Contents
 
 - [Minimal configuration](#minimal-configuration)
@@ -732,7 +747,7 @@ In overlay mode, `mic_osd_style` picks one of four visualizations (notification 
 - `waveform` — the full themed waveform with transcript preview (default)
 - `vu_meter` — a VU meter
 - `pill` — a compact monochrome status pill: idle dots, live bars while recording, a travelling wave while processing, a pulse on error, and a checkmark on success. Can optionally show an animated live transcript on realtime backends that stream partial results.
-- `spectrum` — a larger, mirrored frequency spectrum inspired by CAVA/Cavasik. FFT analysis runs against hyprwhspr's existing capture stream; it does not launch Cavasik or open another microphone connection.
+- `spectrum` — a compact, mirrored frequency spectrum inspired by CAVA/Cavasik. FFT analysis runs against hyprwhspr's existing capture stream; it does not launch Cavasik or open another microphone connection. Its transcript wraps below the meter and the bottom-anchored layer surface grows upward one line at a time, up to a configurable limit.
 
 ![Pill OSD states](assets/pill-states.png)
 
@@ -769,7 +784,67 @@ Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` pl
 | `mic_osd_pill_transcript_word_limit` | `4` | Recent words shown (1–12). |
 | `mic_osd_pill_transcript_idle_timeout_ms` | `1400` | Hide after this much idle time; `0` disables. |
 
-The spectrum's center-to-peak gradient can be overridden in the normal
+#### Spectrum layout, transcript, and response
+
+The spectrum keeps its meter at a stable height. Its panel has only that height
+when there is no preview, then grows and shrinks as transcript lines wrap. Long
+transcripts retain the newest `mic_osd_transcript_max_lines` lines rather than
+allowing an overlay to consume the entire screen. GTK4 Layer Shell supports this
+dynamic surface sizing directly; no Quickshell process or compositor window rule
+is involved.
+
+```jsonc
+{
+  "mic_osd_style": "spectrum",
+  "mic_osd_bottom_margin": 130,
+  "mic_osd_spectrum_width": 520,
+  "mic_osd_spectrum_meter_height": 86,
+  "mic_osd_spectrum_background_opacity": 0.46,
+  "mic_osd_spectrum_border_opacity": 0.30,
+
+  "mic_osd_transcript_font_family": "sans-serif",
+  "mic_osd_transcript_font_size": 18,
+  "mic_osd_transcript_max_lines": 6,
+  "mic_osd_transcript_line_spacing": 1.25,
+  "mic_osd_transcript_opacity": 0.96,
+
+  "mic_osd_spectrum_gain": 1.35,
+  "mic_osd_spectrum_noise_floor_db": -72,
+  "mic_osd_spectrum_peak_db": -24,
+  "mic_osd_spectrum_curve": 1.10,
+  "mic_osd_spectrum_rise_ms": 35,
+  "mic_osd_spectrum_fall_ms": 150
+}
+```
+
+Response tuning does **not** alter the audio sent to transcription:
+
+- Increase `mic_osd_spectrum_gain` to make all bars taller.
+- Make `mic_osd_spectrum_peak_db` more negative (for example `-30`) so normal
+  speech reaches the purple/pink end of the gradient sooner.
+- Raise `mic_osd_spectrum_noise_floor_db` to suppress room noise, or lower it
+  for a very quiet microphone. Keep it below `mic_osd_spectrum_peak_db`.
+- Lower `mic_osd_spectrum_rise_ms` for a faster attack. Increase
+  `mic_osd_spectrum_fall_ms` to make peaks linger.
+- Lower `mic_osd_spectrum_curve` to emphasize quiet frequency detail.
+
+These presentation and response settings are watched while the OSD daemon is
+running and normally apply within 400 ms of saving `config.json`; the service
+does not need to be restarted. Changing `mic_osd_style` still requires a service
+restart because the main process chooses the matching audio-feed format.
+
+For an isolated visualizer while tuning, run from the repository root:
+
+```bash
+PYTHONPATH="$PWD/lib" python -m mic_osd.main --viz spectrum
+```
+
+That standalone window stays visible until Ctrl-C and also hot-reloads the
+settings above. It uses the active hyprwhspr level feed when one exists;
+otherwise it opens the default microphone as a fallback. Stop or hide the
+service-owned mic OSD first if you want to avoid two overlays.
+
+The spectrum's center-to-peak gradient can also be overridden in the normal
 `mic-osd.css` theme file with `@define-color spectrum-base`,
 `spectrum-middle`, `spectrum-high`, and `spectrum-peak`.
 
@@ -1313,6 +1388,23 @@ systemctl --user is-active graphical-session.target
 # Verify the active display environment is available to systemd services
 systemctl --user show-environment | grep -E 'WAYLAND_DISPLAY|DISPLAY|XAUTHORITY|NIRI_SOCKET'
 ```
+
+A value can also be **stale**, especially when two Hyprland sessions have run
+under the same user. Compare `echo $WAYLAND_DISPLAY` and
+`echo $HYPRLAND_INSTANCE_SIGNATURE` in the session where the hotkey is used to
+the output of `systemctl --user show-environment`. If they differ, import the
+current session and restart:
+
+```bash
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XAUTHORITY \
+  XDG_SESSION_TYPE XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION \
+  HYPRLAND_INSTANCE_SIGNATURE NIRI_SOCKET
+systemctl --user restart hyprwhspr.service
+```
+
+A single user service can target only one graphical session at a time. With two
+simultaneous compositor sessions, run hyprwhspr in the session whose environment
+was imported most recently.
 
 If `WAYLAND_DISPLAY` is missing, add to `~/.config/hypr/hyprland.conf`:
 

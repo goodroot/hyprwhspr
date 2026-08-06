@@ -442,6 +442,117 @@
       "default": "waveform",
       "description": "Visualization style for the mic OSD overlay. 'waveform' shows the full themed waveform, 'vu_meter' a VU meter, 'pill' a compact monochrome status pill, and 'spectrum' a mirrored frequency display. Restart the service after changing."
     },
+    "mic_osd_bottom_margin": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2000,
+      "default": 130,
+      "description": "Distance in pixels between the bottom edge of the layer-shell OSD and the screen edge. Hot-reloaded by the OSD."
+    },
+    "mic_osd_spectrum_width": {
+      "type": "integer",
+      "minimum": 280,
+      "maximum": 1600,
+      "default": 520,
+      "description": "Width in pixels of the spectrum OSD. Hot-reloaded by the OSD."
+    },
+    "mic_osd_spectrum_meter_height": {
+      "type": "integer",
+      "minimum": 44,
+      "maximum": 360,
+      "default": 86,
+      "description": "Fixed height in pixels reserved for spectrum bars. Transcript lines dynamically add height below it. Hot-reloaded by the OSD."
+    },
+    "mic_osd_spectrum_background_opacity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.46,
+      "description": "Spectrum panel background opacity. Multiplied by any alpha in the active theme background color."
+    },
+    "mic_osd_spectrum_border_opacity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.3,
+      "description": "Spectrum panel border opacity."
+    },
+    "mic_osd_spectrum_gain": {
+      "type": "number",
+      "minimum": 0.05,
+      "maximum": 20,
+      "default": 1.35,
+      "description": "Post-analysis visual gain for spectrum bars. This does not alter recorded audio."
+    },
+    "mic_osd_spectrum_noise_floor_db": {
+      "type": "number",
+      "minimum": -120,
+      "maximum": -20,
+      "default": -72,
+      "description": "FFT level treated as the bottom of the spectrum display. Raise it to suppress ambient movement; lower it for quiet microphones."
+    },
+    "mic_osd_spectrum_peak_db": {
+      "type": "number",
+      "minimum": -80,
+      "maximum": 0,
+      "default": -24,
+      "description": "FFT level that reaches full bar height and the peak gradient color. Lower/more-negative values make the display more sensitive."
+    },
+    "mic_osd_spectrum_curve": {
+      "type": "number",
+      "minimum": 0.25,
+      "maximum": 4,
+      "default": 1.1,
+      "description": "Spectrum response curve. Values below 1 emphasize quiet detail; values above 1 suppress it."
+    },
+    "mic_osd_spectrum_rise_ms": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 35,
+      "description": "Attack smoothing in milliseconds. Lower values react faster; 0 is immediate."
+    },
+    "mic_osd_spectrum_fall_ms": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2000,
+      "default": 150,
+      "description": "Decay smoothing in milliseconds. Lower values fall faster; 0 is immediate."
+    },
+    "mic_osd_transcript_font_family": {
+      "type": "string",
+      "minLength": 1,
+      "default": "sans-serif",
+      "description": "Cairo font family for the dynamically wrapped spectrum transcript."
+    },
+    "mic_osd_transcript_font_size": {
+      "type": "number",
+      "minimum": 8,
+      "maximum": 72,
+      "default": 18,
+      "description": "Font size in pixels for the dynamically wrapped spectrum transcript."
+    },
+    "mic_osd_transcript_max_lines": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30,
+      "default": 6,
+      "description": "Maximum wrapped transcript lines before the oldest lines are elided. The OSD grows and shrinks up to this limit."
+    },
+    "mic_osd_transcript_line_spacing": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 3,
+      "default": 1.25,
+      "description": "Line-height multiplier for the dynamically wrapped spectrum transcript."
+    },
+    "mic_osd_transcript_opacity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.96,
+      "description": "Opacity of dynamically wrapped transcript text."
+    },
     "mic_osd_pill_transcript_enabled": {
       "type": "boolean",
       "default": false,

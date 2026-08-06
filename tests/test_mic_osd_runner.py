@@ -217,19 +217,61 @@ class MicOSDRunnerTests(unittest.TestCase):
             finally:
                 runner_module.MIC_OSD_PID_FILE = original_pid_file
 
-    def test_orphaned_pid_signal_revalidates_before_sending(self):
+    def test_show_restarts_a_live_but_unresponsive_daemon_once(self):
         runner = MicOSDRunner()
-        runner._process = types.SimpleNamespace(pid=999, poll=lambda: None)
-        runner._orphaned_daemon_pid = 12345
+        runner._process = types.SimpleNamespace(pid=12345, poll=lambda: None)
 
         with mock.patch.object(MicOSDRunner, "is_available", return_value=True), \
-                mock.patch.object(runner, "_is_mic_osd_daemon_pid", return_value=False), \
-                mock.patch.object(runner_module.os, "kill") as kill:
-            self.assertFalse(runner.show())
+                mock.patch.object(runner, "_ensure_daemon", return_value=True) as ensure, \
+                mock.patch.object(runner, "_start_level_feed") as start_feed, \
+                mock.patch.object(runner, "_signal_show_and_wait", side_effect=[False, True]), \
+                mock.patch.object(runner, "stop") as stop:
+            self.assertTrue(runner.show())
 
-        kill.assert_not_called()
-        self.assertIsNone(runner._process)
-        self.assertIsNone(runner._orphaned_daemon_pid)
+        self.assertEqual(start_feed.call_count, 2)
+        self.assertEqual(ensure.call_count, 2)
+        stop.assert_called_once_with()
+
+    def test_visible_ack_must_match_the_signaled_daemon_pid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ack_file = Path(tmp) / "mic_osd_visible"
+            original = runner_module.MIC_OSD_VISIBLE_FILE
+            original_timeout = MicOSDRunner.SHOW_ACK_TIMEOUT_SECONDS
+            runner_module.MIC_OSD_VISIBLE_FILE = ack_file
+            MicOSDRunner.SHOW_ACK_TIMEOUT_SECONDS = 0.02
+            try:
+                ack_file.write_text("111", encoding="utf-8")
+                self.assertFalse(MicOSDRunner._wait_for_visible_ack(222))
+                ack_file.write_text("222", encoding="utf-8")
+                self.assertTrue(MicOSDRunner._wait_for_visible_ack(222))
+            finally:
+                runner_module.MIC_OSD_VISIBLE_FILE = original
+                MicOSDRunner.SHOW_ACK_TIMEOUT_SECONDS = original_timeout
+
+    def test_orphaned_pid_signal_revalidates_before_sending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = MicOSDRunner()
+            runner._process = types.SimpleNamespace(pid=999, poll=lambda: None)
+            runner._orphaned_daemon_pid = 12345
+
+            with mock.patch.object(
+                    runner_module,
+                    "MIC_OSD_PID_FILE",
+                    Path(tmp) / "mic_osd.pid",
+                ), mock.patch.object(
+                    runner_module,
+                    "MIC_OSD_VISIBLE_FILE",
+                    Path(tmp) / "mic_osd_visible",
+                ), mock.patch.object(
+                    MicOSDRunner, "is_available", return_value=True
+                ), mock.patch.object(
+                    runner, "_is_mic_osd_daemon_pid", return_value=False
+                ), mock.patch.object(runner_module.os, "kill") as kill:
+                self.assertFalse(runner.show())
+
+            kill.assert_not_called()
+            self.assertIsNone(runner._process)
+            self.assertIsNone(runner._orphaned_daemon_pid)
 
     def test_text_extents_support_tuple_and_attribute_shapes(self):
         window_module, _ = self._import_window_with_stubs()
@@ -284,6 +326,54 @@ class MicOSDRunnerTests(unittest.TestCase):
 
         self.assertEqual(text, "averylo…")
         self.assertLessEqual(window._text_advance(AdvanceContext(), text), 40)
+
+    def test_dynamic_preview_wraps_paragraphs_and_long_tokens(self):
+        window_module, _ = self._import_window_with_stubs()
+        window = object.__new__(window_module.OSDWindow)
+        cr = FakeCairoContext()
+
+        lines = window._wrap_preview_lines(
+            cr,
+            "one two three\n\nsupercalifragilistic",
+            40,
+        )
+
+        self.assertEqual(lines[:3], ["one two", "three", ""])
+        self.assertTrue(all(len(line) <= 8 for line in lines[3:]))
+        self.assertEqual("".join(lines[3:]), "supercalifragilistic")
+
+    def test_dynamic_preview_grows_and_shrinks_with_wrapped_lines(self):
+        window_module, _ = self._import_window_with_stubs()
+        config_module = __import__(
+            "mic_osd.osd_config", fromlist=["MicOSDConfig"]
+        )
+        window = object.__new__(window_module.OSDWindow)
+        window._osd_config = config_module.MicOSDConfig(
+            transcript_font_size=20,
+            transcript_max_lines=3,
+            transcript_line_spacing=1.25,
+        )
+        window._width = 100
+        window._height = 86
+        window._meter_height = 86
+        window._visualizer_state = "recording"
+        window._preview_text = "one two three four five six seven eight nine"
+        window.drawing_area = types.SimpleNamespace(
+            set_content_height=mock.Mock(),
+            queue_resize=mock.Mock(),
+        )
+        window.set_default_size = mock.Mock()
+        cr = FakeCairoContext()
+
+        window._draw_dynamic_preview_text(cr, 100)
+
+        self.assertEqual(window._height, 177)
+        window.drawing_area.set_content_height.assert_called_once_with(177)
+        self.assertLessEqual(len(cr.shown_text), 6)
+
+        window._preview_text = ""
+        window._draw_dynamic_preview_text(cr, 100)
+        self.assertEqual(window._height, 86)
 
     def test_preview_text_draws_only_while_recording(self):
         window_module, _ = self._import_window_with_stubs()

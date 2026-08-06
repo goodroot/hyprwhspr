@@ -160,6 +160,24 @@ class ConfigManager:
             # Visual feedback settings
             'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
             'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter', 'pill' or 'spectrum'
+            # Layer-shell placement and spectrum layout/response tuning
+            'mic_osd_bottom_margin': 130,
+            'mic_osd_spectrum_width': 520,
+            'mic_osd_spectrum_meter_height': 86,
+            'mic_osd_spectrum_background_opacity': 0.46,
+            'mic_osd_spectrum_border_opacity': 0.30,
+            'mic_osd_spectrum_gain': 1.35,
+            'mic_osd_spectrum_noise_floor_db': -72.0,
+            'mic_osd_spectrum_peak_db': -24.0,
+            'mic_osd_spectrum_curve': 1.10,
+            'mic_osd_spectrum_rise_ms': 35.0,
+            'mic_osd_spectrum_fall_ms': 150.0,
+            # Dynamically wrapped transcript below the spectrum meter
+            'mic_osd_transcript_font_family': 'sans-serif',
+            'mic_osd_transcript_font_size': 18.0,
+            'mic_osd_transcript_max_lines': 6,
+            'mic_osd_transcript_line_spacing': 1.25,
+            'mic_osd_transcript_opacity': 0.96,
             # Live transcript above the pill OSD (ElevenLabs Scribe v2 Realtime)
             'mic_osd_pill_transcript_enabled': False,
             'mic_osd_pill_transcript_word_limit': 4,

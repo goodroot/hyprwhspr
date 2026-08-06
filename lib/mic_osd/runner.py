@@ -18,13 +18,13 @@ from pathlib import Path
 try:
     from ..src.paths import (
         MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
-        MIC_OSD_LEVEL_FEED_FILE,
+        MIC_OSD_LEVEL_FEED_FILE, MIC_OSD_VISIBLE_FILE,
     )
 except ImportError:
     # Fallback for direct execution
     from src.paths import (
         MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
-        MIC_OSD_LEVEL_FEED_FILE,
+        MIC_OSD_LEVEL_FEED_FILE, MIC_OSD_VISIBLE_FILE,
     )
 
 
@@ -37,6 +37,8 @@ class MicOSDRunner:
 
     PREVIEW_WRITE_INTERVAL_SECONDS = 0.05
     LEVEL_FEED_INTERVAL_SECONDS = 1.0 / 30
+    SHOW_ACK_TIMEOUT_SECONDS = 1.0
+    SHOW_ACK_POLL_SECONDS = 0.01
     OSD_STYLES = ('waveform', 'vu_meter', 'pill', 'spectrum')
 
     def __init__(self, level_source=None, style='waveform'):
@@ -63,6 +65,7 @@ class MicOSDRunner:
         self._level_feed_stop = threading.Event()
         self._level_feed_lock = threading.Lock()
         self._last_level_feed_error_at = 0.0
+        self._stderr_thread = None
     
     @staticmethod
     def is_available() -> bool:
@@ -249,11 +252,35 @@ sys.exit(main())
                 self._process = None
                 return False
 
-            # Daemon survived startup - detach stderr so it doesn't block
-            try:
-                self._process.stderr.close()
-            except Exception:
-                pass
+            # Keep draining stderr for the daemon's lifetime. Closing the only
+            # reader hid GTK/layer-shell warnings and made runtime draw callback
+            # failures impossible to diagnose from the service journal.
+            stderr_stream = self._process.stderr
+            if stderr_stream is not None:
+                def _drain_stderr():
+                    try:
+                        for raw_line in iter(stderr_stream.readline, b''):
+                            line = raw_line.decode(
+                                'utf-8', errors='replace'
+                            ).rstrip()
+                            if line:
+                                print(
+                                    f"[MIC-OSD daemon] {line}",
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                    finally:
+                        try:
+                            stderr_stream.close()
+                        except Exception:
+                            pass
+
+                self._stderr_thread = threading.Thread(
+                    target=_drain_stderr,
+                    daemon=True,
+                    name='mic-osd-stderr',
+                )
+                self._stderr_thread.start()
 
             # Write PID file
             MIC_OSD_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -326,7 +353,37 @@ sys.exit(main())
                 MIC_OSD_PID_FILE.unlink()
         except Exception:
             pass
-    
+
+    @staticmethod
+    def _clear_visible_ack():
+        try:
+            MIC_OSD_VISIBLE_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    @classmethod
+    def _wait_for_visible_ack(cls, pid: int) -> bool:
+        deadline = time.monotonic() + cls.SHOW_ACK_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                if MIC_OSD_VISIBLE_FILE.read_text(encoding='utf-8').strip() == str(pid):
+                    return True
+            except OSError:
+                pass
+            time.sleep(cls.SHOW_ACK_POLL_SECONDS)
+        return False
+
+    def _signal_show_and_wait(self) -> bool:
+        pid = (
+            self._orphaned_daemon_pid
+            if self._orphaned_daemon_pid is not None
+            else self._process.pid
+        )
+        self._clear_visible_ack()
+        if not self._signal_daemon(signal.SIGUSR1):
+            return False
+        return self._wait_for_visible_ack(pid)
+
     def _start_level_feed(self):
         """Stream capture levels to the OSD's runtime feed file. Writes the
         first frame synchronously so it's fresh before the daemon's SIGUSR1
@@ -393,17 +450,42 @@ sys.exit(main())
         self._start_level_feed()  # before signaling; first frame must be ready
 
         try:
-            return self._signal_daemon(signal.SIGUSR1)
+            if self._signal_show_and_wait():
+                return True
+            if self._process is None:
+                self._stop_level_feed()
+                return False
+
+            # A live PID with no acknowledgement means its GTK/GLib loop is
+            # wedged. Replace it once instead of silently succeeding forever.
+            print(
+                "[MIC-OSD] Daemon did not acknowledge show; restarting it",
+                flush=True,
+            )
+            self.stop()
+            if not self._ensure_daemon():
+                return False
+            self._start_level_feed()
+            if self._signal_show_and_wait():
+                return True
+            print(
+                "[MIC-OSD] Replacement daemon did not acknowledge show",
+                flush=True,
+            )
+            self._stop_level_feed()
+            return False
         except (ProcessLookupError, OSError):
             self._stop_level_feed()
             self._process = None
             self._orphaned_daemon_pid = None
+            self._clear_visible_ack()
             return False
 
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
         self._stop_level_feed()
         self.clear_preview_text()
+        self._clear_visible_ack()
 
         if self._process is None:
             return
@@ -582,6 +664,7 @@ sys.exit(main())
     def stop(self):
         """Stop the daemon completely."""
         self._stop_level_feed()
+        self._clear_visible_ack()
         if self._process is None:
             return
 

@@ -9,6 +9,7 @@ import cairo
 import numpy as np
 
 from .base import BaseVisualization, StateManager, VisualizerState
+from ..osd_config import MicOSDConfig
 from ..theme import theme
 
 
@@ -22,8 +23,9 @@ class SpectrumVisualization(BaseVisualization):
     """
 
     show_preview = True
-    preferred_width = 560
-    preferred_height = 180
+    dynamic_preview = True
+    preferred_width = 520
+    preferred_height = 86
 
     NUM_BARS = 96
     PANEL_MARGIN = 6.0
@@ -32,15 +34,22 @@ class SpectrumVisualization(BaseVisualization):
     INNER_PADDING_Y = 12.0
     BAR_GAP = 1.2
     MIN_BAR_HEIGHT = 1.5
-    RISE_HZ = 22.0
-    FALL_HZ = 11.0
 
-    def __init__(self):
+    def __init__(self, osd_config=None):
         super().__init__()
+        self.osd_config = osd_config or MicOSDConfig.load()
+        self.preferred_width = self.osd_config.spectrum_width
+        self.preferred_height = self.osd_config.spectrum_meter_height
         self.num_bars = self.NUM_BARS
         self.bar_heights = np.zeros(self.num_bars, dtype=np.float64)
         self.state_manager = StateManager()
         self._last_update = time.monotonic()
+
+    def apply_config(self, osd_config: MicOSDConfig):
+        """Apply presentation/response settings without resetting animation."""
+        self.osd_config = osd_config
+        self.preferred_width = osd_config.spectrum_width
+        self.preferred_height = osd_config.spectrum_meter_height
 
     @staticmethod
     def _rounded_rect(
@@ -76,16 +85,16 @@ class SpectrumVisualization(BaseVisualization):
         target = np.linspace(0.0, 1.0, count)
         return np.interp(target, source, values)
 
-    @staticmethod
-    def _spectrum_target(values: np.ndarray) -> np.ndarray:
-        """Compress raw FFT amplitudes into a useful visual range."""
+    def _spectrum_target(self, values: np.ndarray) -> np.ndarray:
+        """Map FFT amplitudes through the configured dB response curve."""
         if not np.any(values):
             return np.zeros_like(values)
         decibels = 20.0 * np.log10(np.maximum(values, 1e-7))
-        # Speech commonly lands around -55..-20 dBFS.  The curved response
-        # keeps the noise floor quiet while retaining CAVA-like small detail.
-        normalized = np.clip((decibels + 68.0) / 52.0, 0.0, 1.0)
-        return np.power(normalized, 1.35)
+        floor = self.osd_config.spectrum_noise_floor_db
+        peak = self.osd_config.spectrum_peak_db
+        normalized = np.clip((decibels - floor) / (peak - floor), 0.0, 1.0)
+        shaped = np.power(normalized, self.osd_config.spectrum_curve)
+        return np.clip(shaped * self.osd_config.spectrum_gain, 0.0, 1.0)
 
     def set_state(self, state_str: str):
         self.state_manager.set_state_from_string(state_str or "recording")
@@ -125,8 +134,10 @@ class SpectrumVisualization(BaseVisualization):
         else:
             target = np.zeros(self.num_bars)
 
-        rise = 1.0 - math.exp(-dt * self.RISE_HZ)
-        fall = 1.0 - math.exp(-dt * self.FALL_HZ)
+        rise_seconds = self.osd_config.spectrum_rise_ms / 1000.0
+        fall_seconds = self.osd_config.spectrum_fall_ms / 1000.0
+        rise = 1.0 if rise_seconds <= 0.0 else 1.0 - math.exp(-dt / rise_seconds)
+        fall = 1.0 if fall_seconds <= 0.0 else 1.0 - math.exp(-dt / fall_seconds)
         blend = np.where(target > self.bar_heights, rise, fall)
         self.bar_heights += (target - self.bar_heights) * blend
 
@@ -145,7 +156,8 @@ class SpectrumVisualization(BaseVisualization):
             panel_h,
             self.PANEL_RADIUS,
         )
-        cr.set_source_rgba(0.0, 0.0, 0.0, 0.32)
+        shadow_alpha = self.osd_config.spectrum_background_opacity * 0.20
+        cr.set_source_rgba(0.0, 0.0, 0.0, shadow_alpha)
         cr.fill()
 
         self._rounded_rect(
@@ -157,10 +169,22 @@ class SpectrumVisualization(BaseVisualization):
             self.PANEL_RADIUS,
         )
         background = theme.background
-        cr.set_source_rgba(background[0], background[1], background[2], 0.38)
+        theme_alpha = background[3] if len(background) > 3 else 1.0
+        cr.set_source_rgba(
+            background[0],
+            background[1],
+            background[2],
+            self.osd_config.spectrum_background_opacity * theme_alpha,
+        )
         cr.fill_preserve()
         border = theme.border
-        cr.set_source_rgba(border[0], border[1], border[2], 0.24)
+        border_alpha = border[3] if len(border) > 3 else 1.0
+        cr.set_source_rgba(
+            border[0],
+            border[1],
+            border[2],
+            self.osd_config.spectrum_border_opacity * border_alpha,
+        )
         cr.set_line_width(2.0)
         cr.stroke()
 

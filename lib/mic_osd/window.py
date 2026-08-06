@@ -7,6 +7,7 @@ for displaying audio visualizations.
 
 from __future__ import annotations
 
+import math
 import time
 
 import gi
@@ -22,6 +23,7 @@ except ValueError:
 
 from gi.repository import Gtk, Gdk, GLib
 from .theme import theme
+from .osd_config import MicOSDConfig
 from .transcript_preview import PillTranscriptAnimator, PillTranscriptConfig
 
 if LAYER_SHELL_AVAILABLE:
@@ -45,6 +47,7 @@ class OSDWindow(Gtk.Window):
         width=300,
         height=60,
         transcript_config=None,
+        osd_config=None,
     ):
         """
         Initialize the OSD window.
@@ -54,11 +57,16 @@ class OSDWindow(Gtk.Window):
             width: Window width in pixels
             height: Window height in pixels
             transcript_config: Validated PillTranscriptConfig for pill previews.
+            osd_config: Validated general OSD layout/response settings.
         """
         super().__init__()
-        
+
         self.visualization = visualization
+        self._osd_config = osd_config or MicOSDConfig.load()
         self._is_pill_preview = getattr(visualization, 'preview_mode', None) == 'pill'
+        self._is_dynamic_preview = bool(
+            getattr(visualization, 'dynamic_preview', False)
+        )
         self._pill_transcript_config = (
             transcript_config
             if transcript_config is not None
@@ -83,6 +91,7 @@ class OSDWindow(Gtk.Window):
 
         self._width = width
         self._height = height
+        self._meter_height = height
         self._preview_text = ""
         self._visualizer_state = "recording"
         self._pill_transcript_animator = None
@@ -118,7 +127,11 @@ class OSDWindow(Gtk.Window):
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.TOP, False)
         
         # Margin from bottom
-        Gtk4LayerShell.set_margin(self, Gtk4LayerShell.Edge.BOTTOM, 130)
+        Gtk4LayerShell.set_margin(
+            self,
+            Gtk4LayerShell.Edge.BOTTOM,
+            self._osd_config.bottom_margin,
+        )
         
         # Don't reserve exclusive space
         Gtk4LayerShell.set_exclusive_zone(self, -1)
@@ -156,10 +169,20 @@ class OSDWindow(Gtk.Window):
         # Draw background
         self.visualization.draw_background(cr, width, height)
         
-        # Draw the visualization
-        self.visualization.draw(cr, width, height)
+        # Dynamic spectrum previews reserve a compact, stable meter region and
+        # let only the transcript grow upward.  A layer surface can change its
+        # natural size at runtime; no compositor-specific window rules or
+        # Quickshell bridge are required.
+        visualization_height = (
+            min(height, self._meter_height)
+            if self._is_dynamic_preview
+            else height
+        )
+        self.visualization.draw(cr, width, visualization_height)
 
-        if self._is_pill_preview:
+        if self._is_dynamic_preview:
+            self._draw_dynamic_preview_text(cr, width)
+        elif self._is_pill_preview:
             self._draw_pill_preview_text(cr, width, height)
         elif getattr(self.visualization, 'show_preview', True):
             self._draw_preview_text(cr, width, height)
@@ -194,6 +217,145 @@ class OSDWindow(Gtk.Window):
             self._pill_transcript_animator.clear()
         self.drawing_area.queue_draw()
     
+    def apply_osd_config(self, osd_config: MicOSDConfig):
+        """Apply live presentation settings to the mapped layer surface."""
+        self._osd_config = osd_config
+        if LAYER_SHELL_AVAILABLE:
+            Gtk4LayerShell.set_margin(
+                self,
+                Gtk4LayerShell.Edge.BOTTOM,
+                osd_config.bottom_margin,
+            )
+
+        if self._is_dynamic_preview:
+            self._width = osd_config.spectrum_width
+            self._meter_height = osd_config.spectrum_meter_height
+            self.drawing_area.set_content_width(self._width)
+            if not self._preview_text or self._visualizer_state != "recording":
+                self._set_dynamic_height(self._meter_height)
+            self.set_default_size(self._width, self._height)
+            self.drawing_area.queue_resize()
+        self.drawing_area.queue_draw()
+
+    def _set_dynamic_height(self, target_height: int):
+        """Update the GTK natural size; the bottom-anchored surface grows up."""
+        target_height = max(self._meter_height, int(target_height))
+        if target_height == self._height:
+            return
+        self._height = target_height
+        self.drawing_area.set_content_height(target_height)
+        self.set_default_size(self._width, target_height)
+        self.drawing_area.queue_resize()
+
+    def _wrap_preview_lines(
+        self,
+        cr: cairo.Context,
+        text: str,
+        max_width: float,
+    ):
+        """Greedy word wrapping with explicit paragraph and long-token support."""
+        if not text or max_width <= 0:
+            return []
+
+        lines = []
+        paragraphs = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        for paragraph in paragraphs:
+            words = paragraph.split()
+            if not words:
+                if lines and lines[-1] != "":
+                    lines.append("")
+                continue
+
+            current = ""
+            for word in words:
+                candidate = f"{current} {word}" if current else word
+                if self._text_advance(cr, candidate) <= max_width:
+                    current = candidate
+                    continue
+
+                if current:
+                    lines.append(current)
+                    current = ""
+
+                remainder = word
+                while remainder and self._text_advance(cr, remainder) > max_width:
+                    count = self._bisect_truncate(
+                        lambda n: self._text_advance(cr, remainder[:n]),
+                        max_width,
+                        len(remainder),
+                    )
+                    count = max(1, count)
+                    lines.append(remainder[:count])
+                    remainder = remainder[count:]
+                current = remainder
+
+            if current:
+                lines.append(current)
+
+        while lines and lines[-1] == "":
+            lines.pop()
+        return lines
+
+    def _font_metrics(self, cr: cairo.Context):
+        font_size = self._osd_config.transcript_font_size
+        try:
+            extents = cr.font_extents()
+            ascent = self._text_extent(extents, 'ascent', 0)
+            natural_height = self._text_extent(extents, 'height', 2)
+        except (AttributeError, TypeError, IndexError):
+            ascent = font_size
+            natural_height = font_size
+        line_height = max(font_size, natural_height) * (
+            self._osd_config.transcript_line_spacing
+        )
+        return ascent, line_height
+
+    def _draw_dynamic_preview_text(self, cr: cairo.Context, width: int):
+        config = self._osd_config
+        if not self._preview_text or self._visualizer_state != "recording":
+            self._set_dynamic_height(self._meter_height)
+            return
+
+        padding_x = 20.0
+        padding_bottom = 14.0
+        gap = 2.0
+        max_width = max(0.0, width - padding_x * 2.0)
+        cr.select_font_face(
+            config.transcript_font_family,
+            cairo.FONT_SLANT_NORMAL,
+            cairo.FONT_WEIGHT_NORMAL,
+        )
+        cr.set_font_size(config.transcript_font_size)
+        lines = self._wrap_preview_lines(cr, self._preview_text, max_width)
+        if not lines:
+            self._set_dynamic_height(self._meter_height)
+            return
+
+        if len(lines) > config.transcript_max_lines:
+            lines = lines[-config.transcript_max_lines :]
+            lines[0] = self._ellipsize(cr, "... " + lines[0], max_width)
+
+        ascent, line_height = self._font_metrics(cr)
+        text_top = self._meter_height + gap
+        target_height = int(
+            math.ceil(text_top + line_height * len(lines) + padding_bottom)
+        )
+        self._set_dynamic_height(target_height)
+
+        text_color = theme.text
+        theme_alpha = text_color[3] if len(text_color) > 3 else 1.0
+        alpha = config.transcript_opacity * theme_alpha
+        for index, line in enumerate(lines):
+            if not line:
+                continue
+            baseline = text_top + ascent + index * line_height
+            cr.set_source_rgba(0.0, 0.0, 0.0, 0.52 * alpha)
+            cr.move_to(padding_x, baseline + 2.0)
+            cr.show_text(line)
+            cr.set_source_rgba(text_color[0], text_color[1], text_color[2], alpha)
+            cr.move_to(padding_x, baseline)
+            cr.show_text(line)
+
     def _draw_preview_text(self, cr: cairo.Context, width: int, height: int):
         if not self._preview_text or self._visualizer_state != "recording":
             return

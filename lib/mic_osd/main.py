@@ -7,6 +7,7 @@ Supports two modes:
 - Daemon: stays running, shows on SIGUSR1, hides on SIGUSR2
 """
 
+import json
 import sys
 import signal
 import os
@@ -27,6 +28,7 @@ try:
     from .audio import AudioMonitor, FeedLevelSource
     from .visualizations import VISUALIZATIONS
     from .theme import ThemeWatcher
+    from .osd_config import MicOSDConfig
 except ImportError as e:
     _MIC_OSD_IMPORT_ERROR = e
     OSDWindow = None
@@ -34,18 +36,21 @@ except ImportError as e:
     FeedLevelSource = None
     VISUALIZATIONS = {}
     ThemeWatcher = None
+    MicOSDConfig = None
 
 # Import paths with fallback for daemon context
 try:
     from ..src.paths import (
-        RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
-        MIC_OSD_LEVEL_FEED_FILE,
+        CONFIG_FILE, RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE,
+        TRANSCRIPT_PREVIEW_FILE, MIC_OSD_LEVEL_FEED_FILE,
+        MIC_OSD_VISIBLE_FILE,
     )
 except ImportError:
     try:
         from src.paths import (
-            RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
-            MIC_OSD_LEVEL_FEED_FILE,
+            CONFIG_FILE, RECORDING_STATUS_FILE, VISUALIZER_STATE_FILE,
+            TRANSCRIPT_PREVIEW_FILE, MIC_OSD_LEVEL_FEED_FILE,
+            MIC_OSD_VISIBLE_FILE,
         )
     except ImportError:
         # Fallback: construct paths manually if imports fail
@@ -55,10 +60,15 @@ except ImportError:
             runtime_dir = Path(xdg_runtime) / 'hyprwhspr'
         else:
             runtime_dir = Path(tempfile.gettempdir()) / f"hyprwhspr-{os.getuid()}"
+        config_home = Path(
+            os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')
+        )
+        CONFIG_FILE = config_home / 'hyprwhspr' / 'config.json'
         RECORDING_STATUS_FILE = runtime_dir / 'recording_status'
         VISUALIZER_STATE_FILE = runtime_dir / 'visualizer_state'
         TRANSCRIPT_PREVIEW_FILE = runtime_dir / 'transcript_preview'
         MIC_OSD_LEVEL_FEED_FILE = runtime_dir / 'mic_osd_level_feed'
+        MIC_OSD_VISIBLE_FILE = runtime_dir / 'mic_osd_visible'
 
 
 class MicOSD:
@@ -74,6 +84,8 @@ class MicOSD:
         self.update_timer_id = None
         self._auto_hide_timeout_id = None
         self._state_poll_timer_id = None
+        self._config_poll_timer_id = None
+        self._config_signature = None
         self._last_visualizer_state = None
         self._last_preview_text = None
         self.daemon = daemon
@@ -81,9 +93,16 @@ class MicOSD:
         self.theme_watcher = None
         self._should_stop = False
 
+        # Load presentation settings in the OSD process.  They are intentionally
+        # separate from the high-rate audio feed and take effect on daemon restart.
+        self.osd_config = MicOSDConfig.load()
+
         # Get visualization
         viz_class = VISUALIZATIONS.get(visualization, VISUALIZATIONS["waveform"])
-        self.visualization = viz_class()
+        if visualization == "spectrum":
+            self.visualization = viz_class(osd_config=self.osd_config)
+        else:
+            self.visualization = viz_class()
         self.width = (
             width
             if width is not None
@@ -129,6 +148,9 @@ class MicOSD:
             if self._state_poll_timer_id:
                 GLib.source_remove(self._state_poll_timer_id)
                 self._state_poll_timer_id = None
+            if self._config_poll_timer_id:
+                GLib.source_remove(self._config_poll_timer_id)
+                self._config_poll_timer_id = None
             if self._auto_hide_timeout_id:
                 GLib.source_remove(self._auto_hide_timeout_id)
                 self._auto_hide_timeout_id = None
@@ -144,7 +166,12 @@ class MicOSD:
         
         load_css()
 
-        self.window = OSDWindow(self.visualization, self.width, self.height)
+        self.window = OSDWindow(
+            self.visualization,
+            self.width,
+            self.height,
+            osd_config=self.osd_config,
+        )
         app.add_window(self.window)
 
         self.theme_watcher = ThemeWatcher(on_theme_changed=self._on_theme_changed)
@@ -160,7 +187,12 @@ class MicOSD:
         load_css()
 
         # Create window (hidden in daemon mode)
-        self.window = OSDWindow(self.visualization, self.width, self.height)
+        self.window = OSDWindow(
+            self.visualization,
+            self.width,
+            self.height,
+            osd_config=self.osd_config,
+        )
 
         # Start theme watcher for live theme updates
         self.theme_watcher = ThemeWatcher(on_theme_changed=self._on_theme_changed)
@@ -183,6 +215,8 @@ class MicOSD:
             self._cleanup()
 
     def _initial_visibility(self):
+        self._start_config_watcher()
+
         # If a signal handler already set visibility before window creation,
         # respect that state (handles race condition with early signals)
         if self.visible:
@@ -195,11 +229,55 @@ class MicOSD:
             # Show immediately
             self._show()
 
+    @staticmethod
+    def _get_config_signature():
+        try:
+            stat = CONFIG_FILE.stat()
+            return stat.st_mtime_ns, stat.st_size
+        except OSError:
+            return None
+
+    def _start_config_watcher(self):
+        self._config_signature = self._get_config_signature()
+        if not self._config_poll_timer_id:
+            self._config_poll_timer_id = GLib.timeout_add(
+                400,
+                self._poll_config_file,
+            )
+
+    def _poll_config_file(self):
+        """Hot-reload OSD-only settings after a valid config file change."""
+        signature = self._get_config_signature()
+        if signature is None or signature == self._config_signature:
+            return True
+
+        # Editors that write in place can expose partial JSON for a moment.
+        # Keep the previous presentation and retry until the file is valid.
+        try:
+            json.loads(CONFIG_FILE.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return True
+
+        new_config = MicOSDConfig.load()
+        self._config_signature = signature
+        if new_config == self.osd_config:
+            return True
+
+        self.osd_config = new_config
+        apply_visualization = getattr(self.visualization, 'apply_config', None)
+        if callable(apply_visualization):
+            apply_visualization(new_config)
+        if self.window and hasattr(self.window, 'apply_osd_config'):
+            self.window.apply_osd_config(new_config)
+        print("[MIC-OSD] Reloaded presentation config", flush=True)
+        return True
+
     def _show(self):
         """Show the OSD and start audio monitoring."""
         # If already visible and audio monitoring is running, return early
         # This handles the normal case where _show() is called multiple times
         if self.visible and self.audio_monitor and self.update_timer_id:
+            self._mark_visible()
             return
 
         # If window doesn't exist yet (race condition with signal handlers),
@@ -237,14 +315,46 @@ class MicOSD:
         if not self._state_poll_timer_id:
             self._state_poll_timer_id = GLib.timeout_add(100, self._poll_state_file)
 
-        # Start auto-hide timeout (30 seconds)
+        # The service-owned daemon has a stuck-window safety timeout. A
+        # foreground standalone OSD is an intentional preview and stays visible
+        # until Ctrl-C, which makes iterative theme/config tuning practical.
         if self._auto_hide_timeout_id:
             GLib.source_remove(self._auto_hide_timeout_id)
-        self._auto_hide_timeout_id = GLib.timeout_add_seconds(30, self._auto_hide_callback)
-    
+            self._auto_hide_timeout_id = None
+        if self.daemon:
+            self._auto_hide_timeout_id = GLib.timeout_add_seconds(
+                30,
+                self._auto_hide_callback,
+            )
+
+        # A PID alone only proves that a process exists. This acknowledgement
+        # proves that its GLib loop handled the show request and requested a
+        # window mapping, allowing the runner to replace a wedged daemon.
+        self._mark_visible()
+
+    def _mark_visible(self):
+        try:
+            MIC_OSD_VISIBLE_FILE.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+                mode=0o700,
+            )
+            MIC_OSD_VISIBLE_FILE.write_text(str(os.getpid()), encoding='utf-8')
+            MIC_OSD_VISIBLE_FILE.chmod(0o600)
+        except Exception as error:
+            print(f"[MIC-OSD] Failed to acknowledge show request: {error}", flush=True)
+
+    @staticmethod
+    def _clear_visible_marker():
+        try:
+            MIC_OSD_VISIBLE_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     def _hide(self):
         """Hide the OSD and stop audio monitoring."""
         self._clear_preview_file()
+        self._clear_visible_marker()
 
         if not self.visible:
             return
@@ -417,6 +527,7 @@ class MicOSD:
     def _cleanup(self):
         """Clean up resources."""
         self._clear_preview_file()
+        self._clear_visible_marker()
 
         if self.update_timer_id:
             GLib.source_remove(self.update_timer_id)
@@ -425,6 +536,10 @@ class MicOSD:
         if self._state_poll_timer_id:
             GLib.source_remove(self._state_poll_timer_id)
             self._state_poll_timer_id = None
+
+        if self._config_poll_timer_id:
+            GLib.source_remove(self._config_poll_timer_id)
+            self._config_poll_timer_id = None
 
         if self._auto_hide_timeout_id:
             GLib.source_remove(self._auto_hide_timeout_id)
@@ -454,16 +569,30 @@ def _signal_handler(signum, frame):
         _app.stop()
 
 
-def _sigusr1_handler(signum, frame):
-    """Handle SIGUSR1 - show OSD."""
+def _sigusr1_handler(signum=None, frame=None):
+    """Fallback Python signal handler when GLib Unix sources are unavailable."""
     if _app:
         GLib.idle_add(_app._show)
 
 
-def _sigusr2_handler(signum, frame):
-    """Handle SIGUSR2 - hide OSD."""
+def _sigusr2_handler(signum=None, frame=None):
+    """Fallback Python signal handler when GLib Unix sources are unavailable."""
     if _app:
         GLib.idle_add(_app._hide)
+
+
+def _glib_sigusr1_handler():
+    """Handle show requests in the GLib loop rather than a Python C callback."""
+    if _app:
+        _app._show()
+    return True
+
+
+def _glib_sigusr2_handler():
+    """Handle hide requests in the GLib loop rather than a Python C callback."""
+    if _app:
+        _app._hide()
+    return True
 
 
 def main():
@@ -504,19 +633,36 @@ def main():
         print(f"[MIC-OSD] Unavailable: {_MIC_OSD_IMPORT_ERROR}", file=sys.stderr, flush=True)
         return 1
     
-    # Set up signal handlers
+    # Set up termination handlers first. The runner ignores USR1/USR2 during
+    # imports so an early hotkey cannot kill a daemon before these are ready.
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGUSR1, _sigusr1_handler)
-    signal.signal(signal.SIGUSR2, _sigusr2_handler)
-    
-    # Run
+
     _app = MicOSD(
         visualization=args.viz,
         width=args.width,
         height=args.height,
         daemon=args.daemon
     )
+
+    # Python signal callbacks can remain pending while the interpreter is
+    # blocked inside GLib.MainLoop.run(). Native GLib Unix signal sources wake
+    # that loop directly and make repeated daemon show/hide requests reliable.
+    if hasattr(GLib, 'unix_signal_add'):
+        GLib.unix_signal_add(
+            GLib.PRIORITY_DEFAULT,
+            signal.SIGUSR1,
+            _glib_sigusr1_handler,
+        )
+        GLib.unix_signal_add(
+            GLib.PRIORITY_DEFAULT,
+            signal.SIGUSR2,
+            _glib_sigusr2_handler,
+        )
+    else:
+        signal.signal(signal.SIGUSR1, _sigusr1_handler)
+        signal.signal(signal.SIGUSR2, _sigusr2_handler)
+
     _app.run()
     
     return 0

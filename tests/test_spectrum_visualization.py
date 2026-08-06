@@ -33,12 +33,13 @@ class SpectrumVisualizationTests(unittest.TestCase):
     def _advance(self, visualization, seconds=0.05):
         visualization._last_update = time.monotonic() - seconds
 
-    def test_style_declares_large_cavasik_like_surface(self):
+    def test_style_declares_compact_dynamic_surface(self):
         visualization = self.SpectrumVisualization()
 
-        self.assertEqual(visualization.preferred_width, 560)
-        self.assertEqual(visualization.preferred_height, 180)
+        self.assertEqual(visualization.preferred_width, 520)
+        self.assertEqual(visualization.preferred_height, 86)
         self.assertTrue(visualization.show_preview)
+        self.assertTrue(visualization.dynamic_preview)
 
     def test_silence_decays_to_flat_center_line(self):
         visualization = self.SpectrumVisualization()
@@ -58,6 +59,21 @@ class SpectrumVisualizationTests(unittest.TestCase):
 
         self.assertGreater(float(np.max(visualization.bar_heights[12:18])), 0.5)
         self.assertLess(float(np.max(visualization.bar_heights[50:])), 0.05)
+
+    def test_configured_response_can_make_quiet_input_reach_peak(self):
+        config_module = importlib.import_module("mic_osd.osd_config")
+        config = config_module.MicOSDConfig(
+            spectrum_gain=2.0,
+            spectrum_noise_floor_db=-80.0,
+            spectrum_peak_db=-35.0,
+            spectrum_curve=0.8,
+        )
+        visualization = self.SpectrumVisualization(osd_config=config)
+        amplitude = 10 ** (-40.0 / 20.0)
+
+        target = visualization._spectrum_target(np.full(96, amplitude))
+
+        self.assertGreater(float(np.min(target)), 0.9)
 
     def test_processing_state_has_travelling_wave(self):
         visualization = self.SpectrumVisualization()
