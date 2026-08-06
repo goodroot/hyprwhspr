@@ -1,6 +1,8 @@
 import json
 import struct
 import sys
+import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -101,6 +103,41 @@ class RealtimeSTTClientTests(unittest.TestCase):
             "hello world next segment",
         )
         self.assertEqual(client.ws.text_messages[-1], {"type": "stop"})
+
+    def test_idle_stop_returns_vad_final_instead_of_waiting_full_timeout(self):
+        client = self._client()
+        client.STOP_IDLE_GRACE_SECONDS = 0.01
+        client._handle_event({"type": "final", "segmentId": 1, "text": "already final"})
+        # A silence chunk can arrive between server VAD finalization and key-up.
+        client._audio_activity_id += 1
+        threading.Timer(
+            0.08,
+            lambda: client._handle_event({"type": "status", "state": "idle"}),
+        ).start()
+
+        started = time.monotonic()
+        result = client.commit_and_get_text(timeout=3.0)
+
+        self.assertEqual(result, "already final")
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_final_arriving_during_idle_grace_extends_existing_text(self):
+        client = self._client()
+        client.STOP_IDLE_GRACE_SECONDS = 0.2
+        client._handle_event({"type": "final", "segmentId": 1, "text": "first"})
+        client._audio_activity_id += 1
+        threading.Timer(
+            0.08,
+            lambda: client._handle_event({"type": "status", "state": "idle"}),
+        ).start()
+        threading.Timer(
+            0.12,
+            lambda: client._handle_event(
+                {"type": "final", "segmentId": 2, "text": "second"}
+            ),
+        ).start()
+
+        self.assertEqual(client.commit_and_get_text(timeout=1.0), "first second")
 
     def test_clear_ack_rejects_in_flight_previous_take_segments(self):
         previews = []

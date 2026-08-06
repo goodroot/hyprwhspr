@@ -681,7 +681,11 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             if self.mode == 'transcribe':
                 deadline = time.time() + max(0.0, timeout)
                 best_generation = existing_generation
-                best_text = ""
+                # A provider may acknowledge stop without producing another
+                # segment (for example, when VAD finalized just before key-up).
+                # Preserve the best transcript already received while still
+                # allowing a later generation to replace/extend it.
+                best_text = existing_transcript
 
                 while time.time() < deadline:
                     remaining = max(0.0, deadline - time.time())

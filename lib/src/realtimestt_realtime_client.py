@@ -24,6 +24,7 @@ class RealtimeSTTRealtimeClient(WebSocketRealtimeClientBase):
 
     LOG_TAG = "[REALTIMESTT]"
     supports_mid_session_language_update = False
+    STOP_IDLE_GRACE_SECONDS = 2.0
 
     def __init__(self):
         super().__init__(mode="transcribe")
@@ -37,6 +38,8 @@ class RealtimeSTTRealtimeClient(WebSocketRealtimeClientBase):
         self._latest_sequences = {}
         self._awaiting_clear = False
         self._minimum_segment_id = None
+        self._stop_completion_pending = False
+        self._stop_idle_timer = None
 
     # ------------------------------------------------------------------
     # Transport hooks
@@ -115,7 +118,26 @@ class RealtimeSTTRealtimeClient(WebSocketRealtimeClientBase):
             return
 
         if event_type == "status":
-            self._streaming = event.get("state") != "idle"
+            state = event.get("state")
+            with self.lock:
+                self._streaming = state != "idle"
+                if (
+                    state == "idle"
+                    and self._stop_completion_pending
+                    and self._full_committed_text_locked()
+                    and self._stop_idle_timer is None
+                ):
+                    # stop_streaming publishes idle before its optional final
+                    # inference job completes. Give that job time to arrive;
+                    # if there is no job (only silence followed an earlier VAD
+                    # final), release commit with the transcript already held.
+                    timer = threading.Timer(
+                        self.STOP_IDLE_GRACE_SECONDS,
+                        self._complete_idle_stop,
+                    )
+                    timer.daemon = True
+                    self._stop_idle_timer = timer
+                    timer.start()
             return
 
         if event_type == "warning":
@@ -167,6 +189,8 @@ class RealtimeSTTRealtimeClient(WebSocketRealtimeClientBase):
         with self.lock:
             if not self._accept_segment_locked(segment):
                 return
+            self._cancel_stop_idle_timer_locked()
+            self._stop_completion_pending = False
             self._final_by_segment[segment] = text
             self._partial_by_segment.pop(segment, None)
             self._latest_sequences.pop(segment, None)
@@ -179,6 +203,20 @@ class RealtimeSTTRealtimeClient(WebSocketRealtimeClientBase):
         self._notify_partial_transcript(preview)
         self.response_event.set()
         self._log(f"Final segment received ({len(text)} chars)")
+
+    def _cancel_stop_idle_timer_locked(self):
+        timer = self._stop_idle_timer
+        self._stop_idle_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _complete_idle_stop(self):
+        with self.lock:
+            self._stop_idle_timer = None
+            if not self._stop_completion_pending:
+                return
+            self._stop_completion_pending = False
+        self.response_event.set()
 
     def _accept_segment_locked(self, segment) -> bool:
         if self._awaiting_clear:
@@ -218,6 +256,8 @@ class RealtimeSTTRealtimeClient(WebSocketRealtimeClientBase):
     # ------------------------------------------------------------------
 
     def _reset_take_locked(self):
+        self._cancel_stop_idle_timer_locked()
+        self._stop_completion_pending = False
         self._reset_stream_state_locked()
         self._final_by_segment.clear()
         self._partial_by_segment.clear()
@@ -264,14 +304,25 @@ class RealtimeSTTRealtimeClient(WebSocketRealtimeClientBase):
     def _on_commit_fast_path_locked(self):
         # RealtimeSTT still needs the explicit stop even when VAD finalized the
         # last segment before the hotkey was released.
+        self._cancel_stop_idle_timer_locked()
+        self._stop_completion_pending = False
         if self.ws:
             self.ws.send(json.dumps({"type": "stop"}))
         self._streaming = False
 
     def _request_transcript(self, _ctx: dict):
+        with self.lock:
+            self._cancel_stop_idle_timer_locked()
+            self._stop_completion_pending = True
         self.ws.send(json.dumps({"type": "stop"}))
         self._streaming = False
         self._log("Stopped stream; waiting for final segment")
+
+    def close(self):
+        with self.lock:
+            self._cancel_stop_idle_timer_locked()
+            self._stop_completion_pending = False
+        super().close()
 
     def update_language(self, language: Optional[str]):
         # The server chooses language/model at startup.  Keep the value for
