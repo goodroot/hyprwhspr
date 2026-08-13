@@ -14,6 +14,11 @@ try:
 except ImportError:
     from realtime_base import RealtimeAudioClientBase
 
+try:
+    from .text_script import join_segments
+except ImportError:
+    from text_script import join_segments
+
 import numpy as np
 
 
@@ -462,15 +467,14 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
 
     def _committed_text_locked(self) -> str:
         """Joined committed transcript. Call with self.lock held."""
-        parts = [part for part in self._committed_segments if part]
-        return ' '.join(parts).strip()
+        return join_segments(self._committed_segments)
 
     def _emit_partial_transcript(self) -> None:
         with self.lock:
             callback = self._partial_transcript_callback
             committed = self._committed_text_locked()
             partial = self._partial_transcript.strip()
-            preview = f'{committed} {partial}'.strip() if partial else committed
+            preview = join_segments([committed, partial]) if partial else committed
 
         if callback is None:
             return

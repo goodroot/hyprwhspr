@@ -26,6 +26,11 @@ except ImportError:
     from audio_resampler import resample_audio
 
 try:
+    from .text_script import join_segments
+except ImportError:
+    from text_script import join_segments
+
+try:
     import numpy as np
 except (ImportError, ModuleNotFoundError) as e:
     print("ERROR: python-numpy is not available in this Python environment.", file=sys.stderr)
@@ -635,8 +640,7 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
     # ------------------------------------------------------------------
 
     def _full_committed_text_locked(self) -> str:
-        parts = [p for p in self._committed_segments if p]
-        return ' '.join(parts).strip()
+        return join_segments(self._committed_segments)
 
     def _reset_stream_state_locked(self):
         """Reset per-recording state (call under lock)."""

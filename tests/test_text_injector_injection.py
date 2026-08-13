@@ -31,24 +31,34 @@ class ConfigStub:
     def get_word_overrides(self):
         return self.settings.get("word_overrides", {})
 
+    def get_filter_filler_words(self):
+        return self.settings.get("filter_filler_words", False)
+
+    def get_filler_words(self):
+        return self.settings.get("filler_words", [])
+
+
+def make_injector():
+    injector = TextInjector.__new__(TextInjector)
+    injector.config_manager = ConfigStub()
+    injector.session_type = "wayland"
+    injector.ydotool_available = True
+    injector.wtype_available = False
+    injector.xdotool_available = False
+    injector._hyprland_shortcut_syntax = None
+    # Private ydotoold daemon manager: not running by default (so
+    # _clear_stuck_modifiers is a no-op), but ensure_running() succeeds when a
+    # ydotool command is actually issued.
+    injector._ydotoold = mock.Mock()
+    injector._ydotoold.is_running.return_value = False
+    injector._ydotoold.ensure_running.return_value = True
+    injector._ydotoold.socket_env.return_value = {"YDOTOOL_SOCKET": "/run/x.sock"}
+    return injector
+
 
 class TextInjectorInjectionTests(unittest.TestCase):
     def _injector(self):
-        injector = TextInjector.__new__(TextInjector)
-        injector.config_manager = ConfigStub()
-        injector.session_type = "wayland"
-        injector.ydotool_available = True
-        injector.wtype_available = False
-        injector.xdotool_available = False
-        injector._hyprland_shortcut_syntax = None
-        # Private ydotoold daemon manager: not running by default (so
-        # _clear_stuck_modifiers is a no-op), but ensure_running() succeeds when a
-        # ydotool command is actually issued.
-        injector._ydotoold = mock.Mock()
-        injector._ydotoold.is_running.return_value = False
-        injector._ydotoold.ensure_running.return_value = True
-        injector._ydotoold.socket_env.return_value = {"YDOTOOL_SOCKET": "/run/x.sock"}
-        return injector
+        return make_injector()
 
     def test_wayland_clipboard_success_does_not_use_fallback(self):
         injector = self._injector()
@@ -1075,6 +1085,97 @@ class TextInjectorInjectionTests(unittest.TestCase):
             mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=False),
         ):
             self.assertEqual(injector.inject_text("hello"), InjectionOutcome.FAILED)
+
+
+class TrailingSpaceTests(unittest.TestCase):
+    def _injected(self, text, settings):
+        injector = make_injector()
+        injector.config_manager = ConfigStub(settings)
+
+        with (
+            mock.patch.object(injector, "_preprocess_text", return_value=text),
+            mock.patch.object(
+                injector, "_inject_via_clipboard_and_hotkey", return_value=True
+            ) as inject,
+        ):
+            self.assertEqual(injector.inject_text(text), InjectionOutcome.INJECTED)
+
+        return inject.call_args[0][0]
+
+    def test_default_config_still_appends_space_for_english(self):
+        self.assertEqual(self._injected("hello", {}), "hello ")
+
+    def test_auto_skips_space_after_cjk(self):
+        self.assertEqual(self._injected("你好世界", {"append_trailing_space": "auto"}), "你好世界")
+        self.assertEqual(self._injected("こんにちは。", {"append_trailing_space": "auto"}), "こんにちは。")
+
+    def test_auto_keeps_space_after_latin(self):
+        self.assertEqual(self._injected("hello", {"append_trailing_space": "auto"}), "hello ")
+
+    def test_explicit_true_always_appends(self):
+        self.assertEqual(self._injected("你好世界", {"append_trailing_space": True}), "你好世界 ")
+        self.assertEqual(self._injected("hello", {"append_trailing_space": True}), "hello ")
+
+    def test_explicit_false_never_appends(self):
+        self.assertEqual(self._injected("你好世界", {"append_trailing_space": False}), "你好世界")
+        self.assertEqual(self._injected("hello", {"append_trailing_space": False}), "hello")
+
+    def test_space_is_decided_after_the_hook_runs(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({"append_trailing_space": "auto"})
+        replaced = mock.Mock(outcome=_PostTranscriptionHookOutcome.REPLACE, text="你好")
+
+        with (
+            mock.patch.object(injector, "_preprocess_text", return_value="hello"),
+            mock.patch.object(injector, "_run_post_transcription_hook", return_value=replaced),
+            mock.patch.object(
+                injector, "_inject_via_clipboard_and_hotkey", return_value=True
+            ) as inject,
+        ):
+            injector.inject_text("hello")
+
+        self.assertEqual(inject.call_args[0][0], "你好")
+
+
+class WordOverrideBoundaryTests(unittest.TestCase):
+    def _preprocess(self, text, overrides):
+        injector = make_injector()
+        injector.config_manager = ConfigStub(
+            {"word_overrides": overrides, "symbol_replacements": False}
+        )
+        return injector._preprocess_text(text)
+
+    def test_cjk_override_applies_mid_sentence(self):
+        self.assertEqual(self._preprocess("我说你好世界", {"你好": "HI"}), "我说HI世界")
+
+    def test_cjk_punctuation_override_recipe(self):
+        self.assertEqual(self._preprocess("今天很好句号", {"句号": "。"}), "今天很好。")
+
+    def test_latin_override_still_respects_word_boundaries(self):
+        self.assertEqual(self._preprocess("the cat sat", {"cat": "dog"}), "the dog sat")
+        self.assertEqual(self._preprocess("concatenate", {"cat": "dog"}), "concatenate")
+
+    def test_single_character_override_still_matches_mid_word(self):
+        self.assertEqual(self._preprocess("Straße", {"ß": "ss"}), "Strasse")
+
+    def test_cjk_filler_word_is_removed_mid_sentence(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub(
+            {
+                "symbol_replacements": False,
+                "filter_filler_words": True,
+                "filler_words": ["那个"],
+            }
+        )
+        self.assertEqual(injector._preprocess_text("我那个觉得"), "我觉得")
+
+    def test_latin_filler_word_removal_is_unchanged(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub(
+            {"symbol_replacements": False, "filter_filler_words": True, "filler_words": ["um"]}
+        )
+        self.assertEqual(injector._preprocess_text("well um okay"), "well okay")
+        self.assertEqual(injector._preprocess_text("umbrella"), "umbrella")
 
 
 class LazyPyperclipTests(unittest.TestCase):

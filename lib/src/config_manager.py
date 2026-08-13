@@ -83,6 +83,9 @@ class ConfigManager:
             'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
             'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
             'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
+            # Space after each transcription: true, false, or "auto" (skip it when
+            # the text ends in a CJK character, where the space is a stray artifact)
+            'append_trailing_space': 'auto',
             # A prompt written in one language pulls the decoder toward that
             # language, so the shipped default is scoped to English audio.
             'whisper_prompt': '',

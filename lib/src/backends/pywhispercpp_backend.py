@@ -16,8 +16,10 @@ from typing import Optional
 
 try:
     from ..dependencies import require_package
+    from ..text_script import join_segments
 except ImportError:
     from dependencies import require_package
+    from text_script import join_segments
 
 np = require_package('numpy')
 
@@ -403,7 +405,7 @@ class PywhispercppBackend(TranscriptionBackend):
 
                 segments = self._pywhisper_model.transcribe(audio_data, **transcribe_kwargs)
 
-            result = ' '.join(seg.text for seg in segments).strip()
+            result = join_segments(seg.text for seg in segments)
 
             # Update last use time on successful transcription
             self._last_use_time = time.monotonic()

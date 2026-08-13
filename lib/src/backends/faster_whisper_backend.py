@@ -11,8 +11,10 @@ from typing import Optional
 
 try:
     from ..dependencies import require_package
+    from ..text_script import join_segments
 except ImportError:
     from dependencies import require_package
+    from text_script import join_segments
 
 np = require_package('numpy')
 
@@ -189,7 +191,7 @@ class FasterWhisperBackend(TranscriptionBackend):
                 transcribe_kwargs['initial_prompt'] = whisper_prompt
 
             segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
-            result = ' '.join(seg.text for seg in segments).strip()
+            result = join_segments(seg.text for seg in segments)
             self._last_use_time = time.monotonic()
             return result
         except RuntimeError as e:
@@ -198,7 +200,7 @@ class FasterWhisperBackend(TranscriptionBackend):
                 if self.reinitialize(force_cpu=True):
                     try:
                         segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
-                        result = ' '.join(seg.text for seg in segments).strip()
+                        result = join_segments(seg.text for seg in segments)
                         self._last_use_time = time.monotonic()
                         return result
                     except Exception as retry_e:

@@ -13,8 +13,10 @@ from typing import Optional
 
 try:
     from ..dependencies import require_package
+    from ..text_script import join_segments
 except ImportError:
     from dependencies import require_package
+    from text_script import join_segments
 
 np = require_package('numpy')
 
@@ -165,7 +167,7 @@ class OnnxAsrBackend(TranscriptionBackend):
                         else:
                             # Fallback: try to get text representation
                             segment_texts.append(str(seg))
-                    transcription = ' '.join(segment_texts)
+                    transcription = join_segments(segment_texts)
             else:
                 # No VAD - direct result (string or object with .text attribute)
                 if hasattr(result, 'text'):

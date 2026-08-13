@@ -21,6 +21,11 @@ try:
 except ImportError:
     from ydotoold_session import YdotooldSession
 
+try:
+    from .text_script import boundaried_pattern, ends_with_no_space_script
+except ImportError:
+    from text_script import boundaried_pattern, ends_with_no_space_script
+
 class _LazyPyperclip:
     """Load the optional fallback only when native clipboard tools are absent."""
 
@@ -1138,7 +1143,9 @@ except Exception:
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
-        processed_text = hook_result.text + ' '
+        processed_text = hook_result.text
+        if self._should_append_trailing_space(processed_text):
+            processed_text += ' '
 
         try:
             inject_mode = None
@@ -1157,6 +1164,20 @@ except Exception:
             return InjectionOutcome.FAILED
 
     # ------------------------ Helpers ------------------------
+
+    def _should_append_trailing_space(self, text: str) -> bool:
+        """Whether to separate this transcription from whatever is typed next.
+
+        A trailing space keeps English dictation from colliding with the next
+        word; in CJK it is a stray character. "auto" decides from the final
+        character alone, true/false override it.
+        """
+        setting = 'auto'
+        if self.config_manager:
+            setting = self.config_manager.get_setting('append_trailing_space', 'auto')
+        if isinstance(setting, bool):
+            return setting
+        return not ends_with_no_space_script(text)
 
     def _preprocess_text(self, text: str) -> str:
         """
@@ -1281,12 +1302,11 @@ except Exception:
         for original, replacement in word_overrides.items():
             # Only require original to be non-empty; replacement can be empty string to delete words
             if original:
-                if len(original) == 1:
-                    # Single characters can't use \b word boundaries (e.g. ß mid-word in Straße)
-                    processed = re.sub(re.escape(original), replacement, processed, flags=re.IGNORECASE)
-                else:
-                    pattern = r'\b' + re.escape(original) + r'\b'
-                    processed = re.sub(pattern, replacement, processed, flags=re.IGNORECASE)
+                # Word boundaries are applied per-edge, only where they mean
+                # something: not for single characters, CJK, or punctuation edges.
+                processed = re.sub(
+                    boundaried_pattern(original), replacement, processed, flags=re.IGNORECASE
+                )
 
         # Clean up extra spaces left by word deletions (multiple spaces -> single space)
         processed = re.sub(r' +', ' ', processed)
@@ -1309,8 +1329,7 @@ except Exception:
         processed = text
         for word in filler_words:
             if word:
-                pattern = r'\b' + re.escape(word) + r'\b'
-                processed = re.sub(pattern, '', processed, flags=re.IGNORECASE)
+                processed = re.sub(boundaried_pattern(word), '', processed, flags=re.IGNORECASE)
 
         # Clean up extra spaces left by word deletions
         processed = re.sub(r' +', ' ', processed)

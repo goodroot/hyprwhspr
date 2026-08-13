@@ -27,7 +27,7 @@ hyprwhspr config show --all  # Show all settings including defaults
 - [Custom hotkeys](#custom-hotkeys) -- key support, secondary shortcuts, cancel, Hyprland bindings
 - [Backends](#backends) -- Cohere Transcribe, Parakeet, faster-whisper, whisper.cpp, REST API, Realtime WebSocket
 - [Audio and visual feedback](#audio-and-visual-feedback) -- themed visualizer, audio feedback, microphone selection, keepalive, ducking
-- [Text processing](#text-processing) -- word overrides, filler words, symbol replacements
+- [Text processing](#text-processing) -- word overrides, filler words, symbol replacements, trailing space, non-Latin scripts
 - [Paste and clipboard behavior](#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit, post-transcription hook
 - [Integrations](#integrations) -- Waybar, Noctalia, keyboard devices, external hotkey systems
 - [GPU resource management](#gpu-resource-management) -- unload/reload model to free VRAM
@@ -944,7 +944,7 @@ Single-character overrides match anywhere in a word (not just at word boundaries
 ```
 
 - `"Straße"` → `"Strasse"`, `"Fuß"` → `"Fuss"`, etc.
-- Multi-character overrides use whole-word matching only
+- Multi-character overrides use whole-word matching, applied per edge and only where a word boundary exists to anchor to. Terms containing a CJK character match anywhere, so `{"你好": "HI"}` applies inside `"我说你好世界"`. An edge that isn't a letter or digit is likewise unanchored, so `{"c++": "C++"}` matches `"c++ rules"` -- which `\bc\+\+\b` never could -- while the leading `c` still requires a word boundary
 
 ### Filler word filtering
 
@@ -998,6 +998,36 @@ Automatically converts spoken words to symbols and punctuation:
 
 - "new line" → new line
 - "tab" → tab character
+
+The table is English-only. See [Non-Latin scripts](#non-latin-scripts).
+
+### Trailing space
+
+Each transcription is followed by a space so the next word you type doesn't collide with it:
+
+```jsonc
+{
+    "append_trailing_space": "auto"  // "auto" (default), true, or false
+}
+```
+
+`"auto"` checks one character -- the last one pasted. Han, Kana, Hangul, or CJK/full-width punctuation (`。`, `，`) means no space; everything else, including Thai, gets one as before. Use `true` or `false` to fix the answer regardless of content.
+
+The check runs after [`post_transcription_hook`](#post-transcription-hook), on the final text.
+
+### Non-Latin scripts
+
+For Chinese, Japanese, and Korean:
+
+- **Trailing space** -- see [above](#trailing-space); the default needs no configuration.
+- **Realtime and long-form** -- segments are joined without a space after a CJK character, so sentences aren't broken up. No configuration.
+- **Spoken punctuation** -- the built-in table is English-only; use `word_overrides`, which match anywhere in CJK text:
+
+  ```jsonc
+  { "word_overrides": { "句号": "。", "逗号": "，", "问号": "？" } }
+  ```
+
+Using a language we handle badly? Please open an issue.
 
 ## Paste and clipboard behavior
 
@@ -1098,6 +1128,8 @@ Pipe each transcription through a shell command before it's pasted. Stdin receiv
 ```
 
 The example above wraps every injected transcription in `<dictation>...</dictation>` — a useful signal to downstream LLMs that the text came from ASR and may contain transcription artifacts (homophones, proper-noun misspellings).
+
+The hook runs before the [trailing space](#trailing-space) is applied, so it can't strip it — use `append_trailing_space`.
 
 Other patterns:
 

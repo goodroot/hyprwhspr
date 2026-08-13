@@ -145,6 +145,12 @@
       "default": true,
       "description": "Enable built-in speech-to-symbol replacements (e.g., 'quote' to '\"')"
     },
+    "append_trailing_space": {
+      "type": ["boolean", "string"],
+      "enum": [true, false, "auto"],
+      "default": "auto",
+      "description": "Append a space after each transcription: true always, false never, 'auto' skips it when the text ends in a CJK character"
+    },
     "whisper_prompt": {
       "type": "string",
       "default": "",

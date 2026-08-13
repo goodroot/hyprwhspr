@@ -69,6 +69,17 @@ class ElevenLabsClientPreviewTests(unittest.TestCase):
 
         self.assertEqual(previews[-1], "This is already committed and live")
 
+    def test_cjk_preview_matches_what_gets_injected(self):
+        previews = []
+        self.client.set_partial_transcript_callback(previews.append)
+        with self.client.lock:
+            self.client._committed_segments = ["你好"]
+            self.client._partial_transcript = "世界"
+
+        self.client._emit_partial_transcript()
+
+        self.assertEqual(previews[-1], "你好世界")
+
     def test_callback_survives_connection_replacement(self):
         previews = []
         self.client.set_partial_transcript_callback(previews.append)
