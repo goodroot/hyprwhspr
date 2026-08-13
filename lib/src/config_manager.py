@@ -11,6 +11,11 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
+try:
+    from .hallucination import DEFAULT_HALLUCINATION_MARKERS
+except ImportError:
+    from hallucination import DEFAULT_HALLUCINATION_MARKERS
+
 
 # Environment variable substitution: ${VAR} -> value of $VAR, or literal token if unset.
 # Applied lazily in get_setting() so save_config preserves the original tokens.
@@ -86,6 +91,9 @@ class ConfigManager:
             # Space after each transcription: true, false, or "auto" (skip it when
             # the text ends in a CJK character, where the space is a stray artifact)
             'append_trailing_space': 'auto',
+            # Stock phrases Whisper emits for non-speech audio. Configurable because
+            # "you" is both the most common phantom and a real one-word dictation.
+            'hallucination_markers': list(DEFAULT_HALLUCINATION_MARKERS),
             # A prompt written in one language pulls the decoder toward that
             # language, so the shipped default is scoped to English audio.
             'whisper_prompt': '',
@@ -377,6 +385,15 @@ class ConfigManager:
     def get_filler_words(self) -> list:
         """Get the list of filler words to filter"""
         return self.config.get('filler_words', ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm']).copy()
+
+    def get_hallucination_markers(self) -> list:
+        """Get the list of Whisper hallucination markers to filter"""
+        markers = self.config.get('hallucination_markers', DEFAULT_HALLUCINATION_MARKERS)
+        if not isinstance(markers, (list, tuple, set)):
+            # Resolved at service startup: a malformed value must not be fatal.
+            print(f"Warning: hallucination_markers must be a list, got {type(markers).__name__}; using defaults")
+            return list(DEFAULT_HALLUCINATION_MARKERS)
+        return list(markers)
 
     def add_filler_word(self, word: str):
         """Add a word to the filler words list"""

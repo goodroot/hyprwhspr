@@ -3,10 +3,12 @@
 import threading
 
 try:
+    from .hallucination import is_hallucination
     from .paths import LONGFORM_STATE_FILE
     from .segment_manager import SegmentManager
     from .text_injector import InjectionOutcome
 except ImportError:
+    from hallucination import is_hallucination
     from paths import LONGFORM_STATE_FILE
     from segment_manager import SegmentManager
     from text_injector import InjectionOutcome
@@ -244,8 +246,7 @@ class LongFormController:
 
             if transcription and transcription.strip():
                 text = transcription.strip()
-                normalized = text.lower().replace('_', ' ').strip('[]().!?, ')
-                if normalized in self.hallucination_markers or text.startswith('♪'):
+                if is_hallucination(text, self.hallucination_markers):
                     print(f"[LONGFORM] Whisper hallucination detected: {text!r}")
                     self._submission_failed(audio_data)
                     return

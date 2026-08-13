@@ -145,6 +145,16 @@
       "default": true,
       "description": "Enable built-in speech-to-symbol replacements (e.g., 'quote' to '\"')"
     },
+    "hallucination_markers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [
+        "blank audio", "blank", "silence", "no speech",
+        "you", "thank you", "thanks for watching", "thank you for watching",
+        "video playback", "music", "music playing", "keyboard clicking"
+      ],
+      "description": "Stock phrases Whisper emits for non-speech audio; matching transcriptions are discarded instead of pasted"
+    },
     "append_trailing_space": {
       "type": ["boolean", "string"],
       "enum": [true, false, "auto"],

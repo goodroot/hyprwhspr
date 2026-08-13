@@ -27,7 +27,7 @@ hyprwhspr config show --all  # Show all settings including defaults
 - [Custom hotkeys](#custom-hotkeys) -- key support, secondary shortcuts, cancel, Hyprland bindings
 - [Backends](#backends) -- Cohere Transcribe, Parakeet, faster-whisper, whisper.cpp, REST API, Realtime WebSocket
 - [Audio and visual feedback](#audio-and-visual-feedback) -- themed visualizer, audio feedback, microphone selection, keepalive, ducking
-- [Text processing](#text-processing) -- word overrides, filler words, symbol replacements, trailing space, non-Latin scripts
+- [Text processing](#text-processing) -- word overrides, filler words, hallucination markers, symbol replacements, trailing space, non-Latin scripts
 - [Paste and clipboard behavior](#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit, post-transcription hook
 - [Integrations](#integrations) -- Waybar, Noctalia, keyboard devices, external hotkey systems
 - [GPU resource management](#gpu-resource-management) -- unload/reload model to free VRAM
@@ -957,6 +957,24 @@ Remove common filler words automatically:
 }
 ```
 
+### Hallucination markers
+
+Whisper emits stock subtitle-corpus phrases when handed audio with no speech in it. Transcriptions matching this list are discarded instead of pasted:
+
+```jsonc
+{
+    "hallucination_markers": [
+        "blank audio", "blank", "silence", "no speech",
+        "you", "thank you", "thanks for watching", "thank you for watching",
+        "video playback", "music", "music playing", "keyboard clicking"
+    ]
+}
+```
+
+Setting the key replaces the list. Matching ignores case, underscores, surrounding brackets and trailing punctuation, so `[Silence]` and `blank_audio` are caught. Text starting with `♪` is always discarded.
+
+`"you"` is the entry most worth knowing about: it's Whisper's most common phantom *and* a real one-word dictation. Remove it from the list if you dictate single words and would rather see the odd phantom than lose them. Add your own entries for other languages -- the defaults are English.
+
 ### Symbol replacements
 
 Automatically converts spoken words to symbols and punctuation:
@@ -1021,6 +1039,7 @@ For Chinese, Japanese, and Korean:
 
 - **Trailing space** -- see [above](#trailing-space); the default needs no configuration.
 - **Realtime and long-form** -- segments are joined without a space after a CJK character, so sentences aren't broken up. No configuration.
+- **Hallucination markers** -- the defaults are English phrases; add your own via [`hallucination_markers`](#hallucination-markers).
 - **Spoken punctuation** -- the built-in table is English-only; use `word_overrides`, which match anywhere in CJK text:
 
   ```jsonc

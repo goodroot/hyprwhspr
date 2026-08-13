@@ -68,6 +68,28 @@ class ConfigManagerPersistenceTests(unittest.TestCase):
             saved = json.loads((root / "config.json").read_text(encoding="utf-8"))
             self.assertNotIn("whisper_prompt", saved)
 
+    def test_custom_hallucination_markers_are_returned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.json").write_text(
+                json.dumps({"hallucination_markers": ["silence"]}), encoding="utf-8"
+            )
+
+            self.assertEqual(self._manager(root).get_hallucination_markers(), ["silence"])
+
+    def test_malformed_hallucination_markers_fall_back_instead_of_crashing(self):
+        """Resolved during service startup, so a bad value must not kill the daemon."""
+        for bad in (None, "silence", 7):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "config.json").write_text(
+                    json.dumps({"hallucination_markers": bad}), encoding="utf-8"
+                )
+
+                markers = self._manager(root).get_hallucination_markers()
+
+                self.assertEqual(markers, list(config_manager.DEFAULT_HALLUCINATION_MARKERS), bad)
+
     def test_a_customised_prompt_survives_the_migration(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

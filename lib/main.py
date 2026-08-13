@@ -19,13 +19,6 @@ try:
 except ImportError:
     np = None  # Will be checked when needed
 
-# Whisper hallucination markers for silence/noise segments
-_HALLUCINATION_MARKERS = {
-    'blank audio', 'blank', 'silence', 'no speech',
-    'you', 'thank you', 'thanks for watching', 'thank you for watching',
-    'video playback', 'music', 'music playing', 'keyboard clicking',
-}
-
 
 def _looks_like_wlroots_session() -> bool:
     desktop = ':'.join([
@@ -72,6 +65,7 @@ _lock_file = None
 _lock_file_path = None
 
 from config_manager import ConfigManager
+from hallucination import is_hallucination
 from audio_capture import AudioCapture
 from whisper_manager import WhisperManager
 from session_environment import ensure_wayland_display
@@ -215,7 +209,7 @@ class hyprwhsprApp:
             show_result_and_hide=self._show_result_and_hide,
             write_recording_status=self._write_recording_status,
             set_processing=self._set_longform_processing,
-            hallucination_markers=_HALLUCINATION_MARKERS,
+            hallucination_markers=self.config.get_hallucination_markers(),
         )
         self._longform_submit_shortcuts = None  # Submit shortcut handler
 
@@ -970,8 +964,7 @@ class hyprwhsprApp:
                 )
                 if transcription and transcription.strip():
                     text = transcription.strip()
-                    lower = text.lower().strip('.!? ')
-                    if lower in _HALLUCINATION_MARKERS or text.startswith('♪'):
+                    if is_hallucination(text, self.config.get_hallucination_markers()):
                         print(f"[CONTINUOUS] Hallucination ignored: {text!r}", flush=True)
                         return
                     if self._continuous_cancelled:
@@ -1420,8 +1413,7 @@ class hyprwhsprApp:
                 text = transcription.strip()
 
                 # Filter out Whisper hallucination markers - don't touch clipboard
-                normalized = text.lower().replace('_', ' ').strip('[]().!?, ')
-                if normalized in _HALLUCINATION_MARKERS or text.startswith('♪'):
+                if is_hallucination(text, self.config.get_hallucination_markers()):
                     print(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
                     self.audio_manager.play_error_sound()
                     success = False
