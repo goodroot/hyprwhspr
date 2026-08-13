@@ -944,7 +944,9 @@ Single-character overrides match anywhere in a word (not just at word boundaries
 ```
 
 - `"Straße"` → `"Strasse"`, `"Fuß"` → `"Fuss"`, etc.
-- Multi-character overrides use whole-word matching, applied per edge and only where a word boundary exists to anchor to. Terms containing a CJK character match anywhere, so `{"你好": "HI"}` applies inside `"我说你好世界"`. An edge that isn't a letter or digit is likewise unanchored, so `{"c++": "C++"}` matches `"c++ rules"` -- which `\bc\+\+\b` never could -- while the leading `c` still requires a word boundary
+- Multi-character overrides use whole-word matching, applied per edge
+- Terms containing a CJK character match anywhere — `{"你好": "HI"}` applies inside `"我说你好世界"`
+- An edge that isn't a letter or digit is unanchored, so `{"c++": "C++"}` matches
 
 ### Filler word filtering
 
@@ -959,21 +961,18 @@ Remove common filler words automatically:
 
 ### Hallucination markers
 
-Whisper emits stock subtitle-corpus phrases when handed audio with no speech in it. Transcriptions matching this list are discarded instead of pasted:
+Whisper invents stock subtitle phrases when handed audio with no speech in it. Transcriptions matching this list are discarded rather than pasted:
 
 ```jsonc
 {
-    "hallucination_markers": [
-        "blank audio", "blank", "silence", "no speech",
-        "you", "thank you", "thanks for watching", "thank you for watching",
-        "video playback", "music", "music playing", "keyboard clicking"
-    ]
+    "hallucination_markers": ["blank audio", "silence", "no speech", "thanks for watching"]
 }
 ```
 
-Setting the key replaces the list. Matching ignores case, underscores, surrounding brackets and trailing punctuation, so `[Silence]` and `blank_audio` are caught. Text starting with `♪` is always discarded.
-
-`"you"` is the entry most worth knowing about: it's Whisper's most common phantom *and* a real one-word dictation. Remove it from the list if you dictate single words and would rather see the odd phantom than lose them. Add your own entries for other languages -- the defaults are English.
+- Setting the key replaces the built-in list; `hyprwhspr config show --all` prints the default
+- Matching ignores case, underscores, brackets and trailing punctuation, so `[Silence]` and `blank_audio` are caught
+- Text starting with `♪` is always discarded
+- `"you"` ships in the list — Whisper's most common phantom, and a real one-word dictation. Drop it if you'd rather keep the phantoms than lose a dictated "you"
 
 ### Symbol replacements
 
@@ -1029,24 +1028,23 @@ Each transcription is followed by a space so the next word you type doesn't coll
 }
 ```
 
-`"auto"` checks one character -- the last one pasted. Han, Kana, Hangul, or CJK/full-width punctuation (`。`, `，`) means no space; everything else, including Thai, gets one as before. Use `true` or `false` to fix the answer regardless of content.
-
-The check runs after [`post_transcription_hook`](#post-transcription-hook), on the final text.
+- `"auto"` checks the last character pasted: Han, Kana, Hangul and full-width punctuation (`。`, `，`) get no space
+- Everything else gets one, Thai included — it has no spaces between words, but does use them between phrases
+- Set `true` or `false` to fix the answer regardless of content
+- The check runs after [`post_transcription_hook`](#post-transcription-hook), on the final text
 
 ### Non-Latin scripts
 
-For Chinese, Japanese, and Korean:
+Chinese, Japanese and Korean write without spaces between words:
 
-- **Trailing space** -- see [above](#trailing-space); the default needs no configuration.
-- **Realtime and long-form** -- segments are joined without a space after a CJK character, so sentences aren't broken up. No configuration.
-- **Hallucination markers** -- the defaults are English phrases; add your own via [`hallucination_markers`](#hallucination-markers).
-- **Spoken punctuation** -- the built-in table is English-only; use `word_overrides`, which match anywhere in CJK text:
+- Trailing spaces are handled by [`append_trailing_space`](#trailing-space); the default needs no configuration
+- Realtime and long-form segments are joined without a space after a CJK character, so sentences aren't broken up
+- The symbol replacements and [hallucination markers](#hallucination-markers) ship English entries only — add your own
+- Spoken punctuation goes in `word_overrides`, which match anywhere in CJK text:
 
-  ```jsonc
-  { "word_overrides": { "句号": "。", "逗号": "，", "问号": "？" } }
-  ```
-
-Using a language we handle badly? Please open an issue.
+```jsonc
+{ "word_overrides": { "句号": "。", "逗号": "，", "问号": "？" } }
+```
 
 ## Paste and clipboard behavior
 
