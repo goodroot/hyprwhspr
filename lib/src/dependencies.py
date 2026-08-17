@@ -32,9 +32,6 @@ def require_package(
         if install_hint:
             print(f"  {install_hint}", file=sys.stderr)
         else:
-            print(f"  Arch:          pacman -S {pkg}", file=sys.stderr)
-            print(f"  Debian/Ubuntu: apt install python3-{module_name}", file=sys.stderr)
-            print(f"  Fedora:        dnf install python3-{module_name}", file=sys.stderr)
-            print(f"  openSUSE:      zypper install python3-{module_name}", file=sys.stderr)
-            print(f"  Or via pip:    pip install {module_name}", file=sys.stderr)
+            print("  hyprwhspr setup", file=sys.stderr)
+            print("  Source checkout: ./bin/hyprwhspr setup", file=sys.stderr)
         sys.exit(1)

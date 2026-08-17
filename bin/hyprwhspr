@@ -55,12 +55,17 @@ fi
 
 # Find venv Python (for main app execution)
 VENV_PYTHON="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
-if [ -f "$VENV_PYTHON" ]; then
-    PYTHON_CMD="$VENV_PYTHON"
-else
-    # Fallback to system Python if venv doesn't exist
-    PYTHON_CMD="$CLI_PYTHON"
-fi
+PYTHON_CMD="$VENV_PYTHON"
+
+require_app_venv() {
+    if [ ! -x "$VENV_PYTHON" ]; then
+        echo "Error: hyprwhspr setup is incomplete." >&2
+        echo "Python environment not found at: $VENV_PYTHON" >&2
+        echo "Run setup to install the required Python dependencies:" >&2
+        echo "  $0 setup" >&2
+        exit 1
+    fi
+}
 
 # Help/version handling: route -h/--help/--version to CLI
 for arg in "$@"; do
@@ -80,11 +85,16 @@ fi
 # Keep in sync with CLI_SUBCOMMANDS in lib/main.py
 # 'test' needs venv Python since it loads the transcription backend
 if [[ "$1" == "test" ]]; then
+  require_app_venv
   exec "$PYTHON_CMD" "$LIB_DIR/cli.py" "$@"
 fi
 if [[ "$1" =~ ^(setup|install|config|waybar|noctalia|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record|test)$ ]]; then
   exec "$CLI_PYTHON" "$LIB_DIR/cli.py" "$@"
 fi
+
+# The service always runs in the environment created by setup. Falling back to
+# system Python turns an incomplete installation into misleading import errors.
+require_app_venv
 
 # Set up CUDA library path if CUDA is installed
 if [ -d "/opt/cuda" ]; then
