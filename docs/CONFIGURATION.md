@@ -1104,6 +1104,24 @@ Prefer stable app classes over window titles, which change with the open documen
 
 If you already know the Linux evdev keycode, set `paste_keycode` directly. Non-Latin layouts (Thai, Russian, Arabic, …) are a special case handled on GNOME/Mutter — see [GNOME/Mutter notes](#gnomemutter-notes).
 
+### Remapped modifier keys
+
+`ydotool` sends physical keycodes, so desktop-level remaps can change the
+generated paste shortcut. For example, with Ctrl and Caps Lock swapped:
+
+```jsonc
+{
+    "ydotool_modifier_overrides": {
+        "ctrl": "capslock"
+    }
+}
+```
+
+Supported modifiers are `ctrl`, `shift`, `alt`, and `super`. Key names are
+case-insensitive and may include the `KEY_` prefix; Linux evdev keycodes are
+also accepted. The usual `control`, `meta`, `cmd`, and `logo` aliases work here
+as they do in paste chords. This setting affects only the `ydotool` fallback.
+
 ### Auto-submit
 
 Automatically press Enter after pasting — aka Dictation YOLO. Handy for chat boxes and search fields; careful elsewhere.

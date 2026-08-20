@@ -184,6 +184,17 @@ YDOTOOL_KEYCODES = {
     'leftbrace': 26,
     'rightbrace': 27,
     'backslash': 43,
+    'capslock': 58,
+    'leftctrl': 29,
+    'rightctrl': 97,
+    'leftshift': 42,
+    'rightshift': 54,
+    'leftalt': 56,
+    'rightalt': 100,
+    'leftmeta': 125,
+    'rightmeta': 126,
+    'leftsuper': 125,
+    'rightsuper': 126,
 }
 
 FKEY_CODES = {
@@ -208,6 +219,7 @@ class TextInjector:
         self.wtype_available = not self._is_x11_session() and shutil.which('wtype') is not None
         self.xdotool_available = self._is_x11_session() and shutil.which('xdotool') is not None
         self._hyprland_shortcut_syntax = None
+        self._warned_invalid_ydotool_modifier_overrides = set()
 
         # Private ydotoold instance (lazily started on first uinput-fallback use, so
         # wtype-only sessions never spawn it). Replaces the old shared/managed
@@ -718,7 +730,9 @@ except Exception:
             # 56  = LeftAlt,         100 = RightAlt
             # 29  = LeftCtrl,        97  = RightCtrl
             # 42  = LeftShift,       54  = RightShift
-            modifiers_to_clear = ['125:0', '126:0', '56:0', '100:0', '29:0', '97:0', '42:0', '54:0']
+            modifier_codes = [125, 126, 56, 100, 29, 97, 42, 54]
+            modifier_codes.extend(self._ydotool_modifier_keycodes().values())
+            modifiers_to_clear = [f'{code}:0' for code in dict.fromkeys(modifier_codes)]
             self._run_ydotool(['key'] + modifiers_to_clear, timeout=1)
         except Exception as e:
             print(f"Warning: Could not clear stuck modifiers: {e}")
@@ -869,6 +883,69 @@ except Exception:
             return FKEY_CODES[key]
         return YDOTOOL_KEYCODES.get(key)
 
+    def _warn_invalid_ydotool_modifier_override(self, identifier, value):
+        """Warn once for each malformed ydotool modifier override."""
+        warning_key = (str(identifier), repr(value))
+        warned = getattr(self, '_warned_invalid_ydotool_modifier_overrides', set())
+        if warning_key in warned:
+            return
+        warned.add(warning_key)
+        self._warned_invalid_ydotool_modifier_overrides = warned
+        print(
+            f"⚠️  Ignoring invalid ydotool_modifier_overrides entry "
+            f"{identifier!r}: {value!r}; using the default modifier key.",
+            flush=True,
+        )
+
+    @staticmethod
+    def _ydotool_named_keycode(value: str) -> Optional[int]:
+        """Resolve a readable physical key name to a Linux evdev keycode."""
+        normalized = value.strip().lower()
+        if normalized.startswith('key_'):
+            normalized = normalized[4:]
+        normalized = normalized.replace('_', '').replace('-', '')
+        return FKEY_CODES.get(normalized, YDOTOOL_KEYCODES.get(normalized))
+
+    def _ydotool_modifier_keycodes(self) -> Dict[str, int]:
+        """Return logical modifier -> physical evdev keycodes for ydotool."""
+        resolved = dict(YDOTOOL_MODIFIERS)
+        if not self.config_manager:
+            return resolved
+
+        overrides = self.config_manager.get_setting('ydotool_modifier_overrides', {})
+        if not isinstance(overrides, dict):
+            self._warn_invalid_ydotool_modifier_override(
+                'ydotool_modifier_overrides', overrides
+            )
+            return resolved
+
+        for raw_modifier, value in overrides.items():
+            modifier = raw_modifier.strip().lower() if isinstance(raw_modifier, str) else ''
+            canonical_modifier = MODIFIER_ALIASES.get(modifier)
+            if canonical_modifier not in YDOTOOL_MODIFIERS:
+                self._warn_invalid_ydotool_modifier_override(raw_modifier, value)
+                continue
+
+            keycode = None
+            if isinstance(value, int) and not isinstance(value, bool):
+                if 0 < value <= 767:  # Linux input-event-codes.h KEY_MAX
+                    keycode = value
+            elif isinstance(value, str):
+                stripped = value.strip()
+                if stripped.isdigit():
+                    numeric_keycode = int(stripped)
+                    if 0 < numeric_keycode <= 767:
+                        keycode = numeric_keycode
+                else:
+                    keycode = self._ydotool_named_keycode(value)
+
+            if keycode is None:
+                self._warn_invalid_ydotool_modifier_override(raw_modifier, value)
+                continue
+            resolved[canonical_modifier] = keycode
+
+        return resolved
+
     def _send_paste_keys_slow(self, paste_chord: str) -> bool:
         """
         Send paste keystroke with delays between events via ydotool.
@@ -882,30 +959,45 @@ except Exception:
         keycode = self._keycode_for_chord_key(key)
         if keycode is None:
             return False
-        press_args = [f'{YDOTOOL_MODIFIERS[modifier]}:1' for modifier in modifiers]
-        release_args = [f'{YDOTOOL_MODIFIERS[modifier]}:0' for modifier in reversed(modifiers)]
+        modifier_keycodes = self._ydotool_modifier_keycodes()
+        press_args = [f'{modifier_keycodes[modifier]}:1' for modifier in modifiers]
+        release_args = [f'{modifier_keycodes[modifier]}:0' for modifier in reversed(modifiers)]
 
-        def _key(*args):
+        modifiers_pressed = False
+
+        def _key(*args, modifier_press=False):
+            nonlocal modifiers_pressed
             result = self._run_ydotool(['key'] + list(args), timeout=1)
             if result is None:
                 raise RuntimeError("ydotoold unavailable")
+            if modifier_press:
+                # Once ydotool accepted the command, some key-down events may
+                # have landed even if the command ultimately reports failure.
+                modifiers_pressed = True
             if result.returncode != 0:
                 stderr = (result.stderr or b'').decode('utf-8', 'ignore')
                 raise RuntimeError(f"ydotool key {' '.join(args)} failed: {stderr}")
 
         try:
             if press_args:
-                _key(*press_args)
+                _key(*press_args, modifier_press=True)
             time.sleep(0.015)
             _key(f'{keycode}:1', f'{keycode}:0')
             time.sleep(0.010)
             if release_args:
                 _key(*release_args)
+                modifiers_pressed = False
             return True
 
         except Exception as e:
             print(f"Slow paste key injection failed: {e}")
             return False
+        finally:
+            if modifiers_pressed and release_args:
+                try:
+                    _key(*release_args)
+                except Exception as e:
+                    print(f"Warning: Could not release ydotool paste modifiers: {e}")
 
     def _is_gnome_wayland_session(self) -> bool:
         """Return True for Mutter/GNOME Wayland sessions where uinput chords are unreliable."""

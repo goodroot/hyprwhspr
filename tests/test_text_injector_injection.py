@@ -146,6 +146,9 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
     def test_x11_injection_prefers_xdotool_without_wtype_or_ydotool(self):
         injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"ydotool_modifier_overrides": {"ctrl": "capslock"}}
+        )
         injector.session_type = "x11"
         injector.ydotool_available = False
         injector.wtype_available = False
@@ -311,6 +314,9 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
     def test_wtype_sends_arbitrary_single_key_chord(self):
         injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"ydotool_modifier_overrides": {"ctrl": "capslock"}}
+        )
         completed = types.SimpleNamespace(returncode=0, stderr=b"")
 
         with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
@@ -443,6 +449,9 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
     def test_hyprland_native_paste_avoids_wtype(self):
         injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"ydotool_modifier_overrides": {"ctrl": "capslock"}}
+        )
         with (
             mock.patch.object(injector, "_get_active_window_info", return_value=None),
             mock.patch.object(injector, "_save_clipboard", return_value=b"old"),
@@ -542,6 +551,179 @@ class TextInjectorInjectionTests(unittest.TestCase):
         run.assert_has_calls([
             mock.call(["key", "29:1"], timeout=1),
             mock.call(["key", "21:1", "21:0"], timeout=1),
+            mock.call(["key", "29:0"], timeout=1),
+        ])
+
+    def test_ydotool_uses_named_modifier_override(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"ydotool_modifier_overrides": {"ctrl": "KEY_CAPS_LOCK"}}
+        )
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+
+        with mock.patch.object(injector, "_run_ydotool", return_value=completed) as run:
+            self.assertTrue(injector._send_paste_keys_slow("ctrl+shift+v"))
+
+        run.assert_has_calls([
+            mock.call(["key", "58:1", "42:1"], timeout=1),
+            mock.call(["key", "47:1", "47:0"], timeout=1),
+            mock.call(["key", "42:0", "58:0"], timeout=1),
+        ])
+
+    def test_ydotool_accepts_numeric_modifier_override(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"ydotool_modifier_overrides": {"ctrl": 97}}
+        )
+
+        self.assertEqual(injector._ydotool_modifier_keycodes()["ctrl"], 97)
+
+    def test_ydotool_accepts_linux_meta_key_names_and_super_aliases(self):
+        injector = self._injector()
+
+        for physical_name in ("KEY_LEFTMETA", "leftmeta", "leftsuper"):
+            with self.subTest(physical_name=physical_name):
+                injector.config_manager = ConfigStub({
+                    "ydotool_modifier_overrides": {"super": physical_name}
+                })
+                self.assertEqual(injector._ydotool_modifier_keycodes()["super"], 125)
+
+    def test_ydotool_accepts_function_key_modifier_override(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({
+            "ydotool_modifier_overrides": {"super": "f13"}
+        })
+
+        self.assertEqual(injector._ydotool_modifier_keycodes()["super"], 183)
+
+    def test_ydotool_decimal_strings_are_evdev_codes_not_digit_keys(self):
+        injector = self._injector()
+
+        injector.config_manager = ConfigStub({
+            "ydotool_modifier_overrides": {"ctrl": "9", "alt": "58"}
+        })
+        resolved = injector._ydotool_modifier_keycodes()
+        self.assertEqual(resolved["ctrl"], 9)
+        self.assertEqual(resolved["alt"], 58)
+
+        injector.config_manager = ConfigStub({
+            "ydotool_modifier_overrides": {"ctrl": "KEY_9"}
+        })
+        self.assertEqual(injector._ydotool_modifier_keycodes()["ctrl"], 10)
+
+    def test_ydotool_modifier_override_keys_use_chord_aliases(self):
+        injector = self._injector()
+        cases = {
+            "control": ("ctrl", 58),
+            "meta": ("super", 58),
+            "cmd": ("super", 58),
+            "logo": ("super", 58),
+        }
+
+        for alias, (canonical, expected) in cases.items():
+            with self.subTest(alias=alias):
+                injector.config_manager = ConfigStub({
+                    "ydotool_modifier_overrides": {alias: "capslock"}
+                })
+                self.assertEqual(
+                    injector._ydotool_modifier_keycodes()[canonical], expected
+                )
+
+    def test_invalid_ydotool_modifier_overrides_fall_back_and_warn_once(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({
+            "ydotool_modifier_overrides": {
+                "ctrl": "not-a-key",
+                "hyper": "capslock",
+                "alt": True,
+                "shift": 768,
+            }
+        })
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            first = injector._ydotool_modifier_keycodes()
+            second = injector._ydotool_modifier_keycodes()
+
+        self.assertEqual(first, {"ctrl": 29, "shift": 42, "super": 125, "alt": 56})
+        self.assertEqual(second, first)
+        self.assertEqual(output.getvalue().count("Ignoring invalid"), 4)
+
+    def test_non_object_ydotool_modifier_overrides_falls_back(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"ydotool_modifier_overrides": "ctrl=capslock"}
+        )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            resolved = injector._ydotool_modifier_keycodes()
+
+        self.assertEqual(resolved, {"ctrl": 29, "shift": 42, "super": 125, "alt": 56})
+        self.assertIn("Ignoring invalid", output.getvalue())
+
+    def test_clear_stuck_modifiers_includes_override(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"ydotool_modifier_overrides": {"ctrl": "capslock"}}
+        )
+        injector._ydotoold.is_running.return_value = True
+
+        with mock.patch.object(injector, "_run_ydotool") as run:
+            injector._clear_stuck_modifiers()
+
+        command = run.call_args.args[0]
+        self.assertIn("58:0", command)
+        self.assertEqual(command.count("58:0"), 1)
+
+    def test_failed_ydotool_chord_releases_overridden_modifiers(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"ydotool_modifier_overrides": {"ctrl": "capslock"}}
+        )
+        succeeded = types.SimpleNamespace(returncode=0, stderr=b"")
+        failed = types.SimpleNamespace(returncode=1, stderr=b"key failed")
+
+        with mock.patch.object(
+            injector, "_run_ydotool", side_effect=[succeeded, failed, succeeded]
+        ) as run:
+            self.assertFalse(injector._send_paste_keys_slow("ctrl+v"))
+
+        run.assert_has_calls([
+            mock.call(["key", "58:1"], timeout=1),
+            mock.call(["key", "47:1", "47:0"], timeout=1),
+            mock.call(["key", "58:0"], timeout=1),
+        ])
+
+    def test_unavailable_ydotool_does_not_attempt_spurious_modifier_release(self):
+        injector = self._injector()
+
+        output = io.StringIO()
+        with (
+            redirect_stdout(output),
+            mock.patch.object(injector, "_run_ydotool", return_value=None) as run,
+        ):
+            self.assertFalse(injector._send_paste_keys_slow("ctrl+v"))
+
+        run.assert_called_once_with(["key", "29:1"], timeout=1)
+        self.assertNotIn("Could not release", output.getvalue())
+
+    def test_failed_modifier_press_command_still_attempts_release(self):
+        injector = self._injector()
+        failed = types.SimpleNamespace(returncode=1, stderr=b"partial failure")
+        succeeded = types.SimpleNamespace(returncode=0, stderr=b"")
+
+        output = io.StringIO()
+        with (
+            redirect_stdout(output),
+            mock.patch.object(
+                injector, "_run_ydotool", side_effect=[failed, succeeded]
+            ) as run,
+        ):
+            self.assertFalse(injector._send_paste_keys_slow("ctrl+v"))
+
+        run.assert_has_calls([
+            mock.call(["key", "29:1"], timeout=1),
             mock.call(["key", "29:0"], timeout=1),
         ])
 

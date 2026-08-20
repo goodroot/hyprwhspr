@@ -5,6 +5,23 @@
   "description": "Configuration schema for hyprwhspr speech-to-text system",
   "type": "object",
   "additionalProperties": true,
+  "$defs": {
+    "ydotoolModifierKey": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Physical key name such as capslock, rightmeta, or KEY_CAPSLOCK; decimal strings are interpreted as Linux evdev keycodes."
+        },
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 767,
+          "description": "Linux evdev keycode."
+        }
+      ]
+    }
+  },
   "patternProperties": {
     "^whisper_prompt_[a-z]{2}$": {
       "type": "string",
@@ -220,6 +237,22 @@
       "type": "integer",
       "default": 47,
       "description": "Linux evdev keycode for the paste key. Default 47 = KEY_V (QWERTY). Set to the keycode for the physical key that produces 'v' on your layout."
+    },
+    "ydotool_modifier_overrides": {
+      "type": "object",
+      "default": {},
+      "description": "Physical key overrides for logical modifiers sent by the ydotool fallback. Named keys are recommended; positive Linux evdev keycodes are accepted for advanced configurations.",
+      "properties": {
+        "ctrl": { "$ref": "#/$defs/ydotoolModifierKey" },
+        "control": { "$ref": "#/$defs/ydotoolModifierKey" },
+        "shift": { "$ref": "#/$defs/ydotoolModifierKey" },
+        "alt": { "$ref": "#/$defs/ydotoolModifierKey" },
+        "super": { "$ref": "#/$defs/ydotoolModifierKey" },
+        "cmd": { "$ref": "#/$defs/ydotoolModifierKey" },
+        "meta": { "$ref": "#/$defs/ydotoolModifierKey" },
+        "logo": { "$ref": "#/$defs/ydotoolModifierKey" }
+      },
+      "additionalProperties": false
     },
     "applications": {
       "type": "object",

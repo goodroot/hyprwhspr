@@ -120,6 +120,9 @@ class ConfigManager:
             # Default 47 = KEY_V (works on QWERTY; on other layouts set this to the keycode
             # for the physical key that produces 'v' on your layout).
             'paste_keycode': 47,
+            # Override the physical evdev keys used for logical modifiers by the
+            # ydotool fallback, e.g. {"ctrl": "capslock"} for an XKB Ctrl/Caps swap.
+            'ydotool_modifier_overrides': {},
             # Per-application injection behavior. Keys match normalized focused
             # window identifiers. Example: {"emacs": {"auto_paste": "ctrl+y"}}
             # or {"some-app": {"auto_paste": False}} to disable injection entirely
