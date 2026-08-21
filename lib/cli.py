@@ -166,6 +166,10 @@ def main():
     )
     record_capture_parser.add_argument('--lang', dest='language', metavar='CODE',
                                        help='Language code for transcription (e.g., en, it, de)')
+    record_capture_parser.add_argument(
+        '--trace-processing', action='store_true',
+        help='Return raw/preprocessed text and daemon processing settings as JSON'
+    )
     record_subparsers.add_parser('status', help='Show current recording status')
     
     # backend command
@@ -321,7 +325,10 @@ def main():
                 record_parser.print_help()
                 sys.exit(1)
             if args.record_action == 'capture':
-                record_capture_command(language=getattr(args, 'language', None))
+                record_capture_command(
+                    language=getattr(args, 'language', None),
+                    trace_processing=getattr(args, 'trace_processing', False),
+                )
             else:
                 record_command(args.record_action, language=getattr(args, 'language', None))
         elif args.command == 'uninstall':

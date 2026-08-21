@@ -150,6 +150,44 @@ class RecordingControlServerTests(unittest.TestCase):
         self.server.notify_capture("", final=True)
         client.close()
 
+    def test_trace_capture_uses_distinct_subscriber_mode(self):
+        self.assertTrue(self.server.prepare_fifo())
+        self.assertTrue(self.server.start())
+        client = self._connect(b"capture_trace:de\n")
+        self.assertTrue(self._wait_for(self.server.is_trace_capture))
+        self.assertEqual(self.commands, [("start", "de")])
+        payload = '{"raw":"Grüße","preprocessed":"Grüße"}\n'
+        self.recording = True
+        self.server.notify_capture(payload, final=True)
+        self.server.notify_capture('{"raw":"duplicate"}\n', final=True)
+        received = b""
+        while True:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            received += chunk
+        self.assertEqual(received.decode("utf-8"), payload)
+        self.recording = False
+        self.server.notify_capture("", final=True)
+        client.close()
+
+    def test_disconnected_trace_session_still_suppresses_processing_injection(self):
+        self.recording = True
+        self.assertTrue(self.server.prepare_fifo())
+        self.assertTrue(self.server.start())
+        client = self._connect(b"capture_trace\n")
+        self.assertTrue(self._wait_for(self.server.is_trace_capture))
+
+        # Recording has stopped, but transcription is still in flight.
+        self.recording = False
+        client.close()
+        self.assertTrue(self._wait_for(lambda: self.server._capture_subscriber is None))
+        self.assertTrue(self.server.has_capture_subscriber())
+        self.assertTrue(self.server.is_trace_capture())
+
+        self.server.notify_capture("", final=True)
+        self.assertFalse(self.server.has_capture_subscriber())
+
     def test_disconnect_sends_cancel(self):
         def record_after_start(action, language):
             self.commands.append((action, language))

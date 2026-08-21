@@ -232,6 +232,29 @@ class MainStartupSafetyTests(unittest.TestCase):
             "success should compare the injection outcome (e.g. against InjectionOutcome.FAILED)",
         )
 
+    def test_capture_completion_is_centralized_for_trace_json(self):
+        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
+        direct_calls = []
+        for function in (
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        ):
+            for node in ast.walk(function):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "notify_capture"
+                    and isinstance(node.func.value, ast.Attribute)
+                    and node.func.value.attr == "_recording_control_server"
+                ):
+                    direct_calls.append(function.name)
+        self.assertEqual(direct_calls, ["_notify_capture"])
+
+        attributes = {
+            node.attr for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        }
+        self.assertNotIn("current_transcription", attributes)
+
     def test_continuous_flush_distinguishes_consumed_from_injected(self):
         tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
 

@@ -16,6 +16,7 @@ from text_injector import (
     POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE,
     InjectionOutcome,
     TextInjector,
+    preprocess_text,
     _LazyPyperclip,
     _PostTranscriptionHookOutcome,
 )
@@ -1358,6 +1359,46 @@ class WordOverrideBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(injector._preprocess_text("well um okay"), "well okay")
         self.assertEqual(injector._preprocess_text("umbrella"), "umbrella")
+
+
+class SpokenPunctuationPreprocessingTests(unittest.TestCase):
+    def test_command_aware_punctuation_matrix(self):
+        cases = {
+            "Hello, new line. World": "Hello,\nWorld",
+            "Hello. new line? World": "Hello.\nWorld",
+            "Hello period new line World": "Hello.\nWorld",
+            "Hello comma world": "Hello, world",
+            "Hello, comma, world": "Hello, world",
+            "comma, next": ", next",
+            "HELLO COMMA WORLD": "HELLO, WORLD",
+            "hello period close paren": "hello.)",
+            "hello period )": "hello.)",
+            "open paren hi comma close paren": "(hi,)",
+            "Really exclamation mark!!": "Really!!!",
+            "pipe | pipe": "| | |",
+            "done period 。": "done.。",
+            "ok comma，next": "ok,，next",
+            "Wait... really!!": "Wait... really!!",
+            "Why??? new line. Because...": "Why???\nBecause...",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(preprocess_text(raw), expected)
+
+    def test_disabled_symbol_replacements_are_unchanged(self):
+        config = ConfigStub({"symbol_replacements": False})
+        self.assertEqual(
+            preprocess_text("Hello,  new line. comma, world", config),
+            "Hello, new line. comma, world",
+        )
+
+    def test_pure_function_still_applies_overrides_and_fillers(self):
+        config = ConfigStub({
+            "word_overrides": {"colour": "color"},
+            "filter_filler_words": True,
+            "filler_words": ["um"],
+        })
+        self.assertEqual(preprocess_text("um colour comma please", config), "color, please")
 
 
 class LazyPyperclipTests(unittest.TestCase):

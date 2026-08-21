@@ -27,6 +27,8 @@ class RecordingControlServer:
         self._listening_socket = None
 
         self._capture_subscriber = None
+        self._capture_subscriber_mode = None
+        self._capture_payload_sent = False
         self._capture_subscriber_lock = threading.Lock()
         self._capture_subscriber_done = threading.Event()
 
@@ -143,6 +145,8 @@ class RecordingControlServer:
         self._capture_subscriber_done.set()
         with self._capture_subscriber_lock:
             subscriber = self._capture_subscriber
+            self._capture_subscriber_mode = None
+            self._capture_payload_sent = False
         if subscriber is not None:
             try:
                 subscriber.shutdown(socket.SHUT_RDWR)
@@ -173,15 +177,27 @@ class RecordingControlServer:
 
     def has_capture_subscriber(self):
         with self._capture_subscriber_lock:
-            return self._capture_subscriber is not None
+            return self._capture_subscriber_mode is not None
+
+    def is_trace_capture(self):
+        with self._capture_subscriber_lock:
+            return self._capture_subscriber_mode == "trace"
 
     def notify_capture(self, text, final):
         """Stream transcription text and signal completion to the subscriber."""
         with self._capture_subscriber_lock:
             subscriber = self._capture_subscriber
+            if text and self._capture_subscriber_mode == "trace":
+                if self._capture_payload_sent:
+                    text = ""
+                else:
+                    self._capture_payload_sent = True
             if subscriber is None:
                 if final:
                     self._capture_subscriber_done.set()
+                    if not self._is_recording():
+                        self._capture_subscriber_mode = None
+                        self._capture_payload_sent = False
                 return
             if text:
                 try:
@@ -190,6 +206,9 @@ class RecordingControlServer:
                     print(f"[CAPTURE] Subscriber write failed: {exc}", flush=True)
             if final:
                 self._capture_subscriber_done.set()
+                if not self._is_recording():
+                    self._capture_subscriber_mode = None
+                    self._capture_payload_sent = False
 
     def _fifo_listener(self, stop_event):
         while not stop_event.is_set():
@@ -335,12 +354,12 @@ class RecordingControlServer:
             line = conn.recv(256).split(b"\n", 1)[0].decode("utf-8", errors="replace").strip()
             verb, _, language = line.partition(":")
             language = language.strip() or None
-            if verb != "capture":
+            if verb not in ("capture", "capture_trace"):
                 print(f"[CAPTURE] Unknown request: {line!r}", flush=True)
                 return
             conn.settimeout(None)
             with self._capture_subscriber_lock:
-                if self._capture_subscriber is not None:
+                if self._capture_subscriber is not None or self._capture_subscriber_mode is not None:
                     print("[CAPTURE] Rejecting — slot occupied", flush=True)
                     try:
                         conn.sendall(b"ERROR:slot_occupied\n")
@@ -350,6 +369,8 @@ class RecordingControlServer:
                 if stop_event.is_set() or stop_event is not self._stop_event:
                     return
                 self._capture_subscriber = conn
+                self._capture_subscriber_mode = "trace" if verb == "capture_trace" else "raw"
+                self._capture_payload_sent = False
                 self._capture_subscriber_done.clear()
 
             if not self._is_recording():

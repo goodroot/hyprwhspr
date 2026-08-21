@@ -12,6 +12,7 @@ import fcntl
 import atexit
 import subprocess
 import shutil
+import json
 from pathlib import Path
 
 try:
@@ -70,6 +71,7 @@ from audio_capture import AudioCapture
 from whisper_manager import WhisperManager
 from session_environment import ensure_wayland_display
 from text_injector import TextInjector, InjectionOutcome
+from processing_trace import build_processing_trace
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
 from playback_suppressor import PlaybackSuppressor
@@ -115,7 +117,6 @@ class hyprwhsprApp:
         self.is_recording = False
         self._current_language_override = None  # Language override for current recording session
         self.is_processing = False
-        self.current_transcription = ""
         self.audio_level_thread = None
         self._audio_level_stop = threading.Event()  # Signals audio level thread to exit immediately
         self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
@@ -202,7 +203,7 @@ class hyprwhsprApp:
             audio_manager=self.audio_manager,
             whisper_manager=self.whisper_manager,
             inject_text=self._inject_text,
-            notify_capture=self._recording_control_server.notify_capture,
+            notify_capture=self._notify_capture,
             set_visualizer_state=self._set_visualizer_state,
             show_mic_osd=self._show_mic_osd,
             hide_mic_osd=self._hide_mic_osd,
@@ -983,7 +984,7 @@ class hyprwhsprApp:
             except Exception as e:
                 print(f"[CONTINUOUS] Transcription error: {e}", flush=True)
             finally:
-                self._recording_control_server.notify_capture("", final=True)
+                self._notify_capture("", final=True)
                 self._continuous_flush_lock.release()
                 self._continuous_transcription_done.set()
 
@@ -1245,7 +1246,7 @@ class hyprwhsprApp:
 
     def _cleanup_recording_state(self):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
-        self._recording_control_server.notify_capture("", final=True)
+        self._notify_capture("", final=True)
         self._autostop_stop_silence_monitor()
 
         try:
@@ -1360,7 +1361,7 @@ class hyprwhsprApp:
                     self._notify_zero_volume("Audio stream broke during recording - no audio data captured. Try recording again after reseating.")
                 # Show error state and hide OSD
                 self._show_result_and_hide(False)
-                self._recording_control_server.notify_capture("", final=True)
+                self._notify_capture("", final=True)
             elif self._is_zero_volume(audio_data):
                 # Audio data exists but is all zeros - mic not producing sound
                 # Play error sound and notify user (may be intentional muting, but still inform)
@@ -1368,7 +1369,7 @@ class hyprwhsprApp:
                 self._notify_zero_volume("Microphone not producing audio (zero volume detected). This may be intentional muting, or the microphone may need to be reseated.")
                 # Show error state and hide OSD
                 self._show_result_and_hide(False)
-                self._recording_control_server.notify_capture("", final=True)
+                self._notify_capture("", final=True)
             else:
                 # Valid audio data - process it
                 self.audio_manager.play_stop_sound()
@@ -1379,7 +1380,7 @@ class hyprwhsprApp:
                 
         except Exception as e:
             print(f"[ERROR] Error stopping recording: {e}", flush=True)
-            self._recording_control_server.notify_capture("", final=True)
+            self._notify_capture("", final=True)
             # Ensure cleanup even if error occurs
             try:
                 self.is_recording = False
@@ -1415,6 +1416,8 @@ class hyprwhsprApp:
                 # Filter out Whisper hallucination markers - don't touch clipboard
                 if is_hallucination(text, self.config.get_hallucination_markers()):
                     print(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
+                    if self._recording_control_server.is_trace_capture():
+                        self._notify_capture(text, final=True)
                     self.audio_manager.play_error_sound()
                     success = False
                     # Explicitly handle cleanup before returning to ensure visualizer state is updated
@@ -1422,10 +1425,8 @@ class hyprwhsprApp:
                     self._show_result_and_hide(False)
                     return
 
-                self.current_transcription = text
-
                 # Inject text
-                outcome = self._inject_text(self.current_transcription)
+                outcome = self._inject_text(text)
                 success = outcome != InjectionOutcome.FAILED
             else:
                 print("[WARN] No transcription generated")
@@ -1434,18 +1435,28 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Error processing audio: {e}", flush=True)
         finally:
-            self._recording_control_server.notify_capture("", final=True)
+            self._notify_capture("", final=True)
             self._clear_mic_osd_preview_text()
             self.is_processing = False
             # Show success/error state and hide OSD after delay
             self._show_result_and_hide(success)
+
+    def _notify_capture(self, text="", final=True):
+        """Complete a capture request, encoding trace requests as one JSON document."""
+        if self._recording_control_server.is_trace_capture():
+            text = json.dumps(
+                build_processing_trace(text, self.config),
+                ensure_ascii=False,
+                separators=(',', ':'),
+            ) + '\n'
+        self._recording_control_server.notify_capture(text, final=final)
 
     def _inject_text(self, text):
         """Inject transcribed text into active application"""
 
         # Capture mode: route text to client instead of injecting into active app
         if self._recording_control_server.has_capture_subscriber():
-            self._recording_control_server.notify_capture(text, final=True)
+            self._notify_capture(text, final=True)
             return InjectionOutcome.INJECTED
 
         try:

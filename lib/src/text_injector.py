@@ -63,6 +63,105 @@ pyperclip = _LazyPyperclip()
 
 POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE = 77
 
+_SPOKEN_REPLACEMENTS = (
+    ('period', '.'), ('comma', ','), ('question mark', '?'),
+    ('exclamation mark', '!'), ('colon', ':'), ('semicolon', ';'),
+    ('tab', '\t'), ('dash', '-'), ('underscore', '_'),
+    ('open paren', '('), ('close paren', ')'), ('open bracket', '['),
+    ('close bracket', ']'), ('open brace', '{'), ('close brace', '}'),
+    ('at symbol', '@'), ('hash', '#'), ('dollar sign', '$'),
+    ('percent', '%'), ('caret', '^'), ('ampersand', '&'),
+    ('asterisk', '*'), ('plus', '+'), ('equals', '='),
+    ('less than', '<'), ('greater than', '>'), ('slash', '/'),
+    ('backslash', '\\'), ('pipe', '|'), ('tilde', '~'), ('grave', '`'),
+    ('quote', '"'), ('apostrophe', "'"),
+)
+
+
+def _config_setting(config_manager, name, default=None):
+    if config_manager is None:
+        return default
+    return config_manager.get_setting(name, default)
+
+
+def _apply_configured_word_overrides(text, config_manager):
+    if config_manager is None:
+        return text
+    for original, replacement in (config_manager.get_word_overrides() or {}).items():
+        if original:
+            text = re.sub(
+                boundaried_pattern(original), replacement, text, flags=re.IGNORECASE
+            )
+    return re.sub(r' +', ' ', text).strip()
+
+
+def _filter_configured_filler_words(text, config_manager):
+    if config_manager is None or not config_manager.get_filter_filler_words():
+        return text
+    for word in config_manager.get_filler_words() or ():
+        if word:
+            text = re.sub(boundaried_pattern(word), '', text, flags=re.IGNORECASE)
+    return re.sub(r' +', ' ', text).strip()
+
+
+def preprocess_text(text: str, config_manager=None) -> str:
+    """Apply dictation corrections without injection or external hooks."""
+    processed = text.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
+    processed = _apply_configured_word_overrides(processed, config_manager)
+    processed = _filter_configured_filler_words(processed, config_manager)
+
+    if not _config_setting(config_manager, 'symbol_replacements', True):
+        return re.sub(r'[ \t]+', ' ', processed).strip()
+
+    # Recognizers commonly punctuate the spoken command itself. Sentence
+    # punctuation after "new line" is not intended for the new line.
+    processed = re.sub(
+        r'\bnew[ \t]+line\b(?:[ \t]*[.!?]+)?', '\n', processed,
+        flags=re.IGNORECASE,
+    )
+
+    # Mark commands before spacing them. Identical literal punctuation touching
+    # a command is another rendering of the same requested symbol.
+    markers = {}
+    for index, (command, symbol) in enumerate(_SPOKEN_REPLACEMENTS):
+        marker = f'\ue000{index}\ue001'
+        markers[marker] = symbol
+        escaped_symbol = re.escape(symbol)
+        escaped_command = re.escape(command)
+        single_symbol = rf'{escaped_symbol}(?!{escaped_symbol})'
+        pattern = (
+            rf'(?:{escaped_symbol}+[ \t]+\b{escaped_command}\b{single_symbol}'
+            rf'|{escaped_symbol}+\b{escaped_command}\b'
+            rf'|\b{escaped_command}\b{single_symbol}'
+            rf'|\b{escaped_command}\b)'
+        )
+        processed = re.sub(pattern, marker, processed, flags=re.IGNORECASE)
+
+    # Only command markers receive punctuation spacing; unrelated raw
+    # punctuation, including ellipses and repeated emphasis, stays untouched.
+    for marker, symbol in markers.items():
+        if symbol in '.,?!:;':
+            processed = re.sub(rf'[ \t]*{re.escape(marker)}[ \t]*', marker, processed)
+            # Add separation only before following prose. A different raw
+            # punctuation mark is preserved directly beside the spoken one.
+            processed = re.sub(
+                rf'{re.escape(marker)}(?=[^\s\ue000)\]}}>,.?!:;。，、！？：；])',
+                symbol + ' ', processed,
+            )
+            processed = processed.replace(marker, symbol)
+        elif symbol in '([{':
+            processed = re.sub(rf'{re.escape(marker)}[ \t]*', marker, processed)
+            processed = processed.replace(marker, symbol)
+        elif symbol in ')]}':
+            processed = re.sub(rf'[ \t]*{re.escape(marker)}', marker, processed)
+            processed = processed.replace(marker, symbol)
+        else:
+            processed = processed.replace(marker, symbol)
+
+    processed = re.sub(r'[ \t]+', ' ', processed)
+    processed = re.sub(r' *\n *', '\n', processed)
+    return processed.strip()
+
 
 class _PostTranscriptionHookOutcome(Enum):
     PRESERVE = "preserve"
@@ -1275,71 +1374,7 @@ except Exception:
         """
         Preprocess text to handle common speech-to-text corrections and remove unwanted line breaks
         """
-        # Normalize line breaks to spaces to avoid unintended "Enter"
-        processed = text.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
-
-        # Apply user-defined overrides first
-        processed = self._apply_word_overrides(processed)
-
-        # Filter filler words if enabled
-        processed = self._filter_filler_words(processed)
-
-        # Built-in speech-to-text replacements (can be disabled via config)
-        symbol_replacements_enabled = True
-        if self.config_manager:
-            symbol_replacements_enabled = self.config_manager.get_setting('symbol_replacements', True)
-
-        if not symbol_replacements_enabled:
-            # Collapse runs of whitespace (newlines already normalized to spaces on line 243)
-            processed = re.sub(r'[ \t]+', ' ', processed)
-            return processed.strip()
-
-        replacements = {
-            r'\bperiod\b': '.',
-            r'\bcomma\b': ',',
-            r'\bquestion mark\b': '?',
-            r'\bexclamation mark\b': '!',
-            r'\bcolon\b': ':',
-            r'\bsemicolon\b': ';',
-            r'\bnew line\b': '\n',
-            r'\btab\b': '\t',
-            r'\bdash\b': '-',
-            r'\bunderscore\b': '_',
-            r'\bopen paren\b': '(',
-            r'\bclose paren\b': ')',
-            r'\bopen bracket\b': '[',
-            r'\bclose bracket\b': ']',
-            r'\bopen brace\b': '{',
-            r'\bclose brace\b': '}',
-            r'\bat symbol\b': '@',
-            r'\bhash\b': '#',
-            r'\bdollar sign\b': '$',
-            r'\bpercent\b': '%',
-            r'\bcaret\b': '^',
-            r'\bampersand\b': '&',
-            r'\basterisk\b': '*',
-            r'\bplus\b': '+',
-            r'\bequals\b': '=',
-            r'\bless than\b': '<',
-            r'\bgreater than\b': '>',
-            r'\bslash\b': '/',
-            r'\bbackslash\b': r'\\',
-            r'\bpipe\b': '|',
-            r'\btilde\b': '~',
-            r'\bgrave\b': '`',
-            r'\bquote\b': '"',
-            r'\bapostrophe\b': "'",
-        }
-
-        for pattern, replacement in replacements.items():
-            processed = re.sub(pattern, replacement, processed, flags=re.IGNORECASE)
-
-        # Collapse runs of whitespace, preserve intentional newlines
-        processed = re.sub(r'[ \t]+', ' ', processed)
-        processed = re.sub(r' *\n *', '\n', processed)
-        processed = processed.strip()
-
-        return processed
+        return preprocess_text(text, self.config_manager)
 
     def _run_post_transcription_hook(self, text: str) -> _PostTranscriptionHookResult:
         """Run the user's post_transcription_hook shell command.
@@ -1380,54 +1415,6 @@ except Exception:
         if not out:
             return preserve
         return _PostTranscriptionHookResult(_PostTranscriptionHookOutcome.REPLACE, out)
-
-    def _apply_word_overrides(self, text: str) -> str:
-        """Apply user-defined word overrides to the text"""
-        if not self.config_manager:
-            return text
-
-        word_overrides = self.config_manager.get_word_overrides()
-        if not word_overrides:
-            return text
-
-        processed = text
-        for original, replacement in word_overrides.items():
-            # Only require original to be non-empty; replacement can be empty string to delete words
-            if original:
-                # Word boundaries are applied per-edge, only where they mean
-                # something: not for single characters, CJK, or punctuation edges.
-                processed = re.sub(
-                    boundaried_pattern(original), replacement, processed, flags=re.IGNORECASE
-                )
-
-        # Clean up extra spaces left by word deletions (multiple spaces -> single space)
-        processed = re.sub(r' +', ' ', processed)
-        processed = processed.strip()
-
-        return processed
-
-    def _filter_filler_words(self, text: str) -> str:
-        """Remove filler words like uh, um, er if enabled in config"""
-        if not self.config_manager:
-            return text
-
-        if not self.config_manager.get_filter_filler_words():
-            return text
-
-        filler_words = self.config_manager.get_filler_words()
-        if not filler_words:
-            return text
-
-        processed = text
-        for word in filler_words:
-            if word:
-                processed = re.sub(boundaried_pattern(word), '', processed, flags=re.IGNORECASE)
-
-        # Clean up extra spaces left by word deletions
-        processed = re.sub(r' +', ' ', processed)
-        processed = processed.strip()
-
-        return processed
 
     # ------------------------ Paste injection (primary method) ------------------------
 

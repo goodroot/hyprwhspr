@@ -140,7 +140,7 @@ def record_command(action: str, language: str = None):
         log_info("Available actions: start, stop, cancel, toggle, status")
 
 
-def record_capture_command(language: str = None):
+def record_capture_command(language: str = None, trace_processing: bool = False):
     """
     Connect to the capture socket, trigger a recording, stream the transcription to stdout.
 
@@ -149,6 +149,7 @@ def record_capture_command(language: str = None):
 
     Args:
       language: Language code (e.g., 'en', 'it', 'fr') or None for auto-detect
+      trace_processing: Request daemon-side preprocessing diagnostics as JSON
     """
 
     if not SOCKET_FILE.exists():
@@ -160,7 +161,7 @@ def record_capture_command(language: str = None):
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
             s.connect(str(SOCKET_FILE))
-            request = "capture"
+            request = "capture_trace" if trace_processing else "capture"
             if language:
                 request += f":{language}"
             request += "\n"

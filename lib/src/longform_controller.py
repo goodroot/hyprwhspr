@@ -233,6 +233,7 @@ class LongFormController:
             else:
                 self._set_state('IDLE')
                 self.hide_mic_osd()
+            self.notify_capture("", final=True)
             return
 
         self._set_state('PROCESSING', visualizer='processing')
