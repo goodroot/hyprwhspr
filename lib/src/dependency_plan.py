@@ -15,7 +15,9 @@ PLAN_SPECS = {
     'rest': ('requirements-rest.txt', ('sounddevice', 'numpy', 'soxr', 'requests'), 'rest'),
     'realtime': ('requirements-realtime.txt', ('sounddevice', 'numpy', 'soxr', 'websocket'), 'realtime'),
     'elevenlabs': ('requirements-realtime-elevenlabs.txt', ('sounddevice', 'numpy', 'soxr', 'elevenlabs'), 'elevenlabs'),
-    'cohere': ('requirements-cohere-transcribe.txt', ('sounddevice', 'numpy', 'soxr', 'transformers', 'torch'), 'cohere'),
+    'cohere': ('requirements-cohere-transcribe.txt', (
+        'sounddevice', 'numpy', 'soxr', 'transformers', 'torch', 'librosa',
+        'soundfile'), 'cohere'),
     'onnx-cpu': ('requirements-onnx-asr.txt', ('sounddevice', 'numpy', 'soxr', 'onnx_asr'), 'onnx'),
     'onnx-gpu': ('requirements-onnx-asr-gpu.txt', ('sounddevice', 'numpy', 'soxr', 'onnx_asr'), 'onnx'),
     'faster-cpu': ('requirements-faster-whisper.txt', ('sounddevice', 'numpy', 'soxr', 'faster_whisper'), 'faster-whisper'),

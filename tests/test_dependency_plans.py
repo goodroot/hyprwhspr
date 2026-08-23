@@ -1,5 +1,6 @@
 import builtins
 import importlib
+import subprocess
 import sys
 import tempfile
 import types
@@ -43,6 +44,334 @@ class DependencyPlanTests(unittest.TestCase):
         self.assertIn('websocket', plans[0].required_imports)
         eleven = self.plan('realtime-ws', 'elevenlabs')
         self.assertNotIn('websocket', eleven.required_imports)
+
+    def test_cohere_probes_scientific_audio_imports(self):
+        plan = self.plan('cohere-transcribe')
+        self.assertIn('librosa', plan.required_imports)
+        self.assertIn('soundfile', plan.required_imports)
+
+    def test_numpy_abi_signatures_are_specific(self):
+        signatures = (
+            '_ARRAY_API not found',
+            'A module that was compiled using NumPy 1.x cannot be run in NumPy 2.0',
+            'ValueError: numpy.dtype size changed, may indicate binary incompatibility',
+            'module compiled against API version 0x10 but this version of numpy is 0xf',
+        )
+        for text in signatures:
+            with self.subTest(text=text):
+                self.assertTrue(backend_installer._has_numpy_abi_signature(text))
+        self.assertFalse(backend_installer._has_numpy_abi_signature('No module named requests'))
+
+    def test_distribution_mapping_uses_manifest_canonical_name(self):
+        probe = backend_installer.ImportProbe(
+            'sklearn', False, distributions=('scikit-learn',))
+        self.assertEqual(
+            backend_installer._distribution_for_import(probe, {'scikit-learn'}),
+            'scikit-learn',
+        )
+        ambiguous = backend_installer.ImportProbe(
+            'thing', False, distributions=('one', 'two'))
+        self.assertIsNone(
+            backend_installer._distribution_for_import(ambiguous, {'one', 'two'}))
+
+    def test_combined_success_avoids_isolated_probes(self):
+        plan = self.plan('rest-api')
+        success = types.SimpleNamespace(returncode=0, stdout='', stderr='')
+        with (
+            mock.patch.object(backend_installer, 'run_command', return_value=success),
+            mock.patch.object(backend_installer, '_probe_required_import') as probe,
+        ):
+            result = backend_installer._verify_dependency_plan_detailed(plan)
+        self.assertTrue(result.ok)
+        probe.assert_not_called()
+
+    def test_combined_failure_probes_every_import_and_retains_stderr(self):
+        plan = self.plan('rest-api')
+        failed = types.SimpleNamespace(returncode=1, stdout='combined out', stderr='combined err')
+        probes = [
+            backend_installer.ImportProbe(name, name != 'soxr', stderr=f'{name} stderr')
+            for name in plan.required_imports
+        ]
+        with (
+            mock.patch.object(backend_installer, 'run_command', return_value=failed),
+            mock.patch.object(backend_installer, '_probe_required_import', side_effect=probes) as probe,
+        ):
+            result = backend_installer._verify_dependency_plan_detailed(plan)
+        self.assertEqual(probe.call_count, len(plan.required_imports))
+        self.assertEqual(result.combined_stderr, 'combined err')
+        self.assertEqual(result.failures[0].stderr, 'soxr stderr')
+
+    def test_combined_only_failure_is_not_repairable(self):
+        plan = self.plan('rest-api')
+        verification = backend_installer.DependencyVerification(
+            ok=False, combined_only_failure=True, combined_stderr='import order')
+        self.assertEqual(backend_installer._repairable_distributions(plan, verification), [])
+        self.assertIn('combined probe failed',
+                      backend_installer._format_dependency_diagnostic(plan, verification))
+
+    def test_only_allowlisted_system_abi_failures_are_repaired(self):
+        plan = self.plan('rest-api')
+        failures = [
+            backend_installer.ImportProbe(
+                'soxr', False, '/usr/lib/python/site-packages/soxr/__init__.py',
+                stderr='_ARRAY_API not found', distributions=('soxr',)),
+            backend_installer.ImportProbe(
+                'sounddevice', False, '/usr/lib/python/site-packages/sounddevice.py',
+                stderr='numpy.dtype size changed', distributions=('sounddevice',)),
+            backend_installer.ImportProbe(
+                'gi', False, '/usr/lib/python/site-packages/gi/__init__.py',
+                stderr='_ARRAY_API not found', distributions=('PyGObject',)),
+        ]
+        verification = backend_installer.DependencyVerification(False, failures=failures)
+        with mock.patch.object(
+                backend_installer, '_manifest_package_names',
+                return_value={'soxr', 'sounddevice', 'pygobject'}):
+            self.assertEqual(
+                backend_installer._repairable_distributions(plan, verification),
+                ['sounddevice', 'soxr'],
+            )
+
+    def test_venv_extension_with_inherited_numpy_relocates_numpy(self):
+        plan = self.plan('cohere-transcribe')
+        probe = backend_installer.ImportProbe(
+            'librosa', False,
+            str(backend_installer.VENV_DIR / 'lib/python/site-packages/librosa/__init__.py'),
+            stderr='compiled using NumPy 1.x cannot be run in NumPy 2',
+            numpy_version='1.26.4',
+            numpy_origin='/usr/lib/python3/dist-packages/numpy/__init__.py',
+            distributions=('librosa',),
+        )
+        verification = backend_installer.DependencyVerification(False, failures=[probe])
+        self.assertEqual(
+            backend_installer._repairable_distributions(plan, verification),
+            ['numpy'],
+        )
+        self.assertEqual(
+            backend_installer._repair_requirement_specs(plan, ['numpy']),
+            ['numpy>=1.26.0'],
+        )
+
+    def test_live_probe_detects_venv_extension_against_inherited_numpy(self):
+        plan = self.plan('rest-api')
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / 'venv'
+            subprocess.run(
+                [sys.executable, '-m', 'venv', '--system-site-packages', str(venv)],
+                check=True, capture_output=True, text=True)
+            venv_python = venv / 'bin' / 'python'
+            purelib = Path(subprocess.run(
+                [str(venv_python), '-c',
+                 'import sysconfig; print(sysconfig.get_paths()["purelib"])'],
+                check=True, capture_output=True, text=True).stdout.strip())
+            (purelib / 'soxr.py').write_text(
+                'raise ImportError("compiled using NumPy 1.x cannot be run in NumPy 2")\n',
+                encoding='utf-8')
+            dist_info = purelib / 'soxr-1.0.dist-info'
+            dist_info.mkdir()
+            (dist_info / 'METADATA').write_text(
+                'Metadata-Version: 2.1\nName: soxr\nVersion: 1.0\n', encoding='utf-8')
+            (dist_info / 'top_level.txt').write_text('soxr\n', encoding='utf-8')
+
+            with mock.patch.object(backend_installer, 'VENV_DIR', venv):
+                probe = backend_installer._probe_required_import('soxr')
+                if not probe.numpy_origin:
+                    self.skipTest('system interpreter does not expose NumPy')
+                self.assertFalse(probe.ok)
+                self.assertEqual(probe.distributions, ('soxr',))
+                self.assertTrue(str(probe.module_origin).startswith(str(venv)))
+                self.assertFalse(str(probe.numpy_origin).startswith(str(venv)))
+                verification = backend_installer.DependencyVerification(
+                    False, failures=[probe])
+                self.assertEqual(
+                    backend_installer._repairable_distributions(plan, verification),
+                    ['numpy'],
+                )
+
+    def test_system_sounddevice_missing_extension_is_repaired(self):
+        plan = self.plan('rest-api')
+        probe = backend_installer.ImportProbe(
+            'sounddevice', False,
+            '/usr/lib/python3/site-packages/sounddevice.py',
+            traceback="ModuleNotFoundError: No module named '_sounddevice'",
+            distributions=('sounddevice',),
+        )
+        verification = backend_installer.DependencyVerification(False, failures=[probe])
+        self.assertEqual(
+            backend_installer._repairable_distributions(plan, verification),
+            ['sounddevice'],
+        )
+
+    def test_user_site_origin_is_inherited(self):
+        origin = str(Path.home() / '.local/lib/python3.14/site-packages/soxr/__init__.py')
+        self.assertTrue(backend_installer._is_system_origin(origin))
+
+    def test_manifest_specs_are_used_for_repair(self):
+        plan = self.plan('rest-api')
+        self.assertEqual(
+            backend_installer._repair_requirement_specs(
+                plan, ['numpy', 'sounddevice', 'soxr']),
+            ['numpy>=1.26.0', 'sounddevice>=0.5.0', 'soxr>=0.5.0'],
+        )
+
+    def test_combined_timeout_retries_and_accepts_isolated_success(self):
+        plan = self.plan('rest-api')
+        timed_out = types.SimpleNamespace(returncode=124, stdout='', stderr='')
+        probes = [
+            backend_installer.ImportProbe(name, True)
+            for name in plan.required_imports
+        ]
+        with (
+            mock.patch.object(backend_installer, 'run_command',
+                              side_effect=(timed_out, timed_out)) as run,
+            mock.patch.object(backend_installer, '_probe_required_import', side_effect=probes),
+        ):
+            verification = backend_installer._verify_dependency_plan_detailed(plan)
+        self.assertTrue(verification.ok)
+        self.assertIn('180s', run.call_args_list[1].args[0])
+
+    def test_isolated_probe_uses_one_180_second_budget(self):
+        completed = types.SimpleNamespace(returncode=124, stdout='', stderr='')
+        with mock.patch.object(
+                backend_installer, 'run_command', return_value=completed) as run:
+            probe = backend_installer._probe_required_import('torch')
+        self.assertTrue(probe.timed_out)
+        run.assert_called_once()
+        self.assertIn('180s', run.call_args.args[0])
+
+    def test_timeout_diagnostic_is_not_import_order_message(self):
+        plan = self.plan('rest-api')
+        verification = backend_installer.DependencyVerification(
+            False, timed_out=True,
+            failures=[backend_installer.ImportProbe('soxr', False, timed_out=True)],
+        )
+        diagnostic = backend_installer._format_dependency_diagnostic(plan, verification)
+        self.assertIn('verification timed out', diagnostic)
+        self.assertNotIn('import-order interaction', diagnostic)
+
+    def test_snapshot_numpy_before_and_after_appear_in_diagnostic(self):
+        plan = self.plan('rest-api')
+        snapshot = [backend_installer.ImportProbe(
+            'numpy', True, numpy_version='1.26.4', numpy_origin='/usr/lib/numpy/__init__.py')]
+        failed = backend_installer.DependencyVerification(False, failures=[
+            backend_installer.ImportProbe(
+                'soxr', False, numpy_version='1.26.4',
+                numpy_origin='/usr/lib/numpy/__init__.py')])
+        diagnostic = backend_installer._format_dependency_diagnostic(plan, failed, snapshot)
+        self.assertIn('NumPy before install: 1.26.4', diagnostic)
+        self.assertIn('NumPy after install: 1.26.4', diagnostic)
+
+    def test_all_repairs_install_together_then_verify_once(self):
+        plan = self.plan('rest-api')
+        failed = backend_installer.DependencyVerification(False)
+        passed = backend_installer.DependencyVerification(True)
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / 'venv'
+
+            def setup(**_kwargs):
+                (venv / 'bin').mkdir(parents=True)
+                (venv / 'bin' / 'pip').touch()
+                return venv / 'bin' / 'pip'
+
+            completed = types.SimpleNamespace(returncode=0, stdout='', stderr='')
+            with (
+                mock.patch.object(backend_installer, 'VENV_DIR', venv),
+                mock.patch.object(backend_installer, 'get_state', return_value=''),
+                mock.patch.object(backend_installer, 'setup_python_venv', side_effect=setup),
+                mock.patch.object(backend_installer, '_snapshot_inherited_dependencies'),
+                mock.patch.object(backend_installer, '_verify_dependency_plan_detailed',
+                                  side_effect=(failed, passed)) as verify,
+                mock.patch.object(backend_installer, '_repairable_distributions',
+                                  return_value=['sounddevice', 'soxr']),
+                mock.patch.object(backend_installer, 'run_command', return_value=completed) as run,
+                mock.patch.object(backend_installer, 'commit_dependency_state') as commit,
+            ):
+                backend_installer.execute_dependency_plan(plan)
+        repair_calls = [
+            call for call in run.call_args_list
+            if '--ignore-installed' in call.args[0]
+        ]
+        self.assertEqual(len(repair_calls), 1)
+        self.assertEqual(
+            repair_calls[0].args[0][-2:],
+            ['sounddevice>=0.5.0', 'soxr>=0.5.0'],
+        )
+        self.assertEqual(verify.call_count, 2)
+        commit.assert_called_once_with(plan)
+
+    def test_failed_repair_persists_diagnostic_before_rollback(self):
+        plan = self.plan('rest-api')
+        probe = backend_installer.ImportProbe(
+            'soxr', False, '/usr/lib/python/site-packages/soxr/__init__.py',
+            stderr='_ARRAY_API not found', distributions=('soxr',))
+        failed = backend_installer.DependencyVerification(False, failures=[probe])
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / 'venv'
+            venv.mkdir()
+            (venv / 'old-marker').touch()
+
+            def setup(**_kwargs):
+                (venv / 'bin').mkdir(parents=True)
+                (venv / 'bin' / 'pip').touch()
+                return venv / 'bin' / 'pip'
+
+            completed = types.SimpleNamespace(returncode=0, stdout='', stderr='')
+            events = []
+            with (
+                mock.patch.object(backend_installer, 'VENV_DIR', venv),
+                mock.patch.object(backend_installer, 'get_state', return_value=''),
+                mock.patch.object(backend_installer, 'setup_python_venv', side_effect=setup),
+                mock.patch.object(backend_installer, '_snapshot_inherited_dependencies'),
+                mock.patch.object(backend_installer, '_verify_dependency_plan_detailed',
+                                  side_effect=(failed, failed)),
+                mock.patch.object(backend_installer, '_repairable_distributions',
+                                  return_value=['soxr']),
+                mock.patch.object(backend_installer, 'run_command', return_value=completed),
+                mock.patch.object(backend_installer, 'set_install_state',
+                                  side_effect=lambda state, diagnostic: events.append((state, diagnostic))),
+            ):
+                with self.assertRaisesRegex(RuntimeError, 'Dependency verification failed'):
+                    backend_installer.execute_dependency_plan(plan)
+            self.assertTrue((venv / 'old-marker').exists())
+        self.assertEqual(events[0][0], 'failed')
+        self.assertIn('Import: soxr', events[0][1])
+
+    def test_repair_pip_failure_preserves_probe_evidence(self):
+        plan = self.plan('rest-api')
+        probe = backend_installer.ImportProbe(
+            'soxr', False, '/usr/lib/python/site-packages/soxr/__init__.py',
+            stderr='_ARRAY_API not found', distributions=('soxr',))
+        failed = backend_installer.DependencyVerification(False, failures=[probe])
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / 'venv'
+
+            def setup(**_kwargs):
+                (venv / 'bin').mkdir(parents=True)
+                (venv / 'bin' / 'pip').touch()
+                return venv / 'bin' / 'pip'
+
+            install_ok = types.SimpleNamespace(returncode=0, stdout='', stderr='')
+            repair_failed = types.SimpleNamespace(
+                returncode=1, stdout='', stderr='network unavailable')
+            states = []
+            with (
+                mock.patch.object(backend_installer, 'VENV_DIR', venv),
+                mock.patch.object(backend_installer, 'get_state', return_value=''),
+                mock.patch.object(backend_installer, 'setup_python_venv', side_effect=setup),
+                mock.patch.object(backend_installer, '_snapshot_inherited_dependencies',
+                                  return_value=[]),
+                mock.patch.object(backend_installer, '_verify_dependency_plan_detailed',
+                                  return_value=failed),
+                mock.patch.object(backend_installer, '_repairable_distributions',
+                                  return_value=['soxr']),
+                mock.patch.object(backend_installer, 'run_command',
+                                  side_effect=(install_ok, repair_failed)),
+                mock.patch.object(backend_installer, 'set_install_state',
+                                  side_effect=lambda state, error: states.append((state, error))),
+            ):
+                with self.assertRaisesRegex(RuntimeError, 'network unavailable'):
+                    backend_installer.execute_dependency_plan(plan)
+        self.assertIn('_ARRAY_API not found', states[0][1])
+        self.assertIn('Repair pip failure', states[0][1])
 
     def test_recursive_include_changes_fingerprint(self):
         with tempfile.TemporaryDirectory() as tmp:

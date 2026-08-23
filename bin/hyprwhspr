@@ -27,18 +27,33 @@ export PYTHONPATH="$LIB_DIR:$PYTHONPATH"
 
 # Find system Python, avoiding mise/pyenv/asdf/homebrew managed versions
 # CLI commands use system Python since deps are installed via package manager
+SYSTEM_PYTHON_CANDIDATES=(
+    /usr/bin/python3
+    /usr/bin/python
+    /bin/python3
+    /bin/python
+    /usr/local/bin/python3
+    /usr/local/bin/python
+)
+
 get_system_python() {
-    # Use a clean PATH containing only system directories to find Python
-    # This excludes version managers, homebrew, and user-installed Pythons
-    # Prefer /usr/bin first since that's where distro packages install Python
-    local system_path="/usr/bin:/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/sbin"
     local py
-
-    # Search for python3 or python in system paths only
-    py="$(PATH="$system_path" command -v python3 2>/dev/null)" && [ -x "$py" ] && { echo "$py"; return 0; }
-    py="$(PATH="$system_path" command -v python 2>/dev/null)" && [ -x "$py" ] && { echo "$py"; return 0; }
-
-    # No system Python found
+    for py in "${SYSTEM_PYTHON_CANDIDATES[@]}"; do
+        [ -x "$py" ] && "$py" --version >/dev/null 2>&1 && { echo "$py"; return 0; }
+    done
+    py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+    if [ -n "$py" ] \
+        && [ -z "${VIRTUAL_ENV:-}" ] \
+        && [ -z "${MISE_SHELL:-}" ] \
+        && [ -z "${__MISE_ACTIVATE:-}" ] \
+        && { [ -z "${HOME:-}" ] || [[ "$py" != "$HOME/"* ]]; } \
+        && [[ "$py" != *"/.local/share/mise/"* ]] \
+        && [[ "$py" != *"/.pyenv/"* ]] \
+        && [[ "$py" != *"/.asdf/"* ]] \
+        && "$py" -c 'import sys; raise SystemExit(0 if sys.prefix == sys.base_prefix else 1)'; then
+        echo "$py"
+        return 0
+    fi
     return 1
 }
 

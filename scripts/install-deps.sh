@@ -14,7 +14,9 @@
 #   ./scripts/install-deps.sh
 #
 
-set -euo pipefail
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    set -euo pipefail
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -30,6 +32,43 @@ MIN_YDOTOOL_VERSION="1.0.0"
 DISTRO=""
 DISTRO_VERSION=""
 PKG_MANAGER=""
+INSTALL_DEPS_PYTHON=""
+SYSTEM_PYTHON_CANDIDATES=(
+    /usr/bin/python3
+    /usr/bin/python
+    /bin/python3
+    /bin/python
+    /usr/local/bin/python3
+    /usr/local/bin/python
+)
+
+resolve_install_python() {
+    local candidate
+    if [[ -n "$INSTALL_DEPS_PYTHON" && -x "$INSTALL_DEPS_PYTHON" ]]; then
+        return 0
+    fi
+    for candidate in "${SYSTEM_PYTHON_CANDIDATES[@]}"; do
+        if [[ -x "$candidate" ]] && "$candidate" --version >/dev/null 2>&1; then
+            INSTALL_DEPS_PYTHON="$candidate"
+            return 0
+        fi
+    done
+    if [[ -z "${VIRTUAL_ENV:-}" && -z "${MISE_SHELL:-}" && -z "${__MISE_ACTIVATE:-}" ]]; then
+        candidate="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+        if [[ -n "$candidate" \
+                && ( -z "${HOME:-}" || "$candidate" != "$HOME/"* ) \
+                && "$candidate" != *"/.local/share/mise/"* \
+                && "$candidate" != *"/.pyenv/"* \
+                && "$candidate" != *"/.asdf/"* ]] \
+                && "$candidate" --version >/dev/null 2>&1 \
+                && "$candidate" -c 'import sys; raise SystemExit(0 if sys.prefix == sys.base_prefix else 1)'; then
+            INSTALL_DEPS_PYTHON="$candidate"
+            return 0
+        fi
+    fi
+    INSTALL_DEPS_PYTHON=""
+    return 1
+}
 
 print_header() {
     echo ""
@@ -108,15 +147,11 @@ check_python_version() {
     local major=""
     local minor=""
 
-    # Find the default python3
-    if command -v python3 &> /dev/null; then
-        python_path="python3"
-    elif command -v python &> /dev/null; then
-        python_path="python"
-    else
+    if ! resolve_install_python; then
         log_warning "Python not found. It will be installed with dependencies."
         return 0
     fi
+    python_path="$INSTALL_DEPS_PYTHON"
 
     # Get version string
     python_version=$($python_path --version 2>&1 | grep -oP 'Python \K[0-9]+\.[0-9]+' || echo "")
@@ -463,6 +498,12 @@ install_deps_zypper() {
 install_pip_packages() {
     log_info "Checking Python packages..."
 
+    if ! resolve_install_python; then
+        log_error "No system Python is available for import checks and pip --user installs."
+        log_info "Deactivate the current environment or install distro Python, then retry."
+        return 1
+    fi
+
     local need_sounddevice=false
     local need_pyperclip=false
     local need_pulsectl=false
@@ -471,27 +512,27 @@ install_pip_packages() {
     local need_soxr=false
 
     # Check if packages are already available (Fedora/openSUSE include them)
-    if ! python3 -c "import sounddevice" 2>/dev/null; then
+    if ! "$INSTALL_DEPS_PYTHON" -c "import sounddevice" 2>/dev/null; then
         need_sounddevice=true
     fi
 
-    if ! python3 -c "import pyperclip" 2>/dev/null; then
+    if ! "$INSTALL_DEPS_PYTHON" -c "import pyperclip" 2>/dev/null; then
         need_pyperclip=true
     fi
     
-    if ! python3 -c "import pulsectl" 2>/dev/null; then
+    if ! "$INSTALL_DEPS_PYTHON" -c "import pulsectl" 2>/dev/null; then
         need_pulsectl=true
     fi
 
-    if ! python3 -c "import pyudev" 2>/dev/null; then
+    if ! "$INSTALL_DEPS_PYTHON" -c "import pyudev" 2>/dev/null; then
         need_pyudev=true
     fi
 
-    if ! python3 -c "import websocket" 2>/dev/null; then
+    if ! "$INSTALL_DEPS_PYTHON" -c "import websocket" 2>/dev/null; then
         need_websocket=true
     fi
 
-    if ! python3 -c "import soxr" 2>/dev/null; then
+    if ! "$INSTALL_DEPS_PYTHON" -c "import soxr" 2>/dev/null; then
         need_soxr=true
     fi
 
@@ -516,12 +557,12 @@ install_pip_packages() {
         # Try with --break-system-packages first (needed on newer systems)
         # Fall back to without it for older systems
         if [[ -n "$packages" ]]; then
-            python3 -m pip install --user --break-system-packages $packages 2>/dev/null || \
-            python3 -m pip install --user $packages
+            "$INSTALL_DEPS_PYTHON" -m pip install --user --break-system-packages $packages 2>/dev/null || \
+            "$INSTALL_DEPS_PYTHON" -m pip install --user $packages
         fi
         if $need_sounddevice; then
-            python3 -m pip install --user --ignore-installed --break-system-packages sounddevice 2>/dev/null || \
-            python3 -m pip install --user --ignore-installed sounddevice
+            "$INSTALL_DEPS_PYTHON" -m pip install --user --ignore-installed --break-system-packages sounddevice 2>/dev/null || \
+            "$INSTALL_DEPS_PYTHON" -m pip install --user --ignore-installed sounddevice
         fi
 
         log_success "Python packages installed"
@@ -529,7 +570,7 @@ install_pip_packages() {
         log_success "Python packages already available"
     fi
 
-    if ! python3 -c "import dbus" 2>/dev/null; then
+    if ! "$INSTALL_DEPS_PYTHON" -c "import dbus" 2>/dev/null; then
         log_warning "python3-dbus is missing; install via your package manager (e.g., python3-dbus)"
     fi
 }
@@ -685,4 +726,6 @@ main() {
     echo ""
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

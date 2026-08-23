@@ -24,6 +24,11 @@ except ImportError:
     from backend_utils import normalize_backend
 
 try:
+    from ..backend_installer import get_install_state, STATE_FILE
+except ImportError:
+    from backend_installer import get_install_state, STATE_FILE
+
+try:
     from ..output_control import (log_info, log_success, log_warning, log_error,
                                   run_command)
 except ImportError:
@@ -41,6 +46,21 @@ from .waybar import waybar_status
 def status_command():
     """Overall status check"""
     log_info("Checking hyprwhspr status...")
+
+    print("\n[Installation]")
+    state, error = get_install_state()
+    if state == 'completed':
+        log_success("Installation state: completed")
+    elif state == 'failed':
+        log_error("Installation state: failed")
+    else:
+        log_warning(f"Installation state: {state}")
+    if error:
+        print("Last installation error:")
+        error_lines = error.splitlines()
+        print('\n'.join(error_lines[:20]))
+        if len(error_lines) > 20:
+            print(f"… diagnostic truncated; full details: {STATE_FILE}")
     
     # Check systemd service
     print("\n[Systemd Service]")

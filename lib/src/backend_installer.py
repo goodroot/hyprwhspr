@@ -7,13 +7,15 @@ import os
 import sys
 import json
 import subprocess
+import tempfile
 import hashlib
 import shutil
 import re
 import urllib.request
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Tuple, Dict
+from typing import Any, Optional, Tuple, Dict
 
 # Import output control system
 try:
@@ -153,6 +155,14 @@ def _safe_decode(output) -> str:
 
 # Maximum Python version compatible with ML packages (onnxruntime, etc.)
 MAX_COMPATIBLE_PYTHON = (3, 14)
+SYSTEM_PYTHON_CANDIDATES = (
+    '/usr/bin/python3',
+    '/usr/bin/python',
+    '/bin/python3',
+    '/bin/python',
+    '/usr/local/bin/python3',
+    '/usr/local/bin/python',
+)
 
 
 def _get_python_version(python_path: str) -> Optional[Tuple[int, int]]:
@@ -225,9 +235,10 @@ def _find_compatible_python(max_version: Tuple[int, int] = MAX_COMPATIBLE_PYTHON
     Find a compatible Python for venv creation.
 
     Fallback chain:
-    1. System python3 if version <= max_version
-    2. python3.14, python3.13, python3.12, python3.11 in /usr/bin, /usr/local/bin
-    3. Error with actionable message
+    1. Ordered unversioned system candidates if compatible
+    2. Versioned Python 3 executables from max_version down to 3.11
+    3. The current interpreter, but only when it is not environment-managed
+    4. Error with actionable guidance
 
     Args:
         max_version: Maximum allowed Python version as (major, minor) tuple
@@ -238,36 +249,32 @@ def _find_compatible_python(max_version: Tuple[int, int] = MAX_COMPATIBLE_PYTHON
     Raises:
         SystemExit if no compatible Python found
     """
-    # Check if current Python is mise-managed
-    current_is_mise = '.local/share/mise' in sys.executable
-    mise_active = _check_mise_active()
-
-    # 1. Check current/system Python
-    if mise_active or current_is_mise:
-        # Use system Python when MISE is active
-        current_python = _get_system_python()
-    else:
-        current_python = sys.executable
-
-    current_version = _get_python_version(current_python)
-    if current_version and current_version <= max_version:
-        return (current_python, f"Python {current_version[0]}.{current_version[1]}")
-
-    # 2. Search for python3.14, python3.13, python3.12, python3.11 in common paths
-    for minor in [14, 13, 12, 11]:
-        # Skip versions that are too new
-        if (3, minor) > max_version:
+    for candidate in SYSTEM_PYTHON_CANDIDATES:
+        if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
             continue
+        version = _get_python_version(candidate)
+        if version and version <= max_version:
+            return candidate, f"Python {version[0]}.{version[1]}"
 
-        for prefix in ['/usr/bin', '/usr/local/bin']:
-            path = f"{prefix}/python3.{minor}"
-            if os.path.isfile(path) and os.access(path, os.X_OK):
-                # Verify it actually works
-                test_version = _get_python_version(path)
-                if test_version and test_version <= max_version:
-                    return (path, f"python3.{minor}")
+    # Rolling distributions can advance /usr/bin/python3 before ML wheels catch
+    # up while retaining a separately installed compatible interpreter.
+    if max_version[0] == 3:
+        for minor in range(max_version[1], 10, -1):
+            for prefix in ('/usr/bin', '/usr/local/bin'):
+                candidate = f'{prefix}/python3.{minor}'
+                if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+                    continue
+                version = _get_python_version(candidate)
+                if version and version <= max_version:
+                    return candidate, f"Python {version[0]}.{version[1]}"
 
-    # 3. Error with guidance
+    current_version = _get_python_version(sys.executable)
+    if not _current_python_is_managed() and current_version and current_version <= max_version:
+        return sys.executable, f"Python {current_version[0]}.{current_version[1]}"
+
+    if _current_python_is_managed():
+        log_error("Only an activated or version-manager Python is available.")
+        log_error("Deactivate the environment or pass --python /path/to/system/python explicitly.")
     _python_compatibility_error(current_version)
     # _python_compatibility_error calls sys.exit, but for type checker:
     raise SystemExit(1)
@@ -294,6 +301,19 @@ def _check_mise_active() -> bool:
         return True
 
     return False
+
+
+def _current_python_is_managed() -> bool:
+    """Return whether implicit use of the running interpreter would be unsafe."""
+    executable = str(Path(sys.executable).resolve())
+    user_home = str(Path.home().resolve()) + os.sep
+    return bool(
+        os.environ.get('VIRTUAL_ENV')
+        or sys.prefix != getattr(sys, 'base_prefix', sys.prefix)
+        or _check_mise_active()
+        or any(marker in executable for marker in ('/.local/share/mise/', '/.pyenv/', '/.asdf/'))
+        or executable.startswith(user_home)
+    )
 
 
 def _create_mise_free_environment() -> dict:
@@ -331,87 +351,6 @@ def _create_mise_free_environment() -> dict:
         env['PATH'] = ':'.join(paths)
 
     return env
-
-
-def _get_system_python() -> str:
-    """
-    Get the system Python path, avoiding mise-managed Python.
-
-    When mise is active, this function uses a mise-free environment
-    to find the actual system Python (typically /usr/bin/python3).
-
-    Returns:
-        Path to system Python executable, or sys.executable as fallback
-    """
-    # Common system Python paths (Arch Linux)
-    system_paths = ['/usr/bin/python3', '/usr/bin/python']
-    
-    # Check if current Python is mise-managed
-    current_is_mise = '.local/share/mise' in sys.executable
-    
-    # If mise is active, use mise-free environment to find system Python
-    if _check_mise_active() or current_is_mise:
-        mise_free_env = _create_mise_free_environment()
-        
-        # Try system paths first
-        for python_path in system_paths:
-            if os.path.exists(python_path) and os.access(python_path, os.X_OK):
-                # Verify it's actually Python
-                try:
-                    result = run_command(
-                        [python_path, '--version'],
-                        check=False,
-                        capture_output=True,
-                        env=mise_free_env
-                    )
-                    if result.returncode == 0:
-                        return python_path
-                except Exception:
-                    continue
-        
-        # Fallback: check additional common system paths directly
-        # (more robust than relying on 'which' command which may not be available)
-        additional_paths = [
-            '/usr/local/bin/python3',
-            '/usr/local/bin/python',
-            '/bin/python3',
-            '/bin/python'
-        ]
-        for python_path in additional_paths:
-            if os.path.exists(python_path) and os.access(python_path, os.X_OK):
-                try:
-                    result = run_command(
-                        [python_path, '--version'],
-                        check=False,
-                        capture_output=True,
-                        env=mise_free_env
-                    )
-                    if result.returncode == 0:
-                        return python_path
-                except Exception:
-                    continue
-        
-        # Last resort: try 'which' command if available
-        try:
-            result = run_command(
-                ['which', 'python3'],
-                check=False,
-                capture_output=True,
-                env=mise_free_env
-            )
-            if result.returncode == 0 and result.stdout:
-                found_path = result.stdout.strip()
-                if found_path and os.path.exists(found_path) and '.local/share/mise' not in found_path:
-                    return found_path
-        except Exception:
-            pass
-        
-        # If we couldn't find system Python but mise is active, warn about fallback
-        if (_check_mise_active() or current_is_mise) and '.local/share/mise' in sys.executable:
-            log_warning("Could not find system Python - falling back to current Python (may be mise-managed)")
-    
-    # Default: return current executable (may be mise-managed, but better than nothing)
-    return sys.executable
 
 
 # ==================== Pre-built Wheel Support ====================
@@ -1335,12 +1274,350 @@ def setup_python_venv(force_rebuild: bool = False, custom_python: Optional[str] 
     return pip_bin
 
 
-def _verify_dependency_plan(plan: DependencyPlan) -> bool:
-    imports = ', '.join(plan.required_imports)
+_IMPORT_PROBE = r'''
+import contextlib, importlib.metadata, importlib.util, io, json, sys, traceback
+name = sys.argv[1]
+data = {"import_name": name}
+try:
+    spec = importlib.util.find_spec(name)
+    data["module_origin"] = getattr(spec, "origin", None)
+except BaseException:
+    data["module_origin"] = None
+    data["find_spec_traceback"] = traceback.format_exc()
+try:
+    spec = importlib.util.find_spec("numpy")
+    data["numpy_origin"] = getattr(spec, "origin", None)
+    import numpy
+    data["numpy_version"] = numpy.__version__
+except BaseException:
+    data["numpy_traceback"] = traceback.format_exc()
+try:
+    data["distributions"] = sorted(set(
+        importlib.metadata.packages_distributions().get(name, [])
+    ))
+except BaseException:
+    data["distributions"] = []
+stdout, stderr = io.StringIO(), io.StringIO()
+if len(sys.argv) > 2 and sys.argv[2] == "snapshot":
+    data["ok"] = data.get("module_origin") is not None
+else:
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            __import__(name)
+        data["ok"] = True
+    except BaseException:
+        data["ok"] = False
+        data["traceback"] = traceback.format_exc()
+data["import_stdout"] = stdout.getvalue()
+data["import_stderr"] = stderr.getvalue()
+data["prefix"] = sys.prefix
+data["base_prefix"] = sys.base_prefix
+print(json.dumps(data), flush=True)
+sys.exit(0 if data["ok"] else 1)
+'''
+
+_NUMPY_ABI_PATTERNS = (
+    re.compile(r'_ARRAY_API not found', re.I),
+    re.compile(r'compiled using NumPy 1\.x cannot be run in NumPy 2', re.I),
+    re.compile(r'numpy\.dtype size changed', re.I),
+    re.compile(r'(?:compiled|built).*(?:NumPy|numpy).*(?:API|ABI).*(?:version|mismatch)', re.I | re.S),
+    re.compile(r'(?:NumPy|numpy).*(?:API|ABI) version.*(?:mismatch|incompatible)', re.I | re.S),
+    re.compile(r'module compiled against API version .*but this version of numpy is', re.I),
+)
+_ABI_REPAIR_ALLOWLIST = frozenset({'sounddevice', 'soxr'})
+
+
+@dataclass
+class ImportProbe:
+    import_name: str
+    ok: bool
+    module_origin: Optional[str] = None
+    stdout: str = ''
+    stderr: str = ''
+    traceback: str = ''
+    numpy_version: Optional[str] = None
+    numpy_origin: Optional[str] = None
+    distributions: tuple[str, ...] = ()
+    timed_out: bool = False
+
+    def evidence(self) -> str:
+        return '\n'.join(part for part in (
+            self.stdout, self.stderr, self.traceback) if part)
+
+
+@dataclass
+class DependencyVerification:
+    ok: bool
+    combined_stdout: str = ''
+    combined_stderr: str = ''
+    failures: list[ImportProbe] = field(default_factory=list)
+    combined_only_failure: bool = False
+    timed_out: bool = False
+    repair_error: str = ''
+
+
+def _has_numpy_abi_signature(text: str) -> bool:
+    return any(pattern.search(text or '') for pattern in _NUMPY_ABI_PATTERNS)
+
+
+def _manifest_requirement_specs(plan: DependencyPlan) -> dict[str, Optional[str]]:
+    """Return unambiguous package requirements exactly as declared by manifests."""
+    requirements: dict[str, Optional[str]] = {}
+    for manifest in plan.manifests:
+        for raw in manifest.read_text(encoding='utf-8').splitlines():
+            line = raw.split('#', 1)[0].strip()
+            if not line or line.startswith(('-', 'http:', 'https:')):
+                continue
+            name = _graph_package_name(line)
+            if name:
+                previous = requirements.get(name)
+                if previous is not None and previous != line:
+                    requirements[name] = None
+                elif name not in requirements:
+                    requirements[name] = line
+    return requirements
+
+
+def _manifest_package_names(plan: DependencyPlan) -> set[str]:
+    return set(_manifest_requirement_specs(plan))
+
+
+def _distribution_for_import(probe: ImportProbe, manifest_names: set[str]) -> Optional[str]:
+    """Map one import to exactly one distribution selected by the manifest."""
+    candidates = {
+        _canonical_package_name(name) for name in probe.distributions if name
+    } & manifest_names
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _parse_import_probe(name: str, result) -> ImportProbe:
+    process_stdout = _safe_decode(getattr(result, 'stdout', '') or '')
+    process_stderr = _safe_decode(getattr(result, 'stderr', '') or '')
+    payload: Dict[str, Any] = {}
+    payload_line = None
+    stdout_lines = process_stdout.splitlines()
+    for index in range(len(stdout_lines) - 1, -1, -1):
+        line = stdout_lines[index]
+        try:
+            candidate = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(candidate, dict) and candidate.get('import_name') == name:
+            payload = candidate
+            payload_line = index
+            break
+    if payload_line is not None:
+        del stdout_lines[payload_line]
+    unredirected_stdout = '\n'.join(stdout_lines)
+    tracebacks = '\n'.join(filter(None, (
+        payload.get('find_spec_traceback', ''),
+        payload.get('numpy_traceback', ''),
+        payload.get('traceback', ''),
+    )))
+    return ImportProbe(
+        import_name=name,
+        ok=bool(payload.get('ok', result.returncode == 0)),
+        module_origin=payload.get('module_origin'),
+        stdout=(payload.get('import_stdout', '') + unredirected_stdout),
+        stderr=(payload.get('import_stderr', '') + process_stderr),
+        traceback=tracebacks,
+        numpy_version=payload.get('numpy_version'),
+        numpy_origin=payload.get('numpy_origin'),
+        distributions=tuple(payload.get('distributions') or ()),
+        timed_out=result.returncode == 124,
+    )
+
+
+def _probe_required_import(name: str, import_module: bool = True) -> ImportProbe:
+    mode = [] if import_module else ['snapshot']
     result = run_command([
-        'timeout', '10s', str(VENV_DIR / 'bin' / 'python'), '-c', f'import {imports}'
+        'timeout', '180s', str(VENV_DIR / 'bin' / 'python'), '-c',
+        _IMPORT_PROBE, name, *mode,
     ], check=False, capture_output=True, show_output_on_error=False)
-    return result.returncode == 0
+    return _parse_import_probe(name, result)
+
+
+def _verify_dependency_plan_detailed(plan: DependencyPlan) -> DependencyVerification:
+    imports = ', '.join(plan.required_imports)
+    combined = run_command([
+        'timeout', '60s', str(VENV_DIR / 'bin' / 'python'), '-c', f'import {imports}'
+    ], check=False, capture_output=True, show_output_on_error=False)
+    combined_timed_out = combined.returncode == 124
+    if combined_timed_out:
+        combined = run_command([
+            'timeout', '180s', str(VENV_DIR / 'bin' / 'python'), '-c', f'import {imports}'
+        ], check=False, capture_output=True, show_output_on_error=False)
+        combined_timed_out = combined.returncode == 124
+    if combined.returncode == 0:
+        return DependencyVerification(ok=True)
+
+    probes = [_probe_required_import(name) for name in plan.required_imports]
+    failures = [probe for probe in probes if not probe.ok]
+    # A combined timeout is inconclusive. Successful isolated imports are enough
+    # to retain the environment instead of discarding a large, valid installation.
+    if combined_timed_out and not failures:
+        return DependencyVerification(ok=True)
+    return DependencyVerification(
+        ok=False,
+        combined_stdout=_safe_decode(getattr(combined, 'stdout', '') or ''),
+        combined_stderr=_safe_decode(getattr(combined, 'stderr', '') or ''),
+        failures=failures,
+        combined_only_failure=not failures and not combined_timed_out,
+        timed_out=combined_timed_out or any(probe.timed_out for probe in failures),
+    )
+
+
+def _format_dependency_diagnostic(plan: DependencyPlan,
+                                  verification: DependencyVerification,
+                                  snapshot: Optional[list[ImportProbe]] = None) -> str:
+    lines = ['Dependency verification failed.',
+             'Required imports: ' + ', '.join(plan.required_imports)]
+    if verification.timed_out:
+        lines.append('Dependency verification timed out after a 60-second probe and one 180-second retry.')
+    elif verification.combined_only_failure:
+        lines.append('Every isolated import succeeded; the combined probe failed (possible import-order interaction).')
+    before_numpy = next((probe for probe in (snapshot or []) if probe.numpy_origin), None)
+    after_numpy = next((probe for probe in verification.failures if probe.numpy_origin), None)
+    if before_numpy:
+        lines.append(
+            f'NumPy before install: {before_numpy.numpy_version or "unknown"} '
+            f'at {before_numpy.numpy_origin}'
+        )
+    if after_numpy:
+        lines.append(
+            f'NumPy after install: {after_numpy.numpy_version or "unknown"} '
+            f'at {after_numpy.numpy_origin}'
+        )
+    if verification.combined_stdout:
+        lines.append('Combined stdout:\n' + verification.combined_stdout.rstrip())
+    if verification.combined_stderr:
+        lines.append('Combined stderr:\n' + verification.combined_stderr.rstrip())
+    for probe in verification.failures:
+        lines.extend([
+            f'Import: {probe.import_name}',
+            f'Origin: {probe.module_origin or "unknown"}',
+            f'Distribution candidates: {", ".join(probe.distributions) or "none"}',
+            f'NumPy: {probe.numpy_version or "unknown"} ({probe.numpy_origin or "unknown"})',
+        ])
+        if probe.stdout:
+            lines.append('stdout:\n' + probe.stdout.rstrip())
+        if probe.stderr:
+            lines.append('stderr:\n' + probe.stderr.rstrip())
+        if probe.traceback:
+            lines.append('traceback:\n' + probe.traceback.rstrip())
+    if verification.repair_error:
+        lines.append('Repair pip failure:\n' + verification.repair_error.rstrip())
+    return '\n'.join(lines)
+
+
+def _is_system_origin(origin: Optional[str]) -> bool:
+    """Return whether an import is inherited from anywhere outside the venv."""
+    if not origin:
+        return False
+    try:
+        path = Path(origin).resolve()
+        path.relative_to(VENV_DIR.resolve())
+        return False
+    except ValueError:
+        return True
+    except OSError:
+        return False
+
+
+def _has_missing_compiled_import(text: str) -> bool:
+    return bool(re.search(
+        r'(?:ModuleNotFoundError|ImportError):|No module named [\'\"]?_|'
+        r'OSError:.*PortAudio|PortAudio.*not found',
+        text or '', re.I | re.S,
+    ))
+
+
+def _numpy_needs_relocation(verification: DependencyVerification) -> bool:
+    return any(
+        _has_numpy_abi_signature(probe.evidence())
+        and _is_system_origin(probe.numpy_origin)
+        for probe in verification.failures
+    )
+
+
+def _repairable_distributions(plan: DependencyPlan,
+                              verification: DependencyVerification) -> list[str]:
+    # One repair round is intentional. If relocation exposes a second, opposite
+    # ABI mismatch, the post-repair verification records it for manual resolution.
+    requirement_specs = _manifest_requirement_specs(plan)
+    manifest_names = set(requirement_specs)
+    repairs = set()
+    for probe in verification.failures:
+        distribution = _distribution_for_import(probe, manifest_names)
+        eligible_failure = (
+            _has_numpy_abi_signature(probe.evidence())
+            or _has_missing_compiled_import(probe.evidence())
+        )
+        if (distribution in _ABI_REPAIR_ALLOWLIST
+                and requirement_specs.get(distribution)
+                and eligible_failure
+                and _is_system_origin(probe.module_origin)):
+            repairs.add(distribution)
+    ordered = sorted(repairs)
+    if (_numpy_needs_relocation(verification)
+            and requirement_specs.get('numpy')):
+        ordered.insert(0, 'numpy')
+    return ordered
+
+
+def _repair_requirement_specs(plan: DependencyPlan,
+                              distributions: list[str]) -> list[str]:
+    specs = _manifest_requirement_specs(plan)
+    return [specs[name] for name in distributions if specs.get(name)]
+
+
+def _verify_and_repair_dependency_plan(plan: DependencyPlan, pip_bin: Path) -> DependencyVerification:
+    """Verify required imports and perform at most one allowlisted repair round."""
+    verification = _verify_dependency_plan_detailed(plan)
+    repairs = _repairable_distributions(plan, verification)
+    if not repairs:
+        return verification
+
+    log_warning('Relocating incompatible inherited packages into the venv: '
+                + ', '.join(repairs))
+    # --ignore-installed deliberately relocates the selected requirement and
+    # its resolved dependency closure into the venv. Preserve manifest pins.
+    # Conflicts with already-installed pins are intentionally caught by the
+    # single post-repair verification rather than adding another repair round.
+    repair_specs = _repair_requirement_specs(plan, repairs)
+    try:
+        repair_result = run_command(
+            [str(pip_bin), 'install', '--ignore-installed', *repair_specs],
+            check=False, capture_output=True, show_output_on_error=False)
+        if repair_result.returncode == 0:
+            return _verify_dependency_plan_detailed(plan)
+        verification.repair_error = '\n'.join(filter(None, (
+            _safe_decode(getattr(repair_result, 'stdout', '') or ''),
+            _safe_decode(getattr(repair_result, 'stderr', '') or ''),
+        ))) or f'pip exited with status {repair_result.returncode}'
+    except Exception as exc:
+        verification.repair_error = str(exc)
+    return verification
+
+
+def _snapshot_inherited_dependencies(plan: DependencyPlan) -> list[ImportProbe]:
+    """Capture pre-install origins for diagnostics; never mutate dependencies."""
+    snapshots = [
+        _probe_required_import(name, import_module=False)
+        for name in plan.required_imports
+    ]
+    for probe in snapshots:
+        log_debug(
+            f'Pre-install import snapshot: {probe.import_name}: '
+            f'{probe.module_origin or "not found"}; NumPy '
+            f'{probe.numpy_version or "unknown"} at {probe.numpy_origin or "unknown"}'
+        )
+    return snapshots
+
+
+def _verify_dependency_plan(plan: DependencyPlan) -> bool:
+    """Compatibility wrapper for callers that only need a boolean result."""
+    return _verify_dependency_plan_detailed(plan).ok
 
 
 class VenvTransaction:
@@ -1401,21 +1678,14 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
     transaction = VenvTransaction(VENV_DIR).begin()
     try:
         pip_bin = setup_python_venv(custom_python=custom_python)
+        snapshot = _snapshot_inherited_dependencies(plan)
         run_command([str(pip_bin), 'install', '-r', str(plan.manifest)], check=True)
-        if not _verify_dependency_plan(plan) and 'sounddevice' in plan.required_imports:
-            # Some distro sounddevice>=0.5 packages (e.g. Fedora/Nobara) ship without
-            # the compiled _sounddevice extension, but still register as satisfying
-            # pip's "already installed" check via the venv's inherited system
-            # site-packages - so the plain install above silently skipped it.
-            # --ignore-installed forces pip to lay down its own working copy in the
-            # venv without trying to uninstall the (rpm-owned, unremovable) broken one.
-            log_warning('sounddevice import failed after install - retrying with --ignore-installed')
-            run_command([str(pip_bin), 'install', '--ignore-installed', 'sounddevice'], check=False)
-        if not _verify_dependency_plan(plan):
-            raise RuntimeError(
-                'Dependency installation completed but required imports failed: '
-                + ', '.join(plan.required_imports)
-            )
+        verification = _verify_and_repair_dependency_plan(plan, pip_bin)
+        if not verification.ok:
+            diagnostic = _format_dependency_diagnostic(plan, verification, snapshot)
+            log_error(diagnostic)
+            set_install_state('failed', diagnostic)
+            raise RuntimeError(diagnostic)
     except BaseException:
         transaction.rollback()
         raise
@@ -1977,6 +2247,72 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
         return False
 
 
+_COHERE_DOWNLOAD_SCRIPT = r'''
+import os, traceback
+try:
+    try:
+        from huggingface_hub import enable_progress_bars
+        enable_progress_bars()
+    except ImportError:
+        pass
+    from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+    import torch, sys
+    model_id = "CohereLabs/cohere-transcribe-03-2026"
+    token = os.environ.get("HF_TOKEN") or None
+    print("Downloading processor...", flush=True)
+    AutoProcessor.from_pretrained(model_id, trust_remote_code=True, token=token)
+    print("Downloading model weights (~4 GB)...", flush=True)
+    sys.stdout.flush()
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        model_id, trust_remote_code=True, dtype=torch.bfloat16,
+        low_cpu_mem_usage=True, token=token,
+    )
+    del model
+    print("Model downloaded and cached successfully", flush=True)
+except BaseException:
+    diagnostic = traceback.format_exc()
+    diagnostic_path = os.environ.get("HYPRWHSPR_DOWNLOAD_DIAGNOSTIC")
+    if diagnostic_path:
+        with open(diagnostic_path, "w", encoding="utf-8") as handle:
+            handle.write(diagnostic)
+    raise
+'''
+
+
+def download_cohere_transcribe_model(hf_token: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    """Download Cohere weights through the managed venv without a fixed timeout."""
+    venv_python = VENV_DIR / 'bin' / 'python'
+    if not venv_python.exists():
+        return False, f'Cohere Transcribe venv not found at {venv_python}'
+    env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
+    # Hugging Face retries/resumes files itself; this only bounds a stalled read,
+    # not the total multi-gigabyte download duration.
+    env.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
+    if hf_token:
+        env['HF_TOKEN'] = hf_token
+    diagnostic_file = tempfile.NamedTemporaryFile(
+        prefix='hyprwhspr-cohere-download-', suffix='.log', delete=False)
+    diagnostic_file.close()
+    diagnostic_path = Path(diagnostic_file.name)
+    env['HYPRWHSPR_DOWNLOAD_DIAGNOSTIC'] = str(diagnostic_path)
+    try:
+        run_command([str(venv_python), '-c', _COHERE_DOWNLOAD_SCRIPT], check=True,
+                    env=env, verbose=True)
+        return True, None
+    except Exception as exc:
+        try:
+            detail = diagnostic_path.read_text(encoding='utf-8').strip()
+        except OSError:
+            detail = str(exc)
+        detail = detail or str(exc)
+        return False, f'Cohere Transcribe model download failed:\n{detail}'
+    finally:
+        try:
+            diagnostic_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _complete_pywhispercpp_cpu_fallback(created_items: dict) -> str:
     """Clean a failed new source build and return the effective installed variant."""
     if not created_items.get('git_clone_created'):
@@ -2110,59 +2446,25 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                 set_install_state('failed', error_msg)
                 return False
 
-            # Pre-download model weights so the service starts immediately without a
-            # multi-gigabyte fetch on first transcription. low_cpu_mem_usage=True avoids
-            # loading the full ~8 GB fp32 weights into RAM during the cache-only download.
             log_info("Downloading Cohere Transcribe model from HuggingFace (~4 GB)...")
             log_info("This may take several minutes depending on your connection speed.")
-            venv_python = VENV_DIR / 'bin' / 'python'
-            download_script = '''
-try:
-    from huggingface_hub import enable_progress_bars
-    enable_progress_bars()
-except ImportError:
-    pass
-from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
-import torch, os, sys
-model_id = "CohereLabs/cohere-transcribe-03-2026"
-token = os.environ.get("HF_TOKEN") or None
-print("Downloading processor...", flush=True)
-processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True, token=token)
-print("Downloading model weights (~4 GB)...", flush=True)
-sys.stdout.flush()
-model = AutoModelForSpeechSeq2Seq.from_pretrained(
-    model_id,
-    trust_remote_code=True,
-    dtype=torch.bfloat16,
-    low_cpu_mem_usage=True,
-    token=token,
-)
-del model
-print("Model downloaded and cached successfully", flush=True)
-'''
-            # Inject the HuggingFace token so the gated repo download succeeds
-            download_env = None
+            hf_token = None
             try:
                 from credential_manager import get_credential
                 hf_token = get_credential('huggingface')
-                if hf_token:
-                    import os as _os
-                    download_env = {**_os.environ, 'HF_TOKEN': hf_token, 'PYTHONUNBUFFERED': '1'}
-                else:
-                    import os as _os
-                    download_env = {**_os.environ, 'PYTHONUNBUFFERED': '1'}
             except Exception:
-                import os as _os
-                download_env = {**_os.environ, 'PYTHONUNBUFFERED': '1'}
+                pass
 
-            try:
-                run_command([str(venv_python), '-c', download_script], check=True, timeout=900,
-                            env=download_env, verbose=True)
+            downloaded, diagnostic = download_cohere_transcribe_model(hf_token)
+            if downloaded:
                 log_success("Cohere Transcribe model downloaded and cached")
-            except Exception as e:
-                log_warning(f"Model pre-download failed: {e}")
-                log_warning("Model will be downloaded automatically on first use instead.")
-                # Don't fail the installation — the service can still download on first start
+            else:
+                error_msg = diagnostic or 'Cohere Transcribe model download failed'
+                log_error(error_msg)
+                log_info("Re-running setup resumes the cached Hugging Face download.")
+                log_info("If Cohere is already configured, run: hyprwhspr model download")
+                set_install_state('failed', error_msg)
+                return False
 
             set_install_state('completed')
             log_success("Cohere Transcribe backend installation completed!")
@@ -2235,18 +2537,6 @@ print("Models cached successfully", flush=True)
         cur_req_hash = dependency_manifest_hash(manifests)
         stored_req_hash = get_state("dependency_manifest_hash")
 
-        deps_installed = False
-        if VENV_DIR.exists():
-            python_bin = VENV_DIR / 'bin' / 'python'
-            try:
-                result = run_command([
-                    'timeout', '5s', str(python_bin), '-c',
-                    'import sounddevice, pywhispercpp'
-                ], check=False, capture_output=True, show_output_on_error=False)
-                deps_installed = result.returncode == 0
-            except Exception:
-                pass
-
         # Which pywhispercpp build variant is being requested *right now*?
         # (Differs from backend_type only inside this function: GPU setup may
         # have already downgraded backend_type='vulkan' to 'cpu' if Vulkan
@@ -2259,6 +2549,18 @@ print("Models cached successfully", flush=True)
             requested_variant = 'vulkan'
         else:
             requested_variant = 'cpu'
+
+        planned_dependency_state = resolve_dependency_plan(
+            backend_type, accelerated_variant=requested_variant)
+        deps_installed = False
+        if VENV_DIR.exists():
+            try:
+                # A failed required import—including inherited NumPy/soxr—forces
+                # a fresh transaction instead of repairing the live venv in place.
+                deps_installed = _verify_dependency_plan_detailed(
+                    planned_dependency_state).ok
+            except Exception:
+                pass
 
         stored_installed_backend = get_state("installed_backend")
         backend_mismatch = bool(stored_installed_backend) and stored_installed_backend != requested_variant
@@ -2277,6 +2579,11 @@ print("Models cached successfully", flush=True)
         if needs_install:
             created_items['venv_created'] = True
             created_items['venv_path'] = str(VENV_DIR)
+            snapshot_plan = resolve_dependency_plan(
+                backend_type, accelerated_variant=requested_variant)
+            snapshot = _snapshot_inherited_dependencies(snapshot_plan)
+        else:
+            snapshot = []
 
         # Install pywhispercpp if needed
         if needs_install:
@@ -2415,10 +2722,16 @@ print("Models cached successfully", flush=True)
             log_info("Python dependencies up to date (skipping pip install)")
         
         plan = resolve_dependency_plan(backend_type, accelerated_variant=requested_variant)
-        if not _verify_dependency_plan(plan):
-            error_msg = "pywhispercpp installation did not provide required imports"
-            log_error(error_msg)
-            set_install_state('failed', error_msg)
+        if needs_install:
+            verification = _verify_and_repair_dependency_plan(plan, pip_bin)
+        else:
+            # The precheck above proved this live venv healthy. Do not mutate it
+            # outside a VenvTransaction if a later/racing verification now fails.
+            verification = _verify_dependency_plan_detailed(plan)
+        if not verification.ok:
+            diagnostic = _format_dependency_diagnostic(plan, verification, snapshot)
+            log_error(diagnostic)
+            set_install_state('failed', diagnostic)
             _cleanup_partial_installation(created_items, pip_bin)
             return False
 

@@ -4,7 +4,6 @@ ONNX-ASR, faster-whisper and Cohere transcribe model families
 """
 
 import os
-import subprocess
 from pathlib import Path
 
 try:
@@ -18,9 +17,13 @@ except ImportError:
     from paths import RECORDING_CONTROL_FILE, MODEL_UNLOADED_FILE
 
 try:
-    from ..backend_installer import VENV_DIR, PYWHISPERCPP_MODELS_DIR
+    from ..backend_installer import (VENV_DIR, PYWHISPERCPP_MODELS_DIR,
+                                     download_cohere_transcribe_model as _download_cohere,
+                                     set_install_state)
 except ImportError:
-    from backend_installer import VENV_DIR, PYWHISPERCPP_MODELS_DIR
+    from backend_installer import (VENV_DIR, PYWHISPERCPP_MODELS_DIR,
+                                   download_cohere_transcribe_model as _download_cohere,
+                                   set_install_state)
 
 try:
     from ..backend_utils import normalize_backend, COHERE_LANGUAGES
@@ -102,7 +105,7 @@ def _send_model_control(command: str) -> bool:
         return False
 
 
-def model_command(action: str, model_name: str = 'base'):
+def model_command(action: str, model_name: str = 'base') -> bool:
     """Handle model subcommands"""
     config = ConfigManager()
     backend = normalize_backend(config.get_setting('transcription_backend', 'pywhispercpp'))
@@ -112,66 +115,84 @@ def model_command(action: str, model_name: str = 'base'):
         if backend in ('rest-api', 'realtime-ws'):
             log_error(f"Model unload not applicable for backend: {backend}")
             log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr, cohere-transcribe) hold GPU memory.")
-            return
+            return False
         if MODEL_UNLOADED_FILE.exists():
             log_warning("Model is already unloaded.")
             log_info("Reload it with: hyprwhspr model reload")
-            return
+            return True
         log_info("Sending model unload request to service...")
-        if _send_model_control('model_unload'):
+        success = _send_model_control('model_unload')
+        if success:
             log_success("Model unload requested — GPU resources will be freed.")
-        return
+        return success
 
     if action == 'reload':
         if backend in ('rest-api', 'realtime-ws'):
             log_error(f"Model reload not applicable for backend: {backend}")
-            return
+            return False
         if not MODEL_UNLOADED_FILE.exists():
             log_warning("Model does not appear to be unloaded.")
             log_info("Use this after: hyprwhspr model unload")
-            return
+            return False
         log_info("Sending model reload request to service...")
-        if _send_model_control('model_reload'):
+        success = _send_model_control('model_reload')
+        if success:
             log_success("Model reload requested — service will load model back into memory.")
-        return
+        return success
 
     if backend == 'faster-whisper':
         if action == 'download':
-            download_faster_whisper_model(model_name)
+            return download_faster_whisper_model(model_name)
         elif action == 'list':
             list_faster_whisper_models()
+            return True
         elif action == 'status':
             faster_whisper_model_status()
+            return True
         else:
             log_error(f"Unknown model action: {action}")
+            return False
     elif backend == 'onnx-asr':
         if action == 'list':
             list_onnx_asr_models()
+            return True
         elif action == 'status':
             onnx_asr_model_status()
+            return True
         elif action == 'download':
             log_info("Parakeet model is downloaded during setup.")
             log_info("If the model is missing, re-run: hyprwhspr setup")
+            return True
         else:
             log_error(f"Unknown model action: {action}")
+            return False
     elif backend == 'cohere-transcribe':
         if action == 'list':
             list_cohere_transcribe_models()
+            return True
         elif action == 'status':
             cohere_transcribe_model_status(config)
+            return True
         elif action == 'download':
-            download_cohere_transcribe_model()
+            return download_cohere_transcribe_model()
         else:
             log_error(f"Unknown model action: {action}")
-    else:
+            return False
+    elif backend in ('pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan'):
         if action == 'download':
-            download_model(model_name)
+            return download_model(model_name)
         elif action == 'list':
             list_models()
+            return True
         elif action == 'status':
             model_status()
+            return True
         else:
             log_error(f"Unknown model action: {action}")
+            return False
+    else:
+        log_error(f"Model {action} not applicable for backend: {backend}")
+        return False
 
 
 def download_model(model_name: str = 'base'):
@@ -304,44 +325,25 @@ def download_cohere_transcribe_model():
         log_warning("No HuggingFace token found.")
         log_info("Run hyprwhspr setup to provide your token, or accept the model license at:")
         log_info("  https://huggingface.co/CohereLabs/cohere-transcribe-03-2026")
-        return
-
-    from backend_installer import install_backend
+        return False
 
     venv_python = VENV_DIR / 'bin' / 'python'
     if not venv_python.exists():
         log_error("Cohere Transcribe venv not found. Run: hyprwhspr setup")
-        return
+        return False
 
-    import subprocess, os
-    download_script = '''
-try:
-    from huggingface_hub import enable_progress_bars
-    enable_progress_bars()
-except ImportError:
-    pass
-from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
-import torch, os, sys
-model_id = "CohereLabs/cohere-transcribe-03-2026"
-token = os.environ.get("HF_TOKEN") or None
-print("Downloading processor...", flush=True)
-AutoProcessor.from_pretrained(model_id, trust_remote_code=True, token=token)
-print("Downloading model weights (~4 GB)...", flush=True)
-sys.stdout.flush()
-model = AutoModelForSpeechSeq2Seq.from_pretrained(
-    model_id, trust_remote_code=True, dtype=torch.bfloat16,
-    low_cpu_mem_usage=True, token=token,
-)
-del model
-print("Done.", flush=True)
-'''
-    env = {**os.environ, 'HF_TOKEN': hf_token, 'PYTHONUNBUFFERED': '1'}
     log_info("Downloading Cohere Transcribe model (~4 GB)...")
-    result = subprocess.run([str(venv_python), '-c', download_script], env=env)
-    if result.returncode == 0:
+    success, diagnostic = _download_cohere(hf_token)
+    if success:
         log_success("Model downloaded and cached successfully")
+        set_install_state('completed')
+        return True
     else:
-        log_error("Download failed — check your HuggingFace token and license acceptance")
+        error = diagnostic or "Download failed — check your HuggingFace token and license acceptance"
+        log_error(error)
+        set_install_state('failed', error)
+        log_info("Run this command again to resume the cached download.")
+        return False
 
 
 # ==================== faster-whisper Model Commands ====================

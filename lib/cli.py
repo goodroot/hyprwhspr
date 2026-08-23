@@ -279,7 +279,8 @@ def main():
                 sys.exit(1)
             from cli.models import model_command
             model_name = getattr(args, 'name', 'base')
-            model_command(args.model_action, model_name)
+            if not model_command(args.model_action, model_name):
+                sys.exit(1)
         elif args.command == 'status':
             from cli.status import status_command
             status_command()

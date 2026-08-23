@@ -117,6 +117,95 @@ class BackendInstallerStateTests(unittest.TestCase):
         committed_plan = commit_state.call_args.args[0]
         self.assertEqual(committed_plan.accelerated_variant, "cpu")
 
+    def test_pywhispercpp_uses_detailed_verification_and_repair(self):
+        state = {"dependency_manifest_hash": "same-hash"}
+        precheck = backend_installer.DependencyVerification(ok=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            venv_dir = Path(tmp) / "venv"
+            (venv_dir / "bin").mkdir(parents=True)
+            pip_bin = venv_dir / "bin" / "pip"
+            pip_bin.touch()
+            completed = types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            verified = backend_installer.DependencyVerification(ok=True)
+            transaction = mock.Mock(had_old=True, backup=Path(tmp) / "backup")
+            with (
+                mock.patch.object(backend_installer, "VENV_DIR", venv_dir),
+                mock.patch.object(backend_installer, "HYPRWHSPR_ROOT", str(ROOT)),
+                mock.patch.object(backend_installer, "init_state"),
+                mock.patch.object(backend_installer, "_check_mise_active", return_value=False),
+                mock.patch.object(backend_installer, "get_state",
+                                  side_effect=lambda key: state.get(key, "")),
+                mock.patch.object(backend_installer, "dependency_manifest_hash",
+                                  return_value="same-hash"),
+                mock.patch.object(backend_installer, "setup_python_venv", return_value=pip_bin),
+                mock.patch.object(backend_installer, "run_command", return_value=completed),
+                mock.patch.object(backend_installer, "_verify_dependency_plan_detailed",
+                                  return_value=precheck) as preverify,
+                mock.patch.object(backend_installer, "_verify_and_repair_dependency_plan",
+                                  return_value=verified) as verify,
+                mock.patch.object(backend_installer, "VenvTransaction",
+                                  return_value=transaction),
+                mock.patch.object(backend_installer, "install_pywhispercpp_cpu",
+                                  return_value=True),
+                mock.patch.object(backend_installer, "commit_dependency_state"),
+                mock.patch.object(backend_installer, "download_pywhispercpp_model",
+                                  return_value=True),
+                mock.patch.object(backend_installer, "set_install_state"),
+            ):
+                self.assertTrue(backend_installer.install_backend("cpu"))
+        preverify.assert_called_once()
+        transaction.begin.assert_called_once()
+        transaction.commit.assert_called_once()
+        verify.assert_called_once()
+        self.assertEqual(verify.call_args.args[0].family, 'pywhispercpp')
+        self.assertEqual(verify.call_args.args[1], pip_bin)
+
+    def test_pywhispercpp_verification_failure_persists_diagnostic_before_cleanup(self):
+        state = {"dependency_manifest_hash": "same-hash"}
+        failed = backend_installer.DependencyVerification(
+            ok=False,
+            failures=[backend_installer.ImportProbe(
+                'soxr', False, stderr='_ARRAY_API not found')],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            venv_dir = Path(tmp) / "venv"
+            (venv_dir / "bin").mkdir(parents=True)
+            pip_bin = venv_dir / "bin" / "pip"
+            pip_bin.touch()
+            completed = types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            transaction = mock.Mock(had_old=True, backup=Path(tmp) / "backup")
+            with (
+                mock.patch.object(backend_installer, "VENV_DIR", venv_dir),
+                mock.patch.object(backend_installer, "HYPRWHSPR_ROOT", str(ROOT)),
+                mock.patch.object(backend_installer, "init_state"),
+                mock.patch.object(backend_installer, "_check_mise_active", return_value=False),
+                mock.patch.object(backend_installer, "get_state",
+                                  side_effect=lambda key: state.get(key, "")),
+                mock.patch.object(backend_installer, "dependency_manifest_hash",
+                                  return_value="same-hash"),
+                mock.patch.object(backend_installer, "setup_python_venv", return_value=pip_bin),
+                mock.patch.object(backend_installer, "run_command", return_value=completed),
+                mock.patch.object(backend_installer, "_verify_dependency_plan_detailed",
+                                  return_value=failed),
+                mock.patch.object(backend_installer, "_verify_and_repair_dependency_plan",
+                                  return_value=failed),
+                mock.patch.object(backend_installer, "VenvTransaction",
+                                  return_value=transaction),
+                mock.patch.object(backend_installer, "install_pywhispercpp_cpu",
+                                  return_value=True),
+                mock.patch.object(backend_installer, "_format_dependency_diagnostic",
+                                  return_value='persisted ABI diagnostic'),
+                mock.patch.object(backend_installer, "_cleanup_partial_installation") as cleanup,
+                mock.patch.object(backend_installer, "download_pywhispercpp_model") as download,
+                mock.patch.object(backend_installer, "set_install_state") as set_state,
+            ):
+                self.assertFalse(backend_installer.install_backend("cpu"))
+        transaction.begin.assert_called_once()
+        set_state.assert_any_call('failed', 'persisted ABI diagnostic')
+        cleanup.assert_called_once()
+        download.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

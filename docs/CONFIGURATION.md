@@ -310,7 +310,9 @@ For up-to-date accuracy rankings across open-source models, see the [Open ASR Le
 
 ### Model commands
 
-`hyprwhspr model` commands route automatically to the configured backend:
+`hyprwhspr model` commands route automatically to the configured local backend.
+For cloud backends (`rest-api` and `realtime-ws`), model operations are not
+applicable and exit nonzero.
 
 ```bash
 hyprwhspr model status            # Check if model is downloaded/cached
@@ -1587,6 +1589,35 @@ hyprwhspr model download base
 
 # Verify model in config
 cat ~/.config/hyprwhspr/config.json | grep model
+```
+
+#### NumPy ABI or dependency verification failure
+
+During setup, hyprwhspr verifies each backend import before downloading a
+model. Messages such as `_ARRAY_API not found`, `numpy.dtype size changed`, or
+"compiled using NumPy 1.x" mean a compiled package and the NumPy visible in the
+managed environment use incompatible binary interfaces. The diagnostic shown
+by setup—and retained in `hyprwhspr status`—includes the failing import and the
+NumPy versions and paths seen before and after installation.
+
+Re-run `hyprwhspr setup` first. Safe inherited-package conflicts are relocated
+automatically, and failed or interrupted Cohere downloads resume from the
+Hugging Face cache. If Cohere is already configured, its download can also be
+resumed with:
+
+```bash
+hyprwhspr model download
+```
+
+As a last resort, use the diagnostic paths to identify the conflicting NumPy
+and manually install the compatible NumPy version into the managed venv. This
+is intentionally not automatic or globally pinned because the correct version
+depends on the failing compiled package and platform.
+
+```bash
+# Examples only—choose the side indicated by the persisted ABI diagnostic:
+~/.local/share/hyprwhspr/venv/bin/python -m pip install --ignore-installed 'numpy<2'
+~/.local/share/hyprwhspr/venv/bin/python -m pip install --ignore-installed 'numpy>=2'
 ```
 
 #### Stuck recording state
