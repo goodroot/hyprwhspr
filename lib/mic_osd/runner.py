@@ -27,6 +27,11 @@ except ImportError:
         MIC_OSD_LEVEL_FEED_FILE,
     )
 
+try:
+    from ..src import visualizer_runtime
+except ImportError:
+    from src import visualizer_runtime
+
 
 class MicOSDRunner:
     """
@@ -38,6 +43,8 @@ class MicOSDRunner:
     PREVIEW_WRITE_INTERVAL_SECONDS = 0.05
     LEVEL_FEED_INTERVAL_SECONDS = 1.0 / 30
     OSD_STYLES = ('waveform', 'vu_meter', 'pill')
+    _bundled_availability = None
+    _bundled_availability_lock = threading.Lock()
 
     def __init__(self, level_source=None, style='waveform'):
         """
@@ -67,6 +74,12 @@ class MicOSDRunner:
     @staticmethod
     def is_available() -> bool:
         """Check if mic-osd can run."""
+        if MicOSDRunner._system_dependencies_available():
+            return True
+        return MicOSDRunner._bundled_dependencies_available()
+
+    @staticmethod
+    def _system_dependencies_available() -> bool:
         try:
             import cairo  # noqa: F401
             import gi
@@ -75,6 +88,40 @@ class MicOSDRunner:
             return True
         except (ImportError, ValueError):
             return False
+
+    @staticmethod
+    def _bundled_dependencies_available() -> bool:
+        with MicOSDRunner._bundled_availability_lock:
+            if MicOSDRunner._bundled_availability is not None:
+                return MicOSDRunner._bundled_availability
+            available = False
+            if visualizer_runtime.is_complete():
+                probe = (
+                    "import cairo, gi;"
+                    "gi.require_version('Gtk', '4.0');"
+                    "gi.require_version('Gtk4LayerShell', '1.0');"
+                    "from gi.repository import Gtk, Gtk4LayerShell"
+                )
+                try:
+                    result = subprocess.run(
+                        [sys.executable or 'python3', '-c', probe],
+                        env=visualizer_runtime.bundled_environment(),
+                        capture_output=True, timeout=5,
+                    )
+                    available = result.returncode == 0
+                except Exception:
+                    pass
+            MicOSDRunner._bundled_availability = available
+            return available
+
+    @staticmethod
+    def runtime_source() -> str:
+        """Return the selected layer-shell runtime source for status output."""
+        if MicOSDRunner._system_dependencies_available():
+            return "system"
+        if MicOSDRunner._bundled_dependencies_available():
+            return f"bundled {visualizer_runtime.GTK4_LAYER_SHELL_VERSION}"
+        return "unavailable"
     
     @staticmethod
     def _layer_shell_ld_preload() -> str:
@@ -97,6 +144,19 @@ class MicOSDRunner:
         return ""
 
     @staticmethod
+    def _layer_shell_environment() -> dict:
+        """Build the child-only environment for the selected runtime."""
+        env = os.environ.copy()
+        preload = MicOSDRunner._layer_shell_ld_preload()
+        if MicOSDRunner._system_dependencies_available():
+            if preload:
+                current = env.get('LD_PRELOAD', '')
+                env['LD_PRELOAD'] = f"{preload} {current}".strip()
+        elif visualizer_runtime.is_complete():
+            env = visualizer_runtime.bundled_environment(env)
+        return env
+
+    @staticmethod
     def layer_shell_active() -> bool:
         """Return True only if the running compositor supports the layer-shell
         protocol (Hyprland, Niri, Sway, ...). False on GNOME/Mutter and on any
@@ -111,10 +171,7 @@ class MicOSDRunner:
             "Gtk.init();"
             "print('1' if Gtk4LayerShell.is_supported() else '0')"
         )
-        env = os.environ.copy()
-        preload = MicOSDRunner._layer_shell_ld_preload()
-        if preload:
-            env['LD_PRELOAD'] = preload
+        env = MicOSDRunner._layer_shell_environment()
         try:
             result = subprocess.run(
                 [sys.executable or 'python3', '-c', probe],
@@ -164,6 +221,8 @@ class MicOSDRunner:
         try:
             gi.require_version('Gtk4LayerShell', '1.0')
         except (ImportError, ValueError):
+            if MicOSDRunner._bundled_dependencies_available():
+                return ""
             return f"gtk4-layer-shell not installed. Install: {layer_pkg}"
         return ""
     
@@ -216,10 +275,7 @@ sys.exit(main())
 """
 
         # Set LD_PRELOAD for gtk4-layer-shell.
-        env = os.environ.copy()
-        lib_path = self._layer_shell_ld_preload()
-        if lib_path:
-            env['LD_PRELOAD'] = lib_path
+        env = self._layer_shell_environment()
         env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
 
         try:

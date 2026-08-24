@@ -13,6 +13,7 @@ import shutil
 import re
 import urllib.request
 import uuid
+import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Tuple, Dict
@@ -46,6 +47,11 @@ try:
     from .nvidia_probe import responding_gpu_listing
 except ImportError:
     from nvidia_probe import responding_gpu_listing
+
+try:
+    from . import visualizer_runtime
+except ImportError:
+    import visualizer_runtime
 
 
 def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None,
@@ -1727,21 +1733,161 @@ def install_visualizer_deps(pip_bin) -> bool:
     dictation runtime. Skipped when PyGObject is already importable from system
     packages (the venv uses --system-site-packages).
     """
-    if _should_skip_pygobject():
-        return True
-    req = Path(HYPRWHSPR_ROOT) / 'requirements-visualizer.txt'
-    if not req.exists():
-        return True
-    log_info("Installing optional mic-osd visualizer deps (best-effort)…")
+    bindings_ok = _should_skip_pygobject()
+    if not bindings_ok:
+        req = Path(HYPRWHSPR_ROOT) / 'requirements-visualizer.txt'
+        if not req.exists():
+            bindings_ok = True
+        else:
+            log_info("Installing optional mic-osd visualizer deps (best-effort)…")
+            try:
+                run_command([str(pip_bin), 'install', '-r', str(req)], check=True)
+                bindings_ok = True
+            except subprocess.CalledProcessError as e:
+                log_warning(
+                    "mic-osd visualizer deps could not be built — the animated overlay "
+                    f"will be unavailable (core dictation is unaffected): {e}"
+                )
+
+    python_bin = Path(pip_bin).parent / 'python'
+    if bindings_ok:
+        install_gtk4_layer_shell_runtime(python_bin)
+    return bindings_ok
+
+
+_VISUALIZER_IMPORT_PROBE = (
+    "import cairo, gi;"
+    "gi.require_version('Gtk', '4.0');"
+    "gi.require_version('Gtk4LayerShell', '1.0');"
+    "from gi.repository import Gtk, Gtk4LayerShell"
+)
+
+
+def _visualizer_runtime_imports(python_bin: Path, env=None) -> bool:
     try:
-        run_command([str(pip_bin), 'install', '-r', str(req)], check=True)
+        result = run_command(
+            [str(python_bin), '-c', _VISUALIZER_IMPORT_PROBE],
+            check=False, capture_output=True, env=env,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _download_visualizer_runtime(download_dir: Path) -> tuple[Path, str]:
+    asset = download_dir / visualizer_runtime.GTK4_LAYER_SHELL_ASSET
+    base = visualizer_runtime.GTK4_LAYER_SHELL_BASE_URL
+    _download_bounded_file(
+        f"{base}/{visualizer_runtime.GTK4_LAYER_SHELL_ASSET}", asset, 16 * 1024 * 1024
+    )
+    expected = visualizer_runtime.GTK4_LAYER_SHELL_SHA256.lower()
+    if not re.fullmatch(r'[0-9a-f]{64}', expected):
+        raise RuntimeError('pinned runtime checksum is invalid')
+    actual = hashlib.sha256(asset.read_bytes()).hexdigest()
+    if actual != expected:
+        raise RuntimeError('downloaded runtime does not match its pinned checksum')
+    return asset, actual
+
+
+def _download_bounded_file(url: str, destination: Path, maximum_bytes: int) -> None:
+    """Download a small release asset with per-operation stall protection."""
+    total = 0
+    with urllib.request.urlopen(url, timeout=60) as response, destination.open('wb') as output:
+        while True:
+            block = response.read(64 * 1024)
+            if not block:
+                break
+            total += len(block)
+            if total > maximum_bytes:
+                raise RuntimeError(f'download exceeded the {maximum_bytes}-byte safety limit')
+            output.write(block)
+
+
+def _extract_visualizer_runtime(archive: Path, destination: Path, checksum: str) -> None:
+    required = {
+        'lib/libgtk4-layer-shell.so.0',
+        'lib/girepository-1.0/Gtk4LayerShell-1.0.typelib',
+        'LICENSE',
+        'manifest.json',
+    }
+    with tarfile.open(archive, 'r:gz') as bundle:
+        archive_members = bundle.getmembers()
+        members = {member.name.lstrip('./'): member for member in archive_members}
+        if (
+            len(archive_members) != len(required)
+            or set(members) != required
+            or any(not member.isfile() or member.size > 16 * 1024 * 1024 for member in members.values())
+        ):
+            raise RuntimeError('runtime archive contains an unexpected or unsafe layout')
+        for relative, member in members.items():
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source = bundle.extractfile(member)
+            if source is None:
+                raise RuntimeError(f'could not read {relative} from runtime archive')
+            with source, target.open('wb') as output:
+                shutil.copyfileobj(source, output)
+    manifest = json.loads((destination / 'manifest.json').read_text(encoding='utf-8'))
+    if (
+        manifest.get('version') != visualizer_runtime.GTK4_LAYER_SHELL_VERSION
+        or manifest.get('commit') != visualizer_runtime.GTK4_LAYER_SHELL_COMMIT
+    ):
+        raise RuntimeError('runtime manifest does not match the installer contract')
+    (destination / '.sha256').write_text(checksum + '\n', encoding='utf-8')
+
+
+def install_gtk4_layer_shell_runtime(python_bin: Path) -> bool:
+    """Best-effort install of the Noble x86_64 app-private layer-shell runtime."""
+    if _visualizer_runtime_imports(python_bin):
         return True
-    except subprocess.CalledProcessError as e:
+    if not visualizer_runtime.is_noble_x86_64():
+        return False
+    target = visualizer_runtime.runtime_dir()
+    if visualizer_runtime.is_complete() and _visualizer_runtime_imports(
+        python_bin, visualizer_runtime.bundled_environment()
+    ):
+        return True
+
+    log_info('Installing optional bundled gtk4-layer-shell runtime…')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix='.gtk4-layer-shell-', dir=target.parent))
+    previous = target.with_name(f'.{target.name}.previous')
+    try:
+        with tempfile.TemporaryDirectory() as download_tmp:
+            archive, checksum = _download_visualizer_runtime(Path(download_tmp))
+            _extract_visualizer_runtime(archive, staging, checksum)
+        if not _visualizer_runtime_imports(
+            python_bin, visualizer_runtime.environment_for(staging)
+        ):
+            raise RuntimeError('the bundled runtime failed its import check')
+        if previous.exists():
+            shutil.rmtree(previous)
+        if target.exists():
+            target.replace(previous)
+        staging.replace(target)
+        if previous.exists():
+            shutil.rmtree(previous, ignore_errors=True)
+        log_success('Bundled gtk4-layer-shell runtime installed')
+        try:
+            versions_root = visualizer_runtime.versions_dir()
+            if target.parent.parent == versions_root:
+                for old_version in versions_root.iterdir():
+                    if old_version.is_dir() and old_version != target.parent:
+                        shutil.rmtree(old_version, ignore_errors=True)
+        except OSError as exc:
+            log_debug(f'Could not remove an older visualizer runtime: {exc}')
+        return True
+    except Exception as exc:
+        if previous.exists() and not target.exists():
+            previous.replace(target)
         log_warning(
-            "mic-osd visualizer deps could not be built — the animated overlay "
-            f"will be unavailable (core dictation is unaffected): {e}"
+            'Bundled gtk4-layer-shell could not be installed; mic-osd will use '
+            f'notifications instead (core dictation is unaffected): {exc}'
         )
         return False
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
 
 
 def _extract_package_name(requirement_line: str) -> str:

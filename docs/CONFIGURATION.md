@@ -754,6 +754,21 @@ Set `mic_osd_enabled: false` to turn off both. The service log records which mod
 journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status via notifications'
 ```
 
+On Ubuntu 24.04/Noble x86_64, setup automatically installs an app-private
+`gtk4-layer-shell` runtime when the distribution does not provide the GTK4
+binding. It lives under `~/.local/share/hyprwhspr/runtime`, does not replace any
+system library, and is removed by `hyprwhspr uninstall`. If its download or
+validation fails, dictation remains available with notification feedback.
+
+Check which runtime is active with:
+
+```bash
+hyprwhspr mic-osd status
+```
+
+The bundle is built from the MIT-licensed
+[`wmww/gtk4-layer-shell`](https://github.com/wmww/gtk4-layer-shell) v1.3.0 source.
+
 #### Overlay styles
 
 In overlay mode, `mic_osd_style` picks one of three visualizations (notification mode ignores it):

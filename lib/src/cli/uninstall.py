@@ -91,6 +91,9 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
     temp_dir = USER_BASE / 'temp'
     if temp_dir.exists():
         fs_targets.append((f"Temporary files: {temp_dir}", temp_dir))
+    runtime_dir = USER_BASE / 'runtime'
+    if runtime_dir.exists():
+        fs_targets.append((f"Optional GUI runtimes: {runtime_dir}", runtime_dir))
     items_to_remove.extend(label for label, _ in fs_targets)
 
     # Models

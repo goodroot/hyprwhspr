@@ -374,7 +374,7 @@ install_deps_apt() {
         sudo apt install -y gir1.2-gtk4layershell-1.0
         log_success "gtk4-layer-shell installed (mic-osd visualizer available)"
     else
-        log_warning "gir1.2-gtk4layershell-1.0 not available - mic-osd visualizer will be disabled"
+        log_info "System gtk4-layer-shell binding unavailable; setup may install an app-private runtime"
     fi
 
     log_success "System dependencies installed"

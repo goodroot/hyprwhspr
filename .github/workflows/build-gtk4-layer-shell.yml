@@ -1,0 +1,169 @@
+name: Build GTK4 Layer Shell Runtime
+
+# Native output is not assumed to be reproducible across runner image updates.
+# A normal run builds and smoke-tests an artifact. After its generated checksum
+# is pinned in visualizer_runtime.py, a dispatch with that run ID publishes the
+# exact validated artifact rather than compiling it again.
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: 'Successful build run to publish (empty = build only)'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - lib/src/visualizer_runtime.py
+      - .github/workflows/build-gtk4-layer-shell.yml
+
+concurrency:
+  group: build-gtk4-layer-shell-runtime
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.gate.outputs.build }}
+      published: ${{ steps.gate.outputs.published }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check immutable release
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+        run: |
+          contract() { PYTHONPATH=lib/src python3 -c "import visualizer_runtime as v; print(getattr(v, '$1'))"; }
+          tag=$(contract GTK4_LAYER_SHELL_RELEASE_TAG)
+          asset=$(contract GTK4_LAYER_SHELL_ASSET)
+          checksum=$(contract GTK4_LAYER_SHELL_SHA256)
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+              --pattern SHA256SUMS.txt --output published-sums.txt
+            grep -Fx "$checksum  $asset" published-sums.txt
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$ARTIFACT_RUN_ID" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: preflight
+    if: needs.preflight.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive runtime contract
+        run: |
+          contract() { PYTHONPATH=lib/src python3 -c "import visualizer_runtime as v; print(getattr(v, '$1'))"; }
+          echo "VERSION=$(contract GTK4_LAYER_SHELL_VERSION)" >> "$GITHUB_ENV"
+          echo "COMMIT=$(contract GTK4_LAYER_SHELL_COMMIT)" >> "$GITHUB_ENV"
+          echo "ASSET=$(contract GTK4_LAYER_SHELL_ASSET)" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            meson ninja-build libwayland-dev wayland-protocols libgtk-4-dev \
+            gobject-introspection libgirepository1.0-dev python3-gi python3-cairo
+
+      - name: Build pinned upstream source
+        run: |
+          git clone https://github.com/wmww/gtk4-layer-shell.git upstream
+          git -C upstream checkout "$COMMIT"
+          test "$(git -C upstream rev-parse HEAD)" = "$COMMIT"
+          meson setup upstream/build upstream \
+            --buildtype=release --prefix=/usr \
+            -Dexamples=false -Ddocs=false -Dtests=false \
+            -Dvapi=false -Dintrospection=true
+          meson compile -C upstream/build
+          DESTDIR="$PWD/stage" meson install -C upstream/build
+
+      - name: Create minimal bundle
+        run: |
+          mkdir -p bundle/lib/girepository-1.0
+          library=$(find stage -type f -name 'libgtk4-layer-shell.so.*' | head -n1)
+          typelib=$(find stage -type f -name 'Gtk4LayerShell-1.0.typelib' | head -n1)
+          test -n "$library" && test -n "$typelib"
+          cp "$library" bundle/lib/libgtk4-layer-shell.so.0
+          cp "$typelib" bundle/lib/girepository-1.0/Gtk4LayerShell-1.0.typelib
+          cp upstream/LICENSE bundle/LICENSE
+          printf '{"version":"%s","commit":"%s","baseline":"ubuntu-24.04","architecture":"x86_64"}\n' \
+            "$VERSION" "$COMMIT" > bundle/manifest.json
+          SOURCE_DATE_EPOCH=$(git -C upstream show -s --format=%ct "$COMMIT")
+          export SOURCE_DATE_EPOCH
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
+            -czf "$ASSET" -C bundle LICENSE manifest.json \
+            lib/libgtk4-layer-shell.so.0 \
+            lib/girepository-1.0/Gtk4LayerShell-1.0.typelib
+          sha256sum "$ASSET" > SHA256SUMS.txt
+
+      - name: Smoke-test runtime
+        run: |
+          test -z "$(ldd bundle/lib/libgtk4-layer-shell.so.0 | grep 'not found' || true)"
+          GI_TYPELIB_PATH="$PWD/bundle/lib/girepository-1.0" \
+          LD_LIBRARY_PATH="$PWD/bundle/lib" \
+          LD_PRELOAD="$PWD/bundle/lib/libgtk4-layer-shell.so.0" \
+            python3 -c "import cairo,gi; gi.require_version('Gtk','4.0'); gi.require_version('Gtk4LayerShell','1.0'); from gi.repository import Gtk,Gtk4LayerShell"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gtk4-layer-shell-runtime
+          path: |
+            ${{ env.ASSET }}
+            SHA256SUMS.txt
+
+  publish:
+    needs: preflight
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.artifact_run_id != '' &&
+      needs.preflight.outputs.published == 'false'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive pinned publication contract
+        run: |
+          contract() { PYTHONPATH=lib/src python3 -c "import visualizer_runtime as v; print(getattr(v, '$1'))"; }
+          echo "VERSION=$(contract GTK4_LAYER_SHELL_VERSION)" >> "$GITHUB_ENV"
+          echo "COMMIT=$(contract GTK4_LAYER_SHELL_COMMIT)" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$(contract GTK4_LAYER_SHELL_RELEASE_TAG)" >> "$GITHUB_ENV"
+          echo "ASSET=$(contract GTK4_LAYER_SHELL_ASSET)" >> "$GITHUB_ENV"
+          echo "EXPECTED_SHA256=$(contract GTK4_LAYER_SHELL_SHA256)" >> "$GITHUB_ENV"
+
+      - name: Download the previously validated build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+        run: |
+          test "$(gh run view "$ARTIFACT_RUN_ID" --repo "$GITHUB_REPOSITORY" --json conclusion --jq .conclusion)" = success
+          mkdir artifacts
+          gh run download "$ARTIFACT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name gtk4-layer-shell-runtime --dir artifacts
+          grep -Fx "$EXPECTED_SHA256  $ASSET" artifacts/SHA256SUMS.txt
+          echo "$EXPECTED_SHA256  artifacts/$ASSET" | sha256sum --check
+
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" "artifacts/$ASSET" artifacts/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "GTK4 Layer Shell runtime $VERSION" \
+            --notes "App-private x86_64 runtime built from wmww/gtk4-layer-shell@$COMMIT on Ubuntu 24.04."
