@@ -190,6 +190,31 @@ class CohereAndModelCommandTests(unittest.TestCase):
         self.assertIn(('failed', 'original download traceback'), states)
         self.assertNotIn(('completed', None), states)
 
+    def test_cohere_dependency_failure_prevents_model_download(self):
+        states = []
+        with (
+            mock.patch.object(backend_installer, 'HYPRWHSPR_ROOT', str(ROOT)),
+            mock.patch.object(backend_installer, 'init_state'),
+            mock.patch.object(backend_installer, '_check_mise_active',
+                              return_value=False),
+            mock.patch.object(backend_installer, 'get_state', return_value=''),
+            mock.patch.object(
+                backend_installer, 'execute_dependency_plan',
+                side_effect=RuntimeError('inherited pandas ABI mismatch')),
+            mock.patch.object(
+                backend_installer, 'download_cohere_transcribe_model') as download,
+            mock.patch.object(
+                backend_installer, 'set_install_state',
+                side_effect=lambda state, error=None: states.append((state, error))),
+        ):
+            self.assertFalse(
+                backend_installer.install_backend('cohere-transcribe'))
+        download.assert_not_called()
+        self.assertTrue(any(
+            state == 'failed' and 'pandas ABI mismatch' in (error or '')
+            for state, error in states
+        ))
+
 
 class InstallationStatusTests(unittest.TestCase):
     def test_persisted_diagnostic_appears_in_status(self):

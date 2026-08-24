@@ -1609,6 +1609,10 @@ resumed with:
 hyprwhspr model download
 ```
 
+The package named by the traceback may be the incompatible side rather than
+NumPy itself. Cohere setup also verifies and, when safe, relocates the
+inherited scientific-package builds it manages.
+
 As a last resort, use the diagnostic paths to identify the conflicting NumPy
 and manually install the compatible NumPy version into the managed venv. This
 is intentionally not automatic or globally pinned because the correct version

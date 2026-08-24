@@ -4,5 +4,12 @@ transformers>=4.56,<5.3,!=5.0.*,!=5.1.*
 huggingface_hub
 sentencepiece
 protobuf
+# Transformers and librosa load this compiled scientific stack at runtime.
+# Keep it in the managed plan so incompatible inherited distro wheels can be
+# relocated before model initialization.
+scikit-learn
+pandas
+scipy
+numba
 librosa
 soundfile

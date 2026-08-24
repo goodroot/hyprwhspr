@@ -1323,8 +1323,11 @@ _NUMPY_ABI_PATTERNS = (
     re.compile(r'(?:compiled|built).*(?:NumPy|numpy).*(?:API|ABI).*(?:version|mismatch)', re.I | re.S),
     re.compile(r'(?:NumPy|numpy).*(?:API|ABI) version.*(?:mismatch|incompatible)', re.I | re.S),
     re.compile(r'module compiled against API version .*but this version of numpy is', re.I),
+    re.compile(r'Numba needs NumPy .* or less', re.I),
 )
-_ABI_REPAIR_ALLOWLIST = frozenset({'sounddevice', 'soxr'})
+_ABI_REPAIR_ALLOWLIST = frozenset({
+    'numba', 'pandas', 'scikit-learn', 'scipy', 'sounddevice', 'soxr',
+})
 
 
 @dataclass

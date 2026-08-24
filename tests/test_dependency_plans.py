@@ -47,8 +47,21 @@ class DependencyPlanTests(unittest.TestCase):
 
     def test_cohere_probes_scientific_audio_imports(self):
         plan = self.plan('cohere-transcribe')
+        self.assertIn('pandas', plan.required_imports)
+        self.assertIn('scipy', plan.required_imports)
+        self.assertIn('numba', plan.required_imports)
+        self.assertIn('sklearn', plan.required_imports)
         self.assertIn('librosa', plan.required_imports)
         self.assertIn('soundfile', plan.required_imports)
+        for name in ('pandas', 'scipy', 'numba', 'sklearn'):
+            self.assertLess(
+                plan.required_imports.index(name),
+                plan.required_imports.index('transformers'))
+        specs = backend_installer._manifest_requirement_specs(plan)
+        self.assertEqual(specs['pandas'], 'pandas')
+        self.assertEqual(specs['scikit-learn'], 'scikit-learn')
+        self.assertEqual(specs['scipy'], 'scipy')
+        self.assertEqual(specs['numba'], 'numba')
 
     def test_numpy_abi_signatures_are_specific(self):
         signatures = (
@@ -56,6 +69,7 @@ class DependencyPlanTests(unittest.TestCase):
             'A module that was compiled using NumPy 1.x cannot be run in NumPy 2.0',
             'ValueError: numpy.dtype size changed, may indicate binary incompatibility',
             'module compiled against API version 0x10 but this version of numpy is 0xf',
+            'ImportError: Numba needs NumPy 2.2 or less. Got NumPy 2.3.',
         )
         for text in signatures:
             with self.subTest(text=text):
@@ -151,6 +165,82 @@ class DependencyPlanTests(unittest.TestCase):
             ['numpy>=1.26.0'],
         )
 
+    def test_inherited_pandas_against_venv_numpy_relocates_only_pandas(self):
+        plan = self.plan('cohere-transcribe')
+        probe = backend_installer.ImportProbe(
+            'pandas', False,
+            '/usr/lib/python3/dist-packages/pandas/__init__.py',
+            traceback=(
+                'ValueError: numpy.dtype size changed, may indicate binary '
+                'incompatibility. Expected 96 from C header, got 88 from PyObject'
+            ),
+            numpy_version='2.5.2',
+            numpy_origin=str(
+                backend_installer.VENV_DIR
+                / 'lib/python3.12/site-packages/numpy/__init__.py'),
+            distributions=('pandas',),
+        )
+        verification = backend_installer.DependencyVerification(
+            False, failures=[probe])
+        self.assertEqual(
+            backend_installer._repairable_distributions(plan, verification),
+            ['pandas'],
+        )
+        self.assertEqual(
+            backend_installer._repair_requirement_specs(plan, ['pandas']),
+            ['pandas'],
+        )
+
+    def test_inherited_sklearn_maps_to_scikit_learn_repair(self):
+        plan = self.plan('cohere-transcribe')
+        probe = backend_installer.ImportProbe(
+            'sklearn', False,
+            '/usr/lib/python3/dist-packages/sklearn/__init__.py',
+            traceback='_ARRAY_API not found',
+            numpy_version='2.5.2',
+            numpy_origin=str(
+                backend_installer.VENV_DIR
+                / 'lib/python3.12/site-packages/numpy/__init__.py'),
+            distributions=('scikit-learn',),
+        )
+        verification = backend_installer.DependencyVerification(
+            False, failures=[probe])
+        self.assertEqual(
+            backend_installer._repairable_distributions(plan, verification),
+            ['scikit-learn'],
+        )
+
+    def test_inherited_cohere_compiled_dependencies_are_repairable(self):
+        plan = self.plan('cohere-transcribe')
+        cases = (
+            ('scipy', 'ValueError: numpy.dtype size changed'),
+            ('numba', 'ImportError: Numba needs NumPy 2.2 or less. Got NumPy 2.3.'),
+        )
+        for distribution, traceback in cases:
+            with self.subTest(distribution=distribution):
+                probe = backend_installer.ImportProbe(
+                    distribution, False,
+                    f'/usr/lib/python3/dist-packages/{distribution}/__init__.py',
+                    traceback=traceback,
+                    numpy_version='2.5.2',
+                    numpy_origin=str(
+                        backend_installer.VENV_DIR
+                        / 'lib/python3.12/site-packages/numpy/__init__.py'),
+                    distributions=(distribution,),
+                )
+                verification = backend_installer.DependencyVerification(
+                    False, failures=[probe])
+                self.assertEqual(
+                    backend_installer._repairable_distributions(
+                        plan, verification),
+                    [distribution],
+                )
+                self.assertEqual(
+                    backend_installer._repair_requirement_specs(
+                        plan, [distribution]),
+                    [distribution],
+                )
+
     def test_live_probe_detects_venv_extension_against_inherited_numpy(self):
         plan = self.plan('rest-api')
         with tempfile.TemporaryDirectory() as tmp:
@@ -185,6 +275,56 @@ class DependencyPlanTests(unittest.TestCase):
                 self.assertEqual(
                     backend_installer._repairable_distributions(plan, verification),
                     ['numpy'],
+                )
+
+    def test_live_probe_detects_inherited_pandas_against_venv_numpy(self):
+        plan = self.plan('cohere-transcribe')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            venv = root / 'venv'
+            inherited = root / 'inherited-site'
+            pandas = inherited / 'pandas'
+            pandas.mkdir(parents=True)
+            (pandas / '__init__.py').write_text(
+                'raise ValueError("numpy.dtype size changed, may indicate binary '
+                'incompatibility. Expected 96 from C header, got 88 from PyObject")\n',
+                encoding='utf-8')
+            dist_info = inherited / 'pandas-1.0.dist-info'
+            dist_info.mkdir()
+            (dist_info / 'METADATA').write_text(
+                'Metadata-Version: 2.1\nName: pandas\nVersion: 1.0\n',
+                encoding='utf-8')
+            (dist_info / 'top_level.txt').write_text(
+                'pandas\n', encoding='utf-8')
+
+            subprocess.run(
+                [sys.executable, '-m', 'venv', '--system-site-packages', str(venv)],
+                check=True, capture_output=True, text=True)
+            venv_python = venv / 'bin' / 'python'
+            purelib = Path(subprocess.run(
+                [str(venv_python), '-c',
+                 'import sysconfig; print(sysconfig.get_paths()["purelib"])'],
+                check=True, capture_output=True, text=True).stdout.strip())
+            numpy = purelib / 'numpy'
+            numpy.mkdir()
+            (numpy / '__init__.py').write_text(
+                '__version__ = "2.5.2"\n', encoding='utf-8')
+            (purelib / 'inherited-pandas.pth').write_text(
+                f'import sys; sys.path.insert(0, {str(inherited)!r})\n',
+                encoding='utf-8')
+
+            with mock.patch.object(backend_installer, 'VENV_DIR', venv):
+                probe = backend_installer._probe_required_import('pandas')
+                self.assertFalse(probe.ok)
+                self.assertEqual(probe.distributions, ('pandas',))
+                self.assertTrue(str(probe.module_origin).startswith(str(inherited)))
+                self.assertEqual(probe.numpy_version, '2.5.2')
+                self.assertTrue(str(probe.numpy_origin).startswith(str(venv)))
+                verification = backend_installer.DependencyVerification(
+                    False, failures=[probe])
+                self.assertEqual(
+                    backend_installer._repairable_distributions(plan, verification),
+                    ['pandas'],
                 )
 
     def test_system_sounddevice_missing_extension_is_repaired(self):
@@ -297,6 +437,50 @@ class DependencyPlanTests(unittest.TestCase):
         )
         self.assertEqual(verify.call_count, 2)
         commit.assert_called_once_with(plan)
+
+    def test_cohere_repairs_numpy_pandas_and_sklearn_together(self):
+        plan = self.plan('cohere-transcribe')
+        failures = [
+            backend_installer.ImportProbe(
+                'pandas', False,
+                '/usr/lib/python3/dist-packages/pandas/__init__.py',
+                traceback='numpy.dtype size changed',
+                numpy_version='1.26.4',
+                numpy_origin='/usr/lib/python3/dist-packages/numpy/__init__.py',
+                distributions=('pandas',)),
+            backend_installer.ImportProbe(
+                'sklearn', False,
+                '/usr/lib/python3/dist-packages/sklearn/__init__.py',
+                traceback='_ARRAY_API not found',
+                numpy_version='1.26.4',
+                numpy_origin='/usr/lib/python3/dist-packages/numpy/__init__.py',
+                distributions=('scikit-learn',)),
+        ]
+        failed = backend_installer.DependencyVerification(
+            False, failures=failures)
+        passed = backend_installer.DependencyVerification(True)
+        completed = types.SimpleNamespace(
+            returncode=0, stdout='', stderr='')
+        with (
+            mock.patch.object(
+                backend_installer, '_verify_dependency_plan_detailed',
+                side_effect=(failed, passed)) as verify,
+            mock.patch.object(
+                backend_installer, 'run_command',
+                return_value=completed) as run,
+        ):
+            result = backend_installer._verify_and_repair_dependency_plan(
+                plan, Path('/managed/venv/bin/pip'))
+        self.assertTrue(result.ok)
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                '/managed/venv/bin/pip', 'install', '--ignore-installed',
+                'numpy>=1.26.0', 'pandas', 'scikit-learn',
+            ],
+        )
+        self.assertEqual(verify.call_count, 2)
 
     def test_failed_repair_persists_diagnostic_before_rollback(self):
         plan = self.plan('rest-api')
