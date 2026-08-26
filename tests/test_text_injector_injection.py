@@ -492,6 +492,53 @@ class TextInjectorInjectionTests(unittest.TestCase):
         wtype.assert_called_once_with("ctrl+v")
         ydotool.assert_called_once_with("ctrl+v")
 
+    def test_wtype_rejection_logs_resolved_chord_before_ydotool_fallback(self):
+        injector = self._injector()
+        injector.wtype_available = True
+        injector.config_manager = ConfigStub({"paste_mode": "ctrl_shift"})
+        output = io.StringIO()
+        with (
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old"),
+            mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True),
+            mock.patch.object(injector, "_is_hyprland_session", return_value=False),
+            mock.patch.object(injector, "_is_gnome_wayland_session", return_value=False),
+            mock.patch.object(injector, "_send_paste_keys_wtype", return_value=False),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True),
+            mock.patch.object(injector, "_clear_stuck_modifiers"),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch("text_injector.time.sleep"),
+            redirect_stdout(output),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+        self.assertIn("wtype rejected paste chord 'ctrl+shift+v'", output.getvalue())
+        self.assertIn("falling back to ydotool", output.getvalue())
+
+    def test_focused_window_failure_warns_once_with_resolved_chord(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({
+            "applications": {"org.example.Terminal": {"auto_paste": "ctrl+y"}},
+            "paste_mode": "ctrl_shift",
+        })
+        output = io.StringIO()
+        with (
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old"),
+            mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True),
+            mock.patch.object(injector, "_is_hyprland_session", return_value=False),
+            mock.patch.object(injector, "_is_gnome_wayland_session", return_value=False),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True),
+            mock.patch.object(injector, "_clear_stuck_modifiers"),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch("text_injector.time.sleep"),
+            redirect_stdout(output),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("one"))
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("two"))
+        warning = "Focused-window detection failed; using resolved paste chord 'ctrl+shift+v'."
+        self.assertEqual(output.getvalue().count(warning), 1)
+
     def test_hyprland_failure_stops_at_successful_wtype_fallback(self):
         injector = self._injector()
         injector.wtype_available = True
@@ -950,6 +997,29 @@ class TextInjectorInjectionTests(unittest.TestCase):
         restore_clipboard.assert_called_once_with(
             b"old clipboard", injected=b"hello", delay=0
         )
+
+    def test_gnome_explicit_ydotool_failure_leaves_dictation_on_clipboard(self):
+        injector = self._injector()
+        with (
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True),
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=False),
+            mock.patch.object(injector, "_run_ydotool", return_value=None),
+            mock.patch.object(injector, "_restore_clipboard") as restore_clipboard,
+            mock.patch("text_injector.time.sleep"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertFalse(injector._inject_via_clipboard_and_hotkey("hello"))
+        restore_clipboard.assert_not_called()
 
     def test_ydotool_type_command_uses_small_delay_and_argument_separator(self):
         injector = self._injector()

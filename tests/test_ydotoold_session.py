@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
@@ -60,7 +61,7 @@ class YdotooldSessionTests(unittest.TestCase):
     def test_lazy_no_spawn_until_ensure(self):
         record = []
         s = YdotooldSession(socket_path=self.sock,
-                            spawn=_spawn_factory(self.sock, record=record))
+                            spawn=_spawn_factory(self.sock, record=record), settle_delay=0)
         self.assertEqual(record, [])          # constructing must not spawn
         self.assertFalse(s.is_running())      # is_running() must not spawn either
         self.assertEqual(record, [])
@@ -68,7 +69,7 @@ class YdotooldSessionTests(unittest.TestCase):
     def test_ensure_running_spawns_and_waits_for_socket(self):
         record = []
         s = YdotooldSession(socket_path=self.sock,
-                            spawn=_spawn_factory(self.sock, record=record))
+                            spawn=_spawn_factory(self.sock, record=record), settle_delay=0)
         self.assertTrue(s.ensure_running())
         self.assertEqual(len(record), 1)
         self.assertTrue(s.is_running())
@@ -77,7 +78,7 @@ class YdotooldSessionTests(unittest.TestCase):
     def test_ensure_running_idempotent(self):
         record = []
         s = YdotooldSession(socket_path=self.sock,
-                            spawn=_spawn_factory(self.sock, record=record))
+                            spawn=_spawn_factory(self.sock, record=record), settle_delay=0)
         self.assertTrue(s.ensure_running())
         self.assertTrue(s.ensure_running())   # alive + socket present → no respawn
         self.assertEqual(len(record), 1)
@@ -85,7 +86,7 @@ class YdotooldSessionTests(unittest.TestCase):
     def test_respawn_after_death(self):
         record = []
         s = YdotooldSession(socket_path=self.sock,
-                            spawn=_spawn_factory(self.sock, record=record))
+                            spawn=_spawn_factory(self.sock, record=record), settle_delay=0)
         self.assertTrue(s.ensure_running())
         record[0].die()                        # daemon crashed between injections
         self.assertFalse(s.is_running())
@@ -102,7 +103,7 @@ class YdotooldSessionTests(unittest.TestCase):
     def test_spawn_failure_returns_false(self):
         def _boom():
             raise OSError("ydotoold not found")
-        s = YdotooldSession(socket_path=self.sock, spawn=_boom)
+        s = YdotooldSession(socket_path=self.sock, spawn=_boom, settle_delay=0)
         self.assertFalse(s.ensure_running())
 
     def test_default_spawn_builds_correct_argv(self):
@@ -112,6 +113,7 @@ class YdotooldSessionTests(unittest.TestCase):
         class _Rec:
             def __init__(self_inner, argv, **kw):
                 captured['argv'] = argv
+                captured.update(kw)
                 open(sock, "w").close()
 
             def poll(self_inner):
@@ -120,12 +122,14 @@ class YdotooldSessionTests(unittest.TestCase):
         orig = ydotoold_session.subprocess.Popen
         ydotoold_session.subprocess.Popen = _Rec
         try:
-            s = YdotooldSession(socket_path=sock)  # uses _default_spawn
+            s = YdotooldSession(socket_path=sock, settle_delay=0)  # uses _default_spawn
             self.assertTrue(s.ensure_running())
         finally:
             ydotoold_session.subprocess.Popen = orig
         self.assertEqual(captured['argv'],
                          ['ydotoold', '-p', sock, '-P', '0600'])
+        self.assertIs(captured.get('stderr'), None)
+        self.assertIs(captured.get('stdout'), ydotoold_session.subprocess.DEVNULL)
 
     def test_socket_env_points_at_private_socket(self):
         s = YdotooldSession(socket_path=self.sock, spawn=_spawn_factory(self.sock))
@@ -159,7 +163,8 @@ class YdotooldSessionTests(unittest.TestCase):
         ydotoold_session.time.sleep = _sleep
         try:
             s = YdotooldSession(socket_path=self.sock, spawn=_spawn,
-                                socket_timeout=0.15, poll_interval=0.05)
+                                socket_timeout=0.15, poll_interval=0.05,
+                                settle_delay=0)
             self.assertFalse(s.ensure_running())
         finally:
             ydotoold_session.time.monotonic = orig_monotonic
@@ -168,10 +173,33 @@ class YdotooldSessionTests(unittest.TestCase):
         self.assertEqual(len(record), 2)
         self.assertLess(now[0], 0.3)
 
+    def test_settle_delay_does_not_reduce_socket_timeout_budget(self):
+        now = [0.0]
+        proc = FakeProc()
+
+        def _sleep(seconds):
+            now[0] += seconds
+
+        with (
+            mock.patch.object(ydotoold_session.time, 'monotonic', side_effect=lambda: now[0]),
+            mock.patch.object(ydotoold_session.time, 'sleep', side_effect=_sleep),
+            mock.patch.object(
+                ydotoold_session.os.path, 'exists',
+                side_effect=lambda _path: now[0] >= 0.04,
+            ),
+        ):
+            s = YdotooldSession(
+                socket_path=self.sock, spawn=lambda: proc,
+                socket_timeout=0.05, poll_interval=0.01, settle_delay=0.04,
+            )
+            self.assertTrue(s.ensure_running())
+
+        self.assertGreaterEqual(now[0], 0.08)
+
     def test_close_terminates_and_unlinks_and_is_idempotent(self):
         record = []
         s = YdotooldSession(socket_path=self.sock,
-                            spawn=_spawn_factory(self.sock, record=record))
+                            spawn=_spawn_factory(self.sock, record=record), settle_delay=0)
         s.ensure_running()
         self.assertTrue(os.path.exists(self.sock))
         s.close()
@@ -179,6 +207,45 @@ class YdotooldSessionTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.sock))
         self.assertFalse(s.is_running())
         s.close()  # second close must be a harmless no-op
+
+    def test_socket_appearance_is_followed_by_device_settle_delay(self):
+        s = YdotooldSession(
+            socket_path=self.sock,
+            spawn=_spawn_factory(self.sock),
+            socket_timeout=0.2,
+            poll_interval=0.005,
+            settle_delay=0.03,
+        )
+        started = ydotoold_session.time.monotonic()
+        self.assertTrue(s.ensure_running())
+        self.assertGreaterEqual(ydotoold_session.time.monotonic() - started, 0.025)
+
+    def test_death_during_settle_period_retries_once(self):
+        record = []
+
+        class DiesDuringSettle(FakeProc):
+            def __init__(self):
+                super().__init__()
+                self.polls = 0
+
+            def poll(self):
+                self.polls += 1
+                if self.polls >= 4:
+                    self.die()
+                return super().poll()
+
+        def _spawn():
+            proc = DiesDuringSettle() if not record else FakeProc()
+            record.append(proc)
+            open(self.sock, "w").close()
+            return proc
+
+        s = YdotooldSession(
+            socket_path=self.sock, spawn=_spawn, socket_timeout=0.3,
+            poll_interval=0.005, settle_delay=0.03,
+        )
+        self.assertTrue(s.ensure_running())
+        self.assertEqual(len(record), 2)
 
 
 if __name__ == "__main__":

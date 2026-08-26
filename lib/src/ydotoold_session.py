@@ -29,7 +29,8 @@ class YdotooldSession:
 
     def __init__(self, socket_path: Optional[str] = None,
                  spawn: Optional[Callable[[], "subprocess.Popen"]] = None,
-                 socket_timeout: float = 3.0, poll_interval: float = 0.05):
+                 socket_timeout: float = 3.0, poll_interval: float = 0.05,
+                 settle_delay: float = 1.1):
         runtime = os.environ.get('XDG_RUNTIME_DIR') or '/tmp'
         # Private path (not the default $XDG_RUNTIME_DIR/.ydotool_socket) so we never
         # collide with a shared/system ydotoold. The path also appears in our
@@ -38,9 +39,14 @@ class YdotooldSession:
         self._spawn = spawn or self._default_spawn
         self._socket_timeout = socket_timeout
         self._poll_interval = poll_interval
+        # ydotoold creates its socket before its virtual input device is usable.
+        # Upstream deliberately waits one second after creating the device; keep a
+        # small margin so the first client command is not silently dropped.
+        self._settle_delay = settle_delay
         self._socket_env = dict(os.environ)
         self._socket_env['YDOTOOL_SOCKET'] = self.socket_path
         self._proc: Optional[subprocess.Popen] = None
+        self._ready_proc: Optional[subprocess.Popen] = None
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ spawn
@@ -48,7 +54,8 @@ class YdotooldSession:
         return subprocess.Popen(
             ['ydotoold', '-p', self.socket_path, '-P', '0600'],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            # Let startup/uinput failures reach the service journal.
+            stderr=None,
         )
 
     @staticmethod
@@ -69,15 +76,23 @@ class YdotooldSession:
         clipboard-only.
         """
         with self._lock:
-            if self.is_running() and os.path.exists(self.socket_path):
+            if (
+                self.is_running()
+                and self._ready_proc is self._proc
+                and os.path.exists(self.socket_path)
+            ):
                 return True
-            deadline = time.monotonic() + self._socket_timeout
+            # The socket timeout describes how long ydotoold gets to publish its
+            # socket. Its mandatory virtual-device settle period is additional;
+            # charging it to the socket budget made healthy cold starts fail early.
+            deadline = time.monotonic() + self._socket_timeout + self._settle_delay
             return self._start_locked(deadline, allow_restart=True)
 
     def _start_locked(self, deadline: float, allow_restart: bool) -> bool:
         # Drop a dead handle.
         if self._proc is not None and self._proc.poll() is not None:
             self._proc = None
+            self._ready_proc = None
 
         if self._proc is None:
             # Remove a stale socket from a previous run so ydotoold can bind.
@@ -91,13 +106,25 @@ class YdotooldSession:
             except (OSError, ValueError):
                 return False
 
+        socket_seen_at = None
         while time.monotonic() < deadline:
             if self._proc.poll() is not None:
                 # Died during startup — retry once from scratch.
                 self._proc = None
+                self._ready_proc = None
                 return self._start_locked(deadline, allow_restart=False) if allow_restart else False
             if os.path.exists(self.socket_path):
-                return True
+                if socket_seen_at is None:
+                    socket_seen_at = time.monotonic()
+                if time.monotonic() - socket_seen_at >= self._settle_delay:
+                    # Poll once more after the settle interval: the socket can
+                    # outlive a daemon which failed to create /dev/uinput.
+                    if self._proc.poll() is not None:
+                        self._proc = None
+                        self._ready_proc = None
+                        return self._start_locked(deadline, allow_restart=False) if allow_restart else False
+                    self._ready_proc = self._proc
+                    return True
             time.sleep(self._poll_interval)
         return False
 
@@ -110,6 +137,7 @@ class YdotooldSession:
         with self._lock:
             proc = self._proc
             self._proc = None
+            self._ready_proc = None
         if proc is not None:
             try:
                 proc.terminate()

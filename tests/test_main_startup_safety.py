@@ -191,7 +191,7 @@ class MainStartupSafetyTests(unittest.TestCase):
                 and node.args
                 and isinstance(node.args[0], ast.JoinedStr)
                 and any(
-                    isinstance(part, ast.Constant) and "[INJECT] Text injected" in str(part.value)
+                    isinstance(part, ast.Constant) and "[INJECT] Injection dispatched" in str(part.value)
                     for part in node.args[0].values
                 )
             ):

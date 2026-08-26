@@ -325,6 +325,7 @@ class TextInjector:
         # ydotool.service: hyprwhspr owns this daemon on its own socket.
         self._ydotoold = YdotooldSession()
         self._atspi_unavailable = False
+        self._warned_focused_window_unavailable = False
 
         if (
             not self.ydotool_available
@@ -370,6 +371,7 @@ class TextInjector:
         could not be started (callers degrade gracefully).
         """
         if not self._ydotoold.ensure_running():
+            print("ydotoold failed to become ready; check /dev/uinput permissions and the hyprwhspr journal.")
             return None
         return subprocess.run(
             ['ydotool', *args],
@@ -1050,6 +1052,7 @@ except Exception:
         Send paste keystroke with delays between events via ydotool.
         Used as fallback when wtype is unavailable.
         """
+        self._last_ydotool_failure_explicit = False
         paste_chord = PASTE_MODE_CHORDS.get(paste_chord, paste_chord)
         parsed = self._parse_key_chord(paste_chord)
         if not parsed:
@@ -1089,6 +1092,7 @@ except Exception:
             return True
 
         except Exception as e:
+            self._last_ydotool_failure_explicit = True
             print(f"Slow paste key injection failed: {e}")
             return False
         finally:
@@ -1421,13 +1425,21 @@ except Exception:
     def _inject_via_clipboard_and_hotkey(self, text: str) -> bool:
         """Copy text to clipboard, then trigger the compositor-native paste path."""
         try:
+            window_lookup_needed = self._active_window_lookup_needed()
             window_info = (
                 self._get_active_window_info()
-                if self._active_window_lookup_needed()
+                if window_lookup_needed
                 else None
             )
             gnome_wayland_session = self._is_gnome_wayland_session()
             paste_chord, app_match = self._resolve_paste_chord(window_info)
+            if (
+                not window_info
+                and window_lookup_needed
+                and not getattr(self, '_warned_focused_window_unavailable', False)
+            ):
+                print(f"⚠️  Focused-window detection failed; using resolved paste chord {paste_chord!r}.")
+                self._warned_focused_window_unavailable = True
             if paste_chord is False:
                 # Injection is explicitly disabled for this app. Do nothing at all —
                 # no paste, no clipboard write. "Disabled" means hands off, which also
@@ -1491,6 +1503,10 @@ except Exception:
                     self._clear_stuck_modifiers()
 
             if not pasted and self.ydotool_available:
+                if self.wtype_available:
+                    print(f"⚠️  wtype rejected paste chord {paste_chord!r}; falling back to ydotool.")
+                else:
+                    print(f"ℹ️  Dispatching paste chord {paste_chord!r} with ydotool.")
                 self._clear_stuck_modifiers()
                 time.sleep(0.02)
                 # Non-Latin layouts (Thai, Russian, …) remap KEY_V, so the raw-keycode
@@ -1525,7 +1541,10 @@ except Exception:
                     restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
                 self._send_enter_if_auto_submit()
-            elif gnome_wayland_session:
+            elif (
+                gnome_wayland_session
+                and not getattr(self, '_last_ydotool_failure_explicit', False)
+            ):
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=0)
 
             return pasted

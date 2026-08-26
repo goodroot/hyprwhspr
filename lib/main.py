@@ -1468,7 +1468,7 @@ class hyprwhsprApp:
             if outcome == InjectionOutcome.CONSUMED:
                 print("[INJECT] Post-transcription hook consumed transcription", flush=True)
             else:
-                print(f"[INJECT] Text injected ({len(text)} chars)", flush=True)
+                print(f"[INJECT] Injection dispatched ({len(text)} chars)", flush=True)
 
             # Text injection succeeded (or was intentionally consumed) - system is fully healthy
             # Cancel any pending background recovery
