@@ -1329,6 +1329,20 @@ class TextInjectorInjectionTests(unittest.TestCase):
         ):
             self.assertEqual(injector.inject_text("hello"), InjectionOutcome.INJECTED)
 
+    def test_transcript_emptied_by_filtering_pastes_nothing(self):
+        # An utterance that was nothing but fillers filters down to "". The
+        # empty check at the top of inject_text runs on the raw text, so without
+        # a second guard the trailing space alone would reach the clipboard.
+        injector = self._injector()
+        injector.config_manager = ConfigStub(
+            {"filter_filler_words": True, "filler_words": ["um", "uh"]}
+        )
+
+        with mock.patch.object(injector, "_inject_via_clipboard_and_hotkey") as inject:
+            self.assertEqual(injector.inject_text("Um. Uh."), InjectionOutcome.INJECTED)
+
+        inject.assert_not_called()
+
     def test_inject_text_returns_failed_on_failed_paste(self):
         injector = self._injector()
         injector.config_manager = ConfigStub({})
@@ -1411,24 +1425,41 @@ class WordOverrideBoundaryTests(unittest.TestCase):
     def test_single_character_override_still_matches_mid_word(self):
         self.assertEqual(self._preprocess("Straße", {"ß": "ss"}), "Strasse")
 
-    def test_cjk_filler_word_is_removed_mid_sentence(self):
-        injector = make_injector()
-        injector.config_manager = ConfigStub(
-            {
-                "symbol_replacements": False,
-                "filter_filler_words": True,
-                "filler_words": ["那个"],
-            }
-        )
-        self.assertEqual(injector._preprocess_text("我那个觉得"), "我觉得")
+    def test_filler_filtering_reaches_preprocessing_through_config(self):
+        # Rule-level coverage lives in test_filler_filter.py; this pins the
+        # config adapter and the interaction with the spoken-symbol pass, which
+        # runs after filtering and is enabled by default.
+        for symbols in (True, False):
+            injector = make_injector()
+            injector.config_manager = ConfigStub(
+                {"symbol_replacements": symbols, "filter_filler_words": True,
+                 "filler_words": ["uh", "um", "er", "ah", "eh", "hmm", "hm", "mm", "mhm"]}
+            )
+            with self.subTest(symbol_replacements=symbols):
+                self.assertEqual(
+                    injector._preprocess_text(
+                        "Fair enough. Um. Uh, what about the um, second option?"
+                    ),
+                    "Fair enough. What about the second option?",
+                )
+                self.assertEqual(injector._preprocess_text("umbrella"), "umbrella")
 
-    def test_latin_filler_word_removal_is_unchanged(self):
+    def test_dictated_punctuation_next_to_a_filler_is_preserved(self):
+        # Filtering runs before spoken-symbol replacement, so a dictated "comma"
+        # is still a word at that point and survives the filler beside it.
+        # Explicit dictation outranks tidiness.
         injector = make_injector()
         injector.config_manager = ConfigStub(
-            {"symbol_replacements": False, "filter_filler_words": True, "filler_words": ["um"]}
+            {"symbol_replacements": True, "filter_filler_words": True, "filler_words": ["um"]}
         )
-        self.assertEqual(injector._preprocess_text("well um okay"), "well okay")
-        self.assertEqual(injector._preprocess_text("umbrella"), "umbrella")
+        self.assertEqual(
+            injector._preprocess_text("hello comma um comma world"), "hello,, world"
+        )
+
+    def test_filler_filtering_is_off_by_default(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({"symbol_replacements": False})
+        self.assertEqual(injector._preprocess_text("well um okay"), "well um okay")
 
 
 class SpokenPunctuationPreprocessingTests(unittest.TestCase):

@@ -26,6 +26,12 @@ try:
 except ImportError:
     from text_script import boundaried_pattern, ends_with_no_space_script
 
+try:
+    from .filler_filter import filter_filler_words
+except ImportError:
+    from filler_filter import filter_filler_words
+
+
 class _LazyPyperclip:
     """Load the optional fallback only when native clipboard tools are absent."""
 
@@ -98,10 +104,7 @@ def _apply_configured_word_overrides(text, config_manager):
 def _filter_configured_filler_words(text, config_manager):
     if config_manager is None or not config_manager.get_filter_filler_words():
         return text
-    for word in config_manager.get_filler_words() or ():
-        if word:
-            text = re.sub(boundaried_pattern(word), '', text, flags=re.IGNORECASE)
-    return re.sub(r' +', ' ', text).strip()
+    return filter_filler_words(text, config_manager.get_filler_words())
 
 
 def preprocess_text(text: str, config_manager=None) -> str:
@@ -1335,6 +1338,12 @@ except Exception:
 
         # Preprocess; also trim trailing newlines (avoid unwanted Enter)
         processed_text = self._preprocess_text(text).rstrip("\r\n")
+        # Filtering can empty a transcript outright -- an utterance that was
+        # nothing but filler words. Pasting the trailing space alone is worse
+        # than pasting nothing.
+        if not processed_text.strip():
+            print("No text to inject (empty after preprocessing)")
+            return InjectionOutcome.INJECTED
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED

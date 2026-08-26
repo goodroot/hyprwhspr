@@ -961,6 +961,13 @@ Remove common filler words automatically:
 }
 ```
 
+- Backends that punctuate their own transcripts attach the mark to the filler (`"Um."`, `"Uh,"`); the mark is removed along with the filler, not left stranded
+- Punctuation belonging to the surrounding sentence survives -- `"I said, um, no."` keeps its first comma, and a sentence break the filler carried is kept: `"Well, um. Okay."` -> `"Well. Okay."`
+- A word left starting a sentence is re-capitalized: `"Fair enough. Um. Uh, what about it?"` -> `"Fair enough. What about it?"`
+- A bracket or quote pair wrapping a filler goes with it (`"Um," he said.` -> `He said.`); an unpaired one stays (`(so um) fine` -> `(so) fine`)
+- Dictated punctuation is preserved: filtering runs before speech-to-symbol replacement, so a spoken `comma` beside a filler survives
+- An utterance that was nothing but fillers pastes nothing at all
+
 ### Hallucination markers
 
 Whisper invents stock subtitle phrases when handed audio with no speech in it. Transcriptions matching this list are discarded rather than pasted:
