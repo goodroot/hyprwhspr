@@ -184,6 +184,18 @@ class WhisperManager:
         return normalize_backend(
             self.config.get_setting('transcription_backend', 'pywhispercpp'))
 
+    def active_backend_is_local(self) -> bool:
+        """True when the active backend runs a local model (vs. a remote API/WebSocket).
+
+        Falls back to the configured backend name when no backend object exists
+        yet, so callers can classify a backend that failed to initialize.
+        """
+        backend = self._backend
+        if backend is not None:
+            return backend.is_local
+        backend_cls = BACKENDS.get(self._current_backend_name())
+        return backend_cls.is_local if backend_cls is not None else True
+
     def update_realtime_language(self, language: Optional[str]) -> None:
         """Apply a language override to a connected realtime client (no-op otherwise)."""
         backend = self._active_realtime_backend()

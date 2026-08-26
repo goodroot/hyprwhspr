@@ -2161,7 +2161,7 @@ class hyprwhsprApp:
                     self._background_recovery_needed.clear()
                 else:
                     # Backend reinitialization failed - signal that recovery is still needed
-                    if backend in pywhispercpp_variants or backend == 'faster-whisper':
+                    if self.whisper_manager.active_backend_is_local():
                         self._write_recovery_result(False, 'suspend_resume_model')
                     else:
                         self._write_recovery_result(False, 'suspend_resume_websocket')
