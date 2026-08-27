@@ -1379,6 +1379,8 @@ Lets you know when you're disconnected. Mute detection can conflict with Bluetoo
 }
 ```
 
+Silent recordings are still rejected. Test live input with `hyprwhspr test --live`.
+
 ## GPU resource management
 
 Free GPU VRAM without stopping the service - useful before running a game or other GPU-intensive workload. Keyboard shortcuts stay active; recording is blocked while the model is unloaded, with a desktop notification on attempt.
@@ -1442,6 +1444,9 @@ Still weird? Proceed.
 #### I heard the sound but don't see text
 
 On resume/restart, the microphone often "loses connection" and requires reseating — a Linux quirk not resolvable by hyprwhspr. Reseat your microphone as prompted, and ensure the **right microphone** is set in sound options.
+
+If the default source ends in `.monitor`, select a real input or set
+`audio_device_name`. Test it with `hyprwhspr test --live`.
 
 #### Hotkey not working
 

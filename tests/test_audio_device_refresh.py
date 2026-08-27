@@ -392,6 +392,51 @@ class AudioDeviceRefreshTests(unittest.TestCase):
         self.assertEqual(fake_sd.default.device[0], None)
         self.assertIn(None, fake_sd.started_devices)
 
+    def test_output_monitor_default_is_rejected_at_startup(self):
+        fake_sd = FakeSoundDevice()
+        fake_sd.devices.append({
+            "name": "pulse",
+            "max_input_channels": 32,
+            "default_samplerate": 48000,
+            "hostapi": 0,
+        })
+        module = self._load_audio_capture(fake_sd)
+        monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources([monitor])):
+            capture = module.AudioCapture(config_manager=FakeConfig())
+
+        self.assertIsNone(capture.device_id)
+        self.assertIsNone(fake_sd.default.device[0])
+        self.assertIn("output monitor", capture.get_input_selection_error())
+        with self.assertRaisesRegex(RuntimeError, "output monitor"):
+            capture.start_recording()
+        self.assertEqual(capture.stream_open_error, capture.get_input_selection_error())
+
+    def test_output_monitor_transition_blocks_until_real_source_returns(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources([
+            "alsa_input.old mic",
+            monitor,
+            "alsa_input.new mic",
+        ])):
+            capture = module.AudioCapture(config_manager=FakeConfig())
+            self.assertEqual(capture.device_id, 0)
+
+            self.assertTrue(capture.refresh_default_input("monitor_selected"))
+            self.assertIsNone(capture.device_id)
+            self.assertIsNone(fake_sd.default.device[0])
+            self.assertIn("output monitor", capture.get_input_selection_error())
+
+            self.assertTrue(capture.refresh_default_input("microphone_selected"))
+
+        self.assertEqual(capture.device_id, 1)
+        self.assertIsNone(capture.get_input_selection_error())
+        self.assertEqual(fake_sd.default.device[0], 1)
+
     def test_refresh_default_input_skips_during_recovery(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)

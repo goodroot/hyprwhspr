@@ -1538,6 +1538,10 @@ class hyprwhsprApp:
         with self._mic_state_lock:
             if self._mic_disconnected:
                 return "Microphone disconnected - please replug USB microphone"
+        get_selection_error = getattr(self.audio_capture, 'get_input_selection_error', None)
+        selection_error = get_selection_error() if callable(get_selection_error) else None
+        if selection_error:
+            return selection_error
         if not getattr(self.audio_capture, 'stream_opened', True):
             open_error = getattr(self.audio_capture, 'stream_open_error', None)
             if open_error:

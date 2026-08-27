@@ -75,7 +75,11 @@ def test_command(live: bool = False, mic_only: bool = False):
             # Initialize audio capture
             audio = AudioCapture(device_id=device_id, config_manager=config)
 
-            if audio.is_available():
+            selection_error = audio.get_input_selection_error()
+            if selection_error:
+                log_error(selection_error)
+                all_passed = False
+            elif audio.is_available():
                 device_info = audio.get_current_device_info()
                 if device_info:
                     log_success(f"Using: {device_info['name']}")
@@ -268,6 +272,7 @@ def test_command(live: bool = False, mic_only: bool = False):
                 all_passed = False
         else:
             # Use test.wav
+            log_info("Using bundled test audio; run `hyprwhspr test --live` to verify microphone capture")
             test_wav_path = Path(HYPRWHSPR_ROOT) / 'share' / 'assets' / 'test.wav'
 
             if not test_wav_path.exists():

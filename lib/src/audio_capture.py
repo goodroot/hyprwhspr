@@ -121,6 +121,11 @@ class AudioCapture:
         self._keepalive_stream = None
         self._keepalive_lock = threading.Lock()  # Protects _keepalive_stream across threads
         self._last_pulse_default_source_name = None
+        # Actionable reason capture is unavailable even though PortAudio still
+        # exposes devices (for example, PipeWire selected an output monitor as
+        # the default source).  Callers use this instead of reporting a generic
+        # disconnected-microphone error.
+        self._input_selection_error = None
         # Last source a configured mic resolved to; survives a server restart.
         self._pinned_pulse_source = None
         # Callable reporting whether an external event monitor (PulseMonitor)
@@ -164,6 +169,7 @@ class AudioCapture:
                     device_info = sd.query_devices(device=resolved_device_id, kind='input')
                     if device_info['max_input_channels'] > 0:
                         self._set_sd_default_input(resolved_device_id)
+                        self._input_selection_error = None
                         print(f"Using configured audio device: {device_info['name']} (ID: {resolved_device_id})")
                         self._warn_if_raw_alsa(device_info['name'])
                         device_found = True
@@ -237,8 +243,12 @@ class AudioCapture:
                         device_found = True
                     except Exception:
                         pass
-                if not device_found:
+                if not device_found and self._input_selection_error is None:
                     self._set_system_default_device()
+                elif not device_found:
+                    # Do not let sounddevice's implicit/default input route
+                    # straight back to the output monitor we just rejected.
+                    self._clear_sd_default_input()
             
             # Get device information
             try:
@@ -367,12 +377,18 @@ class AudioCapture:
         old_pulse_source = self._last_pulse_default_source_name
         pulse_default_id = self._get_pulse_default_source_device_id()
         new_pulse_source = self._last_pulse_default_source_name
+        if self._input_selection_error is not None:
+            had_binding = old_device_id is not None or self._current_sd_default_input() is not None
+            self._stop_keepalive()
+            self._clear_sd_default_input()
+            return had_binding
         if pulse_default_id is not None:
             try:
                 device_info = sd.query_devices(device=pulse_default_id, kind='input')
                 if device_info['max_input_channels'] <= 0:
                     raise ValueError(f"Default source device {pulse_default_id} has no input channels")
                 self._set_sd_default_input(pulse_default_id)
+                self._input_selection_error = None
                 self.device_info = device_info
                 self.device_id = pulse_default_id
                 self._sync_sample_rate_to_device(device_info)
@@ -610,6 +626,7 @@ class AudioCapture:
                 if device_info['max_input_channels'] > 0:
                     # Binding a concrete index overrides any source pin.
                     self._clear_pulse_source_env()
+                    self._input_selection_error = None
                     self.preferred_device_id = device_id
                     self._set_sd_default_input(device_id)
                     self.device_info = device_info
@@ -652,6 +669,11 @@ class AudioCapture:
 
     # Naming a card this way is an explicit request for raw hardware.
     _RAW_ALSA_PREFIXES = ('hw:', 'plughw:')
+
+    @staticmethod
+    def _is_monitor_source_name(source_name: str) -> bool:
+        """True for PulseAudio/PipeWire sources that mirror an output sink."""
+        return bool(source_name and source_name.strip().lower().endswith('.monitor'))
 
     @staticmethod
     def _list_pulse_sources() -> list:
@@ -765,6 +787,7 @@ class AudioCapture:
         if device_info['max_input_channels'] <= 0:
             return False
         self._set_sd_default_input(index)
+        self._input_selection_error = None
         print(f"{label}: {device_info['name']} (ID: {index})")
         self._warn_if_raw_alsa(device_info['name'])
         return True
@@ -930,6 +953,19 @@ class AudioCapture:
             if source_changed:
                 print(f"[PULSE] System default source: {pulse_source_name}")
 
+            if self._is_monitor_source_name(pulse_source_name):
+                self._input_selection_error = (
+                    "System default input is an output monitor, not a microphone. "
+                    "Select a microphone in sound settings or set audio_device_name, "
+                    "then run: hyprwhspr test --live"
+                )
+                self._clear_pulse_source_env()
+                if source_changed:
+                    print(f"[PULSE] Refusing output monitor as microphone: {pulse_source_name}")
+                return None
+
+            self._input_selection_error = None
+
             try:
                 devices = sd.query_devices()
             except Exception:
@@ -979,6 +1015,10 @@ class AudioCapture:
             return True
         except Exception:
             return False
+
+    def get_input_selection_error(self) -> Optional[str]:
+        """Return an actionable reason the current input cannot be captured."""
+        return self._input_selection_error
     
     def start_recording(self, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
@@ -988,6 +1028,11 @@ class AudioCapture:
             streaming_callback: Optional callback function to receive audio chunks in real-time
                                 (for streaming backends like WebSocket)
         """
+        if self._input_selection_error is not None:
+            self.stream_opened = False
+            self.stream_open_error = self._input_selection_error
+            raise RuntimeError(self._input_selection_error)
+
         if not self.is_available():
             raise RuntimeError("Audio capture not available")
         

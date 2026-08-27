@@ -184,6 +184,22 @@ class SoundServerRoutingTests(unittest.TestCase):
         self.assertEqual(capture.device_id, 2)
         self.assertEqual(os.environ.get("PULSE_SOURCE"), ELGATO_SOURCE)
 
+    def test_explicit_source_works_when_system_default_is_monitor(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
+        pactl = self._fake_pactl(sources=(ELGATO_SOURCE,), default=monitor)
+
+        capture = self._build(
+            module,
+            FakeConfig({"audio_device_name": ELGATO_SOURCE}),
+            pactl=pactl,
+        )
+
+        self.assertEqual(capture.device_id, 2)
+        self.assertEqual(os.environ.get("PULSE_SOURCE"), ELGATO_SOURCE)
+        self.assertIsNone(capture.get_input_selection_error())
+
     def test_virtual_source_with_no_portaudio_entry_resolves(self):
         """EasyEffects' source has no PortAudio device; it used to match nothing."""
         fake_sd = FakeSoundDevice()
