@@ -1,4 +1,5 @@
 import importlib
+import subprocess
 import sys
 import types
 import unittest
@@ -403,15 +404,190 @@ class AudioDeviceRefreshTests(unittest.TestCase):
         module = self._load_audio_capture(fake_sd)
         monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
 
-        with mock.patch("subprocess.run", side_effect=self._run_sources([monitor])):
+        # The mock stays active across start_recording: the entry guard re-polls
+        # the default rather than trusting the cached rejection, so the monitor has
+        # to still be the default for the refusal to stand.
+        with mock.patch("subprocess.run", side_effect=self._run_sources([monitor] * 4)):
             capture = module.AudioCapture(config_manager=FakeConfig())
 
-        self.assertIsNone(capture.device_id)
-        self.assertIsNone(fake_sd.default.device[0])
-        self.assertIn("output monitor", capture.get_input_selection_error())
-        with self.assertRaisesRegex(RuntimeError, "output monitor"):
-            capture.start_recording()
+            self.assertIsNone(capture.device_id)
+            self.assertIsNone(fake_sd.default.device[0])
+            self.assertIn("output monitor", capture.get_input_selection_error())
+            with self.assertRaisesRegex(RuntimeError, "output monitor"):
+                capture.start_recording()
+
         self.assertEqual(capture.stream_open_error, capture.get_input_selection_error())
+
+    def test_monitor_discovered_at_record_start_opens_no_stream(self):
+        """The default can flip to a monitor after start_recording's entry guard.
+
+        The record-start refresh then rejects it and clears the binding, which
+        would leave device=None — and PortAudio resolves that straight back to
+        the monitor. Nothing may be opened.
+        """
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources([
+            "alsa_input.old mic",  # startup: a real microphone, so the guard passes
+            monitor,               # record start: default moved to the monitor
+        ])):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            self.assertEqual(capture.device_id, 0)
+            self.assertIsNone(capture.get_input_selection_error())
+
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=2.0)
+
+        self.assertEqual(fake_sd.started_devices, [])
+        self.assertFalse(capture.stream_opened)
+        self.assertIn("output monitor", capture.stream_open_error)
+        self.assertIsNone(capture.device_id)
+
+    def test_input_selection_retry_does_not_run_while_recording(self):
+        """The retry re-enters PortAudio, so it must sit behind the guards.
+
+        `_initialize_sounddevice` rebinds the device and opens a keepalive stream;
+        running it ahead of the `is_recording` early return would do that on top of
+        a live recording stream, and ahead of the recovery wait would race
+        `_reset_portaudio_state()` (#209).
+        """
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"] * 4)):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+
+            capture.is_recording = True
+            capture._input_selection_error = "stale rejection"
+            with mock.patch.object(capture, "_retry_input_selection") as retry:
+                self.assertTrue(capture.start_recording())
+
+        retry.assert_not_called()
+
+    def test_monitor_discovered_during_open_retry_opens_no_stream(self):
+        """The retry loop's refresh can also surface the monitor for the first time.
+
+        A transient stream failure re-resolves the default; if that now points at
+        a monitor the binding is cleared, and retrying with device=None hands
+        PortAudio the monitor.
+        """
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(
+            ["alsa_input.old mic"] * 2 + [monitor] * 4
+        )):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            self.assertEqual(capture.device_id, 0)
+
+            # First open fails transiently; the refresh that follows finds a monitor.
+            fake_sd.fail_once_for_device = 0
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=2.0)
+
+        self.assertEqual(fake_sd.started_devices, [0])  # no second, monitor-backed open
+        self.assertFalse(capture.stream_opened)
+        self.assertIn("output monitor", capture.stream_open_error)
+
+    def test_monitor_rejection_clears_once_a_real_default_returns(self):
+        """The rejection must not latch for the rest of the process.
+
+        Nothing else re-tests it on the record path, so a user who fixes their
+        default input in sound settings would otherwise be refused until they
+        restarted the service.
+        """
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(
+            [monitor] + ["alsa_input.new mic"] * 8
+        )):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            self.assertIsNotNone(capture.get_input_selection_error())
+
+            # User picks a real microphone; the next record attempt must re-poll.
+            fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=2.0)
+
+        self.assertIsNone(capture.get_input_selection_error())
+        self.assertTrue(capture.stream_opened)
+        self.assertEqual(capture.device_id, 1)
+
+    def test_configured_device_recovers_after_monitor_rejection(self):
+        """A configured mic that was absent at startup must be retried.
+
+        `_refresh_default_input_unlocked` returns early whenever a device is
+        configured, so without an explicit retry the rejection recorded during
+        startup fallback could never clear — and its advice ("set
+        audio_device_name") is exactly what the user has already done.
+        """
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
+        config = FakeConfig({
+            "audio_device_name": "Preferred USB Mic",
+            "stream_start_retry_delay": 0,
+        })
+
+        absent = [d for d in fake_sd.devices if d["name"] != "Preferred USB Mic"]
+        present = list(fake_sd.devices)
+        fake_sd.devices = absent
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources([monitor] * 8)):
+            capture = module.AudioCapture(config_manager=config)
+            self.assertIsNotNone(capture.get_input_selection_error())
+            with self.assertRaisesRegex(RuntimeError, "output monitor"):
+                capture.start_recording()
+
+            # The mic is plugged back in.
+            fake_sd.devices = present
+            fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=2.0)
+
+        self.assertIsNone(capture.get_input_selection_error())
+        self.assertTrue(capture.stream_opened)
+
+    def test_transient_pactl_failure_does_not_latch_the_rejection(self):
+        """A failed poll leaves the last verdict standing, but not permanently.
+
+        We cannot tell what the default is when `pactl` times out, so refusing is
+        right — but the next attempt must re-poll rather than trust the cache.
+        """
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        monitor = "bluez_output.88_0E_85_0F_49_80.1.monitor"
+        answers = iter([monitor, TimeoutError, "alsa_input.new mic", "alsa_input.new mic",
+                        "alsa_input.new mic", "alsa_input.new mic"])
+
+        def run(args, *rest, **kwargs):
+            if 'list' in args:
+                return FakeCompleted("")
+            answer = next(answers)
+            if answer is TimeoutError:
+                raise subprocess.TimeoutExpired(cmd=args, timeout=2)
+            return FakeCompleted(answer)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+            self.assertIsNotNone(capture.get_input_selection_error())
+
+            # Poll fails: still refused, and the reason is unchanged.
+            with self.assertRaisesRegex(RuntimeError, "output monitor"):
+                capture.start_recording()
+
+            # Next poll succeeds and finds a real source.
+            fake_sd.on_stream_start = lambda: setattr(capture, "is_recording", False)
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=2.0)
+
+        self.assertIsNone(capture.get_input_selection_error())
+        self.assertTrue(capture.stream_opened)
 
     def test_output_monitor_transition_blocks_until_real_source_returns(self):
         fake_sd = FakeSoundDevice()

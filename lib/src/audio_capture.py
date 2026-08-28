@@ -947,6 +947,11 @@ class AudioCapture:
             if result.returncode != 0:
                 return None
 
+            # Any successful poll supersedes what an earlier one concluded: the
+            # flag means "the most recent reading saw a monitor", never "a reading
+            # once saw one". The monitor check below re-sets it within this call.
+            self._input_selection_error = None
+
             pulse_source_name = result.stdout.strip()
             source_changed = pulse_source_name != self._last_pulse_default_source_name
             self._last_pulse_default_source_name = pulse_source_name
@@ -963,8 +968,6 @@ class AudioCapture:
                 if source_changed:
                     print(f"[PULSE] Refusing output monitor as microphone: {pulse_source_name}")
                 return None
-
-            self._input_selection_error = None
 
             try:
                 devices = sd.query_devices()
@@ -1019,6 +1022,21 @@ class AudioCapture:
     def get_input_selection_error(self) -> Optional[str]:
         """Return an actionable reason the current input cannot be captured."""
         return self._input_selection_error
+
+    def _retry_input_selection(self):
+        """Re-resolve the input device after a previously rejected selection.
+
+        Clears `_input_selection_error` when a usable input is found. A configured
+        device goes through full initialization because that is what retries name
+        and source-name resolution; default-following only needs the cheaper poll.
+        """
+        try:
+            if self._has_configured_audio_device():
+                self._initialize_sounddevice()
+            else:
+                self.refresh_default_input("input_selection_retry")
+        except Exception as e:
+            print(f"[WARN] Input re-selection failed: {e}", flush=True)
     
     def start_recording(self, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
@@ -1028,11 +1046,6 @@ class AudioCapture:
             streaming_callback: Optional callback function to receive audio chunks in real-time
                                 (for streaming backends like WebSocket)
         """
-        if self._input_selection_error is not None:
-            self.stream_opened = False
-            self.stream_open_error = self._input_selection_error
-            raise RuntimeError(self._input_selection_error)
-
         if not self.is_available():
             raise RuntimeError("Audio capture not available")
         
@@ -1057,6 +1070,24 @@ class AudioCapture:
             print("[RECOVERY] Cleanup still owns the audio stream; recording refused", flush=True)
             return False
         
+        # Re-test a recorded input rejection before refusing: the stored reason can
+        # be stale — the user may have picked a real source or reconnected a
+        # configured mic since. Nothing else re-tests it on this path (the record
+        # thread's refresh is downstream of here, `_refresh_default_input_unlocked`
+        # returns early whenever a device is configured, and recovery only runs
+        # after a stream fails, which cannot happen while we refuse to open one).
+        # Placed after the is_recording return and the recovery/cleanup wait: for a
+        # configured device this re-enters PortAudio via `_initialize_sounddevice`,
+        # which must not race a recovery's `_reset_portaudio_state()` (#209) or open
+        # a keepalive stream alongside a live recording.
+        if self._input_selection_error is not None:
+            self._retry_input_selection()
+
+        if self._input_selection_error is not None:
+            self.stream_opened = False
+            self.stream_open_error = self._input_selection_error
+            raise RuntimeError(self._input_selection_error)
+
         # Validate device ID still exists (works for configured and system default)
         if self.device_id is not None:
             try:
@@ -1363,6 +1394,13 @@ class AudioCapture:
             # retry loop below still re-refreshes if the binding turns out stale.
             if not self._default_binding_is_monitored():
                 self.refresh_default_input("record_start")
+                # The refresh can discover the monitor for the first time (the
+                # default moved after start_recording's entry guard ran). It clears
+                # the binding, so continuing would open device=None and let
+                # PortAudio resolve straight back to the monitor we just rejected.
+                # The handler below records this as stream_open_error.
+                if self._input_selection_error is not None:
+                    raise RuntimeError(self._input_selection_error)
             self._notify_streaming_sample_rate()
 
             # Open and start the stream, retrying on transient failures.
@@ -1409,6 +1447,12 @@ class AudioCapture:
                         if not refreshed_after_failure and not self._has_configured_audio_device():
                             refreshed_after_failure = True
                             self.refresh_default_input("record_start_retry")
+                            # As with the refresh before the first attempt: this one
+                            # can discover a monitor and clear the binding, and
+                            # retrying with device=None would let PortAudio resolve
+                            # straight back to it.
+                            if self._input_selection_error is not None:
+                                raise RuntimeError(self._input_selection_error)
                             self._notify_streaming_sample_rate()
                         retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
                         time.sleep(retry_delay)
