@@ -4,6 +4,7 @@ Configuration management commands for hyprwhspr
 
 import os
 import json
+import shutil
 import subprocess
 from typing import Optional
 
@@ -19,7 +20,9 @@ try:
 except ImportError:
     from output_control import log_info, log_success, log_warning, log_error
 
-from ._shared import USER_CONFIG_DIR
+from ._shared import (USER_CONFIG_DIR, _accessibility_bridge_enabled,
+                      _is_gnome_or_mutter_session, _is_kde_plasma_session,
+                      _is_x11_session)
 
 
 # ==================== Config Commands ====================
@@ -40,6 +43,55 @@ def config_command(action: str, show_all: bool = False):
         log_error(f"Unknown config action: {action}")
 
 
+def _explain_undetected_window():
+    """Explain why the focused window could not be identified, and what to do.
+
+    GNOME and KDE run native-Wayland windows that no compositor IPC of ours can
+    query, so detection there depends on the AT-SPI accessibility bridge. Saying
+    only "not detected" sends people hunting for a fault on their machine.
+    """
+    print("  not detected")
+
+    # On X11 the focused window comes from xdotool, not AT-SPI, so pointing at
+    # the accessibility bridge there would send people down the wrong path.
+    if _is_x11_session():
+        if not shutil.which('xdotool') or not shutil.which('xprop'):
+            print("\nX11 windows are identified with `xdotool` and `xprop`, which are")
+            print("not both installed. Install them and run this command again.")
+        print("\nPaste falls back to Ctrl+V — wrong in terminals. Set `paste_mode`")
+        print('to choose one shortcut for every app:  "paste_mode": "ctrl_shift"')
+        return
+
+    on_gnome = _is_gnome_or_mutter_session()
+    on_kde = _is_kde_plasma_session()
+
+    if on_gnome or on_kde:
+        desktop = "GNOME" if on_gnome else "KDE Plasma"
+        bridge = _accessibility_bridge_enabled()
+        print(f"\n{desktop} windows are identified through the AT-SPI accessibility")
+        print("bridge; hyprwhspr has no other way to see them.")
+        if bridge is False:
+            print("\nThe bridge is currently OFF. Enable it with:")
+        elif bridge is None:
+            print("\nAccessibility bridge state: unknown. Enable it with:")
+        else:
+            print("\nThe bridge reports ON, but this window still isn't visible —")
+            print("apps started before it was enabled need a restart. Re-enable with:")
+        if on_gnome:
+            print("  gsettings set org.gnome.desktop.interface toolkit-accessibility true")
+        else:
+            print("  busctl --user set-property org.a11y.Bus /org/a11y/bus \\")
+            print("      org.a11y.Status IsEnabled b true")
+        print("\nThen restart the app you want detected and run this command again.")
+        print("(`hyprwhspr setup` offers this too.)")
+
+    print("\nUntil a window is detected, paste falls back to Ctrl+V — wrong in")
+    print("terminals. Set `paste_mode` to choose one shortcut for every app:")
+    print('  "paste_mode": "ctrl_shift"')
+    print("Per-app `applications` rules need an identifier, so they cannot help")
+    print("while detection is unavailable.")
+
+
 def show_focused_window_config_identifiers():
     """Print identifiers that can be used in the applications config object."""
     try:
@@ -54,8 +106,7 @@ def show_focused_window_config_identifiers():
 
         print("\nFocused window:")
         if not window_info:
-            print("  not detected")
-            print("\nNo identifiers available.")
+            _explain_undetected_window()
             return
 
         for key in ('source', 'class', 'app_id', 'title'):

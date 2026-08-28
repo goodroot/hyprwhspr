@@ -1057,7 +1057,7 @@ Chinese, Japanese and Korean write without spaces between words:
 
 ## Paste and clipboard behavior
 
-hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. Wayland prefers `wl-clipboard` plus `wtype` (falling back to `ydotool key`). X11 uses `python-pyperclip` with `xclip`, and `xdotool`/`xprop` for focused-window and terminal detection. `xsel` is also accepted as a clipboard fallback when installed. Most setups need no configuration. GNOME/Mutter has a few extras — see [GNOME/Mutter notes](#gnomemutter-notes).
+hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. Wayland prefers `wl-clipboard` plus `wtype` (falling back to `ydotool key`). X11 uses `python-pyperclip` with `xclip`, and `xdotool`/`xprop` for focused-window and terminal detection. `xsel` is also accepted as a clipboard fallback when installed. Most setups need no configuration. GNOME/Mutter and KDE Plasma need the AT-SPI bridge for window detection — see [GNOME/Mutter notes](#gnomemutter-notes) and [KDE Plasma notes](#kde-plasma-notes).
 
 ### Paste mode
 
@@ -1098,6 +1098,8 @@ sleep 3; hyprwhspr config focused-window   # then click into the app you want
 ```
 
 Prefer stable app classes over window titles, which change with the open document.
+
+`not detected` means no identifier is available, so `applications` rules can't match — the command says why and what to do about it.
 
 > **Terminal Emacs** (`emacs -nw`, `emacsclient -t`): hyprwhspr sees the terminal, not Emacs, so terminal paste (Ctrl+Shift+V) is normally correct.
 
@@ -1160,6 +1162,13 @@ GNOME/Mutter lacks layer-shell, so visual feedback uses notifications. Injection
 - **GNOME Wayland direct typing:** Mutter blocks `wtype`, so ASCII text on a US layout is typed directly with `ydotool type`; anything else falls back to clipboard paste automatically. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
 - **GNOME X11 clipboard paste:** X11 uses `xclip` and a normal paste chord rather than the Wayland-only direct-typing workaround. GNOME/X11 on Ubuntu 24.04 is the currently validated X11 configuration.
 - **Non-Latin layouts** (Thai, Russian, Arabic, …): no physical key produces a `v` keysym, so hyprwhspr briefly switches to a Latin input source for the paste chord and restores your layout after — just keep a Latin source in Settings → Keyboard → Input Sources.
+
+### KDE Plasma notes
+
+Plasma has layer-shell, so the overlay works normally. Only window detection needs setup:
+
+- **Window detection** uses the AT-SPI accessibility bridge — KWin windows are native Wayland, invisible to both compositor IPC and `xdotool`, and Qt apps only register on the bus when the bridge is on. Plasma leaves it off, so `hyprwhspr config focused-window` reports `not detected` and Konsole gets Ctrl+V, which pastes nothing. `hyprwhspr setup` offers to enable it, or: `busctl --user set-property org.a11y.Bus /org/a11y/bus org.a11y.Status IsEnabled b true` (revert with `b false`). Apps started before the change need a restart. An explicit `paste_mode` (with no `applications` rules) skips the probe entirely.
+- **Bindings** — needs `at-spi2-core` and `python-gobject` (Arch), or `gir1.2-atspi-2.0` and `python3-gi` (Debian/Ubuntu).
 
 ### Post-transcription hook
 

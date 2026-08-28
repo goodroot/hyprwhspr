@@ -9,6 +9,7 @@ import subprocess
 import shutil
 import re
 from pathlib import Path
+from typing import Optional
 
 try:
     from ..paths import CONFIG_DIR
@@ -69,6 +70,45 @@ def _is_gnome_or_mutter_session() -> bool:
     desktop = ':'.join(desktop_values).lower()
     desktop_tokens = set(filter(None, re.split(r'[^a-z0-9]+', desktop)))
     return bool(desktop_tokens & {'gnome', 'mutter', 'pop'})
+
+
+def _accessibility_bridge_enabled() -> Optional[bool]:
+    """Current org.a11y.Status.IsEnabled, or None when it cannot be read."""
+    if not shutil.which('busctl'):
+        return None
+    try:
+        result = subprocess.run(
+            ['busctl', '--user', 'get-property', 'org.a11y.Bus', '/org/a11y/bus',
+             'org.a11y.Status', 'IsEnabled'],
+            capture_output=True, text=True, timeout=2,
+        )
+        if result.returncode != 0:
+            return None
+        value = result.stdout.strip()  # e.g. "b true"
+        if value.endswith('true'):
+            return True
+        if value.endswith('false'):
+            return False
+    except Exception:
+        pass
+    return None
+
+
+def _is_x11_session() -> bool:
+    """Return true for an X11 session (where xdotool can see the focused window)."""
+    return os.environ.get('XDG_SESSION_TYPE', '').lower() == 'x11'
+
+
+def _is_kde_plasma_session() -> bool:
+    """Return true for KDE Plasma sessions using common desktop env vars."""
+    desktop_values = (
+        os.environ.get('XDG_CURRENT_DESKTOP', ''),
+        os.environ.get('XDG_SESSION_DESKTOP', ''),
+        os.environ.get('DESKTOP_SESSION', ''),
+    )
+    desktop = ':'.join(desktop_values).lower()
+    desktop_tokens = set(filter(None, re.split(r'[^a-z0-9]+', desktop)))
+    return bool(desktop_tokens & {'kde', 'plasma', 'plasmawayland', 'plasmax11'})
 
 
 def _check_mise_active() -> tuple[bool, str]:

@@ -1254,6 +1254,42 @@ class TextInjectorInjectionTests(unittest.TestCase):
         self.assertEqual(chord, "ctrl+y")
         self.assertEqual(buf.getvalue(), "")
 
+    # ---- Issue #243: KDE Plasma terminals must get Ctrl+Shift+V ----
+
+    def test_atspi_konsole_resolves_to_terminal_paste(self):
+        """Konsole reached via the AT-SPI probe is a terminal, not a GUI app.
+
+        On KDE Plasma Wayland no compositor IPC of ours can see the window, so
+        AT-SPI is the only source of a class. Once the accessibility bridge hands
+        us one, terminal detection has to fire — otherwise paste stays Ctrl+V and
+        silently does nothing in Konsole.
+        """
+        injector = self._injector()
+        injector.config_manager = ConfigStub({})
+        window_info = {"class": "konsole", "source": "at-spi"}
+
+        self.assertTrue(injector._is_terminal(window_info))
+        self.assertEqual(injector._detect_paste_mode(window_info), "ctrl_shift")
+
+        chord, app = injector._resolve_paste_chord(window_info)
+        self.assertEqual(chord, "ctrl+shift+v")
+        self.assertIsNone(app)
+
+    def test_undetected_window_still_falls_back_to_gui_paste(self):
+        """No window info keeps the pre-existing Ctrl+V default (unchanged)."""
+        injector = self._injector()
+        injector.config_manager = ConfigStub({})
+
+        # `None` means "look it up yourself", so the lookup has to be stubbed to
+        # model a session where nothing can be detected.
+        with mock.patch.object(injector, "_get_active_window_info", return_value=None):
+            self.assertFalse(injector._is_terminal())
+            self.assertEqual(injector._detect_paste_mode(), "ctrl")
+            chord, app = injector._resolve_paste_chord(None)
+
+        self.assertEqual(chord, "ctrl+v")
+        self.assertIsNone(app)
+
 
     def test_post_hook_consume_exit_code_returns_consume_result(self):
         injector = self._injector()

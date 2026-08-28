@@ -76,6 +76,240 @@ class SetupCommandScopeTests(unittest.TestCase):
         ):
             self.assertTrue(setup._is_gnome_or_mutter_session())
 
+    def test_kde_detection_uses_session_desktop_fallback(self):
+        for env in (
+            {"XDG_CURRENT_DESKTOP": "KDE"},
+            {"XDG_SESSION_DESKTOP": "plasma"},
+            {"DESKTOP_SESSION": "plasmawayland"},
+            {"XDG_CURRENT_DESKTOP": "KDE:plasma"},
+        ):
+            with self.subTest(env=env):
+                with mock.patch.dict(setup.os.environ, env, clear=True):
+                    self.assertTrue(setup._is_kde_plasma_session())
+                    self.assertFalse(setup._is_gnome_or_mutter_session())
+
+    def test_non_kde_desktops_are_not_mistaken_for_plasma(self):
+        for env in (
+            {"XDG_CURRENT_DESKTOP": "niri"},
+            {"XDG_CURRENT_DESKTOP": "Hyprland"},
+            {"XDG_CURRENT_DESKTOP": "GNOME"},
+            {},
+        ):
+            with self.subTest(env=env):
+                with mock.patch.dict(setup.os.environ, env, clear=True):
+                    self.assertFalse(setup._is_kde_plasma_session())
+
+    def test_accessibility_bridge_offer_is_not_function_local(self):
+        # Same class of regression as run_command above: the a11y prompt moved out
+        # of the GNOME/Mutter arm into its own step, so it must still resolve to
+        # the module-level helper rather than a function-local rebinding.
+        self.assertNotIn(
+            "_offer_accessibility_bridge", setup.setup_command.__code__.co_varnames
+        )
+        self.assertTrue(callable(setup._offer_accessibility_bridge))
+
+    def test_kde_uses_busctl_even_when_gsettings_is_installed(self):
+        # gsettings is commonly present on KDE (GTK apps pull glib in) but the
+        # org.gnome.desktop.interface schema need not be, and it isn't what the
+        # Plasma session reads. The org.a11y.Status property must be written
+        # directly regardless of gsettings being on PATH.
+        calls = []
+
+        def fake_run_command(cmd, **kwargs):
+            calls.append(cmd)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        class AcceptDefaultConfirm:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return True
+
+        with (
+            mock.patch.object(setup, "Confirm", AcceptDefaultConfirm),
+            mock.patch.object(setup, "_accessibility_bridge_enabled", return_value=False),
+            mock.patch.object(setup, "_check_atspi_availability", return_value=True),
+            mock.patch.object(setup.shutil, "which", return_value="/usr/bin/anything"),
+            mock.patch.object(setup, "run_command", side_effect=fake_run_command),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            enabled = setup._offer_accessibility_bridge("KDE Plasma", desktop_is_gnome=False)
+
+        self.assertTrue(enabled)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0],
+            ["busctl", "--user", "set-property", "org.a11y.Bus", "/org/a11y/bus",
+             "org.a11y.Status", "IsEnabled", "b", "true"],
+        )
+
+    def test_gnome_falls_back_to_busctl_without_gsettings(self):
+        calls = []
+
+        def fake_run_command(cmd, **kwargs):
+            calls.append(cmd)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        class AcceptDefaultConfirm:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return True
+
+        def fake_which(name):
+            return None if name == "gsettings" else f"/usr/bin/{name}"
+
+        with (
+            mock.patch.object(setup, "Confirm", AcceptDefaultConfirm),
+            mock.patch.object(setup, "_accessibility_bridge_enabled", return_value=False),
+            mock.patch.object(setup, "_check_atspi_availability", return_value=True),
+            mock.patch.object(setup.shutil, "which", side_effect=fake_which),
+            mock.patch.object(setup, "run_command", side_effect=fake_run_command),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            setup._offer_accessibility_bridge("GNOME", desktop_is_gnome=True)
+
+        self.assertEqual(calls[0][0], "busctl")
+
+    def test_kde_x11_does_not_need_the_accessibility_bridge(self):
+        # X11 windows resolve through xdotool, so the bridge buys Plasma nothing
+        # there — but the session is still recognised as KDE.
+        with mock.patch.dict(
+            setup.os.environ,
+            {"XDG_CURRENT_DESKTOP": "KDE", "XDG_SESSION_TYPE": "x11"},
+            clear=True,
+        ):
+            self.assertTrue(setup._is_kde_plasma_session())
+            self.assertTrue(setup._is_x11_session())
+
+        with mock.patch.dict(
+            setup.os.environ,
+            {"XDG_CURRENT_DESKTOP": "KDE", "XDG_SESSION_TYPE": "wayland"},
+            clear=True,
+        ):
+            self.assertTrue(setup._is_kde_plasma_session())
+            self.assertFalse(setup._is_x11_session())
+
+    def test_accessibility_bridge_prefers_gsettings_when_available(self):
+        calls = []
+
+        def fake_run_command(cmd, **kwargs):
+            calls.append(cmd)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        class AcceptDefaultConfirm:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return True
+
+        with (
+            mock.patch.object(setup, "Confirm", AcceptDefaultConfirm),
+            mock.patch.object(setup, "_accessibility_bridge_enabled", return_value=False),
+            mock.patch.object(setup, "_check_atspi_availability", return_value=True),
+            mock.patch.object(setup.shutil, "which", return_value="/usr/bin/gsettings"),
+            mock.patch.object(setup, "run_command", side_effect=fake_run_command),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            setup._offer_accessibility_bridge("GNOME", desktop_is_gnome=True)
+
+        self.assertEqual(
+            calls,
+            [["gsettings", "set", "org.gnome.desktop.interface",
+              "toolkit-accessibility", "true"]],
+        )
+
+    def test_accessibility_bridge_skips_prompt_without_atspi_bindings(self):
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("must not prompt when the bindings are missing")
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(setup, "Confirm", types.SimpleNamespace(ask=refuse)),
+            mock.patch.object(setup, "_accessibility_bridge_enabled", return_value=False),
+            mock.patch.object(setup, "_check_atspi_availability", return_value=False),
+            mock.patch.object(setup, "run_command", side_effect=refuse),
+            contextlib.redirect_stdout(output),
+        ):
+            enabled = setup._offer_accessibility_bridge("KDE Plasma", desktop_is_gnome=False)
+
+        self.assertFalse(enabled)
+        self.assertIn("AT-SPI Python bindings not found", output.getvalue())
+
+    def test_declining_the_bridge_reports_it_as_not_enabled(self):
+        # The caller uses this to decide whether to still print the paste_mode
+        # fallback advice, which is all a declining user has left.
+        class DeclineConfirm:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return False
+
+        with (
+            mock.patch.object(setup, "Confirm", DeclineConfirm),
+            mock.patch.object(setup, "_accessibility_bridge_enabled", return_value=False),
+            mock.patch.object(setup, "_check_atspi_availability", return_value=True),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertFalse(
+                setup._offer_accessibility_bridge("KDE Plasma", desktop_is_gnome=False)
+            )
+
+    def test_failed_enable_reports_it_as_not_enabled(self):
+        class AcceptDefaultConfirm:
+            @staticmethod
+            def ask(*_args, **_kwargs):
+                return True
+
+        with (
+            mock.patch.object(setup, "Confirm", AcceptDefaultConfirm),
+            mock.patch.object(setup, "_accessibility_bridge_enabled", return_value=False),
+            mock.patch.object(setup, "_check_atspi_availability", return_value=True),
+            mock.patch.object(setup.shutil, "which", return_value="/usr/bin/busctl"),
+            mock.patch.object(
+                setup, "run_command",
+                return_value=types.SimpleNamespace(returncode=1, stdout="", stderr=""),
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertFalse(
+                setup._offer_accessibility_bridge("KDE Plasma", desktop_is_gnome=False)
+            )
+
+    def test_already_enabled_bridge_still_requires_the_bindings(self):
+        # The property being true says nothing about `import gi` succeeding; the
+        # runtime probe still fails, so this must not report a working route.
+        output = io.StringIO()
+        with (
+            mock.patch.object(setup, "_accessibility_bridge_enabled", return_value=True),
+            mock.patch.object(setup, "_check_atspi_availability", return_value=False),
+            mock.patch.object(setup, "Confirm", types.SimpleNamespace(
+                ask=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no prompt")))),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertFalse(
+                setup._offer_accessibility_bridge("KDE Plasma", desktop_is_gnome=False)
+            )
+
+        self.assertIn("AT-SPI Python bindings not found", output.getvalue())
+
+    def test_already_enabled_bridge_is_reported_without_prompting(self):
+        # Re-running setup on a configured machine must not warn that window
+        # detection is unavailable just because the user declines a prompt that
+        # has nothing left to do.
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("must not prompt when the bridge is already on")
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(setup, "_accessibility_bridge_enabled", return_value=True),
+            mock.patch.object(setup, "_check_atspi_availability", return_value=True),
+            mock.patch.object(setup, "Confirm", types.SimpleNamespace(ask=refuse)),
+            mock.patch.object(setup, "run_command", side_effect=refuse),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertTrue(
+                setup._offer_accessibility_bridge("KDE Plasma", desktop_is_gnome=False)
+            )
+
+        self.assertIn("already enabled", output.getvalue())
+
     def test_openai_transcription_models_use_recommended_setup_order(self):
         class SelectFirstPrompt:
             @staticmethod

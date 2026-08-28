@@ -64,7 +64,9 @@ except ImportError:
 
 from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, USER_HOME,
                       _check_mise_active, _check_python_compatibility,
-                      _is_gnome_or_mutter_session)
+                      _accessibility_bridge_enabled,
+                      _is_gnome_or_mutter_session, _is_kde_plasma_session,
+                      _is_x11_session)
 from .config import setup_config
 from .install import _setup_hyprland_bindings
 from .keyboard import _run_keyboard_selection
@@ -98,6 +100,109 @@ def _bool_default(cfg: dict, key: str, fallback: bool) -> bool:
     """Default for a Confirm prompt: the stored bool, else `fallback`."""
     val = cfg.get(key, fallback)
     return val if isinstance(val, bool) else fallback
+
+
+def _atspi_package_hint() -> str:
+    """Distro-appropriate package names for the AT-SPI Python bindings."""
+    if Path('/etc/debian_version').exists():
+        return "python3-gi gir1.2-atspi-2.0 at-spi2-core"
+    if Path('/etc/fedora-release').exists():
+        return "python3-gobject at-spi2-core"
+    if Path('/etc/os-release').exists() and 'suse' in Path('/etc/os-release').read_text(encoding='utf-8').lower():
+        return "python3-gobject typelib-1_0-Atspi-2_0 at-spi2-core"
+    return "python-gobject at-spi2-core (Arch naming)"
+
+
+def _check_atspi_availability() -> bool:
+    """True when the service Python can import the AT-SPI bindings.
+
+    Mirrors the probe in TextInjector._get_active_window_info(): the bindings are
+    loaded in a child process because dbind can abort the interpreter outright when
+    the accessibility bus is missing.
+    """
+    check_code = (
+        "import gi; gi.require_version('Atspi', '2.0'); "
+        "from gi.repository import Atspi"
+    )
+    venv_python = VENV_DIR / 'bin' / 'python'
+    interpreter = str(venv_python) if venv_python.exists() else sys.executable
+    try:
+        result = subprocess.run(
+            [interpreter, '-c', check_code],
+            check=False, capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _offer_accessibility_bridge(desktop: str, desktop_is_gnome: bool = True) -> bool:
+    """Offer to enable the AT-SPI accessibility bridge for paste-shortcut detection.
+
+    GNOME and KDE both run native-Wayland windows that no compositor IPC of ours can
+    see, so `_get_active_window_info()` falls back to AT-SPI. That probe only sees
+    applications when the bridge is on; without it every terminal is mistaken for a
+    GUI app and paste falls back to Ctrl+V.
+
+    `desktop_is_gnome` selects the enable mechanism, not the wording — the two
+    desktops expose the same setting through different front ends.
+
+    Returns True only when the bridge is actually enabled, so the caller can still
+    offer the `paste_mode` fallback to anyone who declines or lacks the bindings.
+    """
+    # The bindings gate everything below: without them the probe in
+    # TextInjector._get_active_window_info() exits on `import gi` no matter what
+    # the bridge property says, so this must be tested before reporting success.
+    if not _check_atspi_availability():
+        print(f"\n{desktop} auto-picks the paste shortcut per app (terminal vs. GUI) via")
+        print("the accessibility bridge, which needs the AT-SPI Python bindings.")
+        print(f"\nNote: AT-SPI Python bindings not found. Install: {_atspi_package_hint()}")
+        print("Window detection stays unavailable until they are installed.")
+        return False
+
+    # Re-running setup on a machine that already has the bridge on must not end up
+    # warning that window detection is unavailable, so report it as enabled and
+    # skip a prompt that has nothing left to do.
+    if _accessibility_bridge_enabled() is True:
+        print(f"\n{desktop} accessibility bridge: already enabled "
+              "(paste shortcuts are auto-detected per app).")
+        return True
+
+    print(f"\n{desktop} can auto-pick the paste shortcut per app (terminal vs. GUI) via the")
+    print("accessibility bridge. Without it, paste falls back to Ctrl+V (wrong in terminals).")
+
+    if not Confirm.ask(
+        "Enable the accessibility bridge for automatic paste-shortcut detection?",
+        default=True,
+    ):
+        return False
+
+    # GNOME's own knob is the gsettings key (it is what the session honours, and
+    # persists across relogin). KDE ships no such schema — even where `gsettings`
+    # is installed for GTK apps, org.gnome.desktop.interface may be absent — so
+    # write the org.a11y.Status property the bridge actually reads.
+    if desktop_is_gnome and shutil.which('gsettings'):
+        enable_cmd = ['gsettings', 'set', 'org.gnome.desktop.interface',
+                      'toolkit-accessibility', 'true']
+        revert_hint = "gsettings set org.gnome.desktop.interface toolkit-accessibility false"
+    elif shutil.which('busctl'):
+        enable_cmd = ['busctl', '--user', 'set-property', 'org.a11y.Bus',
+                      '/org/a11y/bus', 'org.a11y.Status', 'IsEnabled', 'b', 'true']
+        revert_hint = ("busctl --user set-property org.a11y.Bus /org/a11y/bus "
+                       "org.a11y.Status IsEnabled b false")
+    else:
+        print("Neither 'gsettings' nor 'busctl' found — cannot enable it automatically.")
+        return False
+
+    result = run_command(enable_cmd, check=False)
+    if result.returncode == 0:
+        print(f"Enabled (revert: {revert_hint}).")
+        print("Apps started before this may need a restart to be detected.")
+        return True
+
+    print("Could not enable it automatically — run this manually:")
+    print(f"  {' '.join(enable_cmd)}")
+    return False
 
 
 def _choice_default(value, ordered_values, fallback: str) -> str:
@@ -1026,26 +1131,6 @@ def setup_command(python_path: Optional[str] = None):
             print(f"\nNote: 'notify-send' not found. Install: {notify_pkg}")
 
         setup_mic_osd_choice = Confirm.ask("Show recording status as desktop notifications?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
-
-        # GNOME picks the paste shortcut per app (terminal → Ctrl+Shift+V, GUI → Ctrl+V)
-        # by detecting the focused window via AT-SPI, which needs the GNOME accessibility
-        # bridge enabled. Without it, detection fails and paste falls back to Ctrl+V.
-        print("\nGNOME can auto-pick the paste shortcut per app (terminal vs. GUI) via the")
-        print("accessibility bridge. Without it, paste falls back to Ctrl+V (wrong in terminals).")
-        if shutil.which('gsettings') and Confirm.ask(
-            "Enable the GNOME accessibility bridge for automatic paste-shortcut detection?",
-            default=True,
-        ):
-            result = run_command(
-                ['gsettings', 'set', 'org.gnome.desktop.interface', 'toolkit-accessibility', 'true'],
-                check=False,
-            )
-            if result.returncode == 0:
-                print("Enabled (revert: gsettings set org.gnome.desktop.interface toolkit-accessibility false).")
-                print("Apps started before this may need a restart to be detected.")
-            else:
-                print("Could not enable it automatically — run this manually:")
-                print("  gsettings set org.gnome.desktop.interface toolkit-accessibility true")
     else:
         print("\nShows a visual overlay during recording with animated bars")
         print("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
@@ -1071,6 +1156,30 @@ def setup_command(python_path: Optional[str] = None):
                 pkg_hint = "python-gobject python-cairo gtk4 gtk4-layer-shell (Arch naming)"
             print(f"\nDependencies not found. Install: {pkg_hint}")
             setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=_bool_default(existing_cfg, 'mic_osd_enabled', False))
+
+    # Step 3b-ii: Focused-window detection for paste-shortcut auto-selection.
+    # Compositors we can query directly (Hyprland, niri) and XWayland windows need
+    # nothing here. GNOME and KDE run native-Wayland windows that only the AT-SPI
+    # bridge exposes, so offer to turn it on. This is about paste, not the status
+    # indicator, hence its own step outside the branch above.
+    # Plasma on X11 already resolves windows through xdotool, so the bridge buys
+    # it nothing there.
+    # An X11 session resolves windows through xdotool + xprop, so the bridge buys
+    # it nothing — but only when both are actually installed. Without them
+    # `_get_active_window_info()` falls through to the AT-SPI probe even on X11
+    # (it runs whenever DISPLAY is set), so the offer still helps there.
+    x11_tools_cover_detection = (
+        _is_x11_session()
+        and bool(shutil.which('xdotool'))
+        and bool(shutil.which('xprop'))
+    )
+    gnome_needs_bridge = is_mutter_session and not x11_tools_cover_detection
+    kde_needs_bridge = _is_kde_plasma_session() and not x11_tools_cover_detection
+    a11y_bridge_enabled = False
+    if gnome_needs_bridge:
+        a11y_bridge_enabled = _offer_accessibility_bridge("GNOME", desktop_is_gnome=True)
+    elif kde_needs_bridge:
+        a11y_bridge_enabled = _offer_accessibility_bridge("KDE Plasma", desktop_is_gnome=False)
 
     # Step 3c: Audio ducking setup
     print("\n" + "="*60)
@@ -1232,14 +1341,17 @@ def setup_command(python_path: Optional[str] = None):
 
     # Paste mode detection notice — only shown when auto-detection won't work at runtime.
     # Per-app paste detection: Hyprland uses hyprctl, Niri uses niri msg
-    # (NIRI_SOCKET), XWayland uses xdotool, and GNOME uses the AT-SPI accessibility
-    # bridge (offered above). A pure-Wayland compositor with none of these can't
-    # tell terminals from other apps, so terminal paste (Ctrl+Shift+V) isn't
-    # auto-selected there.
+    # (NIRI_SOCKET), XWayland uses xdotool, and GNOME/KDE use the AT-SPI
+    # accessibility bridge (offered above). A pure-Wayland compositor with none of
+    # these can't tell terminals from other apps, so terminal paste (Ctrl+Shift+V)
+    # isn't auto-selected there.
     _has_hyprctl = bool(shutil.which('hyprctl'))
     _has_niri = bool(shutil.which('niri')) and bool(os.environ.get('NIRI_SOCKET'))
     _has_xdotool = bool(shutil.which('xdotool'))
-    if not is_mutter_session and not _has_hyprctl and not _has_niri and not _has_xdotool:
+    # Only an actually-enabled bridge counts as a route: declining the prompt, or
+    # missing bindings, leaves the user with no detection and needing the advice.
+    _has_a11y_route = a11y_bridge_enabled
+    if not _has_a11y_route and not _has_hyprctl and not _has_niri and not _has_xdotool:
         print("\nNote: Window detection unavailable on this system (no hyprctl, niri session, or xdotool).")
         print("Paste will default to Ctrl+V, which works in most apps but not terminals.")
         print("If a paste ever lands in the wrong place, you can override the key combo")
