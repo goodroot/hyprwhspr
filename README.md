@@ -183,7 +183,7 @@ MIT License - see [LICENSE](LICENSE) file.
 
 Start with an issue - happy to help! Pull requests best begin there too.
 
-If you want, compute credits from [opub.dev](https://opub.dev/github/goodroot/hyprwhspr) are always welcome!
+Upvotes on the AUR and/or GitHub stars are also a nice way to show appreciation.
 
 ---
 
