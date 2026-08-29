@@ -155,19 +155,6 @@ hyprwhspr setup
 - `hyprwhspr systemd` - Manage systemd services
 - `hyprwhspr uninstall` - Remove hyprwhspr and user data
 
-Files in. Words out:
-
-```bash
-hyprwhspr transcribe meeting.mp3
-hyprwhspr transcribe interview.wav -o interview.txt
-hyprwhspr transcribe speech.wav --lang fr --clean
-```
-
-Raw by default. `--clean` applies configured text cleanup. An idle daemon lends
-its loaded model; a busy one says no. Without one, the command loads the backend.
-
-File transcription does not work with the realtime WebSocket backend.
-
 ## Documentation
 
 For full configuration and customization, see the **[Configuration guide](docs/CONFIGURATION.md)**.
