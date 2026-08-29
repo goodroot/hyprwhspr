@@ -29,6 +29,7 @@ hyprwhspr config show --all  # Show all settings including defaults
 - [Audio and visual feedback](#audio-and-visual-feedback) -- themed visualizer, audio feedback, microphone selection, keepalive, ducking
 - [Text processing](#text-processing) -- word overrides, filler words, hallucination markers, symbol replacements, trailing space, non-Latin scripts
 - [Paste and clipboard behavior](#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit, post-transcription hook
+- [File transcription](#file-transcription) -- transcribe WAV and MP3 files from the CLI
 - [Integrations](#integrations) -- Waybar, Noctalia, keyboard devices, external hotkey systems
 - [GPU resource management](#gpu-resource-management) -- unload/reload model to free VRAM
 - [Troubleshooting](#troubleshooting)
@@ -1206,6 +1207,24 @@ Two environment variables are exported to the hook:
 The hook runs under a 5-second timeout. Exit status `77` is reserved for an intentional consume result; stdout is ignored and the transcription is not pasted. On timeout, any other non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
 
 Note: the command runs under `shell=True`, so pipes, redirects, and command chaining work as expected. Treat `post_transcription_hook` as trusted config (same threat model as the rest of `config.json`).
+
+## File transcription
+
+Files in. Words out. WAV and MP3; local and REST backends.
+
+```bash
+hyprwhspr transcribe recording.mp3
+hyprwhspr transcribe recording.wav -o transcript.txt
+hyprwhspr transcribe recording.wav --lang fr --clean
+```
+
+Stdout by default; `-o` writes UTF-8 text. `--lang` sets the language. `--clean`
+applies configured cleanup, without pasting or running hooks.
+
+An idle service lends its loaded model. A busy service says no. No service: the
+command loads the backend itself.
+
+File transcription does not work with the realtime WebSocket backend.
 
 ## Integrations
 

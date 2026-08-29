@@ -70,7 +70,8 @@ from hallucination import is_hallucination
 from audio_capture import AudioCapture
 from whisper_manager import WhisperManager
 from session_environment import ensure_wayland_display
-from text_injector import TextInjector, InjectionOutcome
+from text_injector import TextInjector, InjectionOutcome, preprocess_text
+from audio_file import AudioFileError, decode_audio_file
 from processing_trace import build_processing_trace
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
@@ -117,6 +118,15 @@ class hyprwhsprApp:
         self.is_recording = False
         self._current_language_override = None  # Language override for current recording session
         self.is_processing = False
+        self._file_transcription_active = False
+        # Long-form keeps its own state machine, so it claims this flag under
+        # _recording_lock to stay mutually exclusive with file transcription.
+        self._longform_active = False
+        # Held across a model load/unload, which runs outside _recording_lock.
+        self._model_operation_active = False
+        # Covers the short stop-recording window before _process_audio claims
+        # is_processing, so file requests cannot steal the backend in between.
+        self._recording_finalizing = threading.Event()
         self.audio_level_thread = None
         self._audio_level_stop = threading.Event()  # Signals audio level thread to exit immediately
         self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
@@ -168,6 +178,7 @@ class hyprwhsprApp:
             socket_path=SOCKET_FILE,
             on_command=self._handle_control_command,
             is_recording=lambda: self.is_recording,
+            on_file_transcribe=self._handle_file_transcribe,
         )
 
         # Hybrid tap/hold mode state tracking (auto mode)
@@ -210,6 +221,8 @@ class hyprwhsprApp:
             show_result_and_hide=self._show_result_and_hide,
             write_recording_status=self._write_recording_status,
             set_processing=self._set_longform_processing,
+            claim_recording=self._claim_longform_recording,
+            release_recording=self._release_longform_recording,
             hallucination_markers=self.config.get_hallucination_markers(),
         )
         self._longform_submit_shortcuts = None  # Submit shortcut handler
@@ -1002,7 +1015,20 @@ class hyprwhsprApp:
             self._cancel_recording()
 
     def _set_longform_processing(self, processing):
-        self.is_processing = processing
+        with self._recording_lock:
+            self.is_processing = processing
+
+    def _claim_longform_recording(self):
+        """Reserve the backend for a long-form session; False if one is in use."""
+        with self._recording_lock:
+            if self._file_transcription_active or self._model_operation_active:
+                return False
+            self._longform_active = True
+            return True
+
+    def _release_longform_recording(self):
+        with self._recording_lock:
+            self._longform_active = False
 
     def _start_recording(self, language_override=None):
         """Start voice recording
@@ -1021,6 +1047,10 @@ class hyprwhsprApp:
                 blocked = 'initializing'
             elif self._backend_init_failed:
                 blocked = 'init-failed'
+            elif self._file_transcription_active:
+                blocked = 'file-transcription'
+            elif self._model_operation_active:
+                blocked = 'model-operation'
             elif getattr(self.whisper_manager, '_model_manually_unloaded', False):
                 blocked = 'unloaded'
             elif self.whisper_manager.realtime_client_missing():
@@ -1031,6 +1061,12 @@ class hyprwhsprApp:
                 self.is_recording = True
                 # Store language override for this recording session
                 self._current_language_override = language_override
+
+        # A capture client self-triggered this start over the FIFO and is now
+        # blocking on completion. Release it here or it waits forever and keeps
+        # the capture slot occupied (no recording will ever finish for it).
+        if blocked is not None:
+            self._release_blocked_capture()
 
         # Model is still loading in background
         if blocked == 'initializing':
@@ -1044,6 +1080,16 @@ class hyprwhsprApp:
             self._notify_user("hyprwhspr", "Backend failed to load — retrying, try again shortly", urgency="normal")
             print("[CONTROL] Recording blocked: backend init failed - retrying", flush=True)
             self._start_backend_init_background()
+            return
+
+        if blocked == 'file-transcription':
+            self._notify_user("hyprwhspr", "File transcription in progress", urgency="normal")
+            print("[CONTROL] Recording blocked: file transcription in progress", flush=True)
+            return
+
+        if blocked == 'model-operation':
+            self._notify_user("hyprwhspr", "Model load in progress — try again shortly", urgency="normal")
+            print("[CONTROL] Recording blocked: model load/unload in progress", flush=True)
             return
 
         # Realtime client was torn down; rebuild in background instead of blocking
@@ -1085,6 +1131,7 @@ class hyprwhsprApp:
                 with self._recording_lock:
                     self.is_recording = False
                 self._write_recording_status(False)
+                self._release_blocked_capture()
                 self._hide_mic_osd()
                 self._stop_audio_level_monitoring()
                 self._notify_zero_volume(
@@ -1143,6 +1190,7 @@ class hyprwhsprApp:
                     with self._recording_lock:
                         self.is_recording = False
                     self._write_recording_status(False)
+                    self._release_blocked_capture()
                     
                     # Hide mic-osd visualization
                     self._hide_mic_osd()
@@ -1167,6 +1215,7 @@ class hyprwhsprApp:
                     with self._recording_lock:
                         self.is_recording = False
                     self._write_recording_status(False)
+                    self._release_blocked_capture()
                     
                     # Hide mic-osd visualization
                     self._hide_mic_osd()
@@ -1217,6 +1266,7 @@ class hyprwhsprApp:
                 with self._recording_lock:
                     self.is_recording = False
                 self._write_recording_status(False)
+                self._release_blocked_capture()
                 self._notify_zero_volume(
                     self._mic_failure_message(
                         "Microphone disconnected or not responding - please unplug and replug USB microphone, then try recording again"),
@@ -1239,6 +1289,9 @@ class hyprwhsprApp:
             with self._recording_lock:
                 self.is_recording = False
             self._write_recording_status(False)
+            # No recording will complete, so any capture client waiting on this
+            # start has to be released here too or it holds the slot forever
+            self._release_blocked_capture()
 
             # Restore audio if it was ducked or paused
             if self.playback_suppressor.is_active:
@@ -1318,13 +1371,14 @@ class hyprwhsprApp:
             if not self.is_recording:
                 return
             self.is_recording = False
-
-        print("Recording stopped", flush=True)
-
-        # Tear down the auto-stop silence monitor if it was running (toggle/auto modes)
-        self._autostop_stop_silence_monitor()
+            self._recording_finalizing.set()
 
         try:
+            print("Recording stopped", flush=True)
+
+            # Tear down the auto-stop silence monitor if it was running (toggle/auto modes)
+            self._autostop_stop_silence_monitor()
+
             self._clear_mic_osd_preview_text()
 
             # Set visualizer to processing state (keep it visible during transcription)
@@ -1393,16 +1447,18 @@ class hyprwhsprApp:
                 self.whisper_manager.close_realtime_connection("recording stop error")
             except Exception:
                 pass  # Best effort cleanup
+        finally:
+            self._recording_finalizing.clear()
 
     def _process_audio(self, audio_data):
         """Process captured audio through Whisper"""
-        if self.is_processing:
-            return
+        with self._recording_lock:
+            if self.is_processing:
+                return
+            self.is_processing = True
 
         success = False
         try:
-            self.is_processing = True
-
             # Transcribe audio with language override if set
             transcription = self.whisper_manager.transcribe_audio(
                 audio_data,
@@ -1421,7 +1477,8 @@ class hyprwhsprApp:
                     self.audio_manager.play_error_sound()
                     success = False
                     # Explicitly handle cleanup before returning to ensure visualizer state is updated
-                    self.is_processing = False
+                    with self._recording_lock:
+                        self.is_processing = False
                     self._show_result_and_hide(False)
                     return
 
@@ -1437,7 +1494,8 @@ class hyprwhsprApp:
         finally:
             self._notify_capture("", final=True)
             self._clear_mic_osd_preview_text()
-            self.is_processing = False
+            with self._recording_lock:
+                self.is_processing = False
             # Show success/error state and hide OSD after delay
             self._show_result_and_hide(success)
 
@@ -1450,6 +1508,11 @@ class hyprwhsprApp:
                 separators=(',', ':'),
             ) + '\n'
         self._recording_control_server.notify_capture(text, final=final)
+
+    def _release_blocked_capture(self):
+        """Finish a capture request whose recording was refused before it began."""
+        if self._recording_control_server.has_capture_subscriber():
+            self._notify_capture("", final=True)
 
     def _inject_text(self, text):
         """Inject transcribed text into active application"""
@@ -1895,6 +1958,62 @@ class hyprwhsprApp:
         else:
             self.audio_level_thread = None
 
+    def _handle_file_transcribe(self, path, language=None, clean=False):
+        """Transcribe a file through the daemon's already-loaded batch backend."""
+        backend = normalize_backend(
+            self.config.get_setting('transcription_backend', 'pywhispercpp')
+        )
+        if backend == 'realtime-ws':
+            return False, (
+                'The realtime-ws backend supports live capture only; configure '
+                'a local or REST backend to transcribe files'
+            )
+
+        with self._recording_lock:
+            if self.is_recording:
+                return False, 'Cannot transcribe a file while recording'
+            if self.is_processing:
+                return False, 'The daemon is already processing audio'
+            if self._file_transcription_active:
+                # One handler thread per connection, so concurrent requests
+                # would otherwise overlap and clear each other's claim
+                return False, 'Another file transcription is already running'
+            if self._longform_active:
+                return False, 'A long-form session is active; submit or cancel it first'
+            if self._model_operation_active:
+                return False, 'The transcription backend is loading; retry shortly'
+            if self._recording_finalizing.is_set():
+                return False, 'The daemon is finalizing a recording'
+            if self._model_initializing:
+                return False, 'The transcription backend is still initializing; retry shortly'
+            if MODEL_UNLOADED_FILE.exists() or not self.whisper_manager.is_ready():
+                return False, 'The transcription backend is not loaded; run hyprwhspr model reload'
+            self._file_transcription_active = True
+
+        try:
+            audio_data, sample_rate = decode_audio_file(path)
+            text = self.whisper_manager.transcribe_audio(
+                audio_data,
+                sample_rate=sample_rate,
+                language_override=language,
+            )
+            text = text.strip() if text else ''
+            if not text:
+                return False, 'Transcription produced no text'
+            if clean:
+                text = preprocess_text(text, self.config)
+                if not text.strip():
+                    return False, 'Transcription produced no text after cleanup'
+            return True, text
+        except AudioFileError as exc:
+            return False, str(exc)
+        except Exception as exc:
+            print(f"[TRANSCRIBE] File transcription failed: {exc}", flush=True)
+            return False, f'File transcription failed: {exc}'
+        finally:
+            with self._recording_lock:
+                self._file_transcription_active = False
+
     def _handle_control_command(self, action, language=None):
         """Apply recording policy for a command received by the control server."""
         recording_mode = self.config.get_setting("recording_mode", "toggle")
@@ -1939,22 +2058,55 @@ class hyprwhsprApp:
             else:
                 print("[CONTROL] Submit command only valid in long_form mode", flush=True)
         elif action == "model_unload":
-            if self.is_recording:
-                print("[CONTROL] Cannot unload model while recording", flush=True)
-                self._notify_user("hyprwhspr", "Stop recording before unloading model", urgency="normal")
-            else:
-                print("[CONTROL] Model unload requested", flush=True)
-                if self.whisper_manager.unload_model():
-                    try:
-                        MODEL_UNLOADED_FILE.touch()
-                    except Exception:
-                        pass
-                    self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
-                else:
-                    self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
+            self._handle_model_operation("unload")
         elif action == "model_reload":
-            print("[CONTROL] Model reload requested", flush=True)
-            if self.whisper_manager.reload_model():
+            self._handle_model_operation("reload")
+        else:
+            print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
+
+    def _handle_model_operation(self, operation):
+        """Load or unload the model without holding the recording lock.
+
+        A reload can take minutes, so the lock is only used to claim the
+        exclusive flag; recording and file requests reject on that flag while
+        the slow work runs instead of blocking on the lock.
+        """
+        with self._recording_lock:
+            busy = (self.is_recording or self.is_processing
+                    or self._recording_finalizing.is_set()
+                    or self._file_transcription_active
+                    or self._model_operation_active
+                    or self._longform_active)
+            if not busy:
+                self._model_operation_active = True
+        if busy:
+            print(f"[CONTROL] Cannot {operation} model while the backend is in use", flush=True)
+            self._notify_user(
+                "hyprwhspr", "Finish the current recording or transcription first", urgency="normal"
+            )
+            return
+
+        print(f"[CONTROL] Model {operation} requested", flush=True)
+        try:
+            if operation == "unload":
+                succeeded = self.whisper_manager.unload_model()
+            else:
+                succeeded = self.whisper_manager.reload_model()
+        finally:
+            with self._recording_lock:
+                self._model_operation_active = False
+
+        if operation == "unload":
+            if succeeded:
+                try:
+                    MODEL_UNLOADED_FILE.touch()
+                except Exception:
+                    pass
+                self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
+            else:
+                self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
+        else:
+            if succeeded:
                 try:
                     MODEL_UNLOADED_FILE.unlink(missing_ok=True)
                 except Exception:
@@ -1962,8 +2114,6 @@ class hyprwhsprApp:
                 self._notify_user("hyprwhspr", "Model reloaded — ready to record", urgency="low")
             else:
                 self._notify_user("hyprwhspr", "Model reload failed — check logs", urgency="critical")
-        else:
-            print(f"[CONTROL] Unknown recording control action: {action}", flush=True)
 
     def _start_backend_init_background(self):
         """Initialize the transcription backend in a background thread.
@@ -2611,7 +2761,7 @@ if __name__ == "__main__":
     # Keep in sync with the subcommand route in bin/hyprwhspr
     CLI_SUBCOMMANDS = ['setup', 'install', 'config', 'waybar', 'noctalia', 'systemd', 'status',
                        'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd',
-                       'keyboard', 'record', 'test']
+                       'keyboard', 'record', 'test', 'transcribe']
     if len(sys.argv) > 1 and sys.argv[1] in CLI_SUBCOMMANDS:
         print(f"[REDIRECT] Detected CLI subcommand '{sys.argv[1]}', redirecting to CLI...")
         # Execute CLI with same arguments

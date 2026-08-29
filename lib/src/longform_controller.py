@@ -32,6 +32,8 @@ class LongFormController:
         write_recording_status,
         set_processing,
         hallucination_markers,
+        claim_recording=None,
+        release_recording=None,
         segment_manager_factory=SegmentManager,
         timer_factory=threading.Timer,
         state_file=LONGFORM_STATE_FILE,
@@ -48,6 +50,8 @@ class LongFormController:
         self.show_result_and_hide = show_result_and_hide
         self.write_recording_status = write_recording_status
         self.set_processing = set_processing
+        self.claim_recording = claim_recording or (lambda: True)
+        self.release_recording = release_recording or (lambda: None)
         self.hallucination_markers = hallucination_markers
         self.segment_manager_factory = segment_manager_factory
         self.timer_factory = timer_factory
@@ -146,16 +150,46 @@ class LongFormController:
             else:
                 print(f"[CONTROL] Long-form in {self.state} state, ignoring cancel request", flush=True)
 
+    def _abandon_claim(self):
+        """Drop a claim whose work failed, and free anyone waiting on it."""
+        self.release_recording()
+        self.notify_capture("", final=True)
+
     def start_recording(self, language_override=None):
+        # The backend is shared with file transcription and model loads, so a
+        # session has to be claimed before any audio is captured for it
+        if not self.claim_recording():
+            print("[LONGFORM] Cannot start: file transcription or model load in progress", flush=True)
+            # A capture client may have self-triggered this start and is now
+            # waiting for a session that will never run
+            self.notify_capture("", final=True)
+            return
+
         lang_info = f" (language: {language_override})" if language_override else ""
         print(f"[LONGFORM] Starting recording session{lang_info}")
         self.language_override = language_override
 
-        if not self.audio_capture.start_recording():
+        started = False
+        try:
+            started = self.audio_capture.start_recording()
+            if started:
+                self.segment_manager.start_session()
+        except Exception:
+            # No session exists to own either, so neither the stream nor the
+            # claim may outlive this call
+            if started:
+                try:
+                    self.audio_capture.stop_recording()
+                except Exception:
+                    pass
+            self._abandon_claim()
+            raise
+
+        if not started:
             print("[LONGFORM] Failed to start audio capture")
+            self._abandon_claim()
             return
 
-        self.segment_manager.start_session()
         self._set_state('RECORDING', visualizer='recording')
         self.show_mic_osd()
         self.start_auto_save_timer()
@@ -175,12 +209,26 @@ class LongFormController:
 
     def resume_recording(self):
         print("[LONGFORM] Resuming recording")
-        if not self.audio_capture.resume_recording():
-            print("[LONGFORM] Failed to resume audio capture")
-            self._set_state('ERROR', visualizer='error')
+        # PAUSED released the claim, so capturing again has to re-take it
+        if not self.claim_recording():
+            print("[LONGFORM] Cannot resume: file transcription or model load in progress", flush=True)
+            # A capture client may have self-triggered this resume
+            self.notify_capture("", final=True)
             return
 
-        self._set_state('RECORDING', visualizer='recording')
+        try:
+            if not self.audio_capture.resume_recording():
+                print("[LONGFORM] Failed to resume audio capture")
+                self._set_state('ERROR', visualizer='error')
+                return
+
+            self._set_state('RECORDING', visualizer='recording')
+        except Exception:
+            # Capture may be unavailable (unplugged mic); the claim must not
+            # outlive the failed resume
+            self._abandon_claim()
+            raise
+
         self.start_auto_save_timer()
         self.audio_manager.play_start_sound()
 
@@ -216,27 +264,48 @@ class LongFormController:
         self.audio_manager.play_error_sound()
 
     def submit(self, retry=False, audio_data=None):
-        print("[LONGFORM] Submitting for transcription")
+        # The caller already paused capture for a RECORDING session, but the
+        # auto-save timer is still armed and must not outlive this call on
+        # either the refused or the accepted path
         self.stop_auto_save_timer()
 
-        if audio_data is None:
-            if retry and self.error_audio is not None:
-                audio_data = self.error_audio
-            else:
-                audio_data = self.segment_manager.concatenate_all()
-
-        if audio_data is None or len(audio_data) == 0:
-            print("[LONGFORM] No audio data to process")
-            if self.segment_manager.has_segments():
-                self.error_audio = self.segment_manager.concatenate_readable()
-                self._set_state('ERROR', visualizer='error')
-            else:
-                self._set_state('IDLE')
-                self.hide_mic_osd()
+        # Idempotent while RECORDING (already claimed); from PAUSED or ERROR it
+        # re-takes the backend, which is what keeps a submit from overlapping a
+        # file transcription
+        if not self.claim_recording():
+            print("[LONGFORM] Cannot submit: file transcription or model load in progress", flush=True)
+            if self.state == 'RECORDING':
+                self._set_state('PAUSED', visualizer='paused')
             self.notify_capture("", final=True)
             return
 
-        self._set_state('PROCESSING', visualizer='processing')
+        print("[LONGFORM] Submitting for transcription")
+
+        try:
+            if audio_data is None:
+                if retry and self.error_audio is not None:
+                    audio_data = self.error_audio
+                else:
+                    audio_data = self.segment_manager.concatenate_all()
+
+            if audio_data is None or len(audio_data) == 0:
+                print("[LONGFORM] No audio data to process")
+                if self.segment_manager.has_segments():
+                    self.error_audio = self.segment_manager.concatenate_readable()
+                    self._set_state('ERROR', visualizer='error')
+                else:
+                    self._set_state('IDLE')
+                    self.hide_mic_osd()
+                self.notify_capture("", final=True)
+                return
+
+            self._set_state('PROCESSING', visualizer='processing')
+        except Exception:
+            # Concatenation and the PROCESSING transition run before the
+            # transcription try/except that would otherwise land in ERROR
+            self._abandon_claim()
+            raise
+
         try:
             self.set_processing(True)
             transcription = self.whisper_manager.transcribe_audio(
@@ -314,6 +383,11 @@ class LongFormController:
 
     def _set_state(self, state, visualizer=None):
         self.state = state
+        # The claim covers only the states that hold the mic or the backend;
+        # PAUSED and ERROR can persist indefinitely and must not block file
+        # transcription or a model unload
+        if state in ('IDLE', 'PAUSED', 'ERROR'):
+            self.release_recording()
         self.write_state(state)
         if visualizer is not None:
             self.set_visualizer_state(visualizer)

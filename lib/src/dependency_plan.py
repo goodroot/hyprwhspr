@@ -10,18 +10,20 @@ except ImportError:
     from dependency_manifest import fingerprint, parse_graph
 
 
+CORE_IMPORTS = ('sounddevice', 'numpy', 'soxr', 'soundfile')
+
+
 PLAN_SPECS = {
-    'pywhispercpp': ('requirements-pywhispercpp.txt', ('sounddevice', 'numpy', 'soxr', 'pywhispercpp'), 'pywhispercpp'),
-    'rest': ('requirements-rest.txt', ('sounddevice', 'numpy', 'soxr', 'requests'), 'rest'),
-    'realtime': ('requirements-realtime.txt', ('sounddevice', 'numpy', 'soxr', 'websocket'), 'realtime'),
-    'elevenlabs': ('requirements-realtime-elevenlabs.txt', ('sounddevice', 'numpy', 'soxr', 'elevenlabs'), 'elevenlabs'),
-    'cohere': ('requirements-cohere-transcribe.txt', (
-        'sounddevice', 'numpy', 'soxr', 'pandas', 'scipy', 'numba', 'sklearn',
-        'transformers', 'torch', 'librosa', 'soundfile'), 'cohere'),
-    'onnx-cpu': ('requirements-onnx-asr.txt', ('sounddevice', 'numpy', 'soxr', 'onnx_asr'), 'onnx'),
-    'onnx-gpu': ('requirements-onnx-asr-gpu.txt', ('sounddevice', 'numpy', 'soxr', 'onnx_asr'), 'onnx'),
-    'faster-cpu': ('requirements-faster-whisper.txt', ('sounddevice', 'numpy', 'soxr', 'faster_whisper'), 'faster-whisper'),
-    'faster-cuda': ('requirements-faster-whisper-cuda.txt', ('sounddevice', 'numpy', 'soxr', 'faster_whisper'), 'faster-whisper'),
+    'pywhispercpp': ('requirements-pywhispercpp.txt', CORE_IMPORTS + ('pywhispercpp',), 'pywhispercpp'),
+    'rest': ('requirements-rest.txt', CORE_IMPORTS + ('requests',), 'rest'),
+    'realtime': ('requirements-realtime.txt', CORE_IMPORTS + ('websocket',), 'realtime'),
+    'elevenlabs': ('requirements-realtime-elevenlabs.txt', CORE_IMPORTS + ('elevenlabs',), 'elevenlabs'),
+    'cohere': ('requirements-cohere-transcribe.txt', CORE_IMPORTS + (
+        'pandas', 'scipy', 'numba', 'sklearn', 'transformers', 'torch', 'librosa'), 'cohere'),
+    'onnx-cpu': ('requirements-onnx-asr.txt', CORE_IMPORTS + ('onnx_asr',), 'onnx'),
+    'onnx-gpu': ('requirements-onnx-asr-gpu.txt', CORE_IMPORTS + ('onnx_asr',), 'onnx'),
+    'faster-cpu': ('requirements-faster-whisper.txt', CORE_IMPORTS + ('faster_whisper',), 'faster-whisper'),
+    'faster-cuda': ('requirements-faster-whisper-cuda.txt', CORE_IMPORTS + ('faster_whisper',), 'faster-whisper'),
 }
 
 

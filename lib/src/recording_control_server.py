@@ -1,5 +1,6 @@
 """Daemon-side transports for recording control and capture clients."""
 
+import json
 import os
 import select
 import socket
@@ -14,11 +15,13 @@ class RecordingControlServer:
         "start", "stop", "cancel", "submit", "model_unload", "model_reload",
     }
 
-    def __init__(self, fifo_path, socket_path, on_command, is_recording):
+    def __init__(self, fifo_path, socket_path, on_command, is_recording,
+                 on_file_transcribe=None):
         self.fifo_path = Path(fifo_path)
         self.socket_path = Path(socket_path)
         self._on_command = on_command
         self._is_recording = is_recording
+        self._on_file_transcribe = on_file_transcribe
 
         self._lifecycle_lock = threading.Lock()
         self._stop_event = None
@@ -351,7 +354,16 @@ class RecordingControlServer:
         stop_event = stop_event or self._stop_event or threading.Event()
         try:
             conn.settimeout(1.0)
-            line = conn.recv(256).split(b"\n", 1)[0].decode("utf-8", errors="replace").strip()
+            try:
+                line = self._recv_request_line(conn)
+            except (UnicodeDecodeError, ValueError) as exc:
+                conn.sendall(json.dumps({
+                    'ok': False, 'error': f'invalid request: {exc}'
+                }, separators=(',', ':')).encode('utf-8') + b'\n')
+                return
+            if line.startswith('{'):
+                self._handle_json_request(conn, line, stop_event)
+                return
             verb, _, language = line.partition(":")
             language = language.strip() or None
             if verb not in ("capture", "capture_trace"):
@@ -412,3 +424,63 @@ class RecordingControlServer:
                 conn.close()
             except OSError:
                 pass
+
+    @staticmethod
+    def _recv_request_line(conn, limit=65536):
+        data = bytearray()
+        while len(data) <= limit:
+            chunk = conn.recv(min(4096, limit + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+            if b'\n' in chunk:
+                break
+        if len(data) > limit:
+            # Consume the rest of this request before replying. Closing a Unix
+            # socket with unread client data resets it and discards our error.
+            while b'\n' not in chunk:
+                try:
+                    chunk = conn.recv(4096)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+            raise ValueError('request too large')
+        return bytes(data).split(b'\n', 1)[0].decode(
+            'utf-8', errors='strict'
+        ).strip()
+
+    def _handle_json_request(self, conn, line, stop_event):
+        """Handle request/response operations without changing capture semantics."""
+        try:
+            request = json.loads(line)
+            if not isinstance(request, dict) or request.get('verb') != 'transcribe_file':
+                raise ValueError('unknown request')
+            path = request.get('path')
+            language = request.get('language')
+            clean = request.get('clean', False)
+            if not isinstance(path, str) or not path:
+                raise ValueError('path must be a non-empty string')
+            if language is not None and not isinstance(language, str):
+                raise ValueError('language must be a string or null')
+            if not isinstance(clean, bool):
+                raise ValueError('clean must be a boolean')
+            if stop_event.is_set() or stop_event is not self._stop_event:
+                raise RuntimeError('daemon is shutting down')
+            if self._on_file_transcribe is None:
+                raise RuntimeError('file transcription is unavailable')
+            ok, payload = self._on_file_transcribe(path, language, clean)
+            response = {'ok': bool(ok)}
+            response['text' if ok else 'error'] = str(payload)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            response = {'ok': False, 'error': f'invalid request: {exc}'}
+        except Exception as exc:
+            print(f"[TRANSCRIBE] Request failed: {exc}", flush=True)
+            response = {'ok': False, 'error': str(exc)}
+        try:
+            conn.settimeout(None)
+            conn.sendall(json.dumps(
+                response, ensure_ascii=False, separators=(',', ':')
+            ).encode('utf-8') + b'\n')
+        except OSError:
+            pass

@@ -140,6 +140,18 @@ def main():
                             help='Record live audio instead of using test.wav')
     test_parser.add_argument('--mic-only', action='store_true',
                             help='Only test microphone, skip transcription')
+
+    # transcribe command
+    transcribe_parser = subparsers.add_parser(
+        'transcribe', help='Transcribe a WAV or MP3 audio file'
+    )
+    transcribe_parser.add_argument('input', metavar='INPUT', help='Input .wav or .mp3 file')
+    transcribe_parser.add_argument('-o', '--output', metavar='PATH',
+                                   help='Write transcript to PATH instead of stdout')
+    transcribe_parser.add_argument('--lang', dest='language', metavar='CODE',
+                                   help='Language code for transcription (e.g., en, it, de)')
+    transcribe_parser.add_argument('--clean', action='store_true',
+                                   help='Apply configured dictation text cleanup')
     
     # keyboard command
     keyboard_parser = subparsers.add_parser('keyboard', help='Keyboard device management')
@@ -293,6 +305,15 @@ def main():
                 live=getattr(args, 'live', False),
                 mic_only=getattr(args, 'mic_only', False)
             )
+        elif args.command == 'transcribe':
+            from cli.transcribe import transcribe_command
+            if not transcribe_command(
+                input_path=args.input,
+                output_path=getattr(args, 'output', None),
+                language=getattr(args, 'language', None),
+                clean=getattr(args, 'clean', False),
+            ):
+                sys.exit(1)
         elif args.command == 'keyboard':
             if not args.keyboard_action:
                 keyboard_parser.print_help()

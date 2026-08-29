@@ -145,6 +145,7 @@ hyprwhspr setup
 - `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit` / `secondary-shortcut`)
 - `hyprwhspr model` - Manage models (`download` / `list` / `status` / `unload` / `reload`)
 - `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle` / `cancel` / `capture` / `status`)
+- `hyprwhspr transcribe INPUT` - Transcribe a WAV or MP3 file to stdout (use `-o PATH` to write a file)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation
 - `hyprwhspr test` - Test microphone and transcription end-to-end
@@ -153,6 +154,19 @@ hyprwhspr setup
 - `hyprwhspr mic-osd` - Enable/disable the mic OSD (`enable` / `disable` / `status`)
 - `hyprwhspr systemd` - Manage systemd services
 - `hyprwhspr uninstall` - Remove hyprwhspr and user data
+
+Files in. Words out:
+
+```bash
+hyprwhspr transcribe meeting.mp3
+hyprwhspr transcribe interview.wav -o interview.txt
+hyprwhspr transcribe speech.wav --lang fr --clean
+```
+
+Raw by default. `--clean` applies configured text cleanup. An idle daemon lends
+its loaded model; a busy one says no. Without one, the command loads the backend.
+
+File transcription does not work with the realtime WebSocket backend.
 
 ## Documentation
 

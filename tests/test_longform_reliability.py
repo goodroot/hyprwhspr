@@ -102,6 +102,125 @@ class LongformReliabilityTests(unittest.TestCase):
         controller.resume_recording()
         self.assertEqual(controller.state, 'RECORDING')
 
+    def test_start_is_refused_while_the_backend_is_claimed_elsewhere(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'IDLE'
+        controller.claim_recording = mock.Mock(return_value=False)
+
+        controller.start_recording()
+
+        self.assertEqual(controller.state, 'IDLE')
+        controller.audio_capture.start_recording.assert_not_called()
+        controller.notify_capture.assert_called_once_with("", final=True)
+
+    def test_backend_claim_is_held_only_while_capturing_or_processing(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'IDLE'
+        controller.claim_recording = mock.Mock(return_value=True)
+        controller.release_recording = mock.Mock()
+
+        controller.start_recording()
+        controller.release_recording.assert_not_called()
+
+        # A paused session can persist indefinitely, so it must not keep the
+        # backend claimed away from file transcription or a model unload
+        controller.audio_capture.pause_recording.return_value = np.array([0.3], dtype=np.float32)
+        controller.segment_manager.save_segment.return_value = Path("segment.wav")
+        controller.pause_recording()
+        controller.release_recording.assert_called_once_with()
+
+        controller.resume_recording()
+        self.assertEqual(controller.claim_recording.call_count, 2)
+        self.assertEqual(controller.state, 'RECORDING')
+
+    def test_resume_and_submit_are_refused_while_the_backend_is_claimed(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'PAUSED'
+        controller.claim_recording = mock.Mock(return_value=False)
+
+        controller.resume_recording()
+        self.assertEqual(controller.state, 'PAUSED')
+        controller.audio_capture.resume_recording.assert_not_called()
+        controller.notify_capture.assert_called_with("", final=True)
+
+        controller.submit()
+        self.assertEqual(controller.state, 'PAUSED')
+        controller.whisper_manager.transcribe_audio.assert_not_called()
+
+    def test_resume_exception_releases_the_claim_and_capture_client(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'PAUSED'
+        controller.release_recording = mock.Mock()
+        controller.audio_capture.resume_recording.side_effect = RuntimeError('mic gone')
+
+        with self.assertRaises(RuntimeError):
+            controller.resume_recording()
+
+        self.assertEqual(controller.state, 'PAUSED')
+        controller.release_recording.assert_called_once_with()
+        controller.notify_capture.assert_called_once_with("", final=True)
+
+    def test_submit_exception_before_processing_releases_the_claim(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'PAUSED'
+        controller.release_recording = mock.Mock()
+        controller.segment_manager.concatenate_all.side_effect = RuntimeError('boom')
+
+        with self.assertRaises(RuntimeError):
+            controller.submit()
+
+        controller.release_recording.assert_called_once_with()
+        controller.notify_capture.assert_called_once_with("", final=True)
+        controller.whisper_manager.transcribe_audio.assert_not_called()
+
+    def test_refused_submit_from_recording_pauses_and_disarms_auto_save(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'RECORDING'
+        controller.claim_recording = mock.Mock(return_value=False)
+        timer = mock.Mock()
+        controller.auto_save_timer = timer
+
+        controller.submit()
+
+        self.assertEqual(controller.state, 'PAUSED')
+        controller.whisper_manager.transcribe_audio.assert_not_called()
+        # A timer left armed here dies silently on its next fire and would run
+        # alongside the chain a later resume starts
+        timer.cancel.assert_called_once_with()
+        self.assertIsNone(controller.auto_save_timer)
+
+    def test_failed_capture_start_releases_the_claim_and_the_capture_client(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'IDLE'
+        controller.release_recording = mock.Mock()
+        controller.audio_capture.start_recording.return_value = False
+
+        controller.start_recording()
+
+        self.assertEqual(controller.state, 'IDLE')
+        controller.release_recording.assert_called_once_with()
+        controller.notify_capture.assert_called_once_with("", final=True)
+
+    def test_startup_exception_releases_the_claim_and_stops_the_stream(self):
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.state = 'IDLE'
+        controller.release_recording = mock.Mock()
+        controller.segment_manager.start_session.side_effect = RuntimeError('boom')
+
+        with self.assertRaises(RuntimeError):
+            controller.start_recording()
+
+        self.assertEqual(controller.state, 'IDLE')
+        controller.release_recording.assert_called_once_with()
+        controller.audio_capture.stop_recording.assert_called_once_with()
+        controller.notify_capture.assert_called_once_with("", final=True)
+
+        controller.release_recording.reset_mock()
+        controller.audio_capture.start_recording.side_effect = RuntimeError('boom')
+        with self.assertRaises(RuntimeError):
+            controller.start_recording()
+        controller.release_recording.assert_called_once_with()
+
     def test_pause_persistence_failure_preserves_complete_audio_and_errors(self):
         controller, persisted = self._controller()
         unsaved = np.array([0.3, 0.4], dtype=np.float32)

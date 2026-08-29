@@ -2,6 +2,7 @@
 sounddevice>=0.5.0
 numpy>=1.26.0
 soxr>=0.5.0
+soundfile>=0.12.1
 
 # Global shortcuts and text injection
 evdev>=1.9.0

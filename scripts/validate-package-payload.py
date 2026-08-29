@@ -19,8 +19,21 @@ def _plan_manifests(installed_root: Path):
         if isinstance(node, ast.Assign) and any(
                 isinstance(target, ast.Name) and target.id == "PLAN_SPECS"
                 for target in node.targets):
-            specs = ast.literal_eval(node.value)
-            return [installed_root / value[0] for value in specs.values()]
+            if not isinstance(node.value, ast.Dict):
+                raise PayloadError(f"PLAN_SPECS is not a dict literal in {source}")
+            # Only the manifest name is needed, and it stays a literal even
+            # when the rest of the entry is built from shared constants
+            manifests = []
+            for value in node.value.values:
+                if not isinstance(value, ast.Tuple) or not value.elts:
+                    raise PayloadError(f"unexpected PLAN_SPECS entry in {source}")
+                try:
+                    manifests.append(installed_root / ast.literal_eval(value.elts[0]))
+                except ValueError as exc:
+                    raise PayloadError(
+                        f"non-literal manifest name in PLAN_SPECS ({source}): {exc}"
+                    ) from exc
+            return manifests
     raise PayloadError(f"PLAN_SPECS not found in {source}")
 
 

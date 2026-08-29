@@ -98,12 +98,12 @@ fi
 
 # Subcommands: route to CLI if recognized
 # Keep in sync with CLI_SUBCOMMANDS in lib/main.py
-# 'test' needs venv Python since it loads the transcription backend
-if [[ "$1" == "test" ]]; then
+# 'test' and 'transcribe' need venv Python since they load transcription dependencies
+if [[ "$1" == "test" || "$1" == "transcribe" ]]; then
   require_app_venv
   exec "$PYTHON_CMD" "$LIB_DIR/cli.py" "$@"
 fi
-if [[ "$1" =~ ^(setup|install|config|waybar|noctalia|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record|test)$ ]]; then
+if [[ "$1" =~ ^(setup|install|config|waybar|noctalia|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record|test|transcribe)$ ]]; then
   exec "$CLI_PYTHON" "$LIB_DIR/cli.py" "$@"
 fi
 

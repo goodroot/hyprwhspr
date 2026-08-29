@@ -1,3 +1,4 @@
+import importlib.util
 import unittest
 from pathlib import Path
 
@@ -5,7 +6,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _load_payload_validator():
+    path = ROOT / "scripts" / "validate-package-payload.py"
+    spec = importlib.util.spec_from_file_location("validate_package_payload", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class ReleasePackagingContractTests(unittest.TestCase):
+    def test_payload_validator_reads_plans_built_from_shared_constants(self):
+        # PLAN_SPECS entries are assembled from CORE_IMPORTS, so the validator
+        # must not depend on the whole entry being a literal
+        validator = _load_payload_validator()
+        manifests = validator._plan_manifests(ROOT)
+        self.assertTrue(manifests)
+        for manifest in manifests:
+            self.assertTrue(manifest.is_file(), manifest)
+
     def test_bump_script_validates_payload_and_preserves_recipe_body(self):
         script = (ROOT / "bump-version.sh").read_text(encoding="utf-8")
         self.assertIn('scripts/validate-package-payload.py', script)

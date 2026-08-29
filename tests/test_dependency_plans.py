@@ -36,7 +36,9 @@ class DependencyPlanTests(unittest.TestCase):
         }
         for args, filename in cases.items():
             with self.subTest(args=args):
-                self.assertEqual(self.plan(*args).manifest.name, filename)
+                plan = self.plan(*args)
+                self.assertEqual(plan.manifest.name, filename)
+                self.assertIn('soundfile', plan.required_imports)
 
     def test_realtime_family_equivalence_and_transport_imports(self):
         plans = [self.plan('realtime-ws', provider) for provider in ('openai', 'google', 'custom')]
