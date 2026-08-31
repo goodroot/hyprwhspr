@@ -84,7 +84,7 @@ PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.l
 STATE_DIR = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'state')) / 'hyprwhspr'
 STATE_FILE = STATE_DIR / 'install-state.json'
 PYWHISPERCPP_SRC_DIR = USER_BASE / 'pywhispercpp-src'
-PYWHISPERCPP_PINNED_COMMIT = "294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f"
+PYWHISPERCPP_PINNED_COMMIT = "f7bf62118c0a33a43cf8aabb58eef16cea5d16c4"
 
 # Pre-built wheel configuration
 WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v2"
