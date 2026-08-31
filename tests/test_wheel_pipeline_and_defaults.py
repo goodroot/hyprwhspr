@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -181,6 +182,44 @@ class PywhisperVadKwargsTests(unittest.TestCase):
                 wm = self._manager(use_vad=True)
                 PywhispercppBackend(wm)._create_pywhisper_model("base", 4)
         self.assertNotIn("vad", self._FakeModel.last_kwargs)
+
+
+class PywhispercppSourcePinTests(unittest.TestCase):
+    """The clone/update is best-effort (check=False), so the pin assertion is the
+    only thing standing between a failed fetch and a silent build of the old commit."""
+
+    def _run(self, src_dir, head_result):
+        def fake_run_command(cmd, **kwargs):
+            if "rev-parse" in cmd:
+                return head_result
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with mock.patch.object(backend_installer, "PYWHISPERCPP_SRC_DIR", src_dir), \
+             mock.patch.object(backend_installer, "run_command", side_effect=fake_run_command):
+            return backend_installer._prepare_pywhispercpp_sources()
+
+    def test_head_on_pin_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "pywhispercpp-src"
+            (src / ".git").mkdir(parents=True)
+            head = subprocess.CompletedProcess(
+                [], 0, backend_installer.PYWHISPERCPP_PINNED_COMMIT + "\n", ""
+            )
+            self.assertTrue(self._run(src, head))
+
+    def test_stale_head_fails_instead_of_building(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "pywhispercpp-src"
+            (src / ".git").mkdir(parents=True)
+            stale = subprocess.CompletedProcess([], 0, "294e1e15f1fa3991aaa8db5f5e9afb97ade5ba5f\n", "")
+            self.assertFalse(self._run(src, stale))
+
+    def test_unreadable_head_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "pywhispercpp-src"
+            (src / ".git").mkdir(parents=True)
+            broken = subprocess.CompletedProcess([], 128, "", "not a git repository")
+            self.assertFalse(self._run(src, broken))
 
 
 if __name__ == "__main__":

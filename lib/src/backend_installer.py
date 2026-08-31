@@ -89,7 +89,7 @@ PYWHISPERCPP_PINNED_COMMIT = "f7bf62118c0a33a43cf8aabb58eef16cea5d16c4"
 # Pre-built wheel configuration
 WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v2"
 WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
-PYWHISPERCPP_VERSION = "1.5.0"
+PYWHISPERCPP_VERSION = "1.5.1"
 
 
 class DependencyPlanError(RuntimeError):
@@ -1965,24 +1965,18 @@ def install_pywhispercpp_cpu(pip_bin: Path, requirements_file: Path) -> bool:
             temp_req_path.unlink()
 
 
-def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
-    """Install pywhispercpp with CUDA support"""
-    log_info("Installing pywhispercpp with CUDA support...")
+def _prepare_pywhispercpp_sources() -> bool:
+    """Clean stale build artifacts and put the pywhispercpp checkout on the pinned commit.
 
-    # Try pre-built wheel first (much faster than source build)
-    wheel_path = download_pywhispercpp_wheel()  # Auto-detects CUDA version
-    if wheel_path:
-        if install_pywhispercpp_from_wheel(pip_bin, wheel_path):
-            return True
-        log_warning("Pre-built wheel failed, falling back to source build...")
-
-    install_system_dependencies()
-    log_info("Building from source (this may take several minutes)...")
+    Returns False if the tree does not end up on PYWHISPERCPP_PINNED_COMMIT: building from
+    a stale checkout silently reintroduces whatever the pin bump was meant to fix.
+    """
+    verbosity = OutputController.get_verbosity()
+    verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
 
     # Clean build artifacts if they exist (to avoid Python version mismatches)
     if PYWHISPERCPP_SRC_DIR.exists():
         log_info("Cleaning existing build artifacts...")
-        import shutil
         # Remove common build directories
         build_dirs = [
             PYWHISPERCPP_SRC_DIR / 'build',
@@ -1993,30 +1987,28 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
         for build_dir in build_dirs:
             if build_dir.exists():
                 shutil.rmtree(build_dir, ignore_errors=True)
-        
+
         # Remove egg-info directories
         for egg_info in PYWHISPERCPP_SRC_DIR.glob('*.egg-info'):
             if egg_info.is_dir():
                 shutil.rmtree(egg_info, ignore_errors=True)
-        
+
         # Remove CMake cache files (these can cache Python version)
         for cmake_cache in PYWHISPERCPP_SRC_DIR.rglob('CMakeCache.txt'):
             cmake_cache.unlink(missing_ok=True)
         for cmake_files in PYWHISPERCPP_SRC_DIR.rglob('CMakeFiles'):
             if cmake_files.is_dir():
                 shutil.rmtree(cmake_files, ignore_errors=True)
-        
+
         # Clean __pycache__ directories
         for pycache in PYWHISPERCPP_SRC_DIR.rglob('__pycache__'):
             if pycache.is_dir():
                 shutil.rmtree(pycache, ignore_errors=True)
-    
+
     # Clone or update pywhispercpp sources
     if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
         log_info(f"Cloning pywhispercpp sources (v{PYWHISPERCPP_VERSION}) → {PYWHISPERCPP_SRC_DIR}")
         PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
-        verbosity = OutputController.get_verbosity()
-        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         run_command([
             'git', 'clone', '--recurse-submodules',
             'https://github.com/Absadiki/pywhispercpp.git',
@@ -2032,17 +2024,48 @@ def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
         ], check=True, verbose=verbose)
     else:
         log_info(f"Updating pywhispercpp sources to v{PYWHISPERCPP_VERSION} in {PYWHISPERCPP_SRC_DIR}")
-        verbosity = OutputController.get_verbosity()
-        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
         try:
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'], 
-                       check=False, verbose=verbose)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT], 
-                       check=False, verbose=verbose)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'], 
-                       check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'],
+                        check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT],
+                        check=False, verbose=verbose)
+            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'],
+                        check=False, verbose=verbose)
         except Exception as e:
             log_warning(f"Could not update pywhispercpp repository to v{PYWHISPERCPP_VERSION}: {e}")
+
+    # The fetch/checkout above are best-effort; confirm the pin actually landed rather
+    # than building the previous commit and failing later with an unrelated-looking error.
+    head = run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'rev-parse', 'HEAD'],
+                       check=False, capture_output=True)
+    current = (head.stdout or '').strip() if head.returncode == 0 else ''
+    if current != PYWHISPERCPP_PINNED_COMMIT:
+        log_error(
+            f"pywhispercpp sources are at {current or 'an unknown commit'}, not the pinned "
+            f"{PYWHISPERCPP_PINNED_COMMIT} (v{PYWHISPERCPP_VERSION})"
+        )
+        log_error(f"Remove {PYWHISPERCPP_SRC_DIR} and re-run to get a clean checkout")
+        return False
+
+    return True
+
+
+def install_pywhispercpp_cuda(pip_bin: Path) -> bool:
+    """Install pywhispercpp with CUDA support"""
+    log_info("Installing pywhispercpp with CUDA support...")
+
+    # Try pre-built wheel first (much faster than source build)
+    wheel_path = download_pywhispercpp_wheel()  # Auto-detects CUDA version
+    if wheel_path:
+        if install_pywhispercpp_from_wheel(pip_bin, wheel_path):
+            return True
+        log_warning("Pre-built wheel failed, falling back to source build...")
+
+    install_system_dependencies()
+    log_info("Building from source (this may take several minutes)...")
+
+    if not _prepare_pywhispercpp_sources():
+        return False
     
     # Build with CUDA support
     log_info("Building pywhispercpp with CUDA (ggml CUDA) via pip - may take several minutes")
@@ -2087,70 +2110,8 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
     log_info("Installing pywhispercpp with ROCm support...")
     install_system_dependencies()
     
-    # Clean build artifacts if they exist (to avoid Python version mismatches)
-    if PYWHISPERCPP_SRC_DIR.exists():
-        log_info("Cleaning existing build artifacts...")
-        import shutil
-        # Remove common build directories
-        build_dirs = [
-            PYWHISPERCPP_SRC_DIR / 'build',
-            PYWHISPERCPP_SRC_DIR / 'dist',
-            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'build',
-            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'ggml' / 'build',
-        ]
-        for build_dir in build_dirs:
-            if build_dir.exists():
-                shutil.rmtree(build_dir, ignore_errors=True)
-        
-        # Remove egg-info directories
-        for egg_info in PYWHISPERCPP_SRC_DIR.glob('*.egg-info'):
-            if egg_info.is_dir():
-                shutil.rmtree(egg_info, ignore_errors=True)
-        
-        # Remove CMake cache files (these can cache Python version)
-        for cmake_cache in PYWHISPERCPP_SRC_DIR.rglob('CMakeCache.txt'):
-            cmake_cache.unlink(missing_ok=True)
-        for cmake_files in PYWHISPERCPP_SRC_DIR.rglob('CMakeFiles'):
-            if cmake_files.is_dir():
-                shutil.rmtree(cmake_files, ignore_errors=True)
-        
-        # Clean __pycache__ directories
-        for pycache in PYWHISPERCPP_SRC_DIR.rglob('__pycache__'):
-            if pycache.is_dir():
-                shutil.rmtree(pycache, ignore_errors=True)
-    
-    # Clone or update pywhispercpp sources
-    if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
-        log_info(f"Cloning pywhispercpp sources (v{PYWHISPERCPP_VERSION}) → {PYWHISPERCPP_SRC_DIR}")
-        PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
-        verbosity = OutputController.get_verbosity()
-        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
-        run_command([
-            'git', 'clone', '--recurse-submodules',
-            'https://github.com/Absadiki/pywhispercpp.git',
-            str(PYWHISPERCPP_SRC_DIR)
-        ], check=True, verbose=verbose)
-        run_command([
-            'git', '-C', str(PYWHISPERCPP_SRC_DIR),
-            'checkout', PYWHISPERCPP_PINNED_COMMIT
-        ], check=True, verbose=verbose)
-        run_command([
-            'git', '-C', str(PYWHISPERCPP_SRC_DIR),
-            'submodule', 'update', '--init', '--recursive'
-        ], check=True, verbose=verbose)
-    else:
-        log_info(f"Updating pywhispercpp sources to v{PYWHISPERCPP_VERSION} in {PYWHISPERCPP_SRC_DIR}")
-        verbosity = OutputController.get_verbosity()
-        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
-        try:
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'], 
-                       check=False, verbose=verbose)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT], 
-                       check=False, verbose=verbose)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'], 
-                       check=False, verbose=verbose)
-        except Exception as e:
-            log_warning(f"Could not update pywhispercpp repository to v{PYWHISPERCPP_VERSION}: {e}")
+    if not _prepare_pywhispercpp_sources():
+        return False, True
     
     # Set up ROCm environment
     rocm_path = os.environ.get('ROCM_PATH', '/opt/rocm')
@@ -2210,70 +2171,8 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
     log_info("Installing pywhispercpp with Vulkan support...")
     install_system_dependencies()
 
-    # Clean build artifacts if they exist (to avoid Python version mismatches)
-    if PYWHISPERCPP_SRC_DIR.exists():
-        log_info("Cleaning existing build artifacts...")
-        import shutil
-        # Remove common build directories
-        build_dirs = [
-            PYWHISPERCPP_SRC_DIR / 'build',
-            PYWHISPERCPP_SRC_DIR / 'dist',
-            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'build',
-            PYWHISPERCPP_SRC_DIR / 'whisper.cpp' / 'ggml' / 'build',
-        ]
-        for build_dir in build_dirs:
-            if build_dir.exists():
-                shutil.rmtree(build_dir, ignore_errors=True)
-
-        # Remove egg-info directories
-        for egg_info in PYWHISPERCPP_SRC_DIR.glob('*.egg-info'):
-            if egg_info.is_dir():
-                shutil.rmtree(egg_info, ignore_errors=True)
-
-        # Remove CMake cache files (these can cache Python version)
-        for cmake_cache in PYWHISPERCPP_SRC_DIR.rglob('CMakeCache.txt'):
-            cmake_cache.unlink(missing_ok=True)
-        for cmake_files in PYWHISPERCPP_SRC_DIR.rglob('CMakeFiles'):
-            if cmake_files.is_dir():
-                shutil.rmtree(cmake_files, ignore_errors=True)
-
-        # Clean __pycache__ directories
-        for pycache in PYWHISPERCPP_SRC_DIR.rglob('__pycache__'):
-            if pycache.is_dir():
-                shutil.rmtree(pycache, ignore_errors=True)
-
-    # Clone or update pywhispercpp sources
-    if not PYWHISPERCPP_SRC_DIR.exists() or not (PYWHISPERCPP_SRC_DIR / '.git').exists():
-        log_info(f"Cloning pywhispercpp sources (v{PYWHISPERCPP_VERSION}) → {PYWHISPERCPP_SRC_DIR}")
-        PYWHISPERCPP_SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
-        verbosity = OutputController.get_verbosity()
-        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
-        run_command([
-            'git', 'clone', '--recurse-submodules',
-            'https://github.com/Absadiki/pywhispercpp.git',
-            str(PYWHISPERCPP_SRC_DIR)
-        ], check=True, verbose=verbose)
-        run_command([
-            'git', '-C', str(PYWHISPERCPP_SRC_DIR),
-            'checkout', PYWHISPERCPP_PINNED_COMMIT
-        ], check=True, verbose=verbose)
-        run_command([
-            'git', '-C', str(PYWHISPERCPP_SRC_DIR),
-            'submodule', 'update', '--init', '--recursive'
-        ], check=True, verbose=verbose)
-    else:
-        log_info(f"Updating pywhispercpp sources to v{PYWHISPERCPP_VERSION} in {PYWHISPERCPP_SRC_DIR}")
-        verbosity = OutputController.get_verbosity()
-        verbose = verbosity.value >= VerbosityLevel.VERBOSE.value
-        try:
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'fetch', '--tags'],
-                       check=False, verbose=verbose)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'checkout', PYWHISPERCPP_PINNED_COMMIT],
-                       check=False, verbose=verbose)
-            run_command(['git', '-C', str(PYWHISPERCPP_SRC_DIR), 'submodule', 'update', '--init', '--recursive'],
-                       check=False, verbose=verbose)
-        except Exception as e:
-            log_warning(f"Could not update pywhispercpp repository to v{PYWHISPERCPP_VERSION}: {e}")
+    if not _prepare_pywhispercpp_sources():
+        return False
 
     # Set up Vulkan environment
     # Start with mise-free environment if mise is active, otherwise use current environment
