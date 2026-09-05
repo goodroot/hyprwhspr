@@ -89,6 +89,10 @@ from recording_control_server import RecordingControlServer
 class hyprwhsprApp:
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
 
+    def _diagnostics_snapshot(self):
+        from diagnostics import daemon_snapshot
+        return daemon_snapshot(self)
+
     def __init__(self):
         ensure_wayland_display()
 
@@ -180,6 +184,7 @@ class hyprwhsprApp:
             is_recording=lambda: self.is_recording,
             on_file_transcribe=self._handle_file_transcribe,
             on_recover=self._handle_recovery,
+            on_diagnostics=self._diagnostics_snapshot,
         )
 
         # Hybrid tap/hold mode state tracking (auto mode)

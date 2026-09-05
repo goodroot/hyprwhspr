@@ -335,6 +335,7 @@ install_deps_apt() {
         python3-evdev \
         python3-requests \
         python3-rich \
+        python3-jsonschema \
         python3-pulsectl \
         python3-pyudev \
         python3-dbus \
@@ -392,6 +393,7 @@ install_deps_dnf() {
         python3-evdev \
         python3-requests \
         python3-rich \
+        python3-jsonschema \
         python3-pulsectl \
         python3-pyudev \
         python3-dbus \
@@ -443,6 +445,7 @@ install_deps_zypper() {
         python3-pyperclip \
         python3-requests \
         python3-rich \
+        python3-jsonschema \
         python3-pulsectl \
         python3-pyudev \
         python3-gobject \

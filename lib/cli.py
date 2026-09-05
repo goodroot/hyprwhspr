@@ -28,11 +28,17 @@ def _get_version():
         result = subprocess.run(
             ['git', 'describe', '--tags', '--abbrev=7'],
             cwd=Path(__file__).parent.parent,
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=2
         )
         return result.stdout.strip()
     except Exception:
         return 'unknown'
+
+
+class _VersionAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"{parser.prog} {_get_version()}")
+        parser.exit()
 
 
 def main():
@@ -41,7 +47,7 @@ def main():
         prog='hyprwhspr',
         description='hyprwhspr - ferocious speech-to-text for Linux',
     )
-    parser.add_argument('--version', action='version', version=f'%(prog)s {_get_version()}')
+    parser.add_argument('--version', action=_VersionAction, nargs=0, help='Show version and exit')
     
     # Global verbosity flags
     parser.add_argument('-q', '--quiet', action='store_true',
@@ -81,6 +87,8 @@ def main():
     # config command
     config_parser = subparsers.add_parser('config', help='Configuration management')
     config_subparsers = config_parser.add_subparsers(dest='config_action', help='Config actions')
+    validate_parser = config_subparsers.add_parser('validate', help='Validate configuration without changes')
+    validate_parser.add_argument('--json', action='store_true', dest='json_output')
     config_subparsers.add_parser('init', help='Create default config')
     config_show_parser = config_subparsers.add_parser('show', help='Display current config')
     config_show_parser.add_argument('--all', action='store_true', dest='show_all', help='Show all settings including defaults')
@@ -129,7 +137,9 @@ def main():
     model_subparsers.add_parser('reload', help='Reload model into memory after unload')
 
     # status command
-    subparsers.add_parser('status', help='Overall status check')
+    status_parser = subparsers.add_parser('status', help='Overall status check')
+    status_parser.add_argument('--report', action='store_true', help='Read-only diagnostic report')
+    status_parser.add_argument('--json', action='store_true', dest='json_output')
     
     # validate command
     subparsers.add_parser('validate', help='Validate installation')
@@ -262,6 +272,9 @@ def main():
             if not args.config_action:
                 config_parser.print_help()
                 sys.exit(1)
+            if args.config_action == 'validate':
+                from diagnostics import run_diagnostics
+                sys.exit(run_diagnostics(json_output=args.json_output))
             from cli.config import config_command
             config_command(args.config_action, show_all=getattr(args, 'show_all', False))
         elif args.command == 'waybar':
@@ -297,6 +310,11 @@ def main():
             if not model_command(args.model_action, model_name):
                 sys.exit(1)
         elif args.command == 'status':
+            if args.json_output and not args.report:
+                parser.error('status --json requires --report')
+            if args.report:
+                from diagnostics import run_diagnostics
+                sys.exit(run_diagnostics(report=True, json_output=args.json_output))
             from cli.status import status_command
             status_command()
         elif args.command == 'validate':

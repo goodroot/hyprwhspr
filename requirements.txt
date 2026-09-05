@@ -18,3 +18,6 @@ rich>=14.0.0
 # requirements-visualizer.txt and are installed best-effort, so a GUI build
 # failure (e.g. missing girepository-2.0 on Ubuntu 24.04) can never abort the
 # install of the core runtime deps above.
+
+# Read-only configuration validation
+jsonschema>=4.18.0

@@ -16,13 +16,14 @@ class RecordingControlServer:
     }
 
     def __init__(self, fifo_path, socket_path, on_command, is_recording,
-                 on_file_transcribe=None, on_recover=None):
+                 on_file_transcribe=None, on_recover=None, on_diagnostics=None):
         self.fifo_path = Path(fifo_path)
         self.socket_path = Path(socket_path)
         self._on_command = on_command
         self._is_recording = is_recording
         self._on_file_transcribe = on_file_transcribe
         self._on_recover = on_recover
+        self._on_diagnostics = on_diagnostics
 
         self._lifecycle_lock = threading.Lock()
         self._stop_event = None
@@ -455,7 +456,26 @@ class RecordingControlServer:
         """Handle request/response operations without changing capture semantics."""
         try:
             request = json.loads(line)
-            if isinstance(request, dict) and request.get('verb') in ('copy_last', 'paste_last', 'clear_last'):
+            if isinstance(request, dict) and request.get('verb') == 'diagnostics':
+                response = {'ok': False}
+                if (not stop_event.is_set() and stop_event is self._stop_event
+                        and self._on_diagnostics is not None):
+                    try:
+                        from diagnostics import sanitize_snapshot
+                        snapshot = sanitize_snapshot(self._on_diagnostics())
+                        if snapshot is not None and not stop_event.is_set():
+                            response = {'ok': True, 'snapshot': snapshot}
+                    except Exception:
+                        pass  # Never return or log diagnostic exception contents.
+                try:
+                    # Match other JSON replies; the diagnostic client owns
+                    # the bounded wait and closes the connection on timeout.
+                    conn.settimeout(None)
+                    conn.sendall(json.dumps(response).encode('utf-8') + b'\n')
+                except OSError:
+                    pass
+                return
+            elif isinstance(request, dict) and request.get('verb') in ('copy_last', 'paste_last', 'clear_last'):
                 if stop_event.is_set() or stop_event is not self._stop_event:
                     raise RuntimeError('daemon is shutting down')
                 if self._on_recover is None:

@@ -46,6 +46,201 @@ except ImportError:
     from paths import CONFIG_DIR, CONFIG_FILE, TEMP_DIR
 
 
+def build_default_config():
+    """Construct fresh defaults without touching configuration or services."""
+    # Default configuration values - minimal set for hyprwhspr
+    return {
+        'primary_shortcut': 'SUPER+ALT+D',
+        'secondary_shortcut': None,  # Optional secondary hotkey for language-specific recording (e.g., "SUPER+ALT+I")
+        'secondary_language': None,  # Language code for secondary shortcut (e.g., "it", "en", "fr", etc.)
+        'cancel_shortcut': None,  # Optional shortcut to cancel recording and discard audio (e.g., "SUPER+ESCAPE")
+        'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
+        'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
+        'continuous_silence_threshold': 0,  # RMS silence threshold; 0 = auto-calibrate from noise floor at session start
+        'silence_timeout': 0,   # Auto-stop after N seconds of silence in toggle/auto modes; 0 = disabled (arms only after speech)
+        'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
+        'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
+        'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
+        'selected_device_name': None,  # Specific keyboard device name (e.g., 'USB Keyboard') - takes priority over path if both set
+        # Watch for keyboards plugged in after startup (pyudev) and attach
+        # them live, so docked/Bluetooth/USB keyboards work without a service
+        # restart. True (default) enables this for any keyboard that passes
+        # the same checks as startup discovery.
+        'keyboard_hotplug': True,
+        # Optional allowlist of keyboard device names. Restricts which
+        # devices are grabbed at startup AND on hotplug — mice/media
+        # controllers that advertise keyboard-shaped capabilities are
+        # skipped.  Null (default) = no filter.
+        'keyboard_device_names': None,
+        # Audio device persistence (for reliable device matching across reboots)
+        'audio_device_id': None,        # PortAudio index, or a PulseAudio/PipeWire source name (pactl list short sources)
+        'audio_device_name': None,      # Device/source name substring (more stable across reboots); 'hw:' prefix opts into raw ALSA
+        'audio_device_vendor_id': None, # USB vendor ID (most stable, from udev)
+        'audio_device_model_id': None,  # USB model ID (most stable, from udev)
+        'model': 'base',
+        'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
+        'word_overrides': {'hyper whisper': 'hyprwhspr'},  # {"original": "replacement"}
+        'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
+        'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
+        'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
+        # Space after each transcription: true, false, or "auto" (skip it when
+        # the text ends in a CJK character, where the space is a stray artifact)
+        'append_trailing_space': 'auto',
+        # Stock phrases Whisper emits for non-speech audio. Configurable because
+        # "you" is both the most common phantom and a real one-word dictation.
+        'hallucination_markers': list(DEFAULT_HALLUCINATION_MARKERS),
+        # A prompt written in one language pulls the decoder toward that
+        # language, so the shipped default is scoped to English audio.
+        'whisper_prompt': '',
+        'whisper_prompt_en': ENGLISH_PROMPT,
+        'task': 'transcribe',  # "transcribe" (source language) or "translate" (to English)
+        'sampling_strategy': 'beam_search',  # "beam_search" or "greedy" for Whisper decoding
+        'beam_size': 5,  # Number of candidates tracked when using beam search
+        'threads': min(8, os.cpu_count() or 4),  # whisper.cpp worker threads
+        # Shell command run after preprocessing, before paste. Stdin
+        # receives the transcription; non-empty stdout replaces it.
+        # Empty stdout leaves text unchanged (observer-only hooks).
+        # Null disables the hook.
+        'post_transcription_hook': None,
+        'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
+        'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
+        # Values: "super" | "ctrl_shift" | "ctrl" | null (auto-detect)
+        # null = auto-detect: terminals get Ctrl+Shift+V, other apps get Ctrl+V
+        'paste_mode': None,
+        # Wayland/XKB keycode as printed by `wev` for the key that types 'v'.
+        # If set, hyprwhspr will convert it to Linux evdev by subtracting 8.
+        # This avoids users having to do the math themselves.
+        'paste_keycode_wev': None,
+        # ydotool sends Linux evdev keycodes (physical keys), not keysyms/characters.
+        # Default 47 = KEY_V (works on QWERTY; on other layouts set this to the keycode
+        # for the physical key that produces 'v' on your layout).
+        'paste_keycode': 47,
+        # Override the physical evdev keys used for logical modifiers by the
+        # ydotool fallback, e.g. {"ctrl": "capslock"} for an XKB Ctrl/Caps swap.
+        'ydotool_modifier_overrides': {},
+        # Per-application injection behavior. Keys match normalized focused
+        # window identifiers. Example: {"emacs": {"auto_paste": "ctrl+y"}}
+        # or {"some-app": {"auto_paste": False}} to disable injection entirely
+        # (nothing pasted, clipboard left untouched).
+        'applications': {},
+        # Back-compat for older configs (used only if paste_mode is absent):
+        'shift_paste': None,  # true = Ctrl+Shift+V, false = Ctrl+V; None = use auto-detect
+        # Direct-type injection mode (bypasses clipboard entirely)
+        # null (default) = clipboard + paste keystroke (existing behavior)
+        # "wtype"         = wtype -- <text>  (native Wayland, works in Kitty-protocol terminals)
+        # "ydotool_type"  = ydotool type -- <text>  (works in Kitty-protocol terminals)
+        'inject_mode': None,
+        'prefer_clipboard_paste': False,  # Force clipboard paste instead of direct typing on GNOME/Mutter
+        # Transcription backend settings
+        'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"vulkan"/"amd") or "rest-api"
+        'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
+        'rest_api_provider': None,          # Provider identifier for credential lookup (e.g., 'openai', 'groq', 'custom')
+        'rest_api_key': None,              # DEPRECATED: Optional API key for authentication (kept for backward compatibility)
+        'rest_headers': {},                # Additional HTTP headers for remote transcription
+        'rest_body': {},                   # Additional body fields for remote transcription
+        'rest_timeout': 30,                # Request timeout in seconds
+        'rest_audio_format': 'wav',        # Audio format for remote transcription
+        # WebSocket realtime backend settings
+        'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai', 'google', 'elevenlabs')
+        'websocket_model': None,           # Model identifier (e.g., 'gpt-transcribe')
+        'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
+        'realtime_timeout': 30,            # Completion timeout (seconds)
+        'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
+        'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
+        'realtime_transcription_delay': 'low',  # OpenAI continuous transcription delay: minimal|low|medium|high|xhigh
+        'realtime_conversation_history': 'turn',  # OpenAI converse mode: session|turn
+        # whisper.cpp (pywhispercpp) backend settings
+        'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
+        # ONNX-ASR backend settings (CPU-optimized)
+        'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
+        'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
+        'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
+        'onnx_asr_vad_min_duration': 30,             # Only use ONNX VAD for recordings at least this many seconds long
+        # faster-whisper backend settings (CTranslate2, NVIDIA CUDA)
+        'faster_whisper_model': 'base',          # Model name (e.g., 'base', 'small', 'large-v3-turbo')
+        'faster_whisper_device': 'auto',         # 'auto' | 'cuda' | 'cpu'
+        'faster_whisper_compute_type': 'auto',   # 'auto' → int8 on cuda, float32 on cpu
+        'faster_whisper_vad_filter': True,       # Enable Silero VAD (strips silence, reduces hallucinations)
+        # Cohere Transcribe backend settings (transformers, CUDA/CPU)
+        'cohere_transcribe_device': 'auto',      # 'auto' | 'cuda' | 'cpu'
+        'cohere_transcribe_dtype': 'bfloat16',   # 'bfloat16' | 'float32' — bfloat16 halves VRAM without float16 overflow in attention masking
+        'cohere_transcribe_compile': False,      # torch.compile encoder for faster throughput (adds warmup on first call)
+        # Audio feedback settings
+        'audio_feedback': True,              # Play sounds on recording start/stop/error
+        'audio_volume': 0.5,                 # Master audio feedback volume (0.0-1.0)
+        'start_sound_volume': 1.0,           # Volume multiplier for start sound
+        'stop_sound_volume': 1.0,            # Volume multiplier for stop sound
+        'error_sound_volume': 0.5,           # Volume multiplier for error sound
+        'start_sound_path': None,            # Custom path for start sound (None = built-in ping-up.ogg)
+        'stop_sound_path': None,             # Custom path for stop sound (None = built-in ping-down.ogg)
+        'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)
+        # Visual feedback settings
+        'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
+        'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter' or 'pill'
+        # Live transcript above the pill OSD (ElevenLabs Scribe v2 Realtime)
+        'mic_osd_pill_transcript_enabled': False,
+        'mic_osd_pill_transcript_word_limit': 4,
+        'mic_osd_pill_transcript_idle_timeout_ms': 1400,
+        # Banner duration (ms) for non-critical desktop notifications. These are also
+        # marked transient so they never accumulate in the notification center;
+        # critical errors ignore this and persist. (GNOME Shell ignores -t entirely.)
+        'notification_timeout_ms': 5000,
+        'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
+        # Audio ducking settings
+        'audio_ducking': False,              # Quiet other audio during recording
+        'audio_ducking_mode': 'duck',        # 'duck' (lower volume) or 'pause' (pause MPRIS players, duck the rest)
+        'audio_ducking_percent': 50,         # How much to reduce BY (50 = reduce to 50% of original)
+        # Post-paste behavior
+        'auto_submit': False,                # Send Enter key after pasting text (for chat/search inputs)
+        # Long-form recording mode settings
+        'long_form_submit_shortcut': None,   # Shortcut to submit long-form recording (e.g., "Super+Return")
+        'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
+        'long_form_auto_save_interval': 300, # Auto-save interval in seconds (default: 5 minutes)
+        # Audio stream cold-start recovery
+        # How long (seconds) to wait between stream.start() retries when PortAudio times out.
+        # Increase this if your USB mic frequently fails on the first recording after idle.
+        'stream_start_retry_delay': 1.5,
+        # Keep a silent audio stream open between recordings to prevent ALSA cold-start
+        # timeouts on some hardware. Disabled by default because active input streams
+        # trigger the microphone-in-use indicator on many desktops (GNOME, Ubuntu, etc.).
+        # Enable only if you see paTimedOut errors on your first recording after idle.
+        'keepalive_stream': False
+    }
+
+
+def normalize_legacy_config(config):
+    """Return a normalized copy and migration descriptions; never persist."""
+    loaded_config = copy.deepcopy(config)
+    # Strip $schema key so it doesn't pollute self.config
+    loaded_config.pop('$schema', None)
+
+    # Migrate old push_to_talk config to recording_mode (before merging with defaults)
+    # Check the original loaded_config, not self.config (which has defaults merged)
+    migrations = []
+    if 'push_to_talk' in loaded_config and 'recording_mode' not in loaded_config:
+        if loaded_config['push_to_talk']:
+            loaded_config['recording_mode'] = 'push_to_talk'
+        else:
+            loaded_config['recording_mode'] = 'toggle'
+        # Remove old push_to_talk key from loaded config
+        del loaded_config['push_to_talk']
+        migrations.append("'push_to_talk' -> 'recording_mode'")
+
+    # Migrate old audio_device config key to audio_device_id
+    if 'audio_device' in loaded_config and 'audio_device_id' not in loaded_config:
+        loaded_config['audio_device_id'] = loaded_config['audio_device']
+        del loaded_config['audio_device']
+        migrations.append("'audio_device' -> 'audio_device_id'")
+
+    # Drop an inherited copy of the old English default so it stops
+    # being read as a deliberate all-languages prompt
+    if loaded_config.get('whisper_prompt') == ENGLISH_PROMPT:
+        del loaded_config['whisper_prompt']
+        migrations.append("'whisper_prompt' -> 'whisper_prompt_en'")
+
+    return loaded_config, migrations
+
+
 class ConfigManager:
     """Manages application configuration and settings"""
 
@@ -53,165 +248,8 @@ class ConfigManager:
 
     def __init__(self, verbose: bool = True):
         self.verbose = verbose
-        # Default configuration values - minimal set for hyprwhspr
-        self.default_config = {
-            'primary_shortcut': 'SUPER+ALT+D',
-            'secondary_shortcut': None,  # Optional secondary hotkey for language-specific recording (e.g., "SUPER+ALT+I")
-            'secondary_language': None,  # Language code for secondary shortcut (e.g., "it", "en", "fr", etc.)
-            'cancel_shortcut': None,  # Optional shortcut to cancel recording and discard audio (e.g., "SUPER+ESCAPE")
-            'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
-            'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
-            'continuous_silence_threshold': 0,  # RMS silence threshold; 0 = auto-calibrate from noise floor at session start
-            'silence_timeout': 0,   # Auto-stop after N seconds of silence in toggle/auto modes; 0 = disabled (arms only after speech)
-            'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
-            'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
-            'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
-            'selected_device_name': None,  # Specific keyboard device name (e.g., 'USB Keyboard') - takes priority over path if both set
-            # Watch for keyboards plugged in after startup (pyudev) and attach
-            # them live, so docked/Bluetooth/USB keyboards work without a service
-            # restart. True (default) enables this for any keyboard that passes
-            # the same checks as startup discovery.
-            'keyboard_hotplug': True,
-            # Optional allowlist of keyboard device names. Restricts which
-            # devices are grabbed at startup AND on hotplug — mice/media
-            # controllers that advertise keyboard-shaped capabilities are
-            # skipped.  Null (default) = no filter.
-            'keyboard_device_names': None,
-            # Audio device persistence (for reliable device matching across reboots)
-            'audio_device_id': None,        # PortAudio index, or a PulseAudio/PipeWire source name (pactl list short sources)
-            'audio_device_name': None,      # Device/source name substring (more stable across reboots); 'hw:' prefix opts into raw ALSA
-            'audio_device_vendor_id': None, # USB vendor ID (most stable, from udev)
-            'audio_device_model_id': None,  # USB model ID (most stable, from udev)
-            'model': 'base',
-            'language': None,       # Language code for transcription (None = auto-detect, or 'en', 'nl', 'fr', etc.)
-            'word_overrides': {'hyper whisper': 'hyprwhspr'},  # {"original": "replacement"}
-            'filter_filler_words': False,  # Remove common filler words (uh, um, er, etc.)
-            'filler_words': ['uh', 'um', 'er', 'ah', 'eh', 'hmm', 'hm', 'mm', 'mhm'],  # Filler words to remove
-            'symbol_replacements': True,  # Enable built-in speech-to-symbol replacements (e.g., "quote" → ")
-            # Space after each transcription: true, false, or "auto" (skip it when
-            # the text ends in a CJK character, where the space is a stray artifact)
-            'append_trailing_space': 'auto',
-            # Stock phrases Whisper emits for non-speech audio. Configurable because
-            # "you" is both the most common phantom and a real one-word dictation.
-            'hallucination_markers': list(DEFAULT_HALLUCINATION_MARKERS),
-            # A prompt written in one language pulls the decoder toward that
-            # language, so the shipped default is scoped to English audio.
-            'whisper_prompt': '',
-            'whisper_prompt_en': ENGLISH_PROMPT,
-            'task': 'transcribe',  # "transcribe" (source language) or "translate" (to English)
-            'sampling_strategy': 'beam_search',  # "beam_search" or "greedy" for Whisper decoding
-            'beam_size': 5,  # Number of candidates tracked when using beam search
-            'threads': min(8, os.cpu_count() or 4),  # whisper.cpp worker threads
-            # Shell command run after preprocessing, before paste. Stdin
-            # receives the transcription; non-empty stdout replaces it.
-            # Empty stdout leaves text unchanged (observer-only hooks).
-            # Null disables the hook.
-            'post_transcription_hook': None,
-            'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
-            'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
-            # Values: "super" | "ctrl_shift" | "ctrl" | null (auto-detect)
-            # null = auto-detect: terminals get Ctrl+Shift+V, other apps get Ctrl+V
-            'paste_mode': None,
-            # Wayland/XKB keycode as printed by `wev` for the key that types 'v'.
-            # If set, hyprwhspr will convert it to Linux evdev by subtracting 8.
-            # This avoids users having to do the math themselves.
-            'paste_keycode_wev': None,
-            # ydotool sends Linux evdev keycodes (physical keys), not keysyms/characters.
-            # Default 47 = KEY_V (works on QWERTY; on other layouts set this to the keycode
-            # for the physical key that produces 'v' on your layout).
-            'paste_keycode': 47,
-            # Override the physical evdev keys used for logical modifiers by the
-            # ydotool fallback, e.g. {"ctrl": "capslock"} for an XKB Ctrl/Caps swap.
-            'ydotool_modifier_overrides': {},
-            # Per-application injection behavior. Keys match normalized focused
-            # window identifiers. Example: {"emacs": {"auto_paste": "ctrl+y"}}
-            # or {"some-app": {"auto_paste": False}} to disable injection entirely
-            # (nothing pasted, clipboard left untouched).
-            'applications': {},
-            # Back-compat for older configs (used only if paste_mode is absent):
-            'shift_paste': None,  # true = Ctrl+Shift+V, false = Ctrl+V; None = use auto-detect
-            # Direct-type injection mode (bypasses clipboard entirely)
-            # null (default) = clipboard + paste keystroke (existing behavior)
-            # "wtype"         = wtype -- <text>  (native Wayland, works in Kitty-protocol terminals)
-            # "ydotool_type"  = ydotool type -- <text>  (works in Kitty-protocol terminals)
-            'inject_mode': None,
-            'prefer_clipboard_paste': False,  # Force clipboard paste instead of direct typing on GNOME/Mutter
-            # Transcription backend settings
-            'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"vulkan"/"amd") or "rest-api"
-            'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
-            'rest_api_provider': None,          # Provider identifier for credential lookup (e.g., 'openai', 'groq', 'custom')
-            'rest_api_key': None,              # DEPRECATED: Optional API key for authentication (kept for backward compatibility)
-            'rest_headers': {},                # Additional HTTP headers for remote transcription
-            'rest_body': {},                   # Additional body fields for remote transcription
-            'rest_timeout': 30,                # Request timeout in seconds
-            'rest_audio_format': 'wav',        # Audio format for remote transcription
-            # WebSocket realtime backend settings
-            'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai', 'google', 'elevenlabs')
-            'websocket_model': None,           # Model identifier (e.g., 'gpt-transcribe')
-            'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
-            'realtime_timeout': 30,            # Completion timeout (seconds)
-            'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
-            'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
-            'realtime_transcription_delay': 'low',  # OpenAI continuous transcription delay: minimal|low|medium|high|xhigh
-            'realtime_conversation_history': 'turn',  # OpenAI converse mode: session|turn
-            # whisper.cpp (pywhispercpp) backend settings
-            'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
-            # ONNX-ASR backend settings (CPU-optimized)
-            'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
-            'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
-            'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
-            'onnx_asr_vad_min_duration': 30,             # Only use ONNX VAD for recordings at least this many seconds long
-            # faster-whisper backend settings (CTranslate2, NVIDIA CUDA)
-            'faster_whisper_model': 'base',          # Model name (e.g., 'base', 'small', 'large-v3-turbo')
-            'faster_whisper_device': 'auto',         # 'auto' | 'cuda' | 'cpu'
-            'faster_whisper_compute_type': 'auto',   # 'auto' → int8 on cuda, float32 on cpu
-            'faster_whisper_vad_filter': True,       # Enable Silero VAD (strips silence, reduces hallucinations)
-            # Cohere Transcribe backend settings (transformers, CUDA/CPU)
-            'cohere_transcribe_device': 'auto',      # 'auto' | 'cuda' | 'cpu'
-            'cohere_transcribe_dtype': 'bfloat16',   # 'bfloat16' | 'float32' — bfloat16 halves VRAM without float16 overflow in attention masking
-            'cohere_transcribe_compile': False,      # torch.compile encoder for faster throughput (adds warmup on first call)
-            # Audio feedback settings
-            'audio_feedback': True,              # Play sounds on recording start/stop/error
-            'audio_volume': 0.5,                 # Master audio feedback volume (0.0-1.0)
-            'start_sound_volume': 1.0,           # Volume multiplier for start sound
-            'stop_sound_volume': 1.0,            # Volume multiplier for stop sound
-            'error_sound_volume': 0.5,           # Volume multiplier for error sound
-            'start_sound_path': None,            # Custom path for start sound (None = built-in ping-up.ogg)
-            'stop_sound_path': None,             # Custom path for stop sound (None = built-in ping-down.ogg)
-            'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)
-            # Visual feedback settings
-            'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
-            'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter' or 'pill'
-            # Live transcript above the pill OSD (ElevenLabs Scribe v2 Realtime)
-            'mic_osd_pill_transcript_enabled': False,
-            'mic_osd_pill_transcript_word_limit': 4,
-            'mic_osd_pill_transcript_idle_timeout_ms': 1400,
-            # Banner duration (ms) for non-critical desktop notifications. These are also
-            # marked transient so they never accumulate in the notification center;
-            # critical errors ignore this and persist. (GNOME Shell ignores -t entirely.)
-            'notification_timeout_ms': 5000,
-            'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
-            # Audio ducking settings
-            'audio_ducking': False,              # Quiet other audio during recording
-            'audio_ducking_mode': 'duck',        # 'duck' (lower volume) or 'pause' (pause MPRIS players, duck the rest)
-            'audio_ducking_percent': 50,         # How much to reduce BY (50 = reduce to 50% of original)
-            # Post-paste behavior
-            'auto_submit': False,                # Send Enter key after pasting text (for chat/search inputs)
-            # Long-form recording mode settings
-            'long_form_submit_shortcut': None,   # Shortcut to submit long-form recording (e.g., "Super+Return")
-            'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
-            'long_form_auto_save_interval': 300, # Auto-save interval in seconds (default: 5 minutes)
-            # Audio stream cold-start recovery
-            # How long (seconds) to wait between stream.start() retries when PortAudio times out.
-            # Increase this if your USB mic frequently fails on the first recording after idle.
-            'stream_start_retry_delay': 1.5,
-            # Keep a silent audio stream open between recordings to prevent ALSA cold-start
-            # timeouts on some hardware. Disabled by default because active input streams
-            # trigger the microphone-in-use indicator on many desktops (GNOME, Ubuntu, etc.).
-            # Enable only if you see paTimedOut errors on your first recording after idle.
-            'keepalive_stream': False
-        }
-        
+        self.default_config = build_default_config()
+
         # Set up config directory and file path
         self.config_dir = CONFIG_DIR
         self.config_file = CONFIG_FILE
@@ -240,32 +278,7 @@ class ConfigManager:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f)
                     
-                # Strip $schema key so it doesn't pollute self.config
-                loaded_config.pop('$schema', None)
-
-                # Migrate old push_to_talk config to recording_mode (before merging with defaults)
-                # Check the original loaded_config, not self.config (which has defaults merged)
-                migrations = []
-                if 'push_to_talk' in loaded_config and 'recording_mode' not in loaded_config:
-                    if loaded_config['push_to_talk']:
-                        loaded_config['recording_mode'] = 'push_to_talk'
-                    else:
-                        loaded_config['recording_mode'] = 'toggle'
-                    # Remove old push_to_talk key from loaded config
-                    del loaded_config['push_to_talk']
-                    migrations.append("'push_to_talk' -> 'recording_mode'")
-
-                # Migrate old audio_device config key to audio_device_id
-                if 'audio_device' in loaded_config and 'audio_device_id' not in loaded_config:
-                    loaded_config['audio_device_id'] = loaded_config['audio_device']
-                    del loaded_config['audio_device']
-                    migrations.append("'audio_device' -> 'audio_device_id'")
-
-                # Drop an inherited copy of the old English default so it stops
-                # being read as a deliberate all-languages prompt
-                if loaded_config.get('whisper_prompt') == ENGLISH_PROMPT:
-                    del loaded_config['whisper_prompt']
-                    migrations.append("'whisper_prompt' -> 'whisper_prompt_en'")
+                loaded_config, migrations = normalize_legacy_config(loaded_config)
 
                 # Merge loaded config with defaults (preserving any new default keys)
                 self.config.update(loaded_config)
