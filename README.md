@@ -144,7 +144,7 @@ hyprwhspr setup
 - `hyprwhspr setup` - Interactive initial setup
 - `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit` / `secondary-shortcut`)
 - `hyprwhspr model` - Manage models (`download` / `list` / `status` / `unload` / `reload`)
-- `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle` / `cancel` / `capture` / `status`)
+- `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle` / `cancel` / `capture` / `status` / `copy-last` / `paste-last` / `clear-last`)
 - `hyprwhspr transcribe INPUT` - Transcribe a WAV or MP3 file to stdout (use `-o PATH` to write a file)
 - `hyprwhspr status` - Overall status check
 - `hyprwhspr validate` - Validate installation

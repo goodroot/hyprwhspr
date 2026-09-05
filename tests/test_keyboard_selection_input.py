@@ -5,6 +5,8 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
+from tests.evdev_stub import modifier_codes
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
@@ -33,8 +35,9 @@ _stub_if_missing("rich.table", Table=object)
 _stub_if_missing(
     "evdev",
     InputDevice=object,
+    list_devices=lambda: [],
     categorize=lambda *a, **k: None,
-    ecodes=types.SimpleNamespace(),
+    ecodes=modifier_codes(),
     UInput=object,
 )
 

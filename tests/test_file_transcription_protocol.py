@@ -14,14 +14,16 @@ from recording_control_server import RecordingControlServer  # noqa: E402
 
 
 class FileTranscriptionProtocolTests(unittest.TestCase):
-    def _exchange(self, request, callback=None):
+    def _exchange(self, request, callback=None, recover=None, stopping=False):
         callback = callback or (lambda path, language, clean: (True, 'text'))
         stop_event = threading.Event()
         server = RecordingControlServer(
             '/tmp/unused-fifo', '/tmp/unused-socket', lambda *_: None,
-            lambda: False, on_file_transcribe=callback,
+            lambda: False, on_file_transcribe=callback, on_recover=recover,
         )
         server._stop_event = stop_event
+        if stopping:
+            stop_event.set()
         client, peer = socket.socketpair()
         worker = threading.Thread(
             target=server._handle_capture_connection, args=(peer, stop_event)
@@ -39,6 +41,29 @@ class FileTranscriptionProtocolTests(unittest.TestCase):
         client.close()
         self.assertFalse(worker.is_alive())
         return json.loads(b''.join(chunks).decode('utf-8'))
+
+    def test_recovery_verbs_do_not_transcribe_files(self):
+        transcribe = mock.Mock()
+        for verb in ('copy_last', 'paste_last', 'clear_last'):
+            with self.subTest(verb=verb):
+                recover = mock.Mock(return_value=(True, 'done'))
+                response = self._exchange(
+                    json.dumps({'verb': verb}).encode() + b'\n',
+                    callback=transcribe, recover=recover,
+                )
+                self.assertEqual(response, {'ok': True, 'message': 'done'})
+                recover.assert_called_once_with(verb)
+        transcribe.assert_not_called()
+
+    def test_recovery_failure_unavailable_and_shutdown(self):
+        request = b'{"verb":"copy_last"}\n'
+        recover = mock.Mock(return_value=(False, 'nothing saved'))
+        self.assertEqual(self._exchange(request, recover=recover),
+                         {'ok': False, 'error': 'nothing saved'})
+        self.assertIn('unavailable', self._exchange(request)['error'])
+        recover.reset_mock()
+        self.assertIn('shutting down', self._exchange(request, recover=recover, stopping=True)['error'])
+        recover.assert_not_called()
 
     def test_structured_request_and_success_response(self):
         seen = []

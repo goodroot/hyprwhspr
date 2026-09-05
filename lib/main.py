@@ -179,6 +179,7 @@ class hyprwhsprApp:
             on_command=self._handle_control_command,
             is_recording=lambda: self.is_recording,
             on_file_transcribe=self._handle_file_transcribe,
+            on_recover=self._handle_recovery,
         )
 
         # Hybrid tap/hold mode state tracking (auto mode)
@@ -200,6 +201,7 @@ class hyprwhsprApp:
         self._continuous_transcription_done = threading.Event()
         self._continuous_transcription_done.set()  # no transcription in flight
         self._continuous_cancelled = False  # set on cancel to suppress in-flight injection
+        self._continuous_delivery_failure_notified = False
 
         # Auto-stop-on-silence state (toggle/auto modes). The stop Event is created fresh
         # per session (not reused) so a stale monitor generation can never signal a newer one.
@@ -812,6 +814,8 @@ class hyprwhsprApp:
     def _continuous_start_silence_monitor(self):
         """Start monitoring for silence to trigger auto-paste in continuous mode"""
         self._continuous_cancelled = False
+        with self._recording_lock:
+            self._continuous_delivery_failure_notified = False
         self._continuous_stop_silence_monitor()
         self._continuous_silence_stop.clear()
 
@@ -1514,6 +1518,12 @@ class hyprwhsprApp:
         if self._recording_control_server.has_capture_subscriber():
             self._notify_capture("", final=True)
 
+    def _handle_recovery(self, action):
+        injector = getattr(self, 'text_injector', None)
+        if injector is None:
+            return False, 'Text delivery is still initializing'
+        return injector.recover_last(action)
+
     def _inject_text(self, text):
         """Inject transcribed text into active application"""
 
@@ -1526,6 +1536,16 @@ class hyprwhsprApp:
             outcome = self.text_injector.inject_text(text)
             if outcome == InjectionOutcome.FAILED:
                 print(f"[ERROR] Text injection failed ({len(text)} chars)", flush=True)
+                notify = True
+                if self.config.get_setting('recording_mode', 'toggle') == 'continuous':
+                    with self._recording_lock:
+                        notify = not self._continuous_delivery_failure_notified
+                        self._continuous_delivery_failure_notified = True
+                if notify:
+                    self._notify_user(
+                        "hyprwhspr", "Text delivery failed. Recover with hyprwhspr record copy-last or record paste-last",
+                        urgency="normal",
+                    )
                 return InjectionOutcome.FAILED
 
             if outcome == InjectionOutcome.CONSUMED:

@@ -183,6 +183,9 @@ def main():
         help='Return raw/preprocessed text and daemon processing settings as JSON'
     )
     record_subparsers.add_parser('status', help='Show current recording status')
+    record_subparsers.add_parser('copy-last', help='Copy the last dictation to the clipboard')
+    record_subparsers.add_parser('paste-last', help='Paste the last dictation without auto-submit')
+    record_subparsers.add_parser('clear-last', help='Forget the last dictation retained in memory')
     
     # backend command
     backend_parser = subparsers.add_parser('backend', help='Backend management')
@@ -342,11 +345,13 @@ def main():
             elif args.state_action == 'reset':
                 state_reset_command(getattr(args, 'all', False))
         elif args.command == 'record':
-            from cli.record import record_command, record_capture_command
+            from cli.record import record_command, record_capture_command, record_recovery_command
             if not args.record_action:
                 record_parser.print_help()
                 sys.exit(1)
-            if args.record_action == 'capture':
+            if args.record_action in ('copy-last', 'paste-last', 'clear-last'):
+                record_recovery_command(args.record_action)
+            elif args.record_action == 'capture':
                 record_capture_command(
                     language=getattr(args, 'language', None),
                     trace_processing=getattr(args, 'trace_processing', False),

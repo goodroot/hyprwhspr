@@ -16,12 +16,13 @@ class RecordingControlServer:
     }
 
     def __init__(self, fifo_path, socket_path, on_command, is_recording,
-                 on_file_transcribe=None):
+                 on_file_transcribe=None, on_recover=None):
         self.fifo_path = Path(fifo_path)
         self.socket_path = Path(socket_path)
         self._on_command = on_command
         self._is_recording = is_recording
         self._on_file_transcribe = on_file_transcribe
+        self._on_recover = on_recover
 
         self._lifecycle_lock = threading.Lock()
         self._stop_event = None
@@ -454,28 +455,37 @@ class RecordingControlServer:
         """Handle request/response operations without changing capture semantics."""
         try:
             request = json.loads(line)
-            if not isinstance(request, dict) or request.get('verb') != 'transcribe_file':
-                raise ValueError('unknown request')
-            path = request.get('path')
-            language = request.get('language')
-            clean = request.get('clean', False)
-            if not isinstance(path, str) or not path:
-                raise ValueError('path must be a non-empty string')
-            if language is not None and not isinstance(language, str):
-                raise ValueError('language must be a string or null')
-            if not isinstance(clean, bool):
-                raise ValueError('clean must be a boolean')
-            if stop_event.is_set() or stop_event is not self._stop_event:
-                raise RuntimeError('daemon is shutting down')
-            if self._on_file_transcribe is None:
-                raise RuntimeError('file transcription is unavailable')
-            ok, payload = self._on_file_transcribe(path, language, clean)
-            response = {'ok': bool(ok)}
-            response['text' if ok else 'error'] = str(payload)
+            if isinstance(request, dict) and request.get('verb') in ('copy_last', 'paste_last', 'clear_last'):
+                if stop_event.is_set() or stop_event is not self._stop_event:
+                    raise RuntimeError('daemon is shutting down')
+                if self._on_recover is None:
+                    raise RuntimeError('recovery is unavailable; update or restart the daemon')
+                ok, payload = self._on_recover(request['verb'])
+                response = {'ok': bool(ok)}
+                response['message' if ok else 'error'] = str(payload)
+            else:
+                if not isinstance(request, dict) or request.get('verb') != 'transcribe_file':
+                    raise ValueError('unknown request')
+                path = request.get('path')
+                language = request.get('language')
+                clean = request.get('clean', False)
+                if not isinstance(path, str) or not path:
+                    raise ValueError('path must be a non-empty string')
+                if language is not None and not isinstance(language, str):
+                    raise ValueError('language must be a string or null')
+                if not isinstance(clean, bool):
+                    raise ValueError('clean must be a boolean')
+                if stop_event.is_set() or stop_event is not self._stop_event:
+                    raise RuntimeError('daemon is shutting down')
+                if self._on_file_transcribe is None:
+                    raise RuntimeError('file transcription is unavailable')
+                ok, payload = self._on_file_transcribe(path, language, clean)
+                response = {'ok': bool(ok)}
+                response['text' if ok else 'error'] = str(payload)
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             response = {'ok': False, 'error': f'invalid request: {exc}'}
         except Exception as exc:
-            print(f"[TRANSCRIBE] Request failed: {exc}", flush=True)
+            print(f"[CONTROL] Request failed: {exc}", flush=True)
             response = {'ok': False, 'error': str(exc)}
         try:
             conn.settimeout(None)

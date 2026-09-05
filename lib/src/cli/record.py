@@ -3,6 +3,7 @@ Recording control commands for hyprwhspr (external hotkey integration)
 """
 
 import os
+import json
 import sys
 import socket
 
@@ -138,6 +139,42 @@ def record_command(action: str, language: str = None):
     else:
         log_error(f"Unknown action: {action}")
         log_info("Available actions: start, stop, cancel, toggle, status")
+
+
+def record_recovery_command(action: str):
+    """Request recovery once; never retry a potentially dispatched paste."""
+    if action not in ('copy-last', 'paste-last', 'clear-last'):
+        log_error('Unknown recovery action')
+        sys.exit(1)
+    request_sent = False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(15.0)
+            client.connect(str(SOCKET_FILE))
+            client.sendall(json.dumps({'verb': action.replace('-', '_')}).encode('utf-8') + b'\n')
+            request_sent = True
+            response = bytearray()
+            while b'\n' not in response:
+                chunk = client.recv(4096)
+                if not chunk:
+                    raise ValueError('No complete response; update or restart the daemon')
+                response.extend(chunk)
+                if len(response) > 65536:
+                    raise ValueError('Invalid oversized daemon response')
+            result = json.loads(response.split(b'\n', 1)[0])
+            if not isinstance(result, dict) or not isinstance(result.get('ok'), bool):
+                raise ValueError('Invalid daemon response; update or restart the daemon')
+            if not result['ok']:
+                raise ValueError(result.get('error', 'Recovery unavailable; update or restart the daemon'))
+            log_success(result.get('message', 'Recovery completed'))
+    except TimeoutError:
+        log_error('Recovery timed out. No automatic retry was attempted.')
+        if request_sent and action == 'paste-last':
+            log_error('The paste may already have been dispatched; check the destination before retrying.')
+        sys.exit(1)
+    except (OSError, ValueError) as exc:
+        log_error(f'Recovery failed: {exc}. Check that the daemon is running and up to date.')
+        sys.exit(1)
 
 
 def record_capture_command(language: str = None, trace_processing: bool = False):

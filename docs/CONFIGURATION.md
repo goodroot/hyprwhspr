@@ -1155,6 +1155,23 @@ hyprwhspr saves your clipboard before injection and restores it afterward — di
 }
 ```
 
+### Recover the last dictation
+
+The daemon keeps the last prepared dictation in memory — text only, no audio or
+disk history — so you can recover it when a paste does not land.
+
+```bash
+hyprwhspr record copy-last   # Copy to clipboard for manual paste
+hyprwhspr record paste-last  # Deliver to the currently focused application
+hyprwhspr record clear-last  # Forget the retained text
+```
+
+Bind these through your compositor so the destination keeps focus — in Hyprland,
+`bind = SUPER ALT, V, exec, hyprwhspr record paste-last`. Recovery reuses the
+exact prepared text without rerunning hooks, and never sends the auto-submit
+Enter. Continuous mode retains the latest segment, not the whole session.
+Dictation into an app with injection disabled is never retained.
+
 ### GNOME/Mutter notes
 
 GNOME/Mutter lacks layer-shell, so visual feedback uses notifications. Injection depends on the session:

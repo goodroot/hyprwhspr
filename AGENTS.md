@@ -13,7 +13,7 @@ This repository is a Linux desktop speech-to-text application supporting Wayland
 - `lib/mic_osd/`: optional GTK4/layer-shell visualizer.
 - `share/config.schema.json`: machine-readable configuration schema.
 - `scripts/`: install/bootstrap sources. `scripts/install.sh` is copied into the website during its build.
-- `tests/`: dependency-free stdlib `unittest` tests.
+- `tests/`: stdlib `unittest` tests; install dependencies with `python -m pip install -r requirements-test.txt`.
 - `website/`: Astro site; edit `src/` and `public/`, not generated `.astro/`, `dist/`, or `node_modules/` content.
 
 ## Fast workflow

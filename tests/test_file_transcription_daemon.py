@@ -28,7 +28,9 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
     def _app(self, backend='pywhispercpp'):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
         app.config = FakeConfig(backend)
+        app.text_injector = mock.Mock()
         app._recording_lock = threading.Lock()
+        app._continuous_delivery_failure_notified = False
         app._recording_finalizing = threading.Event()
         app.is_recording = False
         app.is_processing = False
@@ -41,6 +43,59 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
             transcribe_audio=mock.Mock(return_value=' raw transcript '),
         )
         return app
+
+    def test_recovery_delegates_and_reports_initialization(self):
+        app = self._app()
+        app.text_injector.recover_last.return_value = (True, 'copied')
+        self.assertEqual(app._handle_recovery('copy_last'), (True, 'copied'))
+        app.text_injector.recover_last.assert_called_once_with('copy_last')
+        app.text_injector = None
+        self.assertIn('initializing', app._handle_recovery('copy_last')[1])
+
+    def test_capture_does_not_retain_and_delivery_failure_notifies(self):
+        app = self._app()
+        app._recording_control_server = mock.Mock()
+        app._recording_control_server.has_capture_subscriber.return_value = True
+        app._notify_capture = mock.Mock()
+        app._inject_text('capture only')
+        app.text_injector.inject_text.assert_not_called()
+        app._notify_capture.assert_called_once_with('capture only', final=True)
+
+        app._recording_control_server.has_capture_subscriber.return_value = False
+        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.FAILED
+        app._notify_user = mock.Mock()
+        self.assertEqual(app._inject_text('failed'), self.main.InjectionOutcome.FAILED)
+        self.assertIn('copy-last', app._notify_user.call_args.args[1])
+
+    def test_continuous_delivery_failure_notifies_once_per_session(self):
+        app = self._app()
+        app.config = mock.Mock()
+        app.config.get_setting.side_effect = lambda key, default=None: (
+            'continuous' if key == 'recording_mode' else default)
+        app._recording_control_server = mock.Mock()
+        app._recording_control_server.has_capture_subscriber.return_value = False
+        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.FAILED
+        app._notify_user = mock.Mock()
+        for text in ('first flush', 'second flush', 'third flush'):
+            self.assertEqual(app._inject_text(text), self.main.InjectionOutcome.FAILED)
+        app._notify_user.assert_called_once()
+
+        app._continuous_silence_stop = threading.Event()
+        app._continuous_stop_silence_monitor = mock.Mock()
+        with mock.patch.object(self.main.threading, 'Thread'):
+            app._continuous_start_silence_monitor()
+        app._inject_text('new session')
+        self.assertEqual(app._notify_user.call_count, 2)
+
+    def test_ordinary_delivery_failures_each_notify(self):
+        app = self._app()
+        app._recording_control_server = mock.Mock()
+        app._recording_control_server.has_capture_subscriber.return_value = False
+        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.FAILED
+        app._notify_user = mock.Mock()
+        app._inject_text('first recording')
+        app._inject_text('second recording')
+        self.assertEqual(app._notify_user.call_count, 2)
 
     def test_idle_daemon_transcribes_and_optionally_cleans(self):
         app = self._app()
@@ -56,6 +111,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
                 (True, 'clean transcript'),
             )
         app.whisper_manager.transcribe_audio.assert_called_once()
+        app.text_injector.inject_text.assert_not_called()
         self.assertEqual(
             app.whisper_manager.transcribe_audio.call_args.kwargs,
             {'sample_rate': 44100, 'language_override': 'fr'},

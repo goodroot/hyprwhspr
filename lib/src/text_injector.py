@@ -314,6 +314,11 @@ class TextInjector:
     def __init__(self, config_manager=None):
         # Configuration
         self.config_manager = config_manager
+        self._delivery_lock = threading.RLock()
+        self._clipboard_lock = threading.RLock()
+        self._last_text_lock = threading.Lock()
+        self._last_text = None
+        self._clipboard_generation = 0
 
         # Detect available injectors once for the active display protocol.
         self.session_type = os.environ.get('XDG_SESSION_TYPE', '').lower()
@@ -1235,18 +1240,21 @@ except Exception:
             return False, f"wl-copy failed: {exc}"
 
     def _copy_text_to_clipboard(self, text: str) -> bool:
-        """Copy text to the clipboard without triggering paste."""
-        copied, wayland_error = self._try_wl_copy(text.encode("utf-8"))
-        if copied:
-            return True
-        # Fallback: pyperclip (X11, or wl-copy present but no compositor to reach)
-        try:
-            pyperclip.copy(text)
-            return True
-        except Exception as e:
-            detail = f" after {wayland_error}" if wayland_error else ""
-            print(f"ERROR: Clipboard copy failed{detail}: {e}")
-            return False
+        """Copy text and invalidate older restores only after a successful write."""
+        with self._clipboard_lock:
+            copied, wayland_error = self._try_wl_copy(text.encode("utf-8"))
+            if copied:
+                self._clipboard_generation += 1
+                return True
+            # Fallback: pyperclip (X11, or wl-copy present but no compositor to reach)
+            try:
+                pyperclip.copy(text)
+                self._clipboard_generation += 1
+                return True
+            except Exception as e:
+                detail = f" after {wayland_error}" if wayland_error else ""
+                print(f"ERROR: Clipboard copy failed{detail}: {e}")
+                return False
 
     def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 5.0):
         """Restore clipboard to saved contents after a delay (background thread).
@@ -1257,32 +1265,39 @@ except Exception:
         if saved is None:
             return
 
+        generation = self._clipboard_generation
+
         def _restore():
             time.sleep(delay)
-            try:
-                # Guard: if the user copied something else during the delay, don't clobber it.
-                if injected is not None:
-                    current = self._save_clipboard()
-                    if current != injected:
-                        return
+            # Restoration serializes clipboard I/O, but is not active delivery:
+            # a recovery request may wait for it without hitting the busy gate.
+            with self._clipboard_lock:
+                if generation != self._clipboard_generation:
+                    return
+                try:
+                    # Guard: if the user copied something else during the delay, don't clobber it.
+                    if injected is not None:
+                        current = self._save_clipboard()
+                        if current != injected:
+                            return
 
-                restored, wayland_error = self._try_wl_copy(saved)
-                if not restored:
-                    # Fallback: pyperclip (X11, or wl-copy present but no compositor to
-                    # reach). It's text-only; only restore if the saved bytes are valid
-                    # UTF-8 text. Binary clipboard data (images, etc.) cannot be
-                    # round-tripped through pyperclip without corruption.
-                    try:
-                        pyperclip.copy(saved.decode("utf-8"))
-                    except UnicodeDecodeError:
-                        if wayland_error:
-                            print(f"Warning: Could not restore binary clipboard: {wayland_error}")
-                        # Binary data cannot safely pass through the text fallback.
-                    except Exception as exc:
-                        detail = f" after {wayland_error}" if wayland_error else ""
-                        raise RuntimeError(f"clipboard fallback failed{detail}: {exc}") from exc
-            except Exception as e:
-                print(f"Warning: Could not restore clipboard: {e}")
+                    restored, wayland_error = self._try_wl_copy(saved)
+                    if not restored:
+                        # Fallback: pyperclip (X11, or wl-copy present but no compositor to
+                        # reach). It's text-only; only restore if the saved bytes are valid
+                        # UTF-8 text. Binary clipboard data (images, etc.) cannot be
+                        # round-tripped through pyperclip without corruption.
+                        try:
+                            pyperclip.copy(saved.decode("utf-8"))
+                        except UnicodeDecodeError:
+                            if wayland_error:
+                                print(f"Warning: Could not restore binary clipboard: {wayland_error}")
+                            # Binary data cannot safely pass through the text fallback.
+                        except Exception as exc:
+                            detail = f" after {wayland_error}" if wayland_error else ""
+                            raise RuntimeError(f"clipboard fallback failed{detail}: {exc}") from exc
+                except Exception as e:
+                    print(f"Warning: Could not restore clipboard: {e}")
 
         threading.Thread(target=_restore, daemon=True).start()
 
@@ -1322,6 +1337,36 @@ except Exception:
     # ------------------------ Public API ------------------------
 
     def inject_text(self, text: str) -> InjectionOutcome:
+        """Prepare, retain and deliver one dictation at a time."""
+        with self._delivery_lock:
+            return self._prepare_and_inject_text(text)
+
+    def recover_last(self, action):
+        """Recover prepared text without rerunning hooks or submitting Enter."""
+        if action == 'clear_last':
+            with self._last_text_lock:
+                self._last_text = None
+            return True, 'Last dictation cleared'
+        if action not in ('copy_last', 'paste_last'):
+            return False, 'Unknown recovery action'
+        if not self._delivery_lock.acquire(blocking=False):
+            return False, 'Text delivery is busy; try again when it finishes'
+        try:
+            with self._last_text_lock:
+                text = self._last_text
+            if text is None:
+                return False, 'No saved dictation in this daemon session'
+            if action == 'copy_last':
+                ok = self._copy_text_to_clipboard(text)
+                return ok, ('Last dictation copied' if ok else 'Could not copy last dictation')
+            ok = self._inject_via_clipboard_and_hotkey(text, auto_submit=False)
+            return ok, ('Last dictation delivery dispatched' if ok else 'Could not paste last dictation; try record copy-last')
+        except Exception:
+            return False, 'Could not recover last dictation; check clipboard and paste tools'
+        finally:
+            self._delivery_lock.release()
+
+    def _prepare_and_inject_text(self, text: str) -> InjectionOutcome:
         """
         Inject text into the currently focused application
 
@@ -1360,7 +1405,7 @@ except Exception:
                 print(f"⚠️  inject_mode='{inject_mode}' is deprecated: direct typing drops characters at speed. "
                       f"Using clipboard+paste instead.")
 
-            injected = self._inject_via_clipboard_and_hotkey(processed_text)
+            injected = self._inject_via_clipboard_and_hotkey(processed_text, retain=True)
             return InjectionOutcome.INJECTED if injected else InjectionOutcome.FAILED
 
         except Exception as e:
@@ -1431,7 +1476,7 @@ except Exception:
 
     # ------------------------ Paste injection (primary method) ------------------------
 
-    def _inject_via_clipboard_and_hotkey(self, text: str) -> bool:
+    def _inject_via_clipboard_and_hotkey(self, text: str, auto_submit: bool = True, retain: bool = False) -> bool:
         """Copy text to clipboard, then trigger the compositor-native paste path."""
         try:
             window_lookup_needed = self._active_window_lookup_needed()
@@ -1457,6 +1502,12 @@ except Exception:
                 print(f"Injection disabled for focused app ({app_match}); leaving it untouched.")
                 return True
 
+            # Only ordinary, permitted delivery can replace recovery text.
+            # Re-paste must not undo a concurrent clear-last request.
+            if retain:
+                with self._last_text_lock:
+                    self._last_text = text
+
             # On GNOME/Mutter the layer-shell overlay is unavailable, so we can
             # type directly with `ydotool type` to avoid touching the clipboard.
             # But that is ONLY correct for pure-ASCII text on a US layout:
@@ -1478,9 +1529,20 @@ except Exception:
                 time.sleep(0.05)
                 typed = self._type_text_ydotool(text)
                 if typed:
-                    self._send_enter_if_auto_submit()
+                    if auto_submit:
+                        self._send_enter_if_auto_submit()
                     return True
 
+            with self._clipboard_lock:
+                return self._paste_via_clipboard(text, paste_chord, gnome_wayland_session, auto_submit)
+
+        except Exception as e:
+            print(f"Clipboard+hotkey injection failed: {e}")
+            return False
+
+    def _paste_via_clipboard(self, text, paste_chord, gnome_wayland_session, auto_submit):
+        """Deliver while owning _clipboard_lock, excluding background restores."""
+        try:
             saved_clipboard = self._save_clipboard()
 
             # Copy text to clipboard
@@ -1549,7 +1611,8 @@ except Exception:
                 if self.config_manager:
                     restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
-                self._send_enter_if_auto_submit()
+                if auto_submit:
+                    self._send_enter_if_auto_submit()
             elif (
                 gnome_wayland_session
                 and not getattr(self, '_last_ydotool_failure_explicit', False)

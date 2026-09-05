@@ -27,7 +27,7 @@ class PulseMonitorLifecycleTests(unittest.TestCase):
 
         with (
             mock.patch.object(pulse_monitor, "PULSECTL_AVAILABLE", True),
-            mock.patch.object(pulse_monitor, "pulsectl", fake_pulsectl),
+            mock.patch.object(pulse_monitor, "pulsectl", fake_pulsectl, create=True),
             mock.patch("pulse_monitor.threading.Thread") as thread_type,
         ):
             self.assertTrue(monitor.start())
@@ -44,7 +44,7 @@ class PulseMonitorLifecycleTests(unittest.TestCase):
 
         with (
             mock.patch.object(pulse_monitor, "PULSECTL_AVAILABLE", True),
-            mock.patch.object(pulse_monitor, "pulsectl", fake_pulsectl),
+            mock.patch.object(pulse_monitor, "pulsectl", fake_pulsectl, create=True),
         ):
             self.assertFalse(monitor.start())
 
@@ -57,7 +57,7 @@ class PulseMonitorLifecycleTests(unittest.TestCase):
         monitor._stop_event.wait = mock.Mock(side_effect=lambda timeout: monitor._stop_event.set() or True)
         fake_pulsectl = types.SimpleNamespace(Pulse=mock.Mock(side_effect=RuntimeError("offline")))
 
-        with mock.patch.object(pulse_monitor, "pulsectl", fake_pulsectl):
+        with mock.patch.object(pulse_monitor, "pulsectl", fake_pulsectl, create=True):
             self.assertFalse(monitor._reconnect())
 
         fake_pulsectl.Pulse.assert_called_once_with("hyprwhspr-monitor")
@@ -69,7 +69,7 @@ class PulseMonitorLifecycleTests(unittest.TestCase):
         monitor._stop_event.set()
         fake_pulsectl = types.SimpleNamespace(Pulse=mock.Mock())
 
-        with mock.patch.object(pulse_monitor, "pulsectl", fake_pulsectl):
+        with mock.patch.object(pulse_monitor, "pulsectl", fake_pulsectl, create=True):
             self.assertFalse(monitor._reconnect())
 
         fake_pulsectl.Pulse.assert_not_called()
@@ -94,9 +94,9 @@ class SuspendMonitorLifecycleTests(unittest.TestCase):
 
         with (
             mock.patch.object(suspend_monitor, "DBUS_AVAILABLE", True),
-            mock.patch.object(suspend_monitor, "DBusGMainLoop"),
-            mock.patch.object(suspend_monitor, "dbus", fake_dbus),
-            mock.patch.object(suspend_monitor, "GLib", fake_glib),
+            mock.patch.object(suspend_monitor, "DBusGMainLoop", create=True),
+            mock.patch.object(suspend_monitor, "dbus", fake_dbus, create=True),
+            mock.patch.object(suspend_monitor, "GLib", fake_glib, create=True),
             mock.patch("suspend_monitor.threading.Thread") as thread_type,
         ):
             self.assertTrue(monitor.start())
@@ -148,9 +148,9 @@ class SuspendMonitorLifecycleTests(unittest.TestCase):
 
         with (
             mock.patch.object(suspend_monitor, "DBUS_AVAILABLE", True),
-            mock.patch.object(suspend_monitor, "DBusGMainLoop"),
-            mock.patch.object(suspend_monitor, "dbus", fake_dbus),
-            mock.patch.object(suspend_monitor, "GLib", fake_glib),
+            mock.patch.object(suspend_monitor, "DBusGMainLoop", create=True),
+            mock.patch.object(suspend_monitor, "dbus", fake_dbus, create=True),
+            mock.patch.object(suspend_monitor, "GLib", fake_glib, create=True),
         ):
             self.assertFalse(monitor.start())
 

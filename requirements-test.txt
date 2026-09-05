@@ -1,0 +1,4 @@
+# Isolated unittest suite; desktop, audio hardware and model packages are mocked.
+numpy>=1.26.0
+rich>=14.0.0
+requests>=2.32.0
