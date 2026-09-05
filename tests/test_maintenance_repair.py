@@ -80,6 +80,31 @@ class MaintenanceDependencyRepairTests(unittest.TestCase):
                 self.assertTrue(maintenance.backend_repair_command())
             repair.assert_called_once_with(config, 'realtime-ws')
 
+    def test_import_check_survives_unresolvable_manifest(self):
+        """A missing requirements file must not silence the import check."""
+        config = mock.Mock()
+        config.get_setting.side_effect = lambda key, default=None: {
+            'transcription_backend': 'realtime-ws',
+            'websocket_provider': 'elevenlabs',
+        }.get(key, default)
+        healthy = mock.Mock(returncode=0)
+        missing = mock.Mock(returncode=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / 'venv'
+            (venv / 'bin').mkdir(parents=True)
+            (venv / 'bin' / 'python').touch()
+            with (
+                mock.patch.object(maintenance, 'VENV_DIR', venv),
+                mock.patch.object(maintenance, 'ConfigManager', return_value=config),
+                mock.patch.object(maintenance, 'resolve_dependency_plan',
+                                  side_effect=OSError('no manifest')),
+                mock.patch.object(maintenance.subprocess, 'run', side_effect=[healthy, missing]),
+                mock.patch.object(maintenance.Prompt, 'ask', return_value='1'),
+                mock.patch.object(maintenance, '_reinstall_configured_dependencies', return_value=True) as repair,
+            ):
+                self.assertTrue(maintenance.backend_repair_command())
+            repair.assert_called_once_with(config, 'realtime-ws')
+
 
 class MaintenanceUinputValidationTests(unittest.TestCase):
     def _path(self, exists):

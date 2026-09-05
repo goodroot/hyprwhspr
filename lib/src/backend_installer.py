@@ -142,6 +142,16 @@ def resolve_dependency_plan(backend: str, provider: Optional[str] = None,
                          accelerated_variant, DependencyPlanError)
 
 
+def dependency_required_imports(backend: str, provider: Optional[str] = None,
+                                accelerated_variant: Optional[str] = None) -> tuple:
+    """Return a plan's required imports without touching the manifest files.
+
+    Health checks need this list even on an install whose requirements files
+    are missing, where the full plan resolution cannot be completed.
+    """
+    return _PLAN_SPECS[_plan_key(backend, provider, accelerated_variant)][1]
+
+
 def dependency_manifests(backend: str, provider: Optional[str] = None) -> list[Path]:
     """Compatibility wrapper returning the selected manifest include closure."""
     return list(resolve_dependency_plan(backend, provider).manifests)

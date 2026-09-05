@@ -27,13 +27,13 @@ try:
     from ..backend_installer import (
         install_backend, VENV_DIR, PYWHISPERCPP_SRC_DIR, PYWHISPERCPP_MODELS_DIR,
         get_install_state, set_install_state, get_all_state, get_state, init_state,
-        resolve_dependency_plan, execute_dependency_plan,
+        resolve_dependency_plan, dependency_required_imports, execute_dependency_plan,
     )
 except ImportError:
     from backend_installer import (
         install_backend, VENV_DIR, PYWHISPERCPP_SRC_DIR, PYWHISPERCPP_MODELS_DIR,
         get_install_state, set_install_state, get_all_state, get_state, init_state,
-        resolve_dependency_plan, execute_dependency_plan,
+        resolve_dependency_plan, dependency_required_imports, execute_dependency_plan,
     )
 
 try:
@@ -366,8 +366,12 @@ def backend_repair_command():
             else 'rest_api_provider'
         )
         provider = config_manager.get_setting(provider_key, None)
-        plan = resolve_dependency_plan(configured_backend, provider)
-        required_imports = plan.required_imports
+        try:
+            required_imports = resolve_dependency_plan(configured_backend, provider).required_imports
+        except Exception:
+            # A missing or unreadable manifest is itself a broken install; fall
+            # back to the plan's static import list so the health check still runs.
+            required_imports = dependency_required_imports(configured_backend, provider)
     except Exception:
         pass
 

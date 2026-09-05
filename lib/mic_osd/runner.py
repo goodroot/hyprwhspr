@@ -61,7 +61,7 @@ class MicOSDRunner:
         self._mic_osd_dir = Path(__file__).parent
         self._orphaned_daemon_pid = None  # Track PID when reusing orphaned daemon
         self._preview_lock = threading.Lock()
-        self._last_preview_write_at = 0.0
+        self._last_preview_write_at = None
         self._pending_preview_text = None
         self._preview_flush_timer = None
         self._preview_generation = 0
@@ -547,8 +547,13 @@ sys.exit(main())
                 return
 
             now = time.monotonic()
-            elapsed = now - self._last_preview_write_at
-            if elapsed >= self.PREVIEW_WRITE_INTERVAL_SECONDS:
+            # No baseline yet means nothing has been written, so the first
+            # frame goes out immediately. monotonic() is an arbitrary epoch
+            # (uptime on Linux), so it can never be compared against a fixed
+            # sentinel like 0.0 to make that call.
+            last = self._last_preview_write_at
+            elapsed = None if last is None else now - last
+            if elapsed is None or elapsed >= self.PREVIEW_WRITE_INTERVAL_SECONDS:
                 self._cancel_pending_preview_flush()
                 self._last_preview_write_at = now
                 self._write_preview_text_file(text)
