@@ -1,21 +1,11 @@
 # Configuration guide
 
-Find the fault. Keep your words.
+Validate with ease:
 
 ```bash
 hyprwhspr config validate  # Settings
 hyprwhspr status --report  # Settings, installation, live state
 ```
-
-Read-only. No recording. No repairs. Unavailable live checks leave local findings intact.
-Only allowlisted settings and state; no transcripts, credentials, or dynamic key names.
-Dependencies are checked for presence, not loading.
-
-Add `--json` to either command: one document, `format_version: 1`.
-`status --json` requires `--report`.
-
-Exit codes: `0` no errors; warnings allowed. `1` invalid settings or unhealthy installation.
-`2` validation unavailable—including unreadable or malformed JSON—or no usable report.
 
 Configure via `hyprwhspr setup`, the CLI, or by editing `~/.config/hyprwhspr/config.json` directly.
 
