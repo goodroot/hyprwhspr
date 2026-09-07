@@ -85,7 +85,8 @@ class MicOSDRunnerTests(unittest.TestCase):
             ),
             CssProvider=object,
             StyleContext=types.SimpleNamespace(add_provider_for_display=lambda *args: None),
-            STYLE_PROVIDER_PRIORITY_APPLICATION=0,
+            STYLE_PROVIDER_PRIORITY_APPLICATION=600,
+            STYLE_PROVIDER_PRIORITY_USER=800,
         )
         gdk_module = types.SimpleNamespace(Display=types.SimpleNamespace(get_default=lambda: None))
         glib_module = types.SimpleNamespace(Error=Exception)
@@ -230,6 +231,22 @@ class MicOSDRunnerTests(unittest.TestCase):
         kill.assert_not_called()
         self.assertIsNone(runner._process)
         self.assertIsNone(runner._orphaned_daemon_pid)
+
+    def test_custom_css_cannot_override_transparent_outer_surface(self):
+        module, _ = self._import_window_with_stubs()
+        transparency, custom = mock.Mock(), mock.Mock()
+        display = object()
+        with mock.patch.object(module, '_transparency_provider', None), \
+                mock.patch.object(module.Gtk, 'CssProvider', side_effect=[transparency, custom]), \
+                mock.patch.object(module.Gdk.Display, 'get_default', return_value=display), \
+                mock.patch.object(module.Gtk.StyleContext, 'add_provider_for_display') as add:
+            module.load_css('/optional/cosmetics.css')
+        custom.load_from_path.assert_called_once_with('/optional/cosmetics.css')
+        self.assertEqual(add.call_args_list, [
+            mock.call(display, transparency, module.TRANSPARENCY_PRIORITY),
+            mock.call(display, custom, module.Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION),
+        ])
+        self.assertGreater(module.TRANSPARENCY_PRIORITY, module.Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def test_text_extents_support_tuple_and_attribute_shapes(self):
         window_module, _ = self._import_window_with_stubs()

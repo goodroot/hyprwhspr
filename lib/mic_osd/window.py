@@ -132,7 +132,11 @@ class OSDWindow(Gtk.Window):
         self.set_resizable(False)
         self.set_default_size(self._width, self._height)
         
-        # Make window transparent
+        # Make window transparent. GTK gives every window the `background`
+        # style class, which is what paints the theme's opaque window colour
+        # across the whole surface; dropping it stops class-scoped theme rules
+        # from filling the area around the pill.
+        self.remove_css_class('background')
         self.add_css_class('mic-osd-window')
     
     def _setup_drawing_area(self):
@@ -416,31 +420,62 @@ class OSDWindow(Gtk.Window):
         return prefix + truncated if truncated else prefix
 
 
+TRANSPARENCY_CSS = """
+window.mic-osd-window,
+.mic-osd-window {
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+"""
+
+# A ~/.config/gtk-4.0/gtk.css sets `window { background-color: ... }` for many
+# themed desktops, and GTK loads that at PRIORITY_USER. At the application
+# priority our transparency rule loses to it, and the theme's window colour is
+# painted as an opaque slab behind the pill (issue #248). Outrank the user
+# stylesheet: the OSD is a shaped overlay, so its surface must stay clear
+# whatever the desktop theme says about windows.
+TRANSPARENCY_PRIORITY = Gtk.STYLE_PROVIDER_PRIORITY_USER + 1
+
+_transparency_provider = None
+
+
 def load_css(css_path=None):
     """
     Load CSS styling for the OSD.
-    
+
+    The transparency rule is always installed above the user stylesheet. An
+    optional css_path uses application priority for pill/content cosmetics.
+    It cannot override the higher-priority transparent outer-window surface
+    (background, background-image or box-shadow).
+
     Args:
         css_path: Path to CSS file (optional)
     """
-    css_provider = Gtk.CssProvider()
-    
-    default_css = """
-    .mic-osd-window {
-        background-color: transparent;
-    }
-    """
-    
+    global _transparency_provider
+
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+
+    # Installed once per process; load_css runs again on every GTK activation.
+    if _transparency_provider is None:
+        _transparency_provider = Gtk.CssProvider()
+        _transparency_provider.load_from_string(TRANSPARENCY_CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            display,
+            _transparency_provider,
+            TRANSPARENCY_PRIORITY,
+        )
+
     if css_path:
+        custom_provider = Gtk.CssProvider()
         try:
-            css_provider.load_from_path(css_path)
+            custom_provider.load_from_path(css_path)
         except GLib.Error:
-            css_provider.load_from_string(default_css)
-    else:
-        css_provider.load_from_string(default_css)
-    
-    Gtk.StyleContext.add_provider_for_display(
-        Gdk.Display.get_default(),
-        css_provider,
-        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
+            return
+        Gtk.StyleContext.add_provider_for_display(
+            display,
+            custom_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
