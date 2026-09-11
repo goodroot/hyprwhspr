@@ -19,6 +19,14 @@ SECRET = 'SECRET-private-label-token-user-path'
 
 @unittest.skipUnless(importlib.util.find_spec("jsonschema") is not None, "jsonschema is required for schema validation tests")
 class ValidationTests(unittest.TestCase):
+    def setUp(self):
+        # Validate against the checkout's schema even when CI deliberately points
+        # installation discovery at a nonexistent host installation.
+        schema = Path(__file__).resolve().parents[1] / 'share/config.schema.json'
+        patcher = mock.patch.object(diag, 'SCHEMA_FILE', schema)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def validate(self, value):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'config.json'
@@ -96,6 +104,13 @@ class ValidationTests(unittest.TestCase):
             path.write_text('{"threads": false}')
             with mock.patch.object(diag, 'CONFIG_FILE', path), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(diag.run_diagnostics(), 1)
+
+    def test_missing_bundled_schema_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                diag, 'SCHEMA_FILE', Path(tmp) / 'missing-schema.json'):
+            _, findings, unusable = self.validate({})
+        self.assertTrue(unusable)
+        self.assertIn('config.validator', {item['check_id'] for item in findings})
 
     def test_legacy_backend_names(self):
         for backend in ('local', 'remote', 'amd'):
