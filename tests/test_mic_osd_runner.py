@@ -1,8 +1,10 @@
 import sys
 import tempfile
+import threading
 import types
 import unittest
 import builtins
+import signal
 from pathlib import Path
 from unittest import mock
 
@@ -372,6 +374,138 @@ class MicOSDRunnerTests(unittest.TestCase):
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
                 MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = original_interval
+
+    def test_hide_cancels_show_blocked_on_first_feed_frame(self):
+        source_entered = threading.Event()
+        source_release = threading.Event()
+        hidden = threading.Event()
+        signals = []
+        show_results = []
+
+        def blocked_source():
+            source_entered.set()
+            if not source_release.wait(5):
+                raise TimeoutError("test did not release level source")
+            return 0.0, []
+
+        def record_signal(pid, sig):
+            if sig in (signal.SIGUSR1, signal.SIGUSR2):
+                signals.append(sig)
+            if sig == signal.SIGUSR2:
+                hidden.set()
+
+        runner = MicOSDRunner(level_source=blocked_source)
+        runner._process = types.SimpleNamespace(pid=4242, poll=lambda: None)
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(runner_module, "MIC_OSD_LEVEL_FEED_FILE", Path(tmp) / "feed"), \
+                mock.patch.object(runner_module, "TRANSCRIPT_PREVIEW_FILE", Path(tmp) / "preview"), \
+                mock.patch.object(runner, "is_available", return_value=True), \
+                mock.patch.object(runner, "_ensure_daemon", return_value=True), \
+                mock.patch.object(runner_module.os, "kill", side_effect=record_signal):
+            showing = threading.Thread(target=lambda: show_results.append(runner.show()))
+            hiding = threading.Thread(target=runner.hide)
+            showing.start()
+            try:
+                self.assertTrue(source_entered.wait(2), "show did not reach level source")
+                hiding.start()
+                self.assertTrue(hidden.wait(2), "hide waited for the blocked level source")
+                self.assertTrue(hiding.is_alive(), "feed teardown should still be blocked")
+            finally:
+                source_release.set()
+                showing.join(5)
+                if hiding.ident is not None:
+                    hiding.join(5)
+                runner._stop_level_feed()
+            self.assertFalse(showing.is_alive())
+            self.assertFalse(hiding.is_alive())
+            self.assertEqual(signals, [signal.SIGUSR2])
+            self.assertEqual(show_results, [False])
+
+            # Cancellation must not prevent the next recording from showing.
+            self.assertTrue(runner.show())
+            runner.hide()
+            self.assertEqual(signals[-2:], [signal.SIGUSR1, signal.SIGUSR2])
+
+    def test_hide_during_daemon_startup_does_not_start_a_feed(self):
+        runner = MicOSDRunner(level_source=lambda: (0.0, []))
+        startup_entered = threading.Event()
+        startup_release = threading.Event()
+        results = []
+        signals = []
+
+        def start_daemon():
+            startup_entered.set()
+            startup_release.wait(5)
+            runner._process = types.SimpleNamespace(pid=4242, poll=lambda: None)
+            return True
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(runner_module, "MIC_OSD_LEVEL_FEED_FILE", Path(tmp) / "feed"), \
+                mock.patch.object(runner_module, "TRANSCRIPT_PREVIEW_FILE", Path(tmp) / "preview"), \
+                mock.patch.object(runner, "is_available", return_value=True), \
+                mock.patch.object(runner, "_ensure_daemon", side_effect=start_daemon), \
+                mock.patch.object(runner_module.os, "kill", side_effect=lambda pid, sig: signals.append(sig)):
+            worker = threading.Thread(target=lambda: results.append(runner.show()))
+            worker.start()
+            try:
+                self.assertTrue(startup_entered.wait(2))
+                runner.hide()
+                startup_release.set()
+                worker.join(5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(results, [False])
+                self.assertNotIn(signal.SIGUSR1, signals)
+                self.assertFalse((Path(tmp) / "feed").exists())
+            finally:
+                startup_release.set()
+                worker.join(5)
+                runner._stop_level_feed()
+
+    def test_new_show_waits_for_previous_hide_teardown(self):
+        runner = MicOSDRunner(level_source=lambda: (0.0, []))
+        runner._process = types.SimpleNamespace(pid=4242, poll=lambda: None)
+        teardown_entered = threading.Event()
+        teardown_release = threading.Event()
+        show_finished = threading.Event()
+        signals = []
+
+        def blocked_teardown():
+            teardown_entered.set()
+            teardown_release.wait(5)
+
+        def show_again():
+            runner.show()
+            show_finished.set()
+
+        def record_signal(pid, sig):
+            if sig in (signal.SIGUSR1, signal.SIGUSR2):
+                signals.append(sig)
+
+        with mock.patch.object(runner, "_stop_level_feed", side_effect=blocked_teardown), \
+                mock.patch.object(runner, "clear_preview_text"), \
+                mock.patch.object(runner, "is_available", return_value=True), \
+                mock.patch.object(runner, "_ensure_daemon", return_value=True), \
+                mock.patch.object(runner_module.os, "kill", side_effect=record_signal):
+            hiding = threading.Thread(target=runner.hide)
+            showing = threading.Thread(target=show_again)
+            hiding.start()
+            try:
+                self.assertTrue(teardown_entered.wait(2))
+                showing.start()
+                self.assertFalse(
+                    show_finished.wait(0.1),
+                    "new show overtook the previous hide teardown",
+                )
+                self.assertNotIn(signal.SIGUSR1, signals)
+            finally:
+                teardown_release.set()
+                hiding.join(5)
+                if showing.ident is not None:
+                    showing.join(5)
+
+            self.assertFalse(hiding.is_alive())
+            self.assertFalse(showing.is_alive())
+            self.assertEqual(signals, [signal.SIGUSR2, signal.SIGUSR1])
 
     def test_high_frequency_preview_updates_are_coalesced(self):
         with tempfile.TemporaryDirectory() as tmp:

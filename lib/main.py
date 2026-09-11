@@ -1315,23 +1315,27 @@ class hyprwhsprApp:
 
     def _cleanup_recording_state(self):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
+        # Release recording state and capture clients before teardown can block.
+        try:
+            self._write_recording_status(False)
+        except Exception:
+            pass
         self._notify_capture("", final=True)
+
+        # Retire this recording's monitor before hide can block long enough for
+        # a later recording to install its own monitor in the shared slot.
         self._autostop_stop_silence_monitor()
+        try:
+            self._hide_mic_osd()
+        except Exception:
+            pass
 
         try:
             self._clear_mic_osd_preview_text()
         except Exception:
             pass
         try:
-            self._hide_mic_osd()
-        except Exception:
-            pass
-        try:
             self._stop_audio_level_monitoring()
-        except Exception:
-            pass
-        try:
-            self._write_recording_status(False)
         except Exception:
             pass
         try:
