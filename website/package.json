@@ -12,11 +12,11 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^7.1.3"
+    "astro": "^7.2.8"
   },
   "overrides": {
     "esbuild": "0.28.1",
-    "svgo": "^4.0.2",
-    "sharp": "^0.35.3"
+    "svgo": "^4.1.0",
+    "sharp": "^0.35.4"
   }
 }
