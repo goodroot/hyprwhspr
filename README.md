@@ -48,6 +48,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 ### Prerequisites
 
 - **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, etc.)
+- **Python 3.11-3.14**
 - **Wayland or X11 session** (GNOME, KDE Plasma, Sway, Hyprland, Niri, etc.).
 - **Clipboard/window tools:**
     - `wl-clipboard` and `wtype` on Wayland
@@ -132,16 +133,24 @@ Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues
 # Arch: update via your AUR helper
 yay -Syu hyprwhspr
 
-# Other distros: re-run the installer
+# Managed release installs
+hyprwhspr update
+
+# Legacy bootstrap installs: re-run the installer
 curl -fsSL https://hyprwhspr.com/install.sh | bash
 
 # Either way, setup is idempotent if you need to re-run it
 hyprwhspr setup
 ```
 
+Managed release rollout and recovery: [installation guide](docs/MANAGED_INSTALLATION.md).
+
 ### CLI commands
 
 - `hyprwhspr setup` - Interactive initial setup
+- `hyprwhspr update [--version VERSION]` - Update a managed release
+- `hyprwhspr install status` - Inspect managed installation state
+- `hyprwhspr install repair [--python PATH]` - Repair a managed installation
 - `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit` / `secondary-shortcut`)
 - `hyprwhspr model` - Manage models (`download` / `list` / `status` / `unload` / `reload`)
 - `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle` / `cancel` / `capture` / `status` / `copy-last` / `paste-last` / `clear-last`)
@@ -153,7 +162,8 @@ hyprwhspr setup
 - `hyprwhspr waybar` / `hyprwhspr noctalia` - Manage bar integration
 - `hyprwhspr mic-osd` - Enable/disable the mic OSD (`enable` / `disable` / `status`)
 - `hyprwhspr systemd` - Manage systemd services
-- `hyprwhspr uninstall` - Remove hyprwhspr and user data
+- `hyprwhspr uninstall` - Remove hyprwhspr; preserve settings, credentials and models
+- `hyprwhspr uninstall --purge` - Also remove recorded personal files (`--keep-models` preserves models)
 
 ## Documentation
 
