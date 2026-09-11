@@ -66,15 +66,10 @@ class MicOSD:
     Mic-osd application with show/hide support.
     """
     
-    # A recording_status of 'true' is only believed while the controller keeps
-    # advancing its level feed; this is how long the feed may stall first.
-    FEED_GRACE_SECONDS = 3.0
-
     def __init__(self, visualization="waveform", width=400, height=68, daemon=False):
         self.main_loop = None
         self.app = None
         self.audio_monitor = None
-        self._feed_liveness = False
         self.window = None
         self.update_timer_id = None
         self._auto_hide_timeout_id = None
@@ -212,11 +207,7 @@ class MicOSD:
         # Prefer the main process's level feed (tracks the recorded device, no
         # contention); fall back to opening the default input directly.
         if not self.audio_monitor:
-            self._feed_liveness = bool(
-                FeedLevelSource is not None
-                and FeedLevelSource.available(MIC_OSD_LEVEL_FEED_FILE)
-            )
-            if self._feed_liveness:
+            if FeedLevelSource is not None and FeedLevelSource.available(MIC_OSD_LEVEL_FEED_FILE):
                 self.audio_monitor = FeedLevelSource(MIC_OSD_LEVEL_FEED_FILE)
             else:
                 self.audio_monitor = AudioMonitor(samplerate=44100, blocksize=1024)
@@ -392,21 +383,6 @@ class MicOSD:
             # File read error - assume not recording, allow hide
             pass
         
-        if recording_active and self._feed_liveness and not FeedLevelSource.available(
-            MIC_OSD_LEVEL_FEED_FILE, max_age=self.FEED_GRACE_SECONDS
-        ):
-            # The controller streams a feed frame every tick while capturing but
-            # only writes recording_status when a recording starts or ends, so a
-            # controller that stalls in teardown (typically on a wedged capture
-            # stream) leaves it set to 'true' indefinitely. Trusting the status
-            # file alone therefore pins this window on screen long after capture
-            # died. A feed that stopped advancing proves capture is gone (#249).
-            print("[MIC-OSD] Level feed went stale while recording_status says "
-                  "recording - hiding (controller stalled)", flush=True)
-            self._hide()
-            self._auto_hide_timeout_id = None
-            return False  # Don't repeat
-
         if recording_active:
             # Recording is still active - reset timeout instead of hiding
             print("[MIC-OSD] Recording active - resetting auto-hide timeout", flush=True)

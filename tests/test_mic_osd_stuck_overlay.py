@@ -1,17 +1,15 @@
-"""Regression tests for the overlay outliving the controller's capture (#249).
+"""Recording status, not visualization feed freshness, governs auto-hide.
 
-recording_status is only written when a recording starts or ends, while the
-level feed is rewritten every tick. A controller that stalls in teardown (a
-capture stream that stopped responding is the usual cause) therefore leaves
-recording_status at 'true' indefinitely, and the auto-hide - which only ever
-trusted that file - kept re-arming until the overlay was pinned on screen for
-good. A feed that stopped advancing proves the capture is gone.
+Feed publishing can fail while capture continues. A lost or stale waveform
+must not hide an active recording; clearing recording status must hide it
+on the next auto-hide callback even when the feed remains fresh.
 """
 
+import importlib.util
 import os
 import sys
 import tempfile
-import time
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,88 +17,100 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-try:
-    from mic_osd import main as mic_osd_main
-except ImportError as exc:  # GTK/layer-shell are optional; CI has neither
-    mic_osd_main = None
-    IMPORT_ERROR = exc
-else:
-    IMPORT_ERROR = mic_osd_main._MIC_OSD_IMPORT_ERROR
 
-
-@unittest.skipIf(mic_osd_main is None or IMPORT_ERROR is not None,
-                 "mic-osd GUI stack unavailable")
 class MicOSDStuckOverlayTests(unittest.TestCase):
     def setUp(self):
         runtime = tempfile.TemporaryDirectory()
         self.addCleanup(runtime.cleanup)
         runtime_dir = Path(runtime.name)
-        self.status = runtime_dir / 'recording_status'
-        self.feed = runtime_dir / 'mic_osd_level_feed'
-        self.preview = runtime_dir / 'transcript_preview'
-        for name, path in (
-            ('RECORDING_STATUS_FILE', self.status),
-            ('MIC_OSD_LEVEL_FEED_FILE', self.feed),
-            ('TRANSCRIPT_PREVIEW_FILE', self.preview),
-        ):
-            patcher = mock.patch.object(mic_osd_main, name, path)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.status = runtime_dir / "recording_status"
+        self.feed = runtime_dir / "mic_osd_level_feed"
+        self.preview = runtime_dir / "transcript_preview"
 
-        # Timer arming is observed rather than scheduled: no main loop runs here.
-        timer = mock.patch.object(mic_osd_main.GLib, 'timeout_add_seconds', return_value=7)
-        self.rearm = timer.start()
-        self.addCleanup(timer.stop)
+        # Load isolated modules with only hardware/GUI dependencies stubbed.
+        # Exercise the real feed reader and OSD lifecycle without GTK or audio.
+        audio_spec = importlib.util.spec_from_file_location(
+            "_stuck_overlay_audio", ROOT / "lib" / "mic_osd" / "audio.py"
+        )
+        audio_module = importlib.util.module_from_spec(audio_spec)
+        with mock.patch.dict(sys.modules, {"sounddevice": mock.Mock()}):
+            audio_spec.loader.exec_module(audio_module)
+        audio_module.AudioMonitor = mock.Mock(
+            side_effect=AssertionError("A fresh controller feed must not open a microphone")
+        )
+        glib = types.SimpleNamespace(
+            timeout_add=mock.Mock(return_value=1),
+            timeout_add_seconds=mock.Mock(return_value=7),
+            source_remove=mock.Mock(),
+        )
+        stubs = {
+            "gi": types.SimpleNamespace(require_version=lambda *args: None),
+            "gi.repository": types.SimpleNamespace(Gtk=types.SimpleNamespace(), GLib=glib),
+            "mic_osd.window": types.SimpleNamespace(OSDWindow=mock.Mock(), load_css=mock.Mock()),
+            "mic_osd.audio": audio_module,
+            "mic_osd.visualizations": types.SimpleNamespace(VISUALIZATIONS={"waveform": object}),
+            "mic_osd.theme": types.SimpleNamespace(ThemeWatcher=mock.Mock()),
+        }
+        main_spec = importlib.util.spec_from_file_location(
+            "mic_osd._stuck_overlay_main", ROOT / "lib" / "mic_osd" / "main.py"
+        )
+        self.main = importlib.util.module_from_spec(main_spec)
+        with mock.patch.dict(sys.modules, stubs):
+            main_spec.loader.exec_module(self.main)
+        self.main.RECORDING_STATUS_FILE = self.status
+        self.main.MIC_OSD_LEVEL_FEED_FILE = self.feed
+        self.main.TRANSCRIPT_PREVIEW_FILE = self.preview
+        self.rearm = glib.timeout_add_seconds
 
-    def _visible_app(self, feed_liveness=True):
-        app = mic_osd_main.MicOSD.__new__(mic_osd_main.MicOSD)
-        app.visible = True
-        app.window = None  # _hide() returns before it touches GTK
-        app.audio_monitor = None
-        app._auto_hide_timeout_id = None
-        app._last_preview_text = None
-        app._feed_liveness = feed_liveness
+        # Fix the reader's clock so feed freshness never depends on test speed.
+        clock = mock.patch.object(audio_module.time, "time", return_value=1000.0)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def _show_recording(self):
+        self.status.write_text("true")
+        self.feed.write_text("0.5 0.25 0.5")
+        os.utime(self.feed, (1000.0, 1000.0))
+        app = self.main.MicOSD(daemon=True)
+        app.window = mock.Mock()
+        app._show()
+        app.window.reset_mock()
+        self.rearm.reset_mock()
         return app
 
-    def _write_feed(self, age_seconds=0.0):
-        self.feed.write_text('0.0 0.0 0.0')
-        stamp = time.time() - age_seconds
-        os.utime(self.feed, (stamp, stamp))
-
-    def test_dead_feed_hides_overlay_despite_stale_status(self):
-        self.status.write_text('true')
-        self._write_feed(age_seconds=10.0)
-        app = self._visible_app()
-
+    def _assert_recording_stays_visible(self, app):
         self.assertFalse(app._auto_hide_callback())
-
-        self.assertFalse(app.visible)
-        self.rearm.assert_not_called()
-
-    def test_live_feed_keeps_overlay_while_recording(self):
-        self.status.write_text('true')
-        self._write_feed()
-        app = self._visible_app()
-
-        self.assertFalse(app._auto_hide_callback())
-
         self.assertTrue(app.visible)
+        app.window.set_visible.assert_not_called()
         self.rearm.assert_called_once()
 
-    def test_missing_status_hides_overlay(self):
-        app = self._visible_app()
+    def test_feed_stalling_during_recording_does_not_hide_overlay(self):
+        app = self._show_recording()
+        os.utime(self.feed, (0.0, 0.0))
 
-        self.assertFalse(app._auto_hide_callback())
+        self._assert_recording_stays_visible(app)
 
-        self.assertFalse(app.visible)
+    def test_feed_disappearing_during_recording_does_not_hide_overlay(self):
+        app = self._show_recording()
+        self.feed.unlink()
 
-    def test_stale_status_is_still_believed_without_a_feed(self):
-        # Overlay shown without a feed (controller publishes no frames, so the
-        # daemon opened its own stream): there is no liveness signal to check.
-        self.status.write_text('true')
-        app = self._visible_app(feed_liveness=False)
+        self._assert_recording_stays_visible(app)
 
-        self.assertFalse(app._auto_hide_callback())
+    def test_inactive_recording_hides_overlay_even_with_fresh_feed(self):
+        for status in ("false", None):
+            with self.subTest(status=status):
+                app = self._show_recording()
+                if status is None:
+                    self.status.unlink()
+                else:
+                    self.status.write_text(status)
 
-        self.assertTrue(app.visible)
-        self.rearm.assert_called_once()
+                self.assertFalse(app._auto_hide_callback())
+
+                self.assertFalse(app.visible)
+                app.window.set_visible.assert_called_once_with(False)
+                self.rearm.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

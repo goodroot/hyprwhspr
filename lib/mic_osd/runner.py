@@ -68,8 +68,10 @@ class MicOSDRunner:
         self._level_source = level_source
         self._level_feed_thread = None
         self._level_feed_stop = threading.Event()
-        self._level_feed_lock = threading.Lock()
+        self._level_feed_lock = threading.RLock()
         self._last_level_feed_error_at = 0.0
+        self._visibility_lock = threading.Lock()
+        self._hide_generation = 0
     
     @staticmethod
     def is_available() -> bool:
@@ -440,16 +442,27 @@ sys.exit(main())
 
     def show(self) -> bool:
         """Show the mic-osd overlay (instant via signal)."""
+        with self._visibility_lock:
+            generation = self._hide_generation
+
         if not self.is_available():
             return False
 
         if not self._ensure_daemon():
             return False
 
-        self._start_level_feed()  # before signaling; first frame must be ready
-
         try:
-            return self._signal_daemon(signal.SIGUSR1)
+            with self._level_feed_lock:
+                with self._visibility_lock:
+                    if generation != self._hide_generation:
+                        return False
+                self._start_level_feed()  # first frame must be ready before SIGUSR1
+                with self._visibility_lock:
+                    # A hide during the first frame cancels this show. Keep
+                    # teardown serialized until we have decided whether to signal.
+                    if generation != self._hide_generation:
+                        return False
+                    return self._signal_daemon(signal.SIGUSR1)
         except (ProcessLookupError, OSError):
             self._stop_level_feed()
             self._process = None
@@ -458,12 +471,12 @@ sys.exit(main())
 
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
-        # Signal before the teardown below: _stop_level_feed() waits on
-        # _level_feed_lock, which _start_level_feed() holds across a first-frame
-        # write that blocks while the capture is unresponsive. Bookkeeping that
-        # stalls must not decide whether the overlay leaves the screen (#249).
+        # Do not wait for a blocked level source to hide the window. The
+        # generation check prevents an in-flight show from undoing this signal.
         try:
-            self._signal_hide()
+            with self._visibility_lock:
+                self._hide_generation += 1
+                self._signal_hide()
         finally:
             self._stop_level_feed()
             self.clear_preview_text()
@@ -487,7 +500,6 @@ sys.exit(main())
                 self._orphaned_daemon_pid = None
                 # Clean up stale PID file
                 self._unlink_pid_file()
-                self.clear_preview_text()
                 return
         
         # For normal daemons, verify process is actually alive before signaling
@@ -498,7 +510,6 @@ sys.exit(main())
             self._orphaned_daemon_pid = None
             # Clean up stale PID file
             self._unlink_pid_file()
-            self.clear_preview_text()
             return
         
         # Verify process is actually alive before sending signal
@@ -511,7 +522,6 @@ sys.exit(main())
             self._orphaned_daemon_pid = None
             # Clean up stale PID file
             self._unlink_pid_file()
-            self.clear_preview_text()
             return
         
         # Process is alive, send hide signal
@@ -521,7 +531,6 @@ sys.exit(main())
             print(f"[MIC-OSD] Failed to send SIGUSR2 to daemon (PID {self._process.pid}): {e}", flush=True)
             self._process = None
             self._orphaned_daemon_pid = None
-            self.clear_preview_text()
 
     def set_state(self, state: str):
         """

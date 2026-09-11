@@ -1,13 +1,6 @@
-"""Regression tests for end-of-recording state surviving a stalled teardown (#249).
+"""Recording cleanup must release status and capture clients before teardown."""
 
-Cleanup used to write recording_status last, after the steps that can block for
-minutes when the capture stream stops responding. Consumers that read the file
-(overlay auto-hide, `record toggle`) then saw a recording that had already been
-abandoned - the visualizer stayed on screen and the next toggle sent 'stop'.
-The end state has to be published before any step that can block.
-"""
-
-import sys
+import socket
 import tempfile
 import threading
 import types
@@ -25,51 +18,85 @@ class RecordingCleanupStateTests(unittest.TestCase):
 
     def _app(self, status_path):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
-        app.playback_suppressor = types.SimpleNamespace(is_active=False, restore=mock.Mock())
-        app._recording_lock = threading.Lock()
-        app._recording_finalizing = threading.Event()
+        app.playback_suppressor = types.SimpleNamespace(is_active=False)
+        app._autostop_stop_silence_monitor = mock.Mock()
+        app._clear_mic_osd_preview_text = mock.Mock()
+        app._stop_audio_level_monitoring = mock.Mock()
         patcher = mock.patch.object(self.main, 'RECORDING_STATUS_FILE', status_path)
         patcher.start()
         self.addCleanup(patcher.stop)
         return app
 
-    def test_end_of_recording_is_published_before_blocking_teardown(self):
+    def test_blocked_hide_releases_capture_client_and_subscriber_slot(self):
         with tempfile.TemporaryDirectory() as tmp:
             status = Path(tmp) / 'recording_status'
             status.write_text('true')
             app = self._app(status)
+            server = self.main.RecordingControlServer(
+                fifo_path=Path(tmp) / 'recording_control',
+                socket_path=Path(tmp) / 'capture.sock',
+                on_command=lambda *args: None,
+                is_recording=lambda: False,
+            )
+            app._recording_control_server = server
+            stop = threading.Event()
+            server._stop_event = stop
+            capture_started = threading.Event()
+            server._write_fifo = lambda command: capture_started.set() or True
+            hide_entered = threading.Event()
+            release_hide = threading.Event()
+            errors = []
+            clients = []
+            workers = []
 
-            hidden = []
-            observed = {}
-            app._hide_mic_osd = mock.Mock(side_effect=lambda: hidden.append(True))
-            app._notify_capture = mock.Mock(side_effect=lambda *args, **kwargs: observed.update(
-                status_still_set=status.exists(),
-                overlay_already_hidden=bool(hidden),
-            ))
-            app._autostop_stop_silence_monitor = mock.Mock()
-            app._clear_mic_osd_preview_text = mock.Mock()
-            app._stop_audio_level_monitoring = mock.Mock()
+            def block_hide():
+                hide_entered.set()
+                release_hide.wait()
 
-            app._cleanup_recording_state()
+            def cleanup():
+                try:
+                    app._cleanup_recording_state()
+                except Exception as exc:
+                    errors.append(exc)
 
-            # First potentially blocking step already sees the recording ended.
-            self.assertFalse(observed['status_still_set'])
-            self.assertTrue(observed['overlay_already_hidden'])
-            self.assertFalse(status.exists())
+            def connect_capture():
+                capture_started.clear()
+                client, connection = socket.socketpair()
+                clients.append(client)
+                client.settimeout(2)
+                worker = threading.Thread(
+                    target=server._handle_capture_connection,
+                    args=(connection, stop),
+                )
+                worker.start()
+                workers.append(worker)
+                client.sendall(b'capture\n')
+                self.assertTrue(capture_started.wait(2), 'capture slot was not acquired')
+                return client, worker
 
-    def test_cleanup_still_restores_playback_and_stops_monitoring(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            status = Path(tmp) / 'recording_status'
-            status.write_text('true')
-            app = self._app(status)
-            app.playback_suppressor = types.SimpleNamespace(is_active=True, restore=mock.Mock())
-            app._hide_mic_osd = mock.Mock()
-            app._notify_capture = mock.Mock()
-            app._autostop_stop_silence_monitor = mock.Mock()
-            app._clear_mic_osd_preview_text = mock.Mock()
-            app._stop_audio_level_monitoring = mock.Mock()
+            app._hide_mic_osd = block_hide
+            try:
+                client, subscriber = connect_capture()
+                cleanup_worker = threading.Thread(target=cleanup)
+                cleanup_worker.start()
+                workers.append(cleanup_worker)
+                self.assertTrue(hide_entered.wait(2), 'cleanup did not reach hide')
 
-            app._cleanup_recording_state()
+                self.assertFalse(status.exists())
+                self.assertEqual(client.recv(1), b'', 'capture client did not receive EOF')
+                subscriber.join(timeout=2)
+                self.assertFalse(subscriber.is_alive())
+                self.assertFalse(server.has_capture_subscriber())
 
-            app._stop_audio_level_monitoring.assert_called_once()
-            app.playback_suppressor.restore.assert_called_once()
+                # A new client can acquire the slot even while hide is stalled.
+                connect_capture()
+                self.assertTrue(server.has_capture_subscriber())
+            finally:
+                release_hide.set()
+                stop.set()
+                for client in clients:
+                    client.close()
+                for worker in workers:
+                    worker.join(timeout=2)
+                self.assertFalse(any(worker.is_alive() for worker in workers))
+            self.assertEqual(errors, [])
