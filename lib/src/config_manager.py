@@ -329,6 +329,16 @@ class ConfigManager:
                 os.fsync(f.fileno())
             os.replace(temp_path, self.config_file)
             temp_path = None
+            # Both uninstallers read this receipt, so record regardless of flavour.
+            # The config is already committed; bookkeeping must not fail the save.
+            try:
+                try:
+                    from .managed_install import record_ownership
+                except ImportError:
+                    from managed_install import record_ownership
+                record_ownership('file', self.config_file, 'personal')
+            except ImportError as exc:
+                print(f'Could not record personal data ownership: {exc}')
             if self.verbose:
                 print(f"Configuration saved to {self.config_file}")
             return True

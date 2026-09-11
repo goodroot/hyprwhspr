@@ -3,6 +3,8 @@ Noctalia shell integration commands for hyprwhspr
 """
 
 import os
+import json
+import shlex
 import re
 import shutil
 import subprocess
@@ -155,16 +157,18 @@ def _noctalia_migrate_legacy_settings(settings_path: Path, dst: dict) -> bool:
 def noctalia_command(action: str):
     """Handle noctalia subcommands"""
     if action == 'install':
-        setup_noctalia('install')
+        if setup_noctalia('install') is False:
+            raise RuntimeError('Noctalia installation incomplete; see the reported conflicts')
     elif action == 'remove':
-        setup_noctalia('remove')
+        if setup_noctalia('remove') is False:
+            raise RuntimeError('Noctalia removal incomplete; see the reported guidance')
     elif action == 'status':
         noctalia_status()
     else:
         log_error(f"Unknown noctalia action: {action}")
 
 
-def setup_noctalia(mode: str = 'install'):
+def _setup_noctalia(mode: str = 'install'):
     """Install or remove the Noctalia shell integration.
 
     Two independent pieces:
@@ -193,7 +197,7 @@ def setup_noctalia(mode: str = 'install'):
         shutil.copytree(src_plugin / 'translations',
                         dst['plugin_dir'] / 'translations', dirs_exist_ok=True)
         log_success(f"Plugin installed to {dst['plugin_dir']}")
-        if dst['legacy_plugin_dir'].is_dir():
+        if dst['legacy_plugin_dir'].is_dir() and not os.environ.get('HYPRWHSPR_GENERATION'):
             shutil.rmtree(dst['legacy_plugin_dir'], ignore_errors=True)
             log_success("Legacy hyprwhspr plugin directory removed")
 
@@ -208,7 +212,7 @@ def setup_noctalia(mode: str = 'install'):
         dst['template_input'].parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src_template, dst['template_input'])
         log_success(f"Theme template installed to {dst['template_input']}")
-        if dst['legacy_template_input'].exists():
+        if dst['legacy_template_input'].exists() and not os.environ.get('HYPRWHSPR_GENERATION'):
             dst['legacy_template_input'].unlink()
             log_success("Legacy hyprwhspr theme template removed")
 
@@ -254,7 +258,7 @@ def setup_noctalia(mode: str = 'install'):
         if dst['plugin_dir'].is_dir():
             shutil.rmtree(dst['plugin_dir'], ignore_errors=True)
             log_success("Plugin removed")
-        if dst['legacy_plugin_dir'].is_dir():
+        if dst['legacy_plugin_dir'].is_dir() and not os.environ.get('HYPRWHSPR_GENERATION'):
             shutil.rmtree(dst['legacy_plugin_dir'], ignore_errors=True)
             log_success("Legacy plugin removed")
 
@@ -263,12 +267,16 @@ def setup_noctalia(mode: str = 'install'):
                 dst[key].unlink()
         log_success("Theme template files removed")
 
-        log_info("If present, also remove from Noctalia's settings.toml:")
-        log_info(f"  - the [theme.templates.user.{NOCTALIA_TEMPLATE_ID}] section")
-        log_info(f"  - the [theme.templates.user.{NOCTALIA_LEGACY_TEMPLATE_ID}] section")
-        log_info(f"  - \"{NOCTALIA_PLUGIN_ID}:status\" from the bar's widget list")
-        log_info(f"  - \"{NOCTALIA_LEGACY_PLUGIN_ID}:status\" from the bar's widget list")
+        _noctalia_removal_guidance()
         return True
+
+
+def _noctalia_removal_guidance():
+    log_info("If present, also remove from Noctalia's settings.toml:")
+    log_info(f"  - the [theme.templates.user.{NOCTALIA_TEMPLATE_ID}] section")
+    log_info(f"  - the [theme.templates.user.{NOCTALIA_LEGACY_TEMPLATE_ID}] section")
+    log_info(f"  - \"{NOCTALIA_PLUGIN_ID}:status\" from the bar's widget list")
+    log_info(f"  - \"{NOCTALIA_LEGACY_PLUGIN_ID}:status\" from the bar's widget list")
 
 
 def _print_noctalia_template_snippet(dst: dict):
@@ -326,3 +334,41 @@ def noctalia_status():
         ok = False
 
     return ok
+
+
+def setup_noctalia(mode: str = 'install'):
+    if not os.environ.get('HYPRWHSPR_GENERATION'):
+        return _setup_noctalia(mode)
+    from managed_integrations import edit_files, managed_widget_content
+    from managed_install import Installation, atomic_text
+    dst = _noctalia_paths()
+    source = Path(HYPRWHSPR_ROOT) / 'config/noctalia/plugin'
+    paths = [dst['plugin_dir'] / p.relative_to(source) for p in source.rglob('*') if p.is_file()]
+    tray = Installation().data / 'integrations/noctalia-tray'
+    paths.extend([dst['settings'], dst['template_input'], dst['template_output'], tray])
+    if mode == 'remove':
+        if shutil.which('noctalia') and not _noctalia_msg('plugins', 'disable', NOCTALIA_PLUGIN_ID):
+            log_warning('Could not disable the Noctalia plugin; plugin files were preserved. Start Noctalia and retry removal.')
+            _noctalia_removal_guidance()
+            return False
+    if mode == 'install':
+        try:
+            widget_content = managed_widget_content((source / 'widget.luau').read_text(encoding='utf-8'), tray)
+        except (OSError, UnicodeError, RuntimeError) as exc:
+            log_warning(f'Noctalia installation incomplete; cannot prepare managed widget: {exc}')
+            return False
+    removal = {}
+    with edit_files(paths, [dst['settings'], dst['template_output']], mode, removal=removal, allow_shared_preservation=True) as proceed:
+        if not proceed:
+            if mode == 'remove':
+                _noctalia_removal_guidance()
+            return removal.get('complete', False) if mode == 'remove' else False
+        result = _setup_noctalia(mode)
+        # widget_content is only computed for an install; the tail must never run
+        # for any other mode, which would also re-create the shim just removed.
+        if mode == 'install' and result is not False:
+            tray.parent.mkdir(parents=True, exist_ok=True)
+            atomic_text(tray, '#!/bin/sh\nexec ' + shlex.quote(str(Installation().data / 'launcher')) + ' --managed-tray "$@"\n', 0o755)
+            widget = dst['plugin_dir'] / 'widget.luau'
+            atomic_text(widget, widget_content)
+        return result

@@ -3,6 +3,8 @@ Waybar integration commands for hyprwhspr
 """
 
 import json
+import os
+import shlex
 from pathlib import Path
 
 try:
@@ -19,16 +21,18 @@ from ._shared import (HYPRWHSPR_ROOT, USER_HOME, _load_jsonc,
 def waybar_command(action: str):
     """Handle waybar subcommands"""
     if action == 'install':
-        setup_waybar('install')
+        if setup_waybar('install') is False:
+            raise RuntimeError('Waybar installation incomplete; see the reported conflicts')
     elif action == 'remove':
-        setup_waybar('remove')
+        if setup_waybar('remove') is False:
+            raise RuntimeError('Waybar removal incomplete; reconcile the preserved files and retry')
     elif action == 'status':
         waybar_status()
     else:
         log_error(f"Unknown waybar action: {action}")
 
 
-def setup_waybar(mode: str = 'install'):
+def _setup_waybar(mode: str = 'install'):
     """Setup or remove waybar integration"""
     if mode == 'install':
         log_info("Setting up Waybar integration...")
@@ -51,10 +55,23 @@ def setup_waybar(mode: str = 'install'):
         log_error(f"Waybar CSS not found: {css_file}")
         return False
     
-    waybar_config = USER_HOME / '.config' / 'waybar' / 'config.jsonc'
-    waybar_style = USER_HOME / '.config' / 'waybar' / 'style.css'
-    user_module_config = USER_HOME / '.config' / 'waybar' / 'hyprwhspr-module.jsonc'
+    config_home = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config'))
+    waybar_config = config_home / 'waybar' / 'config.jsonc'
+    waybar_style = config_home / 'waybar' / 'style.css'
+    user_module_config = config_home / 'waybar' / 'hyprwhspr-module.jsonc'
     
+    if os.environ.get('HYPRWHSPR_GENERATION'):
+        from managed_install import Installation
+        tray_command = shlex.quote(str(Installation().data / 'launcher')) + ' --managed-tray'
+        css_target = user_module_config.parent / 'hyprwhspr-style.css'
+        if mode == 'install':
+            css_target.parent.mkdir(parents=True, exist_ok=True)
+            from managed_install import atomic_text
+            atomic_text(css_target, css_file.read_text(encoding='utf-8'))
+        css_file = css_target
+    else:
+        tray_command = shlex.quote(str(tray_script))
+
     if mode == 'install':
         # Create waybar config directory
         waybar_config.parent.mkdir(parents=True, exist_ok=True)
@@ -79,12 +96,12 @@ def setup_waybar(mode: str = 'install'):
         module_config = {
             "custom/hyprwhspr": {
                 "format": "{}",
-                "exec": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh status",
+                "exec": f"{tray_command} status",
                 "interval": 1,
                 "return-type": "json",
                 "exec-on-event": True,
-                "on-click": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh record",
-                "on-click-right": f"{HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh restart",
+                "on-click": f"{tray_command} record",
+                "on-click-right": f"{tray_command} restart",
                 "tooltip": True
             }
         }
@@ -200,8 +217,9 @@ def setup_waybar(mode: str = 'install'):
 
 def waybar_status():
     """Check if waybar is configured"""
-    waybar_config = USER_HOME / '.config' / 'waybar' / 'config.jsonc'
-    user_module_config = USER_HOME / '.config' / 'waybar' / 'hyprwhspr-module.jsonc'
+    config_home = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config'))
+    waybar_config = config_home / 'waybar' / 'config.jsonc'
+    user_module_config = config_home / 'waybar' / 'hyprwhspr-module.jsonc'
     
     if not waybar_config.exists():
         log_warning("Waybar config not found")
@@ -232,3 +250,17 @@ def waybar_status():
     except IOError as e:
         log_error(f"Failed to check waybar status: {e}")
         return False
+
+
+def setup_waybar(mode: str = 'install'):
+    if not os.environ.get('HYPRWHSPR_GENERATION'):
+        return _setup_waybar(mode)
+    from managed_integrations import edit_files
+    base = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config')) / 'waybar'
+    shared = [base / 'config.jsonc', base / 'style.css']
+    paths = shared + [base / 'hyprwhspr-module.jsonc', base / 'hyprwhspr-style.css']
+    removal = {}
+    with edit_files(paths, shared, mode, removal=removal) as proceed:
+        if proceed:
+            return _setup_waybar(mode)
+    return removal.get('complete', False) if mode == 'remove' else False

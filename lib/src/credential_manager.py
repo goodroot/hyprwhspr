@@ -69,6 +69,16 @@ def _save_credentials(credentials: Dict[str, str]):
         os.chmod(temp_file, 0o600)
 
         os.replace(temp_file, CREDENTIALS_FILE)
+        # Both uninstallers read this receipt, so record regardless of flavour.
+        # The credentials are already committed; bookkeeping must not fail the save.
+        try:
+            try:
+                from .managed_install import record_ownership
+            except ImportError:
+                from managed_install import record_ownership
+            record_ownership('file', CREDENTIALS_FILE, 'personal')
+        except ImportError as exc:
+            print(f'Could not record personal data ownership: {exc}')
 
     except Exception as e:
         log_error(f"Failed to save credentials: {e}")

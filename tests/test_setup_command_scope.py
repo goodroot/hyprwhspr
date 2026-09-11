@@ -453,8 +453,6 @@ class UninstallYdotoolOwnershipTests(unittest.TestCase):
             for name, value in redirected_paths.items()
         ]
         patches += [
-            mock.patch.object(uninstall, "setup_waybar"),
-            mock.patch.object(uninstall, "_detect_current_backend", return_value=None),
             mock.patch.object(uninstall, "run_command", side_effect=fake_run_command),
             mock.patch.object(systemd, "run_command", side_effect=fake_run_command),
         ]

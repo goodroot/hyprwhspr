@@ -1,10 +1,18 @@
 #!/bin/bash
 
 # hyprwhspr launcher
+export PYTHONDONTWRITEBYTECODE=1
+
+# Legacy checkouts may still depend on packages installed by old bootstrap
+# versions into the user site. The managed launcher isolates its own environments.
+unset PYTHONHOME
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname $(readlink -f "$0"))" && pwd)"
 PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
+if [[ -f "$PACKAGE_ROOT/release.json" && -x "${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/launcher" ]]; then
+    exec "${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/launcher" "$@"
+fi
 
 # Determine the library directory
 # Development: lib/cli.py exists directly under PACKAGE_ROOT
@@ -23,7 +31,7 @@ fi
 
 # Set environment variables
 export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
-export PYTHONPATH="$LIB_DIR:$PYTHONPATH"
+export PYTHONPATH="$LIB_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
 # Find system Python, avoiding mise/pyenv/asdf/homebrew managed versions
 # CLI commands use system Python since deps are installed via package manager
@@ -36,10 +44,18 @@ SYSTEM_PYTHON_CANDIDATES=(
     /usr/local/bin/python
 )
 
+# hyprwhspr requires 3.11-3.14, matching managed_install.interpreter(),
+# scripts/install.sh and scripts/managed-launcher.sh. Reject older interpreters
+# here so the user gets this message instead of an AttributeError from
+# hashlib.file_digest deeper in the CLI.
+supported_python() {
+    "$1" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] <= (3, 14) else 1)' 2>/dev/null
+}
+
 get_system_python() {
     local py
     for py in "${SYSTEM_PYTHON_CANDIDATES[@]}"; do
-        [ -x "$py" ] && "$py" --version >/dev/null 2>&1 && { echo "$py"; return 0; }
+        [ -x "$py" ] && supported_python "$py" && { echo "$py"; return 0; }
     done
     py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
     if [ -n "$py" ] \
@@ -50,7 +66,8 @@ get_system_python() {
         && [[ "$py" != *"/.local/share/mise/"* ]] \
         && [[ "$py" != *"/.pyenv/"* ]] \
         && [[ "$py" != *"/.asdf/"* ]] \
-        && "$py" -c 'import sys; raise SystemExit(0 if sys.prefix == sys.base_prefix else 1)'; then
+        && "$py" -c 'import sys; raise SystemExit(0 if sys.prefix == sys.base_prefix else 1)' \
+        && supported_python "$py"; then
         echo "$py"
         return 0
     fi
@@ -62,9 +79,10 @@ get_system_python() {
 # This avoids issues with mise/pyenv/asdf hijacking python3 to a version without those deps
 CLI_PYTHON="$(get_system_python)"
 if [[ -z "$CLI_PYTHON" ]]; then
-    echo "Error: System Python not found." >&2
+    echo "Error: No supported system Python found (need 3.11-3.14)." >&2
     echo "hyprwhspr requires system Python with distro packages (python-rich, etc.)." >&2
-    echo "Please install Python via your package manager (pacman -S python)." >&2
+    echo "Install a supported Python via your package manager, for example:" >&2
+    echo "  pacman -S python     apt install python3.12     dnf install python3.12" >&2
     exit 1
 fi
 
@@ -85,15 +103,15 @@ require_app_venv() {
 # Help/version handling: route -h/--help/--version to CLI
 for arg in "$@"; do
   if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-    exec "$CLI_PYTHON" "$LIB_DIR/cli.py" --help
+    exec "$CLI_PYTHON" -B "$LIB_DIR/cli.py" --help
   fi
-  if [[ "$arg" == "--version" ]]; then
-    exec "$CLI_PYTHON" "$LIB_DIR/cli.py" --version
+  if [[ "$arg" == "--version" && "$1" != "update" ]]; then
+    exec "$CLI_PYTHON" -B "$LIB_DIR/cli.py" --version
   fi
 done
 
 if [[ "$1" == "help" ]]; then
-  exec "$CLI_PYTHON" "$LIB_DIR/cli.py" --help
+  exec "$CLI_PYTHON" -B "$LIB_DIR/cli.py" --help
 fi
 
 # Subcommands: route to CLI if recognized
@@ -101,10 +119,10 @@ fi
 # 'test' and 'transcribe' need venv Python since they load transcription dependencies
 if [[ "$1" == "test" || "$1" == "transcribe" ]]; then
   require_app_venv
-  exec "$PYTHON_CMD" "$LIB_DIR/cli.py" "$@"
+  exec "$PYTHON_CMD" -B "$LIB_DIR/cli.py" "$@"
 fi
-if [[ "$1" =~ ^(setup|install|config|waybar|noctalia|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record|test|transcribe)$ ]]; then
-  exec "$CLI_PYTHON" "$LIB_DIR/cli.py" "$@"
+if [[ "$1" =~ ^(update|setup|install|config|waybar|noctalia|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record|test|transcribe)$ ]]; then
+  exec "$CLI_PYTHON" -B "$LIB_DIR/cli.py" "$@"
 fi
 
 # The service always runs in the environment created by setup. Falling back to
@@ -134,4 +152,4 @@ if [ -d "/opt/rocm" ]; then
 fi
 
 # Default: run main application with venv Python
-exec "$PYTHON_CMD" "$LIB_DIR/main.py" "$@"
+exec "$PYTHON_CMD" -B "$LIB_DIR/main.py" "$@"

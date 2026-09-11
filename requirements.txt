@@ -6,6 +6,7 @@ soundfile>=0.12.1
 
 # Global shortcuts and text injection
 evdev>=1.9.0
+pyperclip>=1.11.0
 
 # System integration
 pyudev>=0.24.4

@@ -3,6 +3,8 @@ Install commands for hyprwhspr — omarchy automated install and its helpers
 """
 
 import os
+import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -63,14 +65,20 @@ def _auto_download_model(model: str = 'base'):
         log_warning(f"Model download failed - can download later with: hyprwhspr model download {model}")
 
 
-def _setup_hyprland_bindings() -> bool:
+def _edit_hyprland_bindings() -> bool:
     """
     Set up Hyprland compositor bindings in config file.
     
     Returns:
         True if bindings were added successfully, False otherwise
     """
-    hypr_config_dir = USER_HOME / '.config' / 'hypr'
+    hypr_config_dir = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config')) / 'hypr'
+    tray_command = shlex.quote(str(Path(HYPRWHSPR_ROOT) / 'config/hyprland/hyprwhspr-tray.sh'))
+    if os.environ.get('HYPRWHSPR_GENERATION'):
+        from managed_install import Installation
+        from managed_integrations import stable_hyprland_content
+        data = Installation().data
+        tray_command = shlex.quote(str(data / 'launcher')) + ' --managed-tray'
     bindings_file = hypr_config_dir / 'bindings.conf'
     hyprland_conf = hypr_config_dir / 'hyprland.conf'
     
@@ -100,15 +108,44 @@ def _setup_hyprland_bindings() -> bool:
             if target_file.exists():
                 with open(target_file, 'r', encoding='utf-8') as f:
                     content = f.read()
-                    # Check for existing hyprwhspr bindings
-                    # Just check for the command - keybind could be anything
-                    if 'hyprwhspr-tray.sh record' in content or \
-                       '# added by hyprwhspr' in content:
-                        bindings_exist = True
-        except Exception as e:
-            log_warning(f"Could not read {target_file}: {e}")
-            log_warning("Skipping duplicate check - will attempt to add bindings")
-        
+                    if os.environ.get('HYPRWHSPR_GENERATION'):
+                        updated = stable_hyprland_content(content, data, [HYPRWHSPR_ROOT, data / 'src'])
+                        if updated != content:
+                            from managed_install import atomic_text
+                            atomic_text(target_file.resolve(), updated, target_file.stat().st_mode & 0o777)
+                            content = updated
+                            log_success('Updated Hyprland binding to the stable managed launcher')
+                            if shutil.which('hyprctl') and os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
+                                run_command(['hyprctl', 'reload'], check=False)
+                    expected = shlex.split(tray_command) + ['record']
+                    stale = False
+                    for line in content.splitlines():
+                        if line.lstrip().startswith('#'):
+                            continue
+                        match = re.search(r'\bexec,\s*(.*)$', line)
+                        if not match:
+                            continue
+                        try:
+                            command = shlex.split(match.group(1))
+                        except ValueError:
+                            continue
+                        if command == expected:
+                            bindings_exist = True
+                        elif command and command[-1] == 'record' and (
+                                'hyprwhspr-tray.sh' in match.group(1) or '--managed-tray' in match.group(1)):
+                            # Only a competing *record* binding conflicts. Other tray
+                            # actions (restart, status) legitimately coexist.
+                            stale = True
+                    if stale:
+                        # Warn even when an owned binding also exists: the foreign one still
+                        # fires and may invoke a tray script that is already gone.
+                        log_warning(f'Existing dictation binding in {target_file} targets another installation. Replace its exec command with: {tray_command} record')
+                        if not bindings_exist:
+                            return False
+        except (OSError, UnicodeError) as e:
+            log_warning(f'Could not safely read or update {target_file}: {e}; file preserved')
+            return False
+
         if bindings_exist:
             log_info("Hyprland bindings already exist, skipping")
             return True
@@ -118,7 +155,7 @@ def _setup_hyprland_bindings() -> bool:
                 with open(target_file, 'a', encoding='utf-8') as f:
                     f.write('\n# hyprwhspr - Toggle mode (added by hyprwhspr setup)\n')
                     f.write('# Press once to start, press again to stop\n')
-                    f.write(f'bindd = SUPER ALT, D, Speech-to-text, exec, {HYPRWHSPR_ROOT}/config/hyprland/hyprwhspr-tray.sh record\n')
+                    f.write(f'bindd = SUPER ALT, D, Speech-to-text, exec, {tray_command} record\n')
                 log_success(f"Added Hyprland bindings to {target_file}")
                 if shutil.which('hyprctl') and os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
                     run_command(['hyprctl', 'reload'], check=False)
@@ -288,7 +325,7 @@ def omarchy_command(args=None):
     mise_active, mise_details = _check_mise_active()
     mise_free_env = None
     if mise_active:
-        log_warning("MISE detected - will be temporarily deactivated for installation")
+        log_warning("MISE detected - using explicit interpreter paths without changing manager configuration")
         log_warning(f"Details:\n    {mise_details}")
         mise_free_env = _create_mise_free_environment()
         # Note: install_backend() already handles MISE warnings
@@ -456,3 +493,13 @@ def omarchy_command(args=None):
     print("\nFor help: hyprwhspr --help")
 
     return True
+
+
+def _setup_hyprland_bindings() -> bool:
+    if not os.environ.get('HYPRWHSPR_GENERATION'):
+        return _edit_hyprland_bindings()
+    from managed_integrations import edit_files
+    base = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config')) / 'hypr'
+    paths = [base / 'bindings.conf', base / 'hyprland.conf']
+    with edit_files(paths, paths) as proceed:
+        return _edit_hyprland_bindings() if proceed else False

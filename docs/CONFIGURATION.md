@@ -1713,3 +1713,9 @@ yay -Rs hyprwhspr
 ```
 
 Or better yet - create an issue and help us improve.
+
+## Managed installation lifecycle
+
+Managed updates validate settings without rewriting them. Uninstall preserves
+settings, credentials and models; `uninstall --purge` removes recorded personal
+files. See [installation and recovery](MANAGED_INSTALLATION.md).

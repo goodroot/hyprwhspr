@@ -3,9 +3,9 @@ Uninstall command for hyprwhspr — removes services, integrations, user data
 and optionally system permissions
 """
 
-import getpass
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from rich.prompt import Confirm
@@ -37,273 +37,192 @@ except ImportError:
 
 from ._shared import (SERVICE_NAME, RESUME_SERVICE_NAME, YDOTOOL_UNIT,
                       USER_HOME, USER_CONFIG_DIR, USER_SYSTEMD_DIR)
-from .maintenance import _cleanup_backend, _detect_current_backend
 from .systemd import _is_hyprwhspr_managed_ydotool_unit
-from .waybar import setup_waybar
 
 
 
-# ==================== Uninstall Command ====================
+def _generated_legacy_unit(path):
+    """Recognize exact generated content, not just a familiar unit filename."""
+    from ._shared import HYPRWHSPR_ROOT
+    try:
+        from ..legacy_units import generated_unit
+    except ImportError:
+        from legacy_units import generated_unit
+    return generated_unit(path, HYPRWHSPR_ROOT)
+
 
 def uninstall_command(keep_models: bool = False, remove_permissions: bool = False,
-                     skip_permissions: bool = False, yes: bool = False):
-    """Completely remove hyprwhspr and all user data"""
-    print("\n" + "="*60)
-    print("hyprwhspr Uninstall")
-    print("="*60)
-    
-    # Build summary of what will be removed
-    items_to_remove = []
-    
-    # Systemd services
-    if (USER_SYSTEMD_DIR / SERVICE_NAME).exists():
-        items_to_remove.append(f"Systemd service: {SERVICE_NAME}")
-    if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
-        items_to_remove.append(f"Systemd service: {RESUME_SERVICE_NAME} (deprecated)")
-    ydotool_unit_path = USER_SYSTEMD_DIR / YDOTOOL_UNIT
-    if _is_hyprwhspr_managed_ydotool_unit(ydotool_unit_path):
-        items_to_remove.append(f"Systemd service: {YDOTOOL_UNIT}")
-
-    # Waybar integration
-    waybar_module = USER_HOME / '.config' / 'waybar' / 'hyprwhspr-module.jsonc'
-    if waybar_module.exists():
-        items_to_remove.append("Waybar integration")
-    
-    # Plain filesystem targets: declared once here, listed in the summary and
-    # removed in one pass below (dirs rmtree'd, files/symlinks unlinked)
-    fs_targets = []
-    if USER_CONFIG_DIR.exists():
-        fs_targets.append((f"User configuration: {USER_CONFIG_DIR}", USER_CONFIG_DIR))
-    if VENV_DIR.exists():
-        fs_targets.append((f"Main backend venv: {VENV_DIR}", VENV_DIR))
-    if PYWHISPERCPP_SRC_DIR.exists():
-        fs_targets.append((f"pywhispercpp source: {PYWHISPERCPP_SRC_DIR}", PYWHISPERCPP_SRC_DIR))
-    src_dir = USER_BASE / 'src'
-    if (src_dir / '.git').exists():
-        fs_targets.append((f"Managed clone: {src_dir}", src_dir))
-    cmd_symlink = USER_HOME / '.local' / 'bin' / 'hyprwhspr'
-    if cmd_symlink.is_symlink() and os.readlink(cmd_symlink).endswith('/bin/hyprwhspr'):
-        fs_targets.append((f"Command symlink: {cmd_symlink}", cmd_symlink))
-    if STATE_DIR.exists():
-        fs_targets.append((f"State files: {STATE_DIR}", STATE_DIR))
-    if CREDENTIALS_FILE.exists():
-        fs_targets.append(("Stored API credentials", CREDENTIALS_FILE))
-    temp_dir = USER_BASE / 'temp'
-    if temp_dir.exists():
-        fs_targets.append((f"Temporary files: {temp_dir}", temp_dir))
-    runtime_dir = USER_BASE / 'runtime'
-    if runtime_dir.exists():
-        fs_targets.append((f"Optional GUI runtimes: {runtime_dir}", runtime_dir))
-    items_to_remove.extend(label for label, _ in fs_targets)
-
-    # Models
-    if not keep_models and PYWHISPERCPP_MODELS_DIR.exists():
-        models = list(PYWHISPERCPP_MODELS_DIR.glob('ggml-*.bin'))
-        if models:
-            items_to_remove.append(f"Whisper models: {len(models)} model(s) in {PYWHISPERCPP_MODELS_DIR}")
-    
-    # Permissions (if not skipped)
-    if not skip_permissions:
-        items_to_remove.append("System permissions (groups, udev rules) - optional")
-    
-    if not items_to_remove:
-        log_info("Nothing to remove - hyprwhspr appears to be already uninstalled")
-        return
-    
-    # Show summary
-    print("\nThe following will be removed:")
-    for item in items_to_remove:
-        print(f"  • {item}")
-    print()
-    
-    # Confirmation
-    if not yes:
-        log_warning("This will permanently delete all hyprwhspr data and configuration.")
-        if not Confirm.ask("Are you sure you want to continue?", default=False):
-            print("\nUninstall cancelled.")
-            return
-    
-    print("\n" + "="*60)
-    print("Removing Components")
-    print("="*60 + "\n")
-    
-    errors = []
-    
-    # 1. Stop and remove systemd services
-    log_info("Stopping and removing systemd services...")
+                     skip_permissions: bool = False, yes: bool = False, purge: bool = False):
+    """Remove recognized legacy components; report anything whose ownership is uncertain."""
+    from ._shared import HYPRWHSPR_ROOT
     try:
-        # Stop and disable hyprwhspr service
-        if (USER_SYSTEMD_DIR / SERVICE_NAME).exists():
-            run_command(['systemctl', '--user', 'stop', SERVICE_NAME], check=False)
-            run_command(['systemctl', '--user', 'disable', SERVICE_NAME], check=False)
-            (USER_SYSTEMD_DIR / SERVICE_NAME).unlink(missing_ok=True)
-            log_success(f"Removed {SERVICE_NAME}")
-
-
-        # Stop and disable deprecated resume service
-        if (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).exists():
-            run_command(['systemctl', '--user', 'stop', RESUME_SERVICE_NAME], check=False)
-            run_command(['systemctl', '--user', 'disable', RESUME_SERVICE_NAME], check=False)
-            (USER_SYSTEMD_DIR / RESUME_SERVICE_NAME).unlink(missing_ok=True)
-            log_success(f"Removed {RESUME_SERVICE_NAME}")
-
-        if _is_hyprwhspr_managed_ydotool_unit(ydotool_unit_path):
-            run_command(['systemctl', '--user', 'stop', YDOTOOL_UNIT], check=False)
-            run_command(['systemctl', '--user', 'disable', YDOTOOL_UNIT], check=False)
-            ydotool_unit_path.unlink(missing_ok=True)
-            log_success(f"Removed {YDOTOOL_UNIT}")
-
-        # Reload systemd daemon
-        run_command(['systemctl', '--user', 'daemon-reload'], check=False)
-    except Exception as e:
-        error_msg = f"Failed to remove systemd services: {e}"
-        log_warning(error_msg)
-        errors.append(error_msg)
-    
-    # 2. Remove Waybar integration
-    log_info("Removing Waybar integration...")
-    try:
-        setup_waybar('remove')
-    except Exception as e:
-        error_msg = f"Failed to remove Waybar integration: {e}"
-        log_warning(error_msg)
-        errors.append(error_msg)
-    
-    # 3. Backend-specific cleanup (while config still exists for detection)
-    log_info("Cleaning up backend...")
-    try:
-        current_backend = _detect_current_backend()
-        if current_backend:
-            _cleanup_backend(current_backend)
-    except Exception as e:
-        error_msg = f"Backend cleanup failed: {e}"
-        log_warning(error_msg)
-        errors.append(error_msg)
-
-    # 4. Remove filesystem targets from the summary manifest
-    log_info("Removing files...")
-    for label, target in fs_targets:
-        try:
-            if target.is_dir() and not target.is_symlink():
-                shutil.rmtree(target, ignore_errors=True)
-            else:
-                target.unlink(missing_ok=True)
-            log_success(f"Removed {label}")
-        except Exception as e:
-            error_msg = f"Failed to remove {label}: {e}"
-            log_warning(error_msg)
-            errors.append(error_msg)
-
-    # 5. Remove models (if not keeping)
-    if not keep_models:
-        log_info("Removing Whisper models...")
-        try:
-            if PYWHISPERCPP_MODELS_DIR.exists():
-                models = list(PYWHISPERCPP_MODELS_DIR.glob('ggml-*.bin'))
-                if models:
-                    shutil.rmtree(PYWHISPERCPP_MODELS_DIR, ignore_errors=True)
-                    log_success(f"Removed {len(models)} model(s) from {PYWHISPERCPP_MODELS_DIR}")
-                else:
-                    # Remove empty directory
-                    PYWHISPERCPP_MODELS_DIR.rmdir()
-        except Exception as e:
-            error_msg = f"Failed to remove models: {e}"
-            log_warning(error_msg)
-            errors.append(error_msg)
-    else:
-        log_info("Keeping Whisper models (--keep-models flag)")
-    
-    # 6. Remove the base directory if it's empty or only contains empty subdirs
-    try:
-        if USER_BASE.exists():
-            has_content = False
-            for item in USER_BASE.iterdir():
-                if item.is_file():
-                    has_content = True
-                    break
-                elif item.is_dir():
-                    try:
-                        if any(item.iterdir()):
-                            has_content = True
-                            break
-                    except Exception:
-                        pass
-
-            if not has_content:
-                shutil.rmtree(USER_BASE, ignore_errors=True)
-                log_success(f"Removed {USER_BASE}")
-    except Exception:
-        pass  # Ignore errors when trying to remove base directory
-
-    # 7. Remove system permissions (if requested)
-    permissions_removed = False
-    if not skip_permissions:
-        log_info("Checking system permissions...")
-        
-        should_remove = remove_permissions
-        if not remove_permissions and not yes:
-            should_remove = Confirm.ask(
-                "Remove system permissions (remove user from input/audio/tty groups and udev rules)?",
-                default=False
-            )
-        
-        if should_remove:
-            permissions_removed = True
+        from ..managed_install import Installation, digest, forget_receipt_entry
+    except ImportError:
+        from managed_install import Installation, digest, forget_receipt_entry
+    install = Installation(data=USER_BASE, state=STATE_DIR)
+    receipt = install.read_receipt()
+    units = []
+    preserved_unit = False
+    for name in (SERVICE_NAME, RESUME_SERVICE_NAME):
+        path = USER_SYSTEMD_DIR / name
+        if path.exists() or path.is_symlink():
+            if path.is_symlink() and not path.exists():
+                log_warning(f'Preserving dangling service link (no runtime dependency): {path}')
+                continue
+            entry = receipt.get('files', {}).get(str(path), {})
             try:
-                username = os.environ.get('SUDO_USER') or os.environ.get('USER') or getpass.getuser()
-                if not username:
-                    log_warning("Could not determine username for permission removal")
-                else:
-                    # Remove from groups
-                    groups_to_remove = ['input', 'audio', 'tty']
-                    for group in groups_to_remove:
-                        try:
-                            run_sudo_command(['gpasswd', '-d', username, group], check=False)
-                            log_success(f"Removed user from '{group}' group")
-                        except Exception as e:
-                            log_warning(f"Failed to remove user from '{group}' group: {e}")
-                    
-                    # Remove udev rule (only if it exists and was created by hyprwhspr)
-                    udev_rule = Path('/etc/udev/rules.d/99-uinput.rules')
-                    if udev_rule.exists():
-                        # Check if it's our rule by reading it
-                        try:
-                            with open(udev_rule, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                            if 'hyprwhspr' in content.lower() or 'input' in content.lower():
-                                run_sudo_command(['rm', str(udev_rule)], check=False)
-                                log_success("Removed udev rule")
-                                # Reload udev
-                                run_sudo_command(['udevadm', 'control', '--reload-rules'], check=False)
-                                run_sudo_command(['udevadm', 'trigger', '--name-match=uinput'], check=False)
-                        except Exception as e:
-                            log_warning(f"Failed to remove udev rule: {e}")
-            except Exception as e:
-                error_msg = f"Failed to remove system permissions: {e}"
-                log_warning(error_msg)
-                errors.append(error_msg)
+                recorded = not path.is_symlink() and entry.get('sha256') == digest(path)
+            except OSError as exc:
+                preserved_unit = True
+                log_warning(f'Preserving unreadable service and its runtime: {path}: {exc}')
+                continue
+            if recorded or _generated_legacy_unit(path):
+                units.append(path)
+            else:
+                preserved_unit = True
+                log_warning(f'Preserving customized or unowned service: {path}')
+    ydotool = USER_SYSTEMD_DIR / YDOTOOL_UNIT
+    if _is_hyprwhspr_managed_ydotool_unit(ydotool):
+        units.append(ydotool)
+
+    targets = []
+    if VENV_DIR.exists() and not VENV_DIR.is_symlink():
+        if preserved_unit:
+            log_warning(f'Preserving backend environment for the retained service: {VENV_DIR}')
         else:
-            log_info("Skipping permission removal")
+            targets.append((f'Main backend venv: {VENV_DIR}', VENV_DIR))
+    for path in (PYWHISPERCPP_SRC_DIR, USER_BASE / 'src'):
+        if path.exists():
+            log_warning(f'Preserving unrecorded source checkout: {path}')
+    command = USER_HOME / '.local/bin/hyprwhspr'
+    recognized = {Path(HYPRWHSPR_ROOT) / 'bin/hyprwhspr', USER_BASE / 'src/bin/hyprwhspr'}
+    if command.is_symlink():
+        target = (command.parent / os.readlink(command)).resolve()
+        if target in {path.resolve() for path in recognized}:
+            targets.append((f'Command symlink: {command}', command))
+        else:
+            log_warning(f'Preserving foreign command symlink: {command}')
+    elif command.exists():
+        log_warning(f'Preserving unowned command: {command}')
+    if purge:
+        for path in (USER_CONFIG_DIR / 'config.json', CREDENTIALS_FILE):
+            if path.is_file() and not path.is_symlink():
+                targets.append((f'Personal file: {path}', path))
+    temp_dir = USER_BASE / 'temp'
+    runtime_dir = USER_BASE / 'runtime'
+    if not preserved_unit:
+        for label, path in (('Temporary files', temp_dir), ('Optional GUI runtimes', runtime_dir)):
+            if path.exists():
+                targets.append((f'{label}: {path}', path))
+    models = []
+    if purge and not keep_models:
+        for name, entry in receipt.get('files', {}).items():
+            path = Path(name)
+            if entry.get('kind') == 'model' and path.is_file() and not path.is_symlink():
+                try:
+                    matches = digest(path) == entry.get('sha256')
+                except OSError as exc:
+                    log_warning(f'Preserving unreadable model: {path}: {exc}')
+                    continue
+                if matches:
+                    models.append((path, entry))
+                else:
+                    log_warning(f'Preserving modified model: {path}')
+    if keep_models:
+        log_info('Keeping models (--keep-models).')
+    elif not purge:
+        log_info('Keeping models and personal data (ordinary uninstall).')
     else:
-        log_info("Skipping permission removal (--skip-permissions flag)")
-    
-    # Summary
-    print("\n" + "="*60)
+        log_info('Purging recorded models only; unrecorded legacy models are preserved.')
+    if skip_permissions:
+        log_info('Skipping all permission removal (--skip-permissions).')
+    elif remove_permissions:
+        log_info('Removing only permissions recorded as added by installation; unrecorded legacy permissions are preserved.')
+    else:
+        log_info('Keeping system permissions; select --remove-permissions to remove recorded additions.')
+    log_info('Preserving unrecorded legacy bar integrations and shared caches.')
+
+    print('\nComponents to remove:')
+    for path in units:
+        print(f'  Systemd service: {path}')
+    for label, _ in targets:
+        print(f'  {label}')
+    for path, _ in models:
+        print(f'  Recorded model: {path}')
+    if not yes and not Confirm.ask('Remove these hyprwhspr components?', default=False):
+        return
+    errors = []
+    runtime_unsafe = False
+    for path in units:
+        try:
+            for action in ('stop', 'disable'):
+                run_command(['systemctl', '--user', action, path.name], check=True)
+            path.unlink()
+            log_success(f'Removed service: {path}')
+        except (OSError, subprocess.SubprocessError) as exc:
+            errors.append(f'Could not remove {path.name}: {exc}; retry with a working user systemd bus')
+            if path.name in (SERVICE_NAME, RESUME_SERVICE_NAME):
+                runtime_unsafe = True
+    if units:
+        try:
+            run_command(['systemctl', '--user', 'daemon-reload'], check=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            errors.append(f'systemd daemon-reload failed: {exc}')
+            runtime_unsafe = True
+
+    for label, path in targets:
+        if runtime_unsafe and path in (VENV_DIR, temp_dir, runtime_dir):
+            log_warning(f'Preserving runtime needed by service: {path}')
+            continue
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+            log_success(f'Removed {label}')
+        except OSError as exc:
+            errors.append(f'{path}: {exc}')
+    for path, entry in models:
+        try:
+            path.unlink()
+            forget_receipt_entry(install, str(path), entry)
+            log_success(f'Removed recorded model: {path}')
+        except (OSError, ValueError, TypeError) as exc:
+            errors.append(f'{path}: {exc}')
+    if remove_permissions and not skip_permissions:
+        for permission in receipt.get('permissions', []):
+            if permission.get('adopted_legacy'):
+                log_info(f'Preserving pre-existing permission rule: {permission.get("path")}')
+                continue
+            if not permission.get('added'):
+                continue
+            try:
+                if permission['kind'] == 'group':
+                    try:
+                        from ..managed_install import remove_added_group
+                    except ImportError:
+                        from managed_install import remove_added_group
+                    remove_added_group(permission['user'], permission['group'],
+                        lambda: run_sudo_command(['gpasswd', '-d', permission['user'], permission['group']], check=True))
+                elif permission['kind'] == 'rule':
+                    path = Path(permission['path'])
+                    if path.is_symlink() or (path.exists() and digest(path) != permission['sha256']):
+                        log_warning(f'Preserving modified permission rule: {path}')
+                        continue
+                    if path.exists():
+                        run_sudo_command(['rm', str(path)], check=True)
+                    run_sudo_command(['udevadm', 'control', '--reload-rules'], check=True)
+                else:
+                    continue
+                with install.receipts() as latest:
+                    for entry in latest.get('permissions', []):
+                        if entry == permission:
+                            entry['added'] = False
+                log_success('Removed recorded permission addition')
+            except Exception as exc:
+                errors.append(f'Permission removal: {exc}')
     if errors:
-        log_warning("Uninstall completed with some errors:")
         for error in errors:
-            log_warning(f"  • {error}")
-        print("="*60)
-    else:
-        log_success("Uninstall completed successfully!")
-        print("="*60)
-    
-    print("\nAll hyprwhspr user data has been removed.")
-    hf_cache = Path(os.environ.get('XDG_CACHE_HOME', USER_HOME / '.cache')) / 'huggingface'
-    if hf_cache.exists():
-        print(f"Note: {hf_cache} (shared model cache) was not removed.")
-        print("      Delete it manually if no other apps use Hugging Face models.")
-    if not skip_permissions and not permissions_removed:
-        print("Note: System permissions (group memberships, udev rules) were not removed.")
-        print("      You may want to remove them manually if needed.")
-    print()
+            log_warning(error)
+        raise RuntimeError('Uninstall incomplete; runtime preserved where needed; see reported failures')
+    log_success('Uninstall completed; preserved components are listed above.')

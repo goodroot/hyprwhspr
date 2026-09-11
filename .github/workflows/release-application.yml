@@ -1,0 +1,74 @@
+name: Application release
+on:
+  push:
+    tags: ['v[0-9]*']
+permissions:
+  contents: read
+jobs:
+  payload:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/build-release.py "$GITHUB_REF_NAME" /tmp/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: application-release
+          path: /tmp/release/*
+  smoke:
+    needs: payload
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        image: ['ubuntu:24.04', 'debian:bookworm', 'fedora:latest', 'opensuse/tumbleweed:latest']
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: application-release
+          path: /tmp/release
+      - name: Disposable container prerequisites and CLI smoke check
+        shell: bash
+        run: |
+          if command -v apt-get; then
+            apt-get update
+            apt-get install -y python3 python3-venv python3-dev gcc libevdev-dev
+          elif command -v dnf; then
+            dnf install -y python3 python3-pip python3-devel gcc libevdev-devel
+          else
+            zypper --non-interactive install python3 python3-pip python3-devel gcc libevdev-devel
+          fi
+          cd /tmp/release
+          sha256sum --check SHA256SUMS
+          mkdir /tmp/payload
+          tar -xzf hyprwhspr-*.tar.gz -C /tmp/payload
+          python3 -m venv --system-site-packages /tmp/cli
+          /tmp/cli/bin/python -m pip install --ignore-installed -r /tmp/payload/requirements-cli.txt
+          PYTHONNOUSERSITE=1 /tmp/cli/bin/python -c 'import rich, requests, jsonschema, evdev, pulsectl, pyudev'
+          PYTHONNOUSERSITE=1 /tmp/cli/bin/python /tmp/payload/lib/cli.py --version
+          PYTHONNOUSERSITE=1 /tmp/cli/bin/python /tmp/payload/lib/cli.py install status
+  publish:
+    needs: [payload, smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: application-release
+          path: release
+      - name: Publish immutable application assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd release
+          sha256sum --check SHA256SUMS
+          # Idempotent: a re-run after a flaked smoke job, or a release created by
+          # hand to write notes, must still be able to publish these assets.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber ./*
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes ./*
+          fi

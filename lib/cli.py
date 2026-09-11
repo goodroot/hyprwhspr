@@ -24,6 +24,14 @@ except ImportError:
 
 def _get_version():
     import subprocess
+    import json
+    metadata = Path(__file__).parent.parent / 'release.json'
+    if metadata.is_file():
+        try:
+            version = json.loads(metadata.read_text(encoding="utf-8"))['version']
+            return version if isinstance(version, str) and version else 'unknown'
+        except (OSError, ValueError, KeyError, TypeError):
+            return 'unknown'
     try:
         result = subprocess.run(
             ['git', 'describe', '--tags', '--abbrev=7'],
@@ -83,6 +91,13 @@ def main():
     install_parser = subparsers.add_parser('install', help='Installation management')
     install_subparsers = install_parser.add_subparsers(dest='install_action', help='Install actions')
     install_subparsers.add_parser('auto', help=argparse.SUPPRESS)  # Hidden for backwards compatibility, use 'setup auto' instead
+
+    repair_parser = install_subparsers.add_parser('repair', help='Repair managed installation')
+    repair_parser.add_argument('--python', metavar='PATH')
+    install_subparsers.add_parser('status', help='Read-only managed installation status')
+    update_parser = subparsers.add_parser('update', help='Update managed application release')
+    update_parser.add_argument('--version', metavar='VERSION')
+    update_parser.add_argument('--python', metavar='PATH')
 
     # config command
     config_parser = subparsers.add_parser('config', help='Configuration management')
@@ -212,13 +227,14 @@ def main():
     state_reset_parser.add_argument('--all', action='store_true', help='Also remove installations')
     
     # uninstall command
-    uninstall_parser = subparsers.add_parser('uninstall', help='Completely remove hyprwhspr and all user data')
+    uninstall_parser = subparsers.add_parser('uninstall', help='Remove application; preserve settings, credentials and models')
+    uninstall_parser.add_argument('--purge', action='store_true', help='Also remove owned personal data')
     uninstall_parser.add_argument('--keep-models', action='store_true',
-                                 help='Keep downloaded Whisper models (faster reinstall)')
+                                 help='Preserve models even with --purge; unrecorded legacy models are always preserved')
     uninstall_parser.add_argument('--remove-permissions', action='store_true',
-                                 help='Automatically remove system permissions (groups, udev rules)')
+                                 help='Remove only permissions recorded as added by installation; preserve unrecorded legacy permissions')
     uninstall_parser.add_argument('--skip-permissions', action='store_true',
-                                 help='Skip permission removal entirely')
+                                 help='Preserve all system permissions')
     uninstall_parser.add_argument('--yes', action='store_true',
                                  help='Skip confirmation prompt (non-interactive)')
     
@@ -248,7 +264,17 @@ def main():
     
     # Route to appropriate command handler
     try:
-        if args.command == 'setup':
+        if args.command == 'update' or (args.command == 'install' and args.install_action in ('repair', 'status')):
+            from managed_install import main as lifecycle_main
+            command = [args.command]
+            if args.command == 'install':
+                command.append(args.install_action)
+            if getattr(args, 'version', None):
+                command.extend(['--version', args.version])
+            if getattr(args, 'python', None):
+                command.extend(['--python', args.python])
+            sys.exit(lifecycle_main(command))
+        elif args.command == 'setup':
             from cli.setup import setup_command
             from cli.install import omarchy_command
             if hasattr(args, 'setup_action') and args.setup_action == 'auto':
@@ -382,7 +408,8 @@ def main():
                 keep_models=getattr(args, 'keep_models', False),
                 remove_permissions=getattr(args, 'remove_permissions', False),
                 skip_permissions=getattr(args, 'skip_permissions', False),
-                yes=getattr(args, 'yes', False)
+                yes=getattr(args, 'yes', False),
+                purge=getattr(args, 'purge', False)
             )
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")

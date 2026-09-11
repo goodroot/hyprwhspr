@@ -1,0 +1,7 @@
+# Management commands must work before a transcription backend is installed.
+rich>=14.0.0
+requests>=2.32.0
+jsonschema>=4.18.0
+evdev>=1.9.0
+pulsectl>=24.12.0
+pyudev>=0.24.4
