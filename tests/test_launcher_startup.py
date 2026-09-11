@@ -55,6 +55,20 @@ class LauncherStartupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(str(ROOT / "lib" / "main.py"), result.stdout)
 
+    def test_legacy_launch_preserves_user_site_and_inherited_search_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            interpreter = Path(tmp) / 'hyprwhspr/venv/bin/python'
+            interpreter.parent.mkdir(parents=True)
+            interpreter.write_text('#!/bin/sh\nprintf "%s\\n" "${PYTHONNOUSERSITE:-enabled}" "$PYTHONPATH"\n')
+            interpreter.chmod(0o755)
+            env = os.environ.copy()
+            env.pop('PYTHONNOUSERSITE', None)
+            env.update(XDG_DATA_HOME=tmp, PYTHONPATH='/legacy/dependencies')
+            result = subprocess.run([str(LAUNCHER)], env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[0], 'enabled')
+        self.assertIn('/legacy/dependencies', result.stdout)
+
     def test_version_remains_available_without_venv(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_launcher(Path(tmp), "--version")

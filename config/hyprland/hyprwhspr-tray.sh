@@ -117,7 +117,7 @@ is_pipewire_ok() {
 
 # Function to check if model file exists
 model_exists() {
-    local cfg="$HOME/.config/hyprwhspr/config.json"
+    local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/hyprwhspr/config.json"
     [[ -f "$cfg" ]] || return 0
 
     # One interpreter start reads both keys (this runs on every status poll)
@@ -149,7 +149,7 @@ PY
 
     # Check onnx-asr availability (lightweight, non-blocking)
     if [[ "$backend" == "onnx-asr" ]]; then
-        local venv_python="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
+        local venv_python="${HYPRWHSPR_BACKEND_ENV:-${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv}/bin/python"
         # Fast timeout check - verify onnx_asr is importable
         # Uses absolute path to venv Python (resilient to MISE/PATH issues)
         if [[ -f "$venv_python" ]]; then
@@ -164,7 +164,7 @@ PY
 
     # faster-whisper uses the HuggingFace cache, not the pywhispercpp models dir
     if [[ "$backend" == "faster-whisper" ]]; then
-        local venv_python="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
+        local venv_python="${HYPRWHSPR_BACKEND_ENV:-${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv}/bin/python"
         if [[ -f "$venv_python" ]] && timeout 3s "$venv_python" -c 'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("faster_whisper") else 1)' >/dev/null 2>&1; then
             return 0
         fi

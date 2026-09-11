@@ -32,7 +32,9 @@ MIN_YDOTOOL_VERSION="1.0.0"
 DISTRO=""
 DISTRO_VERSION=""
 PKG_MANAGER=""
-INSTALL_DEPS_PYTHON=""
+# Honour an interpreter chosen by the caller (managed_install.update() exports the
+# one interpreter() already validated); otherwise resolve_install_python picks one.
+INSTALL_DEPS_PYTHON="${INSTALL_DEPS_PYTHON:-}"
 SYSTEM_PYTHON_CANDIDATES=(
     /usr/bin/python3
     /usr/bin/python
@@ -136,7 +138,11 @@ detect_distro() {
     log_success "Detected: ${PRETTY_NAME:-$ID} (using $PKG_MANAGER)"
 }
 
-# Maximum Python version compatible with ML packages (onnxruntime, etc.)
+# Supported interpreter range. The minimum matches managed_install.interpreter(),
+# scripts/install.sh and scripts/managed-launcher.sh; the maximum is the newest
+# version with ML package wheels (onnxruntime, etc.).
+MIN_PYTHON_MAJOR=3
+MIN_PYTHON_MINOR=11
 MAX_PYTHON_MAJOR=3
 MAX_PYTHON_MINOR=14
 
@@ -165,6 +171,35 @@ check_python_version() {
     minor=$(echo "$python_version" | cut -d. -f2)
 
     log_info "System Python version: $python_version"
+
+    # Check if version is too old
+    if [[ "$major" -lt "$MIN_PYTHON_MAJOR" ]] || \
+       [[ "$major" -eq "$MIN_PYTHON_MAJOR" && "$minor" -lt "$MIN_PYTHON_MINOR" ]]; then
+        echo ""
+        log_error "Python $python_version is too old for hyprwhspr."
+        echo ""
+        echo -e "${YELLOW}hyprwhspr requires Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}-${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR}.${NC}"
+        echo ""
+        echo "Install a supported Python alongside your current one:"
+        case "$PKG_MANAGER" in
+            pacman)
+                echo "     sudo pacman -S python"
+                ;;
+            dnf)
+                echo "     sudo dnf install python3.12"
+                ;;
+            apt)
+                echo "     sudo apt install python3.12  # or use deadsnakes PPA"
+                ;;
+            zypper)
+                echo "     sudo zypper install python312"
+                ;;
+        esac
+        echo ""
+        echo "Then re-run with: hyprwhspr setup --python /path/to/python3.12"
+        echo ""
+        return 1
+    fi
 
     # Check if version is too new
     if [[ "$major" -gt "$MAX_PYTHON_MAJOR" ]] || \
@@ -209,6 +244,7 @@ check_python_version() {
     else
         log_success "Python version $python_version is compatible"
     fi
+    return 0
 }
 
 # Compare version strings (returns 0 if $1 >= $2)
@@ -326,10 +362,10 @@ install_deps_apt() {
 
     # Core dependencies (excluding ydotool - handled separately on Debian/Ubuntu)
     sudo apt install -y \
-        python3 \
-        python3-pip \
-        python3-venv \
         git \
+        python3-venv \
+        python3-dev \
+        build-essential \
         libportaudio2 \
         python3-numpy \
         python3-evdev \
@@ -363,7 +399,7 @@ install_deps_apt() {
         if apt-cache show "$pkg" &> /dev/null; then
             available_packages+=("$pkg")
         else
-            log_warning "Package $pkg not found in apt repos - will use pip if needed"
+            log_warning "Package $pkg not found in apt repos - will be installed in the application environment"
         fi
     done
     if [[ ${#available_packages[@]} -gt 0 ]]; then
@@ -386,9 +422,10 @@ install_deps_dnf() {
     log_info "Installing system dependencies via dnf..."
 
     sudo dnf install -y \
-        python3 \
-        python3-pip \
         git \
+        gcc \
+        python3-devel \
+        python3-pip \
         python3-numpy \
         python3-evdev \
         python3-requests \
@@ -410,7 +447,7 @@ install_deps_dnf() {
         xprop
 
     # Optional Python packages (not present on all Fedora releases — e.g. python3-sounddevice
-    # was dropped in F43). Anything missing here is picked up by pip in install_pip_packages.
+    # was dropped in F43). Missing application packages are installed in the owned environment during setup.
     local optional_packages=(
         python3-sounddevice
         python3-pyperclip
@@ -421,7 +458,7 @@ install_deps_dnf() {
         if dnf info "$pkg" &> /dev/null; then
             available_packages+=("$pkg")
         else
-            log_warning "Package $pkg not found in dnf repos - will use pip if needed"
+            log_warning "Package $pkg not found in dnf repos - will be installed in the application environment"
         fi
     done
     if [[ ${#available_packages[@]} -gt 0 ]]; then
@@ -436,9 +473,10 @@ install_deps_zypper() {
     log_info "Installing system dependencies via zypper..."
 
     sudo zypper install -y \
-        python3 \
-        python3-pip \
         git \
+        gcc \
+        python3-devel \
+        python3-pip \
         python3-sounddevice \
         python3-numpy \
         python3-evdev \
@@ -499,82 +537,9 @@ install_deps_zypper() {
 
 # Install Python packages that aren't in distro repos
 install_pip_packages() {
-    log_info "Checking Python packages..."
-
-    if ! resolve_install_python; then
-        log_error "No system Python is available for import checks and pip --user installs."
-        log_info "Deactivate the current environment or install distro Python, then retry."
-        return 1
-    fi
-
-    local need_sounddevice=false
-    local need_pyperclip=false
-    local need_pulsectl=false
-    local need_pyudev=false
-    local need_websocket=false
-    local need_soxr=false
-
-    # Check if packages are already available (Fedora/openSUSE include them)
-    if ! "$INSTALL_DEPS_PYTHON" -c "import sounddevice" 2>/dev/null; then
-        need_sounddevice=true
-    fi
-
-    if ! "$INSTALL_DEPS_PYTHON" -c "import pyperclip" 2>/dev/null; then
-        need_pyperclip=true
-    fi
-    
-    if ! "$INSTALL_DEPS_PYTHON" -c "import pulsectl" 2>/dev/null; then
-        need_pulsectl=true
-    fi
-
-    if ! "$INSTALL_DEPS_PYTHON" -c "import pyudev" 2>/dev/null; then
-        need_pyudev=true
-    fi
-
-    if ! "$INSTALL_DEPS_PYTHON" -c "import websocket" 2>/dev/null; then
-        need_websocket=true
-    fi
-
-    if ! "$INSTALL_DEPS_PYTHON" -c "import soxr" 2>/dev/null; then
-        need_soxr=true
-    fi
-
-    if $need_sounddevice || $need_pyperclip || $need_pulsectl || $need_pyudev || $need_websocket || $need_soxr; then
-        log_info "Installing Python packages via pip..."
-
-        local packages=""
-        # sounddevice is installed separately below with --ignore-installed: some
-        # distro sounddevice>=0.5 packages (e.g. Fedora/Nobara) ship without the
-        # compiled _sounddevice extension. `import sounddevice` fails, but pip still
-        # sees a distro-owned "sounddevice" satisfying the requirement and silently
-        # skips installing anything - and --force-reinstall can't fix it either,
-        # since pip can't uninstall an rpm-owned package (no RECORD file).
-        # --ignore-installed makes pip install its own working copy into user
-        # site-packages regardless, which takes priority over the broken system one.
-        $need_pyperclip && packages="$packages pyperclip"
-        $need_pulsectl && packages="$packages pulsectl"
-        $need_pyudev && packages="$packages pyudev"
-        $need_websocket && packages="$packages websocket-client"
-        $need_soxr && packages="$packages soxr"
-
-        # Try with --break-system-packages first (needed on newer systems)
-        # Fall back to without it for older systems
-        if [[ -n "$packages" ]]; then
-            "$INSTALL_DEPS_PYTHON" -m pip install --user --break-system-packages $packages 2>/dev/null || \
-            "$INSTALL_DEPS_PYTHON" -m pip install --user $packages
-        fi
-        if $need_sounddevice; then
-            "$INSTALL_DEPS_PYTHON" -m pip install --user --ignore-installed --break-system-packages sounddevice 2>/dev/null || \
-            "$INSTALL_DEPS_PYTHON" -m pip install --user --ignore-installed sounddevice
-        fi
-
-        log_success "Python packages installed"
-    else
-        log_success "Python packages already available"
-    fi
-
-    if ! "$INSTALL_DEPS_PYTHON" -c "import dbus" 2>/dev/null; then
-        log_warning "python3-dbus is missing; install via your package manager (e.g., python3-dbus)"
+    log_info "Python runtime packages, including pyperclip, are installed in the backend environment during setup."
+    if ! python3 -c "import dbus" >/dev/null 2>&1; then
+        log_warning "Python dbus bindings are unavailable; install your distro dbus Python package for desktop integration."
     fi
 }
 
@@ -657,8 +622,11 @@ main() {
     # Detect distribution
     detect_distro
 
-    # Check Python version compatibility early
-    check_python_version
+    # Check Python version compatibility early. Too old is fatal; too new only
+    # warns and prompts, so the return value is what distinguishes them.
+    if ! check_python_version; then
+        exit 1
+    fi
 
     echo ""
     log_info "This script will install dependencies for hyprwhspr."

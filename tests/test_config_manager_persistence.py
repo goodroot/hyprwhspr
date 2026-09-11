@@ -34,7 +34,12 @@ class ConfigManagerPersistenceTests(unittest.TestCase):
                 "$schema": manager.SCHEMA_URL,
                 "language": "fr",
             })
-            source, destination = replace.call_args.args
+            # save_config also records an ownership receipt, which replaces its own
+            # file; select the config write rather than whichever happened last.
+            writes = [call.args for call in replace.call_args_list
+                      if Path(call.args[1]) == root / "config.json"]
+            self.assertEqual(len(writes), 1, replace.call_args_list)
+            source, destination = writes[0]
             self.assertEqual(destination, root / "config.json")
             self.assertEqual(Path(source).parent, root)
             self.assertFalse(list(root.glob(".config.json.*.tmp")))

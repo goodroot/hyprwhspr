@@ -783,6 +783,8 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
 
 def _setup_command_symlink():
     """Offer to create ~/.local/bin/hyprwhspr symlink for git clone installs"""
+    if os.environ.get("HYPRWHSPR_GENERATION"):
+        return
     # Only relevant for non-package installs (git clones)
     if HYPRWHSPR_ROOT == '/usr/lib/hyprwhspr':
         return  # Package install, symlink not needed
@@ -847,16 +849,8 @@ def setup_command(python_path: Optional[str] = None):
     print("\nThis setup will guide you through configuring hyprwhspr.")
     print("Skip any step by answering 'no'.\n")
 
-    # Check for MISE interference and handle automatically
-    mise_active, _ = _check_mise_active()
-    if mise_active:
-        # Try to deactivate MISE (may be a shell function)
-        if shutil.which('mise'):
-            try:
-                run_command(['bash', '-c', 'mise deactivate'], check=False, capture_output=True)
-            except Exception:
-                pass
-        log_info("MISE deactivated for installation")
+    if _check_mise_active()[0]:
+        log_info('Using the selected interpreter without changing Python manager configuration.')
 
     # Early Python version compatibility check
     # This warns users upfront if their Python is too new for local ML backends
@@ -917,7 +911,7 @@ def setup_command(python_path: Optional[str] = None):
     backend_normalized = normalize_backend(backend)
     
     # Handle backend switching
-    if current_backend and current_backend != backend_normalized:
+    if current_backend and current_backend != backend_normalized and not os.environ.get("HYPRWHSPR_GENERATION"):
         if current_backend not in ['rest-api', 'remote', 'realtime-ws']:
             # Switching from local to something else
             if not _cleanup_backend(current_backend):
@@ -1530,6 +1524,35 @@ def setup_command(python_path: Optional[str] = None):
 
 # ==================== Permissions Setup ====================
 
+UINPUT_RULE_CONTENT = '# Allow members of the input group to access uinput device\nKERNEL=="uinput", GROUP="input", MODE="0660"\n'
+
+
+def _select_uinput_rule(rules_dir=Path('/etc/udev/rules.d')):
+    """Adopt only the exact historical generated rule; preserve unrelated rules."""
+    legacy = rules_dir / '99-uinput.rules'
+    modern = rules_dir / '99-hyprwhspr-uinput.rules'
+    try:
+        if legacy.is_symlink() or not legacy.is_file() or legacy.read_text(encoding='utf-8') != UINPUT_RULE_CONTENT:
+            return modern
+    except (OSError, UnicodeError) as exc:
+        log_warning(f'Could not inspect legacy uinput rule: {legacy}: {exc}; leaving it unchanged')
+        return modern
+    # Both managed and unmanaged uninstalls read this receipt, so it is recorded
+    # either way; only 'added' decides whether removal may touch the file.
+    try:
+        try:
+            from ..managed_install import record_ownership, digest
+        except ImportError:
+            from managed_install import record_ownership, digest
+        if not record_ownership('permission', {'kind': 'rule', 'path': str(legacy), 'added': False,
+                                               'adopted_legacy': True, 'sha256': digest(legacy)}):
+            raise record_ownership.last_error
+    except (OSError, ValueError, TypeError, ImportError) as exc:
+        log_warning(f'Could not record existing uinput rule ownership: {legacy}: {exc}; preserving it')
+    log_info(f'Recognized pre-existing uinput rule: {legacy}; no duplicate rule needed')
+    return legacy
+
+
 def setup_permissions():
     """Setup permissions (requires sudo)"""
     log_info("Setting up permissions...")
@@ -1544,8 +1567,37 @@ def setup_permissions():
 
     # Add user to required groups
     try:
+        before_groups = None
+        # Establish prior membership for every install flavour, so uninstall can
+        # tell a membership we added from one the user already had.
+        import grp
+        import pwd
+        try:
+            primary_gid = pwd.getpwnam(username).pw_gid
+            gids = set(os.getgrouplist(username, primary_gid)) | {primary_gid}
+            before_groups = {}
+            for group in ('input', 'audio', 'tty'):
+                try:
+                    before_groups[group] = grp.getgrnam(group).gr_gid in gids
+                except KeyError:
+                    log_warning(f'Could not establish prior membership in {group}; preserving permission ownership uncertainty')
+        except (KeyError, OSError) as exc:
+            log_warning(f'Could not inspect prior groups for {username}: {exc}; continuing without claiming group ownership')
         result = run_sudo_command(['usermod', '-a', '-G', 'input,audio,tty', username], check=False)
         if result.returncode == 0:
+            if before_groups is not None:
+                # Recorded for every install flavour: both uninstallers drive
+                # group removal purely from this receipt.
+                try:
+                    try:
+                        from ..managed_install import record_ownership
+                    except ImportError:
+                        from managed_install import record_ownership
+                    for group, present in before_groups.items():
+                        record_ownership('permission', {'kind': 'group', 'user': username,
+                                                        'group': group, 'added': not present})
+                except ImportError as exc:
+                    log_warning(f'Groups added, but ownership could not be recorded: {exc}')
             log_success("Added user to required groups")
         else:
             log_warning(f"Failed to add user to groups (exit code {result.returncode})")
@@ -1575,17 +1627,30 @@ def setup_permissions():
     # is a stable fallback: uaccess only covers the *active* session. The `input`
     # group is needed mainly for the global hotkey, which reads /dev/input/event*
     # via evdev (no uaccess ACL there) — not for the ydotool paste path.
-    udev_rule = Path('/etc/udev/rules.d/99-uinput.rules')
+    udev_rule = _select_uinput_rule()
     if not udev_rule.exists():
         log_info("Creating udev rule...")
-        rule_content = '# Allow members of the input group to access uinput device\nKERNEL=="uinput", GROUP="input", MODE="0660"\n'
+        rule_content = UINPUT_RULE_CONTENT
         try:
             result = run_sudo_command(['tee', str(udev_rule)], input_data=rule_content.encode(), check=False)
             if result.returncode == 0:
+                # The rule exists and works; failing to record ownership is not a
+                # failed rule. Unmanaged uninstall reads this receipt too, so record
+                # it regardless of whether a managed generation is active.
+                try:
+                    try:
+                        from ..managed_install import record_ownership, digest
+                    except ImportError:
+                        from managed_install import record_ownership, digest
+                    if not record_ownership('permission', {'kind': 'rule', 'path': str(udev_rule),
+                                                           'added': True, 'sha256': digest(udev_rule)}):
+                        raise record_ownership.last_error
+                except (OSError, ValueError, TypeError, ImportError) as exc:
+                    log_warning(f'Created the udev rule but could not record ownership: {exc}')
                 log_success("udev rule created")
             else:
                 log_warning(f"Failed to create udev rule (exit code {result.returncode})")
-                log_info("You may need to run manually: sudo tee /etc/udev/rules.d/99-uinput.rules")
+                log_info("You may need to run manually: sudo tee /etc/udev/rules.d/99-hyprwhspr-uinput.rules")
                 any_failures = True
         except Exception as e:
             log_warning(f"Failed to create udev rule: {e}")

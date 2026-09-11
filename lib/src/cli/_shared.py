@@ -39,7 +39,30 @@ YDOTOOL_UNIT = 'ydotool.service'
 _YDOTOOL_MARKERS = ('Managed by hyprwhspr', 'deployed by hyprwhspr')
 USER_HOME = Path.home()
 USER_CONFIG_DIR = CONFIG_DIR  # Use centralized path constant
-USER_SYSTEMD_DIR = USER_HOME / '.config' / 'systemd' / 'user'
+def _systemd_user_dir():
+    """Where `systemd --user` actually looks for units.
+
+    The unit search path comes from the *manager's* environment, not ours, and
+    XDG_CONFIG_HOME is not in the set that `systemctl --user import-environment`
+    propagates. A user who exports XDG_CONFIG_HOME only in their shell would
+    otherwise get units written somewhere systemd never reads, and `enable` would
+    fail with "Unit not found". Ask the manager; fall back to the spec default.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(['systemctl', '--user', 'show-environment'],
+                                capture_output=True, text=True, timeout=5, check=False)
+        for line in result.stdout.splitlines():
+            if line.startswith('XDG_CONFIG_HOME='):
+                value = line.split('=', 1)[1].strip()
+                if value:
+                    return Path(value) / 'systemd' / 'user'
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return USER_HOME / '.config' / 'systemd' / 'user'
+
+
+USER_SYSTEMD_DIR = _systemd_user_dir()
 
 
 def _is_niri_session() -> bool:
@@ -142,30 +165,12 @@ def _check_mise_active() -> tuple[bool, str]:
 
 
 def _create_mise_free_environment() -> dict:
-    """
-    Create environment with MISE deactivated for subprocesses.
-
-    This prevents MISE from interfering with Python version detection
-    during pip install operations.
-
-    Returns:
-        Environment dict suitable for subprocess.run(env=...)
-    """
-    env = os.environ.copy()
-
-    # Remove MISE-related environment variables
-    mise_vars = ['MISE_SHELL', '__MISE_ACTIVATE', 'MISE_DATA_DIR']
-    for var in mise_vars:
-        env.pop(var, None)
-
-    # Clean PATH of MISE entries
-    path = env.get('PATH', '')
-    if '.local/share/mise' in path:
-        paths = path.split(':')
-        paths = [p for p in paths if '.local/share/mise' not in p]
-        env['PATH'] = ':'.join(paths)
-
-    return env
+    """Avoid mise command shims while preserving user pip configuration."""
+    try:
+        from ..managed_install import legacy_build_env
+    except ImportError:
+        from managed_install import legacy_build_env
+    return legacy_build_env()
 
 
 def _check_python_compatibility() -> tuple[bool, str, str]:

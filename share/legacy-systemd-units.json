@@ -1,0 +1,93 @@
+{
+  "format": 1,
+  "units": {
+    "hyprwhspr.service": [
+      {
+        "commit": "06b4c92a7fa350ab4251d84d81b281e30c80be39",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\n\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\nAfter=pipewire.service\nWants=pipewire.service\n\nWants=wireplumber.service\nAfter=wireplumber.service\n\n[Service]\nType=simple\nExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do if [ -n \"$WAYLAND_DISPLAY\" ]; then case \"$WAYLAND_DISPLAY\" in /*) wayland_socket=\"$WAYLAND_DISPLAY\" ;; *) wayland_socket=\"${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}\" ;; esac; [ -S \"$wayland_socket\" ] && exit 0; fi; [ -n \"$DISPLAY\" ] && exit 0; if [ -n \"$XDG_RUNTIME_DIR\" ]; then for wayland_socket in \"${XDG_RUNTIME_DIR}\"/wayland-*; do [ -S \"$wayland_socket\" ] && exit 0; done; fi; sleep 0.25; done; echo \"No usable Wayland socket or X11 DISPLAY found\"; exit 1'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nExecStopPost=/bin/bash -c '( pkill -9 -f \"hyprwhspr-virtual-keyboar[d]\" 2>/dev/null; pkill -9 -f \"hyprwhspr-ydotool.soc[k]\" 2>/dev/null ) || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=graphical-session.target\n"
+      },
+      {
+        "commit": "66d19bbcc6505913a4db9804c4a50155c09c0d7b",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\n\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\nAfter=pipewire.service\nWants=pipewire.service\n\nWants=wireplumber.service\nAfter=wireplumber.service\n\n[Service]\nType=simple\nExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do { ls \"$XDG_RUNTIME_DIR\"/wayland-* || ls /tmp/.X11-unix/X*; } >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo \"No Wayland or X11 display socket found\"; exit 1'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nExecStopPost=/bin/bash -c '( pkill -9 -f \"hyprwhspr-virtual-keyboar[d]\" 2>/dev/null; pkill -9 -f \"hyprwhspr-ydotool.soc[k]\" 2>/dev/null ) || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=graphical-session.target\n"
+      },
+      {
+        "commit": "31655b31455ea0dc28560a751043dd89dcbdc2e6",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\n\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\nAfter=pipewire.service\nWants=pipewire.service\n\nWants=wireplumber.service\nAfter=wireplumber.service\n\n[Service]\nType=simple\nExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do { ls \"$XDG_RUNTIME_DIR\"/wayland-* || ls /tmp/.X11-unix/X*; } >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo \"No Wayland or X11 display socket found\"; exit 1'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nExecStopPost=/bin/bash -c '( pkill -9 -f \"hyprwhspr-virtual-keyboard\" 2>/dev/null; pkill -9 -f \"hyprwhspr-ydotool.sock\" 2>/dev/null ) || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=graphical-session.target\n"
+      },
+      {
+        "commit": "954ed4e646a3a856494cd6025944a98d3703cfad",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\n\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\nAfter=pipewire.service\nWants=pipewire.service\n\nWants=wireplumber.service\nAfter=wireplumber.service\n\n[Service]\nType=simple\nExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do ls \"$XDG_RUNTIME_DIR\"/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo \"Wayland socket not found\"; exit 1'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nExecStopPost=/bin/bash -c '( pkill -9 -f \"hyprwhspr-virtual-keyboar[d]\" 2>/dev/null; pkill -9 -f \"hyprwhspr-ydotool.soc[k]\" 2>/dev/null ) || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=graphical-session.target\n"
+      },
+      {
+        "commit": "e3639c3d4885c57113b7ca65ae01bd86bc8cac20",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\n\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\nAfter=pipewire.service\nWants=pipewire.service\n\nWants=wireplumber.service\nAfter=wireplumber.service\n\n[Service]\nType=simple\nExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do ls \"$XDG_RUNTIME_DIR\"/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo \"Wayland socket not found\"; exit 1'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nExecStopPost=/bin/bash -c '( pkill -9 -f \"hyprwhspr-virtual-keyboard\" 2>/dev/null; pkill -9 -f \"hyprwhspr-ydotool.sock\" 2>/dev/null ) || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=graphical-session.target\n"
+      },
+      {
+        "commit": "bb74c61f3a2e607c44809199e859b00e532a5bff",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\n\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\nAfter=pipewire.service\nWants=pipewire.service\n\nWants=wireplumber.service\nAfter=wireplumber.service\n\n[Service]\nType=simple\nExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do ls \"$XDG_RUNTIME_DIR\"/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo \"Wayland socket not found\"; exit 1'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nExecStopPost=/bin/bash -c 'pkill -9 -f \"hyprwhspr-virtual-keyboard\" 2>/dev/null; pkill -9 -f \"hyprwhspr-ydotool.sock\" 2>/dev/null || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=graphical-session.target\n"
+      },
+      {
+        "commit": "4cc20db4cd6ca56006cf23bfcc61289ebfe593d4",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\n\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\nAfter=pipewire.service ydotool.service\nWants=pipewire.service\nWants=ydotool.service\n\nWants=wireplumber.service\nAfter=wireplumber.service\n\n[Service]\nType=simple\nExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do ls \"$XDG_RUNTIME_DIR\"/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo \"Wayland socket not found\"; exit 1'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nExecStopPost=/bin/bash -c 'pkill -9 -f \"hyprwhspr-virtual-keyboard\" 2>/dev/null || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=graphical-session.target\n"
+      },
+      {
+        "commit": "8eb6439a58625cca22523b75fe23c93131b37a58",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\n\nPartOf=graphical-session.target\nAfter=graphical-session.target\n\nAfter=pipewire.service ydotool.service\nWants=pipewire.service\nRequires=ydotool.service\n\nWants=wireplumber.service\nAfter=wireplumber.service\n\n[Service]\nType=simple\nExecStartPre=/bin/bash -lc 'for i in $(seq 1 60); do ls \"$XDG_RUNTIME_DIR\"/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.25; done; echo \"Wayland socket not found\"; exit 1'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nExecStopPost=/bin/bash -c 'pkill -9 -f \"hyprwhspr-virtual-keyboard\" 2>/dev/null || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=graphical-session.target\n"
+      },
+      {
+        "commit": "f4912c2cda9e659c9e1ac75809c33e797d934143",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nStartLimitIntervalSec=300\nStartLimitBurst=5\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\n# Wait for Wayland compositor - check for socket file directly since systemd\n# services don't inherit WAYLAND_DISPLAY from the graphical session\nExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo \"Warning: Wayland socket not found after 15s\"'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\n# Ensure virtual keyboard is killed even on crash/SIGKILL to release device grabs\nExecStopPost=/bin/bash -c 'pkill -9 -f \"hyprwhspr-virtual-keyboard\" 2>/dev/null || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\n# Give kernel time to release device grabs after stop\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "aac58836c306f39b8e04fcf2714a44894d947867",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\n# Wait for Wayland compositor - check for socket file directly since systemd\n# services don't inherit WAYLAND_DISPLAY from the graphical session\nExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo \"Warning: Wayland socket not found after 15s\"'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\n# Ensure virtual keyboard is killed even on crash/SIGKILL to release device grabs\nExecStopPost=/bin/bash -c 'pkill -9 -f \"hyprwhspr-virtual-keyboard\" 2>/dev/null || true'\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\n# Give kernel time to release device grabs after stop\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "aea928ef52e8b4bcafa39c41ae45bce8e3e9bd33",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\n# Wait for Wayland compositor - check for socket file directly since systemd\n# services don't inherit WAYLAND_DISPLAY from the graphical session\nExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo \"Warning: Wayland socket not found after 15s\"'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nEnvironment=PYTHONUNBUFFERED=1\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "4294d8d04ee7a81427eeaca839572c0acaa2b742",
+        "content": "[Unit]\nDescription=hyprwhspr stt\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\n# Wait for Wayland compositor - check for socket file directly since systemd\n# services don't inherit WAYLAND_DISPLAY from the graphical session\nExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo \"Warning: Wayland socket not found after 15s\"'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "b6160bb67886b5d6f132e88475dc7bfeef2f3cab",
+        "content": "[Unit]\nDescription=hyprwhspr tts\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\n# Wait for Wayland compositor - check for socket file directly since systemd\n# services don't inherit WAYLAND_DISPLAY from the graphical session\nExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo \"Warning: Wayland socket not found after 15s\"'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nRestart=on-failure\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "5738108b8d9f846d4eda055488ee97fc8e1ec241",
+        "content": "[Unit]\nDescription=hyprwhspr tts\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\n# Wait for Wayland compositor - check for socket file directly since systemd\n# services don't inherit WAYLAND_DISPLAY from the graphical session\nExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do ls /run/user/$(id -u)/wayland-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; echo \"Warning: Wayland socket not found after 15s\"'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nRestart=on-failure\nRestartSec=2\nStartLimitIntervalSec=10\nStartLimitBurst=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "d3a46e40c37da9123d1aec87051f3f70757185a5",
+        "content": "[Unit]\nDescription=hyprwhspr tts\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\n# Wait for Wayland environment - wl-copy needs WAYLAND_DISPLAY to be set\nExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -n \"$WAYLAND_DISPLAY\" ] && exit 0; sleep 0.5; done; echo \"Warning: WAYLAND_DISPLAY not set after 15s\"'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nRestart=on-failure\nRestartSec=2\nStartLimitIntervalSec=10\nStartLimitBurst=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "f6c81c7d5fbfa9d40632bd7ebc4c2604e6c624da",
+        "content": "[Unit]\nDescription=hyprwhspr Voice Dictation Service\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\n# Wait for Wayland environment - wl-copy needs WAYLAND_DISPLAY to be set\nExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do [ -n \"$WAYLAND_DISPLAY\" ] && exit 0; sleep 0.5; done; echo \"Warning: WAYLAND_DISPLAY not set after 15s\"'\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nRestart=on-failure\nRestartSec=2\nStartLimitIntervalSec=10\nStartLimitBurst=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "4f28ac37518a6e5746e21d7f069b101a43695ec0",
+        "content": "[Unit]\nDescription=hyprwhspr Voice Dictation Service\nDocumentation=https://github.com/goodroot/hyprwhspr\nAfter=graphical-session.target pipewire.service ydotool.service\nRequires=ydotool.service\nWants=pipewire.service\n\n[Service]\nType=simple\nExecStartPre=/bin/sleep 3\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nRestart=on-failure\nRestartSec=2\nStartLimitIntervalSec=10\nStartLimitBurst=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target"
+      },
+      {
+        "commit": "6275f955cc95aee675586d72bf8a9c373dd5d1ff",
+        "content": "[Unit]\nDescription=hyprwhspr Voice Dictation Service\nAfter=graphical-session.target pipewire.service\nWants=ydotool.service\n\n[Service]\nType=simple\nExecStartPre=/bin/sleep 2\nExecStart=/usr/lib/hyprwhspr/bin/hyprwhspr\nEnvironment=HYPRWHSPR_ROOT=/usr/lib/hyprwhspr\nRestart=on-failure\nRestartSec=5\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target\n"
+      },
+      {
+        "commit": "55ffdcd41293fc34ce84aae3170b5a3817f44b63",
+        "content": "[Unit]\nDescription=hyprwhspr Voice Dictation Service\nAfter=wayland-session@hyprland.desktop.target\nWants=wayland-session@hyprland.desktop.target\n\n[Service]\nType=simple\nExecStartPre=/bin/sleep 2\nExecStart=/opt/hyprwhspr/bin/hyprwhspr\nRestart=on-failure\nRestartSec=5\nWorkingDirectory=/opt/hyprwhspr\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=wayland-session@hyprland.desktop.target\n"
+      },
+      {
+        "commit": "05ebcf6c0e55eac524fbcd411afff169b136b2fa",
+        "content": "[Unit]\nDescription=HyprWhspr Voice Dictation Service\nAfter=wayland-session@hyprland.desktop.target\nWants=wayland-session@hyprland.desktop.target\n\n[Service]\nType=simple\nExecStartPre=/bin/sleep 2\nExecStart=/opt/hyprwhspr/bin/hyprwhspr\nRestart=on-failure\nRestartSec=5\nWorkingDirectory=/opt/hyprwhspr\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=wayland-session@hyprland.desktop.target\n"
+      }
+    ],
+    "hyprwhspr-resume.service": [
+      {
+        "commit": "39e06ac838d0853f64093f57ed6e338e2a1daa30",
+        "content": "[Unit]\nDescription=hyprwhspr suspend/resume handler\nBefore=sleep.target\nStopWhenUnneeded=yes\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\n# On suspend: create marker file to signal suspend event\nExecStart=/bin/sh -c 'mkdir -p ~/.config/hyprwhspr && touch ~/.config/hyprwhspr/.suspend_marker'\n# On resume: remove marker (main service detects absence = resume)\nExecStop=/bin/sh -c 'rm -f ~/.config/hyprwhspr/.suspend_marker'\n\n[Install]\nWantedBy=sleep.target\n"
+      }
+    ]
+  }
+}

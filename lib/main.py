@@ -4,6 +4,7 @@ hyprwhspr - stt
 """
 
 import sys
+sys.dont_write_bytecode = True
 import time
 import math
 import threading
@@ -14,6 +15,12 @@ import subprocess
 import shutil
 import json
 from pathlib import Path
+
+# Recovery dispatch must precede optional runtime imports.
+if __name__ == '__main__' and (sys.argv[1:2] == ['update'] or sys.argv[1:3] in (['install', 'repair'], ['install', 'status'])):
+    sys.path.insert(0, str(Path(__file__).parent / 'src'))
+    from managed_install import main as lifecycle_main
+    raise SystemExit(lifecycle_main(sys.argv[1:]))
 
 try:
     import numpy as np
@@ -2784,7 +2791,7 @@ if __name__ == "__main__":
     # Safety check: if a CLI subcommand was passed, redirect to CLI instead of starting the service
     # This handles cases where an old bin/hyprwhspr wrapper doesn't recognize newer CLI subcommands
     # Keep in sync with the subcommand route in bin/hyprwhspr
-    CLI_SUBCOMMANDS = ['setup', 'install', 'config', 'waybar', 'noctalia', 'systemd', 'status',
+    CLI_SUBCOMMANDS = ['update', 'setup', 'install', 'config', 'waybar', 'noctalia', 'systemd', 'status',
                        'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd',
                        'keyboard', 'record', 'test', 'transcribe']
     if len(sys.argv) > 1 and sys.argv[1] in CLI_SUBCOMMANDS:

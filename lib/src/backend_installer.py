@@ -79,7 +79,7 @@ if '.local/share/mise' in sys.executable:
                 HYPRWHSPR_ROOT = '/usr/lib/hyprwhspr'
 
 USER_BASE = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share')) / 'hyprwhspr'
-VENV_DIR = USER_BASE / 'venv'
+VENV_DIR = Path(os.environ['HYPRWHSPR_BACKEND_ENV']) if os.environ.get('HYPRWHSPR_BACKEND_ENV') else USER_BASE / 'venv'
 PYWHISPERCPP_MODELS_DIR = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share')) / 'pywhispercpp' / 'models'
 STATE_DIR = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'state')) / 'hyprwhspr'
 STATE_FILE = STATE_DIR / 'install-state.json'
@@ -290,7 +290,7 @@ def _find_compatible_python(max_version: Tuple[int, int] = MAX_COMPATIBLE_PYTHON
 
     if _current_python_is_managed():
         log_error("Only an activated or version-manager Python is available.")
-        log_error("Deactivate the environment or pass --python /path/to/system/python explicitly.")
+        log_error("Pass --python /path/to/python explicitly to select a managed interpreter.")
     _python_compatibility_error(current_version)
     # _python_compatibility_error calls sys.exit, but for type checker:
     raise SystemExit(1)
@@ -333,40 +333,12 @@ def _current_python_is_managed() -> bool:
 
 
 def _create_mise_free_environment() -> dict:
-    """
-    Create environment with MISE deactivated for subprocesses.
-
-    This prevents MISE from interfering with Python version detection
-    during pip install operations and venv creation.
-
-    Returns:
-        Environment dict suitable for subprocess.run(env=...)
-    """
-    env = os.environ.copy()
-
-    # Remove MISE-related environment variables
-    mise_vars = ['MISE_SHELL', '__MISE_ACTIVATE', 'MISE_DATA_DIR']
-    for var in mise_vars:
-        env.pop(var, None)
-
-    # Clean PATH of MISE entries
-    path = env.get('PATH', '')
-    if '.local/share/mise' in path:
-        paths = path.split(':')
-        paths = [p for p in paths if '.local/share/mise' not in p]
-        
-        # If all paths were filtered out, fall back to essential system paths
-        # This prevents empty PATH which would break subprocess execution
-        if not paths:
-            essential_paths = ['/usr/bin', '/usr/local/bin', '/bin', '/usr/sbin', '/sbin']
-            paths = [p for p in essential_paths if os.path.exists(p)]
-            # If even essential paths don't exist (unlikely), at least set a minimal PATH
-            if not paths:
-                paths = ['/usr/bin', '/bin']
-        
-        env['PATH'] = ':'.join(paths)
-
-    return env
+    """Avoid mise command shims while preserving user pip configuration."""
+    try:
+        from .managed_install import legacy_build_env
+    except ImportError:
+        from managed_install import legacy_build_env
+    return legacy_build_env()
 
 
 # ==================== Pre-built Wheel Support ====================
@@ -1679,6 +1651,14 @@ class VenvTransaction:
 def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] = None,
                             force_rebuild: bool = False) -> Path:
     """Install and verify a plan transactionally, restoring a usable old venv on failure."""
+    if os.environ.get('HYPRWHSPR_GENERATION'):
+        backend = {'rest': 'rest-api', 'realtime': 'realtime-ws', 'elevenlabs': 'realtime-ws',
+                   'cohere': 'cohere-transcribe', 'onnx': 'onnx-asr', 'faster-whisper': 'faster-whisper',
+                   'pywhispercpp': 'pywhispercpp'}[plan.family]
+        _managed_select(backend, custom_python, force_rebuild,
+                        provider='elevenlabs' if plan.family == 'elevenlabs' else None,
+                        variant=plan.accelerated_variant)
+        return VENV_DIR / 'bin/pip'
     # Re-resolve before any filesystem mutation; callers cannot pass a stale/malformed plan.
     checked = _manifest_closure(plan.manifest)
     if checked != plan.manifests or dependency_manifest_hash(list(checked)) != plan.fingerprint:
@@ -2298,6 +2278,19 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
         model_hash = compute_file_hash(model_file)
         set_state(f"model_hash_{model_file.name}", model_hash)
 
+        # Recorded for every install flavour: cli/uninstall.py --purge selects
+        # models purely by receipt kind, so an unrecorded model is never removed.
+        try:
+            try:
+                from ..managed_install import record_ownership
+            except ImportError:
+                from managed_install import record_ownership
+            if not record_ownership('file', model_file, 'model'):
+                log_warning('Model downloaded, but ownership could not be recorded: '
+                            f'{record_ownership.last_error}')
+        except ImportError as exc:
+            log_warning(f'Model downloaded, but ownership could not be recorded: {exc}')
+
         log_success(f"pywhispercpp model downloaded: {model_name}")
         return True
     except Exception as e:
@@ -2420,15 +2413,19 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         log_error(str(exc))
         return False
 
+    if os.environ.get('HYPRWHSPR_GENERATION'):
+        try:
+            selected, variant = _managed_backend_variant(backend_type)
+            _managed_select(selected, custom_python, force_rebuild, variant=variant)
+            return True
+        except Exception as exc:
+            log_error(f'Managed backend installation failed: {exc}')
+            return False
+
     init_state()
     set_install_state('in_progress')
 
     log_info(f"Installing {backend_type.upper()} backend...")
-
-    # Check for MISE interference
-    if _check_mise_active():
-        log_warning("Warning! MISE is active. This may cause build errors.")
-        log_warning("To fix: mise deactivate (or: mise unuse -g python)")
 
     dependency_family = initial_plan.family
     previous_family = get_state("dependency_family")
@@ -2880,3 +2877,45 @@ def _cleanup_partial_installation(created_items: dict, pip_bin: Optional[Path]):
                        check=False, capture_output=True)
         except Exception:
             pass
+
+
+def _managed_backend_variant(backend):
+    probes = {'nvidia': setup_nvidia_support, 'amd': setup_amd_support,
+              'vulkan': setup_vulkan_support}
+    if backend in probes:
+        if not probes[backend]():
+            log_warning(f'{backend} support unavailable; falling back to CPU')
+            return 'cpu', 'cpu'
+        return backend, backend
+    if backend in ('onnx-asr', 'faster-whisper') and _detect_nvidia_gpu_listing():
+        return backend, 'gpu' if backend == 'onnx-asr' else 'cuda'
+    return backend, 'cpu' if backend == 'cpu' else None
+
+
+def _managed_select(backend, python, repair, provider=None, variant=None):
+    """Keep setup callers on the newly selected immutable environment."""
+    global VENV_DIR
+    try:
+        from .managed_install import Installation, CommittedCleanupError
+    except ImportError:
+        from managed_install import Installation, CommittedCleanupError
+    previous = VENV_DIR
+    current = json.loads(os.environ['HYPRWHSPR_GENERATION'])
+    cleanup_error = None
+    try:
+        generation = Installation().update(current['version'], python, False,
+                                           {'backend': backend, 'provider': provider, 'variant': variant},
+                                           force_backend=repair, local_payload=True)
+    except CommittedCleanupError as exc:
+        generation = exc.generation
+        cleanup_error = exc
+    VENV_DIR = Path(generation['backend']['path'])
+    os.environ['HYPRWHSPR_BACKEND_ENV'] = str(VENV_DIR)
+    os.environ['HYPRWHSPR_GENERATION'] = json.dumps(generation)
+    # Existing CLI modules import this constant; update only this process after
+    # the transaction succeeds. Daemons retain their original generation.
+    for module in tuple(sys.modules.values()):
+        if getattr(module, 'VENV_DIR', None) == previous:
+            module.VENV_DIR = VENV_DIR
+    if cleanup_error:
+        raise SystemExit(f'Backend activated successfully. {cleanup_error}. Retry install repair for cleanup.')
