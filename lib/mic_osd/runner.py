@@ -458,9 +458,18 @@ sys.exit(main())
 
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
-        self._stop_level_feed()
-        self.clear_preview_text()
+        # Signal before the teardown below: _stop_level_feed() waits on
+        # _level_feed_lock, which _start_level_feed() holds across a first-frame
+        # write that blocks while the capture is unresponsive. Bookkeeping that
+        # stalls must not decide whether the overlay leaves the screen (#249).
+        try:
+            self._signal_hide()
+        finally:
+            self._stop_level_feed()
+            self.clear_preview_text()
 
+    def _signal_hide(self):
+        """Send SIGUSR2 to the daemon, dropping references to a dead one."""
         if self._process is None:
             return
         

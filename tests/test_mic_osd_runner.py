@@ -1,8 +1,11 @@
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 import builtins
+import signal
 from pathlib import Path
 from unittest import mock
 
@@ -372,6 +375,35 @@ class MicOSDRunnerTests(unittest.TestCase):
             finally:
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
                 MicOSDRunner.PREVIEW_WRITE_INTERVAL_SECONDS = original_interval
+
+    def test_hide_signals_the_daemon_while_feed_teardown_is_stalled(self):
+        # _stop_level_feed() waits on _level_feed_lock, which a first-frame write
+        # can hold while the capture is unresponsive. The overlay must leave the
+        # screen regardless: the signal goes out before that bookkeeping.
+        runner = MicOSDRunner()
+        runner._process = types.SimpleNamespace(pid=4242, poll=lambda: None)
+        signals = []
+        teardown_release = threading.Event()
+        teardown_finished = threading.Event()
+
+        def stalled_teardown():
+            teardown_release.wait(5)
+            teardown_finished.set()
+
+        with mock.patch.object(runner, "_stop_level_feed", side_effect=stalled_teardown), \
+                mock.patch.object(runner_module.os, "kill",
+                                  side_effect=lambda pid, sig: signals.append(sig)):
+            worker = threading.Thread(target=runner.hide, daemon=True)
+            worker.start()
+            try:
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline and signal.SIGUSR2 not in signals:
+                    time.sleep(0.01)
+                self.assertIn(signal.SIGUSR2, signals)
+                self.assertFalse(teardown_finished.is_set())
+            finally:
+                teardown_release.set()
+            worker.join(timeout=5)
 
     def test_high_frequency_preview_updates_are_coalesced(self):
         with tempfile.TemporaryDirectory() as tmp:
