@@ -1308,6 +1308,20 @@ class hyprwhsprApp:
 
     def _cleanup_recording_state(self):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
+        # Publish the end of the recording before anything that can block. The
+        # overlay's auto-hide and `record toggle` both read recording_status, and
+        # teardown can stall on a capture that stopped responding - a status left
+        # at 'true' for that long keeps the visualizer on screen and inverts the
+        # next toggle (#249).
+        try:
+            self._write_recording_status(False)
+        except Exception:
+            pass
+        try:
+            self._hide_mic_osd()
+        except Exception:
+            pass
+
         self._notify_capture("", final=True)
         self._autostop_stop_silence_monitor()
 
@@ -1316,15 +1330,7 @@ class hyprwhsprApp:
         except Exception:
             pass
         try:
-            self._hide_mic_osd()
-        except Exception:
-            pass
-        try:
             self._stop_audio_level_monitoring()
-        except Exception:
-            pass
-        try:
-            self._write_recording_status(False)
         except Exception:
             pass
         try:
