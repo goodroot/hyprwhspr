@@ -461,6 +461,52 @@ class MicOSDRunnerTests(unittest.TestCase):
                 worker.join(5)
                 runner._stop_level_feed()
 
+    def test_new_show_waits_for_previous_hide_teardown(self):
+        runner = MicOSDRunner(level_source=lambda: (0.0, []))
+        runner._process = types.SimpleNamespace(pid=4242, poll=lambda: None)
+        teardown_entered = threading.Event()
+        teardown_release = threading.Event()
+        show_finished = threading.Event()
+        signals = []
+
+        def blocked_teardown():
+            teardown_entered.set()
+            teardown_release.wait(5)
+
+        def show_again():
+            runner.show()
+            show_finished.set()
+
+        def record_signal(pid, sig):
+            if sig in (signal.SIGUSR1, signal.SIGUSR2):
+                signals.append(sig)
+
+        with mock.patch.object(runner, "_stop_level_feed", side_effect=blocked_teardown), \
+                mock.patch.object(runner, "clear_preview_text"), \
+                mock.patch.object(runner, "is_available", return_value=True), \
+                mock.patch.object(runner, "_ensure_daemon", return_value=True), \
+                mock.patch.object(runner_module.os, "kill", side_effect=record_signal):
+            hiding = threading.Thread(target=runner.hide)
+            showing = threading.Thread(target=show_again)
+            hiding.start()
+            try:
+                self.assertTrue(teardown_entered.wait(2))
+                showing.start()
+                self.assertFalse(
+                    show_finished.wait(0.1),
+                    "new show overtook the previous hide teardown",
+                )
+                self.assertNotIn(signal.SIGUSR1, signals)
+            finally:
+                teardown_release.set()
+                hiding.join(5)
+                if showing.ident is not None:
+                    showing.join(5)
+
+            self.assertFalse(hiding.is_alive())
+            self.assertFalse(showing.is_alive())
+            self.assertEqual(signals, [signal.SIGUSR2, signal.SIGUSR1])
+
     def test_high_frequency_preview_updates_are_coalesced(self):
         with tempfile.TemporaryDirectory() as tmp:
             preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"

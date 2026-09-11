@@ -1321,12 +1321,14 @@ class hyprwhsprApp:
         except Exception:
             pass
         self._notify_capture("", final=True)
+
+        # Retire this recording's monitor before hide can block long enough for
+        # a later recording to install its own monitor in the shared slot.
+        self._autostop_stop_silence_monitor()
         try:
             self._hide_mic_osd()
         except Exception:
             pass
-
-        self._autostop_stop_silence_monitor()
 
         try:
             self._clear_mic_osd_preview_text()

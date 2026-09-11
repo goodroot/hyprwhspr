@@ -70,8 +70,9 @@ class MicOSDRunner:
         self._level_feed_stop = threading.Event()
         self._level_feed_lock = threading.RLock()
         self._last_level_feed_error_at = 0.0
-        self._visibility_lock = threading.Lock()
+        self._visibility_condition = threading.Condition()
         self._hide_generation = 0
+        self._hide_teardowns = 0
     
     @staticmethod
     def is_available() -> bool:
@@ -442,7 +443,9 @@ sys.exit(main())
 
     def show(self) -> bool:
         """Show the mic-osd overlay (instant via signal)."""
-        with self._visibility_lock:
+        with self._visibility_condition:
+            while self._hide_teardowns:
+                self._visibility_condition.wait()
             generation = self._hide_generation
 
         if not self.is_available():
@@ -453,11 +456,11 @@ sys.exit(main())
 
         try:
             with self._level_feed_lock:
-                with self._visibility_lock:
+                with self._visibility_condition:
                     if generation != self._hide_generation:
                         return False
                 self._start_level_feed()  # first frame must be ready before SIGUSR1
-                with self._visibility_lock:
+                with self._visibility_condition:
                     # A hide during the first frame cancels this show. Keep
                     # teardown serialized until we have decided whether to signal.
                     if generation != self._hide_generation:
@@ -472,14 +475,21 @@ sys.exit(main())
     def hide(self):
         """Hide the mic-osd overlay (instant via signal)."""
         # Do not wait for a blocked level source to hide the window. The
-        # generation check prevents an in-flight show from undoing this signal.
+        # generation check prevents an in-flight show from undoing this signal,
+        # while the teardown counter keeps a newer show from overtaking cleanup.
         try:
-            with self._visibility_lock:
+            with self._visibility_condition:
                 self._hide_generation += 1
+                self._hide_teardowns += 1
                 self._signal_hide()
         finally:
-            self._stop_level_feed()
-            self.clear_preview_text()
+            try:
+                self._stop_level_feed()
+                self.clear_preview_text()
+            finally:
+                with self._visibility_condition:
+                    self._hide_teardowns -= 1
+                    self._visibility_condition.notify_all()
 
     def _signal_hide(self):
         """Send SIGUSR2 to the daemon, dropping references to a dead one."""

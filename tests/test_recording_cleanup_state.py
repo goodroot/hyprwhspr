@@ -45,6 +45,7 @@ class RecordingCleanupStateTests(unittest.TestCase):
             server._write_fifo = lambda command: capture_started.set() or True
             hide_entered = threading.Event()
             release_hide = threading.Event()
+            autostop_stopped = threading.Event()
             errors = []
             clients = []
             workers = []
@@ -52,6 +53,8 @@ class RecordingCleanupStateTests(unittest.TestCase):
             def block_hide():
                 hide_entered.set()
                 release_hide.wait()
+
+            app._autostop_stop_silence_monitor.side_effect = autostop_stopped.set
 
             def cleanup():
                 try:
@@ -83,6 +86,10 @@ class RecordingCleanupStateTests(unittest.TestCase):
                 self.assertTrue(hide_entered.wait(2), 'cleanup did not reach hide')
 
                 self.assertFalse(status.exists())
+                self.assertTrue(
+                    autostop_stopped.is_set(),
+                    'old auto-stop monitor was not retired before hide blocked',
+                )
                 self.assertEqual(client.recv(1), b'', 'capture client did not receive EOF')
                 subscriber.join(timeout=2)
                 self.assertFalse(subscriber.is_alive())
