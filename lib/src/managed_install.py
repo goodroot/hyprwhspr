@@ -948,6 +948,7 @@ class Installation:
                     # bootstrap that was explicitly given a supported --python.
                     prerequisites = clean_env()
                     prerequisites['INSTALL_DEPS_PYTHON'] = identity['path']
+                    prerequisites['HYPRWHSPR_MANAGED_PREREQUISITES'] = '1'
                     run(['bash', root / 'scripts/install-deps.sh'], env=prerequisites)
                 cli = self.build(root, identity, 'cli', selection, old, tx, repair)
                 backend, selection = self.build_backend(root, identity, selection, old, tx, repair or force_backend)

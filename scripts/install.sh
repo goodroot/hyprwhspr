@@ -14,6 +14,15 @@ set -euo pipefail
 # and desktop VM acceptance passes. Explicit lifecycle flags and existing managed
 # installs already select the release path, without repeating onboarding.
 release_bootstrap() {
+# A fresh managed install still runs scripts/install-deps.sh, which prompts on
+# /dev/tty. Without this pre-flight the failure surfaces minutes later as an
+# opaque CalledProcessError plus a rollback. `die` is defined below this
+# function's call site, so report directly.
+if ! { : </dev/tty; } 2>/dev/null; then
+    echo 'This installer is interactive and needs a terminal.' >&2
+    echo 'Run it from a shell: curl -fsSL https://hyprwhspr.com/install.sh | bash' >&2
+    exit 1
+fi
 if [[ -f /etc/os-release ]]; then
     . /etc/os-release
     if [[ "${ID:-}" == arch || " ${ID_LIKE:-} " == *" arch "* ]]; then

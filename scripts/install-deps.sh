@@ -682,6 +682,14 @@ main() {
     echo -e "${GREEN}  Dependencies Installed!${NC}"
     echo -e "${BLUE}============================================================${NC}"
     echo ""
+    # The managed installer runs this script mid-transaction and continues on its
+    # own; printing the git-clone walkthrough there would tell the user to perform
+    # the legacy install the managed flow replaces.
+    if [[ -n "${INSTALL_DEPS_PYTHON:-}" && -n "${HYPRWHSPR_MANAGED_PREREQUISITES:-}" ]]; then
+        echo "Host prerequisites installed; the hyprwhspr installer will continue."
+        echo ""
+        return 0
+    fi
     echo "Next steps:"
     echo ""
     echo "  1. Clone hyprwhspr (if you haven't already):"
