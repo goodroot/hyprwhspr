@@ -50,6 +50,25 @@ from .waybar import waybar_command
 
 # ==================== Install Commands ====================
 
+def _prepare_qwen_model(backend: str, explicit_model: str | None) -> bool:
+    """Validate and persist an explicit Qwen model before its payload install."""
+    if backend != 'qwen3-asr' or not explicit_model:
+        return True
+    try:
+        from ..qwen3_asr_runtime import QWEN3_ASR_MODELS
+    except ImportError:
+        from qwen3_asr_runtime import QWEN3_ASR_MODELS
+    if explicit_model not in QWEN3_ASR_MODELS:
+        choices = ', '.join(QWEN3_ASR_MODELS)
+        log_error(f"Unknown Qwen3-ASR model '{explicit_model}'. Available models: {choices}")
+        return False
+    config = ConfigManager()
+    config.set_setting('qwen3_asr_model', explicit_model)
+    if not config.save_config():
+        log_error('Could not save the Qwen3-ASR model selection before installation')
+        return False
+    return True
+
 def _auto_download_model(model: str = 'base'):
     """Auto-download Whisper model without prompts
 
@@ -212,6 +231,16 @@ def _verify_backend_installation(backend: str) -> bool:
         # For non-local backends, skip import check
         return True
 
+    if backend == 'qwen3-asr':
+        # Inference lives in the llama.cpp sidecar, so there is no import to
+        # check; is_installed() is the same resolver the backend launches with,
+        # so verification cannot pass against a runtime that will never be used.
+        try:
+            from ..qwen3_asr_runtime import is_installed
+        except ImportError:
+            from qwen3_asr_runtime import is_installed
+        return is_installed(config=ConfigManager())
+
     venv_python = VENV_DIR / 'bin' / 'python'
     if not venv_python.exists():
         return False
@@ -349,6 +378,12 @@ def omarchy_command(args=None):
 
     log_info(f"Installing: {backend.upper()} backend")
 
+    # The payload installer reads this setting to choose the GGUF pair. Resolve
+    # it before installation so setup cannot download one model and configure
+    # another afterward.
+    if not _prepare_qwen_model(backend, explicit_model):
+        return False
+
     # 4. Install backend
     print("\n" + "="*60)
     print("Backend Installation")
@@ -378,6 +413,15 @@ def omarchy_command(args=None):
         onnx_model = explicit_model or 'nemo-parakeet-tdt-0.6b-v3'
         config.set_setting('onnx_asr_model', onnx_model)
         log_info(f"Configured onnx-asr with model: {onnx_model}")
+    elif backend == 'qwen3-asr':
+        try:
+            from ..qwen3_asr_runtime import DEFAULT_MODEL
+        except ImportError:
+            from qwen3_asr_runtime import DEFAULT_MODEL
+        config.set_setting('transcription_backend', 'qwen3-asr')
+        qwen_model = explicit_model or DEFAULT_MODEL
+        config.set_setting('qwen3_asr_model', qwen_model)
+        log_info(f"Configured qwen3-asr with model: {qwen_model}")
     else:
         config.set_setting('transcription_backend', 'pywhispercpp')
         # Set whisper model (defaults to 'base')
@@ -413,6 +457,8 @@ def omarchy_command(args=None):
             log_warning(f"You can download it later with: hyprwhspr model download {model_to_download}")
     elif backend == 'onnx-asr':
         log_info("onnx-asr model downloaded during setup")
+    elif backend == 'qwen3-asr':
+        log_info("Qwen3-ASR runtime and model downloaded during setup")
 
     # 7. Bar integration (whichever supported shells are detected, unless skipped)
     print("\n" + "="*60)

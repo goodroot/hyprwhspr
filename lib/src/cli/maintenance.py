@@ -193,6 +193,19 @@ def _detect_current_backend(existing_cfg: Optional[dict] = None) -> Optional[str
                 except Exception:
                     pass
             # cohere-transcribe configured but not installed - fall through to return None
+        if backend == 'qwen3-asr':
+            # No venv import to probe: inference lives in the llama.cpp sidecar,
+            # so presence is the binary plus the configured model pair.
+            try:
+                try:
+                    from ..qwen3_asr_runtime import is_installed
+                except ImportError:
+                    from qwen3_asr_runtime import is_installed
+                if is_installed(config=ConfigManager()):
+                    return 'qwen3-asr'
+            except Exception:
+                pass
+            # qwen3-asr configured but not installed - fall through to return None
         if backend in ['cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp']:
             # Verify it's actually installed in venv
             venv_python = VENV_DIR / 'bin' / 'python'

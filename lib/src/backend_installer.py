@@ -6,6 +6,7 @@ Handles installation of pywhispercpp backends (CPU/NVIDIA/AMD)
 import os
 import sys
 import json
+import platform
 import subprocess
 import tempfile
 import hashlib
@@ -52,6 +53,13 @@ try:
     from . import visualizer_runtime
 except ImportError:
     import visualizer_runtime
+
+try:
+    from . import qwen3_asr_runtime
+    from .qwen3_asr_runtime import QWEN3_ASR_MODELS, QWEN3_ASR_MODELS_DIR
+except ImportError:
+    import qwen3_asr_runtime
+    from qwen3_asr_runtime import QWEN3_ASR_MODELS, QWEN3_ASR_MODELS_DIR
 
 
 def run_sudo_command(cmd: list, check: bool = True, input_data: Optional[bytes] = None,
@@ -1654,7 +1662,7 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
     if os.environ.get('HYPRWHSPR_GENERATION'):
         backend = {'rest': 'rest-api', 'realtime': 'realtime-ws', 'elevenlabs': 'realtime-ws',
                    'cohere': 'cohere-transcribe', 'onnx': 'onnx-asr', 'faster-whisper': 'faster-whisper',
-                   'pywhispercpp': 'pywhispercpp'}[plan.family]
+                   'qwen3-asr': 'qwen3-asr', 'pywhispercpp': 'pywhispercpp'}[plan.family]
         _managed_select(backend, custom_python, force_rebuild,
                         provider='elevenlabs' if plan.family == 'elevenlabs' else None,
                         variant=plan.accelerated_variant)
@@ -1878,6 +1886,182 @@ def install_gtk4_layer_shell_runtime(python_bin: Path) -> bool:
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+
+
+# Largest single member across the pinned llama.cpp assets is libggml-vulkan.so
+# at ~54 MB; the cap only has to exclude an archive that is not what we pinned.
+_LLAMA_MEMBER_LIMIT = 96 * 1024 * 1024
+_LLAMA_TOTAL_LIMIT = 512 * 1024 * 1024
+
+
+def _extract_llama_runtime(archive: Path, destination: Path) -> None:
+    """Extract a pinned llama.cpp release archive into a flat runtime directory.
+
+    Written rather than reusing _extract_visualizer_runtime because that helper
+    rejects every non-regular-file member and drops mode bits: this archive
+    carries ten relative symlinks (libggml.so -> libggml.so.0 and friends) and
+    an llama-server that is useless without its exec bit.
+    """
+    prefix = qwen3_asr_runtime.LLAMA_CPP_ARCHIVE_ROOT + '/'
+    total = 0
+    with tarfile.open(archive, 'r:gz') as bundle:
+        for member in bundle.getmembers():
+            name = member.name.lstrip('./')
+            if name.rstrip('/') == qwen3_asr_runtime.LLAMA_CPP_ARCHIVE_ROOT:
+                continue
+            if not name.startswith(prefix):
+                raise RuntimeError(f'runtime archive member outside {prefix}: {member.name}')
+            relative = name[len(prefix):]
+            parts = Path(relative).parts
+            if not relative or relative.startswith('/') or '..' in parts:
+                raise RuntimeError(f'unsafe runtime archive member: {member.name}')
+            target = destination / relative
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if member.issym():
+                # Same-directory relative links only; anything else could point
+                # outside the runtime once resolved.
+                link = member.linkname
+                if not link or '/' in link or link in ('.', '..'):
+                    raise RuntimeError(f'unsafe symlink in runtime archive: {member.name} -> {link}')
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(link)
+                continue
+            if not member.isfile():
+                raise RuntimeError(f'unsupported member type in runtime archive: {member.name}')
+            if member.size > _LLAMA_MEMBER_LIMIT:
+                raise RuntimeError(f'runtime archive member is oversized: {member.name}')
+            total += member.size
+            if total > _LLAMA_TOTAL_LIMIT:
+                raise RuntimeError('runtime archive exceeds its total size limit')
+            source = bundle.extractfile(member)
+            if source is None:
+                raise RuntimeError(f'could not read {relative} from runtime archive')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with source, target.open('wb') as output:
+                shutil.copyfileobj(source, output)
+            # llama-server and the shared objects ship 0755; without this the
+            # binary extracts non-executable and the sidecar can never start.
+            os.chmod(target, member.mode & 0o777)
+
+
+def _download_llama_runtime(device: str, download_dir: Path) -> Path:
+    filename, size, digest = qwen3_asr_runtime.LLAMA_CPP_ASSETS[device]
+    archive = download_dir / filename
+    _download_bounded_file(
+        f'{qwen3_asr_runtime.LLAMA_CPP_BASE_URL}/{filename}', archive, size + 1024)
+    expected = digest.lower()
+    if not re.fullmatch(r'[0-9a-f]{64}', expected):
+        raise RuntimeError('pinned runtime checksum is invalid')
+    actual = compute_file_hash(archive)
+    if archive.stat().st_size != size or actual != expected:
+        raise RuntimeError(f'{filename} failed pinned size/SHA-256 validation')
+    return archive
+
+
+def install_qwen3_asr_runtime(device: str, force: bool = False) -> bool:
+    """Install the pinned llama.cpp sidecar for `device`, atomically.
+
+    `force` re-downloads and re-extracts even when the runtime looks present, so
+    an explicit reinstall can repair a damaged tree.
+    """
+    if device not in qwen3_asr_runtime.LLAMA_CPP_ASSETS:
+        log_error(f'Unsupported Qwen3-ASR runtime device: {device}')
+        return False
+    if platform.machine() not in ('x86_64', 'amd64'):
+        log_error(
+            f'Qwen3-ASR ships pinned x86_64 llama.cpp binaries; this host is '
+            f'{platform.machine()}. Select a different backend.')
+        return False
+
+    target = qwen3_asr_runtime.runtime_dir(device)
+    if not force and qwen3_asr_runtime.runtime_installed(device):
+        log_success(f'Qwen3-ASR runtime present: {qwen3_asr_runtime.LLAMA_CPP_RELEASE} ({device})')
+        return True
+
+    log_info(f'Installing Qwen3-ASR llama.cpp runtime {qwen3_asr_runtime.LLAMA_CPP_RELEASE} ({device})…')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix='.llama-cpp-', dir=target.parent))
+    previous = target.with_name(f'.{target.name}.previous')
+    try:
+        with tempfile.TemporaryDirectory() as download_tmp:
+            archive = _download_llama_runtime(device, Path(download_tmp))
+            _extract_llama_runtime(archive, staging)
+        server = staging / 'llama-server'
+        if not server.is_file() or not os.access(server, os.X_OK):
+            raise RuntimeError('runtime archive did not yield an executable llama-server')
+        probe = subprocess.run([str(server), '--version'], capture_output=True,
+                               text=True, timeout=30, check=False,
+                               env={**os.environ, 'LD_LIBRARY_PATH': str(staging)})
+        if probe.returncode != 0:
+            detail = (probe.stderr or probe.stdout or '').strip().splitlines()
+            raise RuntimeError(
+                'llama-server failed its version check: '
+                + (detail[-1] if detail else f'exit {probe.returncode}'))
+        if previous.exists():
+            shutil.rmtree(previous)
+        if target.exists():
+            target.replace(previous)
+        staging.replace(target)
+        if previous.exists():
+            shutil.rmtree(previous, ignore_errors=True)
+        log_success(f'Qwen3-ASR runtime installed: {qwen3_asr_runtime.LLAMA_CPP_RELEASE} ({device})')
+        _prune_llama_runtimes()
+        return True
+    except Exception as exc:
+        if previous.exists() and not target.exists():
+            previous.replace(target)
+        log_error(f'Failed to install the Qwen3-ASR llama.cpp runtime: {exc}')
+        return False
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def _install_qwen3_asr_payload(force_rebuild: bool = False) -> bool:
+    """Install the sidecar runtime and the configured GGUF pair.
+
+    Shared by the normal and managed install paths so a managed generation
+    cannot end up with the venv but none of the things that do the work.
+    """
+    try:
+        from .config_manager import ConfigManager
+    except ImportError:
+        from config_manager import ConfigManager
+    config = ConfigManager()
+    # An explicit reinstall re-reads the hardware, so a machine that has gained
+    # a GPU since the last setup can move off the CPU runtime.
+    device = qwen3_asr_runtime.resolve_device(config, force_probe=force_rebuild)
+    if device == 'cpu':
+        log_info("No hardware Vulkan GPU detected; installing the CPU runtime")
+    else:
+        log_info(f"Installing the {device} llama.cpp runtime")
+    # No created_items slot: install_qwen3_asr_runtime stages and swaps
+    # atomically, so a failure leaves nothing behind, and a runtime that did
+    # land should survive a later model-download failure so the retry only
+    # re-fetches the model.
+    if not install_qwen3_asr_runtime(device, force=force_rebuild):
+        return False
+
+    model_name = config.get_setting('qwen3_asr_model', qwen3_asr_runtime.DEFAULT_MODEL)
+    log_info(f"Downloading Qwen3-ASR model pair: {model_name}")
+    log_info("This may take several minutes depending on your connection speed.")
+    if not download_qwen3_asr_model(model_name):
+        log_info("Re-run 'hyprwhspr model download' to resume.")
+        return False
+    return True
+
+
+def _prune_llama_runtimes() -> None:
+    """Drop runtime trees from llama.cpp releases we no longer pin."""
+    root = qwen3_asr_runtime.QWEN3_ASR_RUNTIMES_DIR
+    try:
+        for entry in root.iterdir():
+            if entry.is_dir() and entry.name != qwen3_asr_runtime.LLAMA_CPP_RELEASE:
+                shutil.rmtree(entry, ignore_errors=True)
+    except OSError as exc:
+        log_debug(f'Could not remove an older llama.cpp runtime: {exc}')
 
 
 def _extract_package_name(requirement_line: str) -> str:
@@ -2205,6 +2389,94 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
 
 # ==================== Model Download ====================
 
+def _file_matches(path: Path, size: int, digest: str) -> bool:
+    return (path.is_file() and path.stat().st_size == size
+            and compute_file_hash(path) == digest)
+
+
+def _qwen3_model_present(path: Path, size: int, digest: str) -> bool:
+    """Is this model already installed, without re-hashing gigabytes?
+
+    A verified download records its digest in state, so the common "already
+    there" case costs a stat. Only an unrecorded file (an older install, or a
+    hand-copied one) pays the full hash.
+    """
+    if not path.is_file() or path.stat().st_size != size:
+        return False
+    if get_state(f'model_hash_{path.name}') == digest:
+        return True
+    if compute_file_hash(path) != digest:
+        return False
+    set_state(f'model_hash_{path.name}', digest)
+    return True
+
+
+def _qwen3_progress(role: str):
+    """urlretrieve reporthook mirroring download_pywhispercpp_model's output."""
+    def show_progress(block_num, block_size, total_size):
+        if not OutputController.is_progress_enabled():
+            return
+        downloaded = block_num * block_size
+        percent = min(100, (downloaded * 100) // total_size) if total_size > 0 else 0
+        size_mb = total_size / (1024 * 1024) if total_size > 0 else 0
+        downloaded_mb = min(downloaded, total_size or downloaded) / (1024 * 1024)
+        OutputController.write(
+            f"\r[INFO] {role}: {downloaded_mb:.1f}/{size_mb:.1f} MB ({percent}%)",
+            VerbosityLevel.NORMAL, flush=True)
+        if total_size > 0 and downloaded >= total_size:
+            OutputController.write("\n", VerbosityLevel.NORMAL, flush=True)
+    return show_progress
+
+
+def download_qwen3_asr_model(model_name: str = '1.7b-q8_0') -> bool:
+    """Atomically download and verify a pinned Qwen decoder/projector pair."""
+    metadata = QWEN3_ASR_MODELS.get(model_name)
+    if metadata is None:
+        log_error(f"Unsupported Qwen3-ASR model: {model_name}")
+        return False
+    QWEN3_ASR_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    installed = []
+    partials = []
+    try:
+        for role in ('decoder', 'projector'):
+            filename, size, digest = metadata[role]
+            destination = QWEN3_ASR_MODELS_DIR / filename
+            if _qwen3_model_present(destination, size, digest):
+                log_success(f"Qwen3-ASR {role} present: {filename}")
+                installed.append(destination)
+                continue
+            partial = destination.with_name(destination.name + '.partial')
+            partials.append(partial)
+            partial.unlink(missing_ok=True)
+            url = (f"https://huggingface.co/{metadata['repo']}/resolve/"
+                   f"{metadata['revision']}/{filename}")
+            log_info(f"Downloading Qwen3-ASR {role}: {filename}")
+            urllib.request.urlretrieve(url, partial,
+                                       reporthook=_qwen3_progress(role))
+            if not _file_matches(partial, size, digest):
+                raise RuntimeError(f"{filename} failed pinned size/SHA-256 validation")
+            partial.replace(destination)
+            set_state(f'model_hash_{destination.name}', digest)
+            installed.append(destination)
+        try:
+            try:
+                from ..managed_install import record_ownership
+            except ImportError:
+                from managed_install import record_ownership
+            for path in installed:
+                if not record_ownership('file', path, 'model'):
+                    log_warning('Model installed but ownership was not recorded: '
+                                f'{path}: {record_ownership.last_error}')
+        except ImportError as exc:
+            log_warning(f"Model installed but ownership could not be recorded: {exc}")
+        log_success(f"Qwen3-ASR model installed: {model_name}")
+        return True
+    except Exception as exc:
+        log_error(f"Failed to download Qwen3-ASR model {model_name}: {exc}")
+        for partial in partials:
+            partial.unlink(missing_ok=True)
+        return False
+
 VAD_MODEL_FILENAME = 'ggml-silero-v5.1.2.bin'
 VAD_MODEL_URL = f"https://huggingface.co/ggml-org/whisper-vad/resolve/main/{VAD_MODEL_FILENAME}"
 
@@ -2417,6 +2689,11 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         try:
             selected, variant = _managed_backend_variant(backend_type)
             _managed_select(selected, custom_python, force_rebuild, variant=variant)
+            if backend_type == 'qwen3-asr':
+                # Unlike cohere/onnx/faster-whisper, this backend has no lazy
+                # first-use download — the sidecar and GGUF pair must be placed
+                # here or the managed install is permanently non-functional.
+                return _install_qwen3_asr_payload(force_rebuild)
             return True
         except Exception as exc:
             log_error(f'Managed backend installation failed: {exc}')
@@ -2523,6 +2800,28 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
 
             set_install_state('completed')
             log_success("Cohere Transcribe backend installation completed!")
+            return True
+
+        elif backend_type == 'qwen3-asr':
+            # Inference runs in a pinned llama.cpp sidecar, so the only Python
+            # dependencies are the core audio ones every backend shares.
+            plan = resolve_dependency_plan('qwen3-asr')
+            try:
+                execute_dependency_plan(plan, custom_python=custom_python,
+                                        force_rebuild=force_rebuild)
+            except Exception as exc:
+                error_msg = f"Failed to install Qwen3-ASR dependencies: {exc}"
+                log_error(error_msg)
+                set_install_state('failed', error_msg)
+                return False
+
+            if not _install_qwen3_asr_payload(force_rebuild):
+                error_msg = 'Qwen3-ASR runtime or model installation failed'
+                set_install_state('failed', error_msg)
+                return False
+
+            set_install_state('completed')
+            log_success("Qwen3-ASR backend installation completed!")
             return True
 
         elif backend_type == 'onnx-asr':

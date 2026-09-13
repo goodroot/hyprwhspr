@@ -295,9 +295,28 @@
     },
     "transcription_backend": {
       "type": "string",
-      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "faster-whisper", "cohere-transcribe"],
+      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "faster-whisper", "cohere-transcribe", "qwen3-asr"],
       "default": "pywhispercpp",
       "description": "Transcription backend to use"
+    },
+    "qwen3_asr_model": {
+      "type": "string",
+      "enum": ["1.7b-q8_0", "0.6b-q8_0"],
+      "default": "1.7b-q8_0",
+      "description": "Qwen3-ASR GGUF decoder/projector pair"
+    },
+    "qwen3_asr_device": {
+      "type": "string",
+      "enum": ["auto", "cpu", "vulkan"],
+      "default": "auto",
+      "description": "llama.cpp runtime variant; auto prefers an installed runtime, then a hardware Vulkan GPU, then CPU"
+    },
+    "qwen3_asr_timeout": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600,
+      "default": 180,
+      "description": "Qwen3-ASR sidecar request timeout in seconds"
     },
     "rest_endpoint_url": {
       "type": ["string", "null"],

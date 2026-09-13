@@ -202,6 +202,26 @@ def test_command(live: bool = False, mic_only: bool = False):
             log_error("transformers not installed. Run: hyprwhspr setup and select cohere-transcribe")
             all_passed = False
 
+    elif backend == 'qwen3-asr':
+        # Nothing to import: inference runs in the llama.cpp sidecar.
+        try:
+            from ..qwen3_asr_runtime import (DEFAULT_MODEL, model_installed,
+                                             resolve_device, runtime_installed)
+        except ImportError:
+            from qwen3_asr_runtime import (DEFAULT_MODEL, model_installed,
+                                           resolve_device, runtime_installed)
+        device = resolve_device(config)
+        model_name = config.get_setting('qwen3_asr_model', DEFAULT_MODEL)
+        if not runtime_installed(device):
+            log_error(f"Qwen3-ASR llama.cpp runtime ({device}) not installed. Run: hyprwhspr setup")
+            all_passed = False
+        elif not model_installed(model_name):
+            log_error(f"Qwen3-ASR model not installed: {model_name}. Run: hyprwhspr model download")
+            all_passed = False
+        else:
+            log_success(f"Qwen3-ASR available ({device}), model: {model_name}")
+            backend_ready = True
+
     elif backend in ('pywhispercpp', 'nvidia', 'cpu', 'vulkan'):
         # Test pywhispercpp model availability (covers all local whisper variants)
         try:

@@ -199,6 +199,38 @@ import BlogPost from "../layouts/BlogPost.astro";
         <li>Privacy: fully local</li>
     </ul>
 
+    <h2>Qwen3-ASR</h2>
+
+    <p>
+        <strong
+            >Best for: Chinese, Japanese and Korean — the strongest open model
+            for CJK.</strong
+        >
+    </p>
+
+    <p>
+        <a href="https://github.com/QwenLM/Qwen3-ASR" target="_blank" rel="noopener"
+            >Qwen3-ASR</a
+        > is Alibaba's open ASR family, and the 1.7B model beats Whisper-large-v3
+        across most benchmarks — by a wide margin on Mandarin, and with the lowest
+        reported Japanese character error rate against Whisper, ReazonSpeech and
+        Granite. If you dictate in an Asian language, this is the one to reach for.
+    </p>
+
+    <p>
+        In hyprwhspr it runs through a pinned llama.cpp sidecar, so selecting it
+        adds no new Python packages. Long recordings are split at natural pauses
+        where possible and rejoined, so long-form dictation works normally. It is still marked
+        experimental, and there is no streaming or timestamp support.
+    </p>
+
+    <ul>
+        <li>Requires: ~2.4 GB disk for the 1.7B Q8 pair (~1.0 GB for 0.6B)</li>
+        <li>Languages: 30, plus 22 Chinese dialects</li>
+        <li>Acceleration: Vulkan (NVIDIA, AMD or Intel) or CPU</li>
+        <li>Privacy: fully local</li>
+    </ul>
+
     <h2>A note on GPU support</h2>
 
     <p>
@@ -283,6 +315,7 @@ import BlogPost from "../layouts/BlogPost.astro";
                 ></tr
             >
             <tr><td>Multiple languages</td><td>Whisper large-v3</td></tr>
+            <tr><td>Chinese, Japanese or Korean</td><td>Qwen3-ASR</td></tr>
             <tr
                 ><td>Multilingual, constrained VRAM</td><td>faster-whisper</td
                 ></tr

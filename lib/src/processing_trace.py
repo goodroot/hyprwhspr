@@ -41,6 +41,8 @@ def _backend_model(config, backend):
         return _setting(config, 'websocket_model', None)
     if backend == 'cohere-transcribe':
         return 'CohereLabs/cohere-transcribe-03-2026'
+    if backend == 'qwen3-asr':
+        return _setting(config, 'qwen3_asr_model', None)
     return _setting(config, 'model', None)
 
 

@@ -77,7 +77,10 @@ def main():
                               help='Path to Python executable for venv (e.g., /usr/bin/python3.14)')
     setup_subparsers = setup_parser.add_subparsers(dest='setup_action', help='Setup actions')
     auto_parser = setup_subparsers.add_parser('auto', help='Automated setup')
-    auto_parser.add_argument('--backend', choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr'],
+    # Only backends omarchy_command can actually configure belong here; a value
+    # it does not handle installs one backend and writes another into config.
+    auto_parser.add_argument('--backend',
+                             choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr', 'qwen3-asr'],
                              help='Backend to install (default: auto-detect GPU)')
     auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
     auto_parser.add_argument('--no-waybar', action='store_true', help='Skip bar integration (Waybar/Noctalia)')

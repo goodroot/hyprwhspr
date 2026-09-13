@@ -19,11 +19,18 @@ except ImportError:
 try:
     from ..backend_installer import (VENV_DIR, PYWHISPERCPP_MODELS_DIR,
                                      download_cohere_transcribe_model as _download_cohere,
+                                     download_qwen3_asr_model as _download_qwen,
                                      set_install_state)
 except ImportError:
     from backend_installer import (VENV_DIR, PYWHISPERCPP_MODELS_DIR,
                                    download_cohere_transcribe_model as _download_cohere,
+                                   download_qwen3_asr_model as _download_qwen,
                                    set_install_state)
+
+try:
+    from ..qwen3_asr_runtime import QWEN3_ASR_MODELS
+except ImportError:
+    from qwen3_asr_runtime import QWEN3_ASR_MODELS
 
 try:
     from ..backend_utils import normalize_backend, COHERE_LANGUAGES
@@ -114,7 +121,7 @@ def model_command(action: str, model_name: str = 'base') -> bool:
     if action == 'unload':
         if backend in ('rest-api', 'realtime-ws'):
             log_error(f"Model unload not applicable for backend: {backend}")
-            log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr, cohere-transcribe) hold GPU memory.")
+            log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr, cohere-transcribe, qwen3-asr) hold GPU memory.")
             return False
         if MODEL_UNLOADED_FILE.exists():
             log_warning("Model is already unloaded.")
@@ -139,6 +146,23 @@ def model_command(action: str, model_name: str = 'base') -> bool:
         if success:
             log_success("Model reload requested — service will load model back into memory.")
         return success
+
+    if backend == 'qwen3-asr':
+        selected = (model_name if model_name != 'base'
+                    else config.get_setting('qwen3_asr_model', '1.7b-q8_0'))
+        if action == 'download':
+            return _download_qwen(selected)
+        if action == 'list':
+            print("Available Qwen3-ASR models (decoder + projector):")
+            for name in QWEN3_ASR_MODELS:
+                marker = " (recommended)" if name == '1.7b-q8_0' else ""
+                print(f"  - {name}{marker}")
+            return True
+        if action == 'status':
+            qwen3_asr_model_status(config)
+            return True
+        log_error(f"Unknown model action: {action}")
+        return False
 
     if backend == 'faster-whisper':
         if action == 'download':
@@ -234,6 +258,42 @@ def model_status():
     for model in sorted(models):
         size = model.stat().st_size / (1024 * 1024)  # MB
         print(f"  - {model.name} ({size:.1f} MB)")
+
+
+def qwen3_asr_model_status(config=None):
+    """Report the Qwen3-ASR sidecar runtime and the configured model pair.
+
+    Takes an existing ConfigManager like cohere_transcribe_model_status does;
+    constructing its own printed a second "Configuration loaded" banner into
+    `hyprwhspr status`.
+    """
+    try:
+        from ..qwen3_asr_runtime import (DEFAULT_MODEL, LLAMA_CPP_RELEASE,
+                                         QWEN3_ASR_DEVICES, model_installed,
+                                         runtime_installed)
+    except ImportError:
+        from qwen3_asr_runtime import (DEFAULT_MODEL, LLAMA_CPP_RELEASE,
+                                       QWEN3_ASR_DEVICES, model_installed,
+                                       runtime_installed)
+    devices = [d for d in QWEN3_ASR_DEVICES if runtime_installed(d)]
+    if devices:
+        log_success(f"llama.cpp runtime {LLAMA_CPP_RELEASE}: {', '.join(devices)}")
+    else:
+        log_warning(f"llama.cpp runtime {LLAMA_CPP_RELEASE} is not installed")
+        log_info("Run 'hyprwhspr setup' to install the Qwen3-ASR sidecar.")
+
+    # Only the configured pair is a health signal; the others are alternatives,
+    # so warning about them made every healthy install look broken.
+    config = config or ConfigManager()
+    configured = config.get_setting('qwen3_asr_model', DEFAULT_MODEL)
+    if model_installed(configured):
+        log_success(f"Model installed: {configured}")
+    else:
+        log_warning(f"Configured model not installed: {configured}")
+        log_info("Run 'hyprwhspr model download' to fetch the decoder/projector pair.")
+    others = [n for n in QWEN3_ASR_MODELS if n != configured and model_installed(n)]
+    if others:
+        log_info(f"Also present: {', '.join(others)}")
 
 
 def onnx_asr_model_status():

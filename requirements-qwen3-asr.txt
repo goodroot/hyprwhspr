@@ -1,0 +1,4 @@
+# Qwen3-ASR runs inference in a pinned llama.cpp sidecar binary, not in Python,
+# so this backend needs nothing beyond the core audio/runtime dependencies.
+# The sidecar and the GGUF model pair are installed by backend_installer.
+-r requirements.txt

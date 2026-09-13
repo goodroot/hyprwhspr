@@ -216,8 +216,8 @@ def _choice_default(value, ordered_values, fallback: str) -> str:
 # Reverse of the backend_map inside _prompt_backend_selection: name -> choice.
 _BACKEND_CHOICE = {
     'onnx-asr': '1', 'faster-whisper': '2', 'pywhispercpp': '3', 'cpu': '3',
-    'nvidia': '4', 'vulkan': '5', 'cohere-transcribe': '6', 'rest-api': '7',
-    'realtime-ws': '8',
+    'nvidia': '4', 'vulkan': '5', 'cohere-transcribe': '6', 'qwen3-asr': '7',
+    'rest-api': '8', 'realtime-ws': '9',
 }
 
 
@@ -237,17 +237,19 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
 
     print("\nChoose your transcription backend:")
     print()
-    print("Local In-Memory Backends:")
+    # Not "In-Memory": Qwen3-ASR runs a sidecar process, not an in-process model.
+    print("Local Backends:")
     print("  [1] Parakeet TDT V3       - Optimized for light hardware (autodetects CPU/GPU)")
     print("  [2] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
     print("  [3] Whisper (CPU)         - whisper.cpp, works everywhere")
     print("  [4] Whisper (NVIDIA)      - whisper.cpp + CUDA, premium local transcription for NVIDIA GPUs")
     print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, ideal for AMD/Intel GPUs")
     print("  [6] Cohere Transcribe     - #1 Open ASR leaderboard, 14 languages, ~4-5 GB VRAM (fp16)")
+    print("  [7] Qwen3-ASR             - Strongest Chinese/Japanese/Korean, 30 languages (experimental)")
     print()
     print("Cloud/REST Backends:")
-    print("  [7] REST API              - OpenAI, Groq, or custom endpoint")
-    print("  [8] Realtime WS           - Low-latency streaming")
+    print("  [8] REST API              - OpenAI, Groq, or custom endpoint")
+    print("  [9] Realtime WS           - Low-latency streaming")
     print()
 
     # Seed the prompt default with the currently configured/installed backend so
@@ -269,7 +271,7 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
 
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8'], default=default_backend_choice)
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8', '9'], default=default_backend_choice)
             backend_map = {
                 '1': 'onnx-asr',
                 '2': 'faster-whisper',
@@ -277,8 +279,9 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
                 '4': 'nvidia',
                 '5': 'vulkan',
                 '6': 'cohere-transcribe',
-                '7': 'rest-api',
-                '8': 'realtime-ws',
+                '7': 'qwen3-asr',
+                '8': 'rest-api',
+                '9': 'realtime-ws',
             }
             selected = backend_map[choice]
 
@@ -289,6 +292,7 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
                 'nvidia': 'Whisper NVIDIA (CUDA)',
                 'faster-whisper': 'faster-whisper (CTranslate2)',
                 'cohere-transcribe': 'Cohere Transcribe 2B',
+                'qwen3-asr': 'Qwen3-ASR (llama.cpp)',
                 'amd': 'Whisper AMD/Intel (Vulkan)',
                 'vulkan': 'Whisper AMD/Intel (Vulkan)',
                 'rest-api': 'REST API',
@@ -955,6 +959,13 @@ def setup_command(python_path: Optional[str] = None):
                 print("Falls back to CPU if no GPU is available (slow — not recommended for live dictation).")
                 print("Model weights (~4 GB) will be downloaded from HuggingFace during setup.")
                 print("This may take several minutes depending on your connection speed.")
+            elif backend_normalized == 'qwen3-asr':
+                print("\nThis will install the Qwen3-ASR backend (experimental).")
+                print("Strongest open model for Chinese, Japanese and Korean; 30 languages and 22 Chinese dialects.")
+                print("Transcription runs in a private llama.cpp sidecar, so no new Python packages are added.")
+                print("Downloads a pinned llama.cpp runtime (~17-34 MB) and the model pair (~2.4 GB for 1.7B).")
+                print("Uses a Vulkan GPU when one is present (NVIDIA, AMD or Intel), otherwise CPU.")
+                print("This may take several minutes depending on your connection speed.")
             else:
                 print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
                 print("This may take several minutes as it compiles from source.")
@@ -1059,9 +1070,10 @@ def setup_command(python_path: Optional[str] = None):
     
     # Model selection for local backends
     if not backend_install_skipped:
-        if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'onnx-asr', 'faster-whisper', 'cohere-transcribe']:
+        if backend_normalized not in ['rest-api', 'remote', 'realtime-ws', 'onnx-asr', 'faster-whisper', 'cohere-transcribe', 'qwen3-asr']:
             # Local backend - prompt for model selection
-            # Note: ONNX-ASR, faster-whisper, and cohere-transcribe don't use Whisper.cpp models
+            # Note: ONNX-ASR, faster-whisper, cohere-transcribe and qwen3-asr
+            # all carry their own models and never use Whisper.cpp ones.
             selected_model = _prompt_model_selection(current_model=existing_cfg.get('model'))
         elif backend_normalized == 'faster-whisper':
             faster_whisper_model = _prompt_faster_whisper_model_selection(current_model=existing_cfg.get('faster_whisper_model'))
@@ -1310,6 +1322,8 @@ def setup_command(python_path: Optional[str] = None):
         print("Model: nemo-parakeet-tdt-0.6b-v3 (~1 GB, downloaded during setup)")
     elif backend_normalized == 'cohere-transcribe':
         print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
+    elif backend_normalized == 'qwen3-asr':
+        print("Model: Qwen3-ASR 1.7B Q8_0 (~2.4 GB, downloaded during setup)")
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     if noctalia_installed:
         print(f"Noctalia integration: {'Yes' if setup_noctalia_choice else 'No'}")

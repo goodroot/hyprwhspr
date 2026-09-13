@@ -32,7 +32,7 @@ hyprwhspr config show --all  # Show all settings including defaults
 - [Environment variable substitution](#environment-variable-substitution)
 - [Recording modes](#recording-modes) -- toggle, push-to-talk, auto, silence auto-stop, continuous, long-form
 - [Custom hotkeys](#custom-hotkeys) -- key support, secondary shortcuts, cancel, Hyprland bindings
-- [Backends](#backends) -- Cohere Transcribe, Parakeet, faster-whisper, whisper.cpp, REST API, Realtime WebSocket
+- [Backends](#backends) -- Cohere Transcribe, Parakeet, faster-whisper, whisper.cpp, Qwen3-ASR, REST API, Realtime WebSocket
 - [Audio and visual feedback](#audio-and-visual-feedback) -- themed visualizer, audio feedback, microphone selection, keepalive, ducking
 - [Text processing](#text-processing) -- word overrides, filler words, hallucination markers, symbol replacements, trailing space, non-Latin scripts
 - [Paste and clipboard behavior](#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit, post-transcription hook
@@ -303,6 +303,7 @@ With `grab_keys: false` (default), hyprwhspr can start even if you are not in th
 - **NVIDIA GPU** → Cohere Transcribe is the leading edge · whisper.cpp (`large-v3-turbo`) for speed
 - **AMD / Intel GPU** → whisper.cpp (Vulkan)
 - **CPU only** → Parakeet or faster-whisper
+- **Chinese, Japanese or Korean** → Qwen3-ASR
 - **No local setup** → REST API
 
 For up-to-date accuracy rankings across open-source models, see the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard).
@@ -313,6 +314,7 @@ For up-to-date accuracy rankings across open-source models, see the [Open ASR Le
 | Parakeet | Local | NVIDIA or CPU | Fast | Multi | Very good | — |
 | faster-whisper | Local | NVIDIA or CPU | Very fast | 99 | Very good | — |
 | whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Fast | 99 | Very good | — |
+| Qwen3-ASR | Local | Vulkan or CPU | Fast | 30 (+22 zh dialects) | Best for CJK | Experimental · sidecar process |
 | REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
 | Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs |
 
@@ -539,7 +541,8 @@ Translate non-English speech into English:
 - **`"transcribe"`** (default) - Output in the source language
 - **`"translate"`** - Translate speech into English
 
-> **Note**: Supported by `faster-whisper` and `pywhispercpp` backends. `language` and `task` are independent — setting a non-English language does not imply translation.
+> **Note**: Supported by `faster-whisper` and `pywhispercpp` backends. `qwen3-asr` honours `language` but has no
+> translation task. `language` and `task` are independent — setting a non-English language does not imply translation.
 
 #### Language-specific prompts
 
@@ -551,8 +554,10 @@ Set a per-language prompt using `whisper_prompt_{lang}`:
 }
 ```
 
-- The language comes from `language`, `secondary_language` or `--lang`; `pywhispercpp` and
-  `faster-whisper` auto-detect it when unset
+- The language comes from `language`, `secondary_language` or `--lang`; `pywhispercpp`
+  and `faster-whisper` auto-detect it when unset
+- Prompts do not apply to `qwen3-asr`, which sends no prompt field (it uses `language`
+  for the hint and auto-detects when unset)
 - Falls back to `whisper_prompt` if no language-specific prompt is configured
 - With neither set, English audio gets the shipped `whisper_prompt_en` capitalization prompt and
   other languages get no prompt
@@ -573,6 +578,44 @@ Controls how Whisper searches for the best transcription. Applies to `pywhisperc
 - **`beam_size`** — higher values (e.g. `8`–`10`) can improve accuracy at the cost of speed. Default `5` is a good balance for real-time dictation.
 
 > **Note**: `sampling_strategy` is locked in at model load time for `pywhispercpp`. Changing it requires a service restart.
+
+### Qwen3-ASR (experimental)
+
+Local [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) via a pinned llama.cpp sidecar.
+
+Run `hyprwhspr setup` and select **[7] Qwen3-ASR** to install.
+
+**Best for:** Chinese, Japanese and Korean — Qwen3-ASR-1.7B beats Whisper-large-v3 across most benchmarks and leads open models on CJK. Also a good multilingual choice at 30 languages plus 22 Chinese dialects.
+
+Transcription runs in a private `llama-server` process rather than in the venv, so selecting this backend installs **no new Python packages**. Setup fetches a pinned llama.cpp runtime (17–34 MB) alongside the model pair.
+
+```jsonc
+{
+    "transcription_backend": "qwen3-asr",
+    "qwen3_asr_model": "1.7b-q8_0",   // 1.7b-q8_0 (quality) or 0.6b-q8_0 (smaller)
+    "qwen3_asr_device": "auto",       // auto | cpu | vulkan
+    "qwen3_asr_timeout": 180          // sidecar request timeout, seconds (1-600)
+}
+```
+
+`auto` keeps using a runtime that is already installed, otherwise it picks Vulkan when a hardware GPU is present and CPU when not. There is no CUDA option — llama.cpp publishes no Linux CUDA build, and its Vulkan build covers NVIDIA, AMD and Intel alike.
+
+Recordings longer than two minutes are split at natural pauses where possible and rejoined automatically, so long-form and long files work normally. Setting `language` is recommended for long recordings: each segment is otherwise language-detected on its own, and hyprwhspr can only pin the first detection on a best-effort basis.
+
+#### Available models
+
+| Model | Size | Notes |
+|-------|------|-------|
+| `1.7b-q8_0` | ~2.4 GB | **Recommended** — the quality tier the benchmarks describe |
+| `0.6b-q8_0` | ~1.0 GB | Smaller and faster, lower accuracy |
+
+Models stored in: `~/.local/share/hyprwhspr/qwen3-asr/models/`
+
+#### Languages
+
+Chinese, Cantonese, English, Japanese, Korean, Arabic, German, French, Spanish, Portuguese, Italian, Russian, Dutch, Polish, Turkish, Thai, Vietnamese, Hindi, Indonesian, Malay and more — 30 languages plus 22 Chinese dialects. An unset `language` auto-detects; a configured ISO code is sent as its English name, because llama.cpp passes the value into the model's prompt and Qwen reasons in language names.
+
+> **Note:** No streaming, timestamps, forced alignment, or prompt conditioning. `whisper_prompt_*` settings do not apply — this backend sends no prompt.
 
 ### REST API
 
@@ -1445,7 +1488,7 @@ hyprwhspr model unload
 hyprwhspr model reload
 ```
 
-Only applies to local-model backends (Cohere Transcribe, `pywhispercpp`, `faster-whisper`, `onnx-asr`) — no-op for `rest-api` and `realtime-ws`, which hold no local GPU memory. The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
+Only applies to local-model backends (Cohere Transcribe, `pywhispercpp`, `faster-whisper`, `onnx-asr`, `qwen3-asr`) — no-op for `rest-api` and `realtime-ws`, which hold no local GPU memory. The Waybar tray shows a `󰒲` sleep icon while the model is unloaded.
 
 ### Hyprland keybindings
 

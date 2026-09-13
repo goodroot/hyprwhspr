@@ -33,6 +33,7 @@ class DependencyPlanTests(unittest.TestCase):
             ('onnx-asr', None, 'gpu'): 'requirements-onnx-asr-gpu.txt',
             ('faster-whisper', None, None): 'requirements-faster-whisper.txt',
             ('faster-whisper', None, 'cuda'): 'requirements-faster-whisper-cuda.txt',
+            ('qwen3-asr', None, None): 'requirements-qwen3-asr.txt',
         }
         for args, filename in cases.items():
             with self.subTest(args=args):

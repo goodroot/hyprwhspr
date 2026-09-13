@@ -96,7 +96,7 @@ def build_default_config():
         'task': 'transcribe',  # "transcribe" (source language) or "translate" (to English)
         'sampling_strategy': 'beam_search',  # "beam_search" or "greedy" for Whisper decoding
         'beam_size': 5,  # Number of candidates tracked when using beam search
-        'threads': min(8, os.cpu_count() or 4),  # whisper.cpp worker threads
+        'threads': min(8, os.cpu_count() or 4),  # whisper.cpp / llama.cpp worker threads
         # Shell command run after preprocessing, before paste. Stdin
         # receives the transcription; non-empty stdout replaces it.
         # Empty stdout leaves text unchanged (observer-only hooks).
@@ -133,6 +133,9 @@ def build_default_config():
         'prefer_clipboard_paste': False,  # Force clipboard paste instead of direct typing on GNOME/Mutter
         # Transcription backend settings
         'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"vulkan"/"amd") or "rest-api"
+        'qwen3_asr_model': '1.7b-q8_0',       # Quality-first Q8 decoder/projector pair
+        'qwen3_asr_device': 'auto',           # 'auto' | 'cpu' | 'vulkan' (no Linux CUDA build upstream)
+        'qwen3_asr_timeout': 180,              # Sidecar request timeout (1-600 seconds)
         'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
         'rest_api_provider': None,          # Provider identifier for credential lookup (e.g., 'openai', 'groq', 'custom')
         'rest_api_key': None,              # DEPRECATED: Optional API key for authentication (kept for backward compatibility)

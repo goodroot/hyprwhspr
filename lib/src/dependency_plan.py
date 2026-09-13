@@ -24,6 +24,9 @@ PLAN_SPECS = {
     'onnx-gpu': ('requirements-onnx-asr-gpu.txt', CORE_IMPORTS + ('onnx_asr',), 'onnx'),
     'faster-cpu': ('requirements-faster-whisper.txt', CORE_IMPORTS + ('faster_whisper',), 'faster-whisper'),
     'faster-cuda': ('requirements-faster-whisper-cuda.txt', CORE_IMPORTS + ('faster_whisper',), 'faster-whisper'),
+    # Inference happens in the pinned llama.cpp sidecar, so there is no ASR
+    # import to verify — only the core audio deps the capture pipeline needs.
+    'qwen3-asr': ('requirements-qwen3-asr.txt', CORE_IMPORTS, 'qwen3-asr'),
 }
 
 
@@ -50,6 +53,8 @@ def plan_key(backend: str, provider: Optional[str], variant: Optional[str], erro
         return 'onnx-gpu' if variant in ('gpu', 'cuda') else 'onnx-cpu'
     if backend == 'faster-whisper':
         return 'faster-cuda' if variant in ('gpu', 'cuda') else 'faster-cpu'
+    if backend == 'qwen3-asr':
+        return 'qwen3-asr'
     raise error(f"No dependency manifest is defined for backend {backend!r}")
 
 

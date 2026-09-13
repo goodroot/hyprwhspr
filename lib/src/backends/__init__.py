@@ -12,6 +12,7 @@ from .cohere_backend import CohereBackend
 from .faster_whisper_backend import FasterWhisperBackend
 from .onnx_asr_backend import OnnxAsrBackend
 from .pywhispercpp_backend import PywhispercppBackend
+from .qwen3_asr_backend import Qwen3AsrBackend
 from .realtime_ws_backend import RealtimeWsBackend
 from .rest_api_backend import RestApiBackend
 
@@ -20,6 +21,7 @@ BACKENDS = {
     FasterWhisperBackend.name: FasterWhisperBackend,
     OnnxAsrBackend.name: OnnxAsrBackend,
     PywhispercppBackend.name: PywhispercppBackend,
+    Qwen3AsrBackend.name: Qwen3AsrBackend,
     RealtimeWsBackend.name: RealtimeWsBackend,
     RestApiBackend.name: RestApiBackend,
 }
@@ -31,6 +33,7 @@ __all__ = [
     'FasterWhisperBackend',
     'OnnxAsrBackend',
     'PywhispercppBackend',
+    'Qwen3AsrBackend',
     'RealtimeWsBackend',
     'RestApiBackend',
 ]

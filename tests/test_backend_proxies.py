@@ -44,6 +44,7 @@ class BackendProxyTests(unittest.TestCase):
                 "cohere-transcribe",
                 "realtime-ws",
                 "rest-api",
+                "qwen3-asr",
             },
         )
         for name, cls in BACKENDS.items():

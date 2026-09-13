@@ -158,6 +158,16 @@ class SetupDefaultTests(unittest.TestCase):
         self.assertEqual(setup._BACKEND_CHOICE['faster-whisper'], '2')
         self.assertEqual(setup._BACKEND_CHOICE['pywhispercpp'], '3')
         self.assertEqual(setup._BACKEND_CHOICE['cohere-transcribe'], '6')
+        self.assertEqual(setup._BACKEND_CHOICE['qwen3-asr'], '7')
+        self.assertEqual(setup._BACKEND_CHOICE['rest-api'], '8')
+        self.assertEqual(setup._BACKEND_CHOICE['realtime-ws'], '9')
+
+    def test_backend_choices_are_contiguous(self):
+        # The menu is spelled out in five places (this map, the printed lines,
+        # the Prompt choices list, backend_map, and a local display dict); a
+        # gap here means one of them was renumbered and another was not.
+        values = sorted(set(setup._BACKEND_CHOICE.values()), key=int)
+        self.assertEqual(values, [str(n) for n in range(1, len(values) + 1)])
 
 
 if __name__ == '__main__':

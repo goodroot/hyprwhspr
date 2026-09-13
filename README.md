@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | Cohere / Parakeet / Whisper / Gemini / ElevenLabs / REST API | stylish visuals
+    instant performance | Cohere / Parakeet / Whisper / Qwen3-ASR / Gemini / ElevenLabs / REST API | stylish visuals
 </p>
 
  <p align="center">
@@ -25,9 +25,10 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Built for Linux** - Native AUR package for Arch, or use Debian/Ubuntu/Fedora/openSUSE
 - **Very fast defaults** - Nearly instant and accurate performance via in-memory models
 - **Offline and private** - Transcription never leaves your machine. Cloud APIs are fully optional. 
-- **Latest models** - Cohere Transcribe? Turbo-v3? Parakeet TDT V3? Latest and greatest
+- **Latest models** - Cohere Transcribe? Turbo-v3? Parakeet TDT V3? Qwen3-ASR? Latest and greatest
 - **GPU memory efficient** - Limit or zero memory usage easily, more for other local models
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
+- **Strong CJK support** - Qwen3-ASR leads open models on Chinese, Japanese and Korean
 - **Translation** - Translate non-English to English with a single config
 - **REST API or websockets** - Secure, fast wires to top clouds like Gemini, ElevenLabs
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy and Noctalia themes
@@ -105,7 +106,7 @@ cd hyprwhspr
 
 **Setup then walks you through:**
 
-1. ✅ Configure transcription backend (Cohere Transcribe, Parakeet TDT V3, Whisper, REST API, or Realtime WebSocket)
+1. ✅ Configure transcription backend (Cohere Transcribe, Parakeet TDT V3, Whisper, Qwen3-ASR, REST API, or Realtime WebSocket)
 2. ✅ Download models
 3. ✅ Configure themed visualizer for maximum coolness (optional)
 4. ✅ Configure bar integration for your shell -- Waybar or Noctalia (optional)
@@ -172,7 +173,7 @@ For full configuration and customization, see the **[Configuration guide](docs/C
 - [Minimal configuration](docs/CONFIGURATION.md#minimal-configuration)
 - [Recording modes](docs/CONFIGURATION.md#recording-modes) -- toggle, push-to-talk, auto, long-form
 - [Custom hotkeys](docs/CONFIGURATION.md#custom-hotkeys) -- key support, secondary shortcuts, Hyprland bindings
-- [Backends](docs/CONFIGURATION.md#backends) -- Cohere Transcribe, Parakeet, Whisper, REST API, Realtime WebSocket
+- [Backends](docs/CONFIGURATION.md#backends) -- Cohere Transcribe, Parakeet, Whisper, Qwen3-ASR, REST API, Realtime WebSocket
 - [GPU resource management](docs/CONFIGURATION.md#gpu-resource-management) -- unload/reload model to free VRAM
 - [Audio and visual feedback](docs/CONFIGURATION.md#audio-and-visual-feedback) -- visualizer, audio feedback, ducking
 - [Text processing](docs/CONFIGURATION.md#text-processing) -- word overrides, filler words, symbol replacements

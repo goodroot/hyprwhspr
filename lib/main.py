@@ -2486,7 +2486,9 @@ class hyprwhsprApp:
         # 4 GB model onto the GPU) run in a background thread so shortcuts and the FIFO
         # listener are active immediately. Recording is blocked until ready.
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        slow_backends = {'cohere-transcribe'}
+        # qwen3-asr spawns a llama.cpp sidecar and waits on it loading a
+        # multi-GB GGUF pair, so it belongs here alongside cohere-transcribe.
+        slow_backends = {'cohere-transcribe', 'qwen3-asr'}
         if backend in slow_backends:
             print(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...", flush=True)
             self._start_backend_init_background()
