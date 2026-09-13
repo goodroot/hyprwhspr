@@ -581,13 +581,9 @@ Controls how Whisper searches for the best transcription. Applies to `pywhisperc
 
 ### Qwen3-ASR (experimental)
 
-Local [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) via a pinned llama.cpp sidecar.
+[Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR), local through a pinned llama.cpp sidecar. Best for Chinese, Japanese and Korean. Thirty languages; 22 Chinese dialects.
 
-Run `hyprwhspr setup` and select **[7] Qwen3-ASR** to install.
-
-**Best for:** Chinese, Japanese and Korean — Qwen3-ASR-1.7B beats Whisper-large-v3 across most benchmarks and leads open models on CJK. Also a good multilingual choice at 30 languages plus 22 Chinese dialects.
-
-Transcription runs in a private `llama-server` process rather than in the venv, so selecting this backend installs **no new Python packages**. Setup fetches a pinned llama.cpp runtime (17–34 MB) alongside the model pair.
+Run `hyprwhspr setup`; choose **[7] Qwen3-ASR**. It adds no Python packages—only the runtime (17–34 MB) and model pair.
 
 ```jsonc
 {
@@ -598,24 +594,26 @@ Transcription runs in a private `llama-server` process rather than in the venv, 
 }
 ```
 
-`auto` keeps using a runtime that is already installed, otherwise it picks Vulkan when a hardware GPU is present and CPU when not. There is no CUDA option — llama.cpp publishes no Linux CUDA build, and its Vulkan build covers NVIDIA, AMD and Intel alike.
+`auto` keeps an installed runtime. Otherwise: Vulkan when found, CPU when not. Vulkan covers NVIDIA, AMD and Intel; there is no Linux CUDA build.
 
-Recordings longer than two minutes are split at natural pauses where possible and rejoined automatically, so long-form and long files work normally. Setting `language` is recommended for long recordings: each segment is otherwise language-detected on its own, and hyprwhspr can only pin the first detection on a best-effort basis.
+Long audio splits at pauses, then joins again. Set `language` when you can; without it, the first useful segment guides the rest.
 
 #### Available models
 
 | Model | Size | Notes |
 |-------|------|-------|
-| `1.7b-q8_0` | ~2.4 GB | **Recommended** — the quality tier the benchmarks describe |
-| `0.6b-q8_0` | ~1.0 GB | Smaller and faster, lower accuracy |
+| `1.7b-q8_0` | ~2.4 GB | **Recommended** · best quality |
+| `0.6b-q8_0` | ~1.0 GB | Smaller · faster · less accurate |
 
 Models stored in: `~/.local/share/hyprwhspr/qwen3-asr/models/`
 
 #### Languages
 
-Chinese, Cantonese, English, Japanese, Korean, Arabic, German, French, Spanish, Portuguese, Italian, Russian, Dutch, Polish, Turkish, Thai, Vietnamese, Hindi, Indonesian, Malay and more — 30 languages plus 22 Chinese dialects. An unset `language` auto-detects; a configured ISO code is sent as its English name, because llama.cpp passes the value into the model's prompt and Qwen reasons in language names.
+Chinese, Cantonese, English, Japanese, Korean, Arabic, German, French, Spanish, Portuguese, Italian, Russian, Dutch, Polish, Turkish, Thai, Vietnamese, Hindi, Indonesian, Malay and more.
 
-> **Note:** No streaming, timestamps, forced alignment, or prompt conditioning. `whisper_prompt_*` settings do not apply — this backend sends no prompt.
+Leave `language` unset to detect it. Set an ISO code to hold it steady.
+
+> **Note:** No streaming, timestamps, alignment or prompts. `whisper_prompt_*` does not apply.
 
 ### REST API
 
