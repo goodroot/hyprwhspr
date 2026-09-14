@@ -151,6 +151,12 @@ class QwenBackendTests(unittest.TestCase):
         self.backend._socket_path = Path(self._tmp.name) / "qwen3-asr.sock"
         self.backend._process = Process()
         self._log_path = Path(self._tmp.name) / "server.log"
+        # A failed chunk reaches the desktop through desktop_notify as a critical
+        # notification, so every test in this class runs with the notifier patched
+        # rather than only the tests that assert on it.
+        self.notify_incomplete = mock.patch.object(
+            self.backend, "_notify_incomplete").start()
+        self.addCleanup(mock.patch.stopall)
 
     def _touch(self, name):
         path = Path(self._tmp.name) / name
@@ -239,21 +245,19 @@ class QwenBackendTests(unittest.TestCase):
     def test_partial_failure_notifies_that_the_transcript_is_incomplete(self):
         audio = np.ones(300 * 16000, dtype=np.float32)
         responses = [self._asr("one"), (500, b""), self._asr("three")]
-        with mock.patch.object(self.backend, "_notify_incomplete") as notify, \
-                mock.patch.object(self.backend, "_request", side_effect=responses):
+        with mock.patch.object(self.backend, "_request", side_effect=responses):
             self.assertEqual(
                 self.backend.transcribe(audio, sample_rate=16000), "one three")
-        notify.assert_called_once_with(1, 3)
+        self.notify_incomplete.assert_called_once_with(1, 3)
 
     def test_full_success_and_total_failure_do_not_notify(self):
         audio = np.ones(300 * 16000, dtype=np.float32)
         for label, responses in [("all ok", [self._asr("x")] * 3),
                                  ("all fail", [(500, b"")] * 3)]:
             with self.subTest(label):
-                with mock.patch.object(self.backend, "_notify_incomplete") as notify, \
-                        mock.patch.object(self.backend, "_request", side_effect=responses):
+                with mock.patch.object(self.backend, "_request", side_effect=responses):
                     self.backend.transcribe(audio, sample_rate=16000)
-                notify.assert_not_called()
+                self.notify_incomplete.assert_not_called()
 
     def test_a_failed_chunk_does_not_discard_the_rest(self):
         audio = np.ones(300 * 16000, dtype=np.float32)
