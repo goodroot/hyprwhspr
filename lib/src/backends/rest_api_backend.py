@@ -15,7 +15,6 @@ except ImportError:
     from dependencies import require_package
 
 np = require_package('numpy')
-requests = require_package('requests')
 
 try:
     from ..credential_manager import get_credential
@@ -31,8 +30,20 @@ class RestApiBackend(TranscriptionBackend):
     name = 'rest-api'
     is_local = False
 
+    def __init__(self, manager):
+        super().__init__(manager)
+        self._requests = None
+
+    def _requests_client(self):
+        """Load the REST-only dependency when this backend is actually used."""
+        if self._requests is None:
+            self._requests = require_package('requests')
+        return self._requests
+
     def initialize(self) -> bool:
         """Configure REST API backend"""
+        self._requests_client()
+
         # Attempt migration of API key if needed (backup in case config was loaded before migration)
         self.config.migrate_api_key_to_credential_manager()
 
@@ -104,6 +115,7 @@ class RestApiBackend(TranscriptionBackend):
         Returns:
             Transcribed text string
         """
+        requests = self._requests_client()
         try:
 
             # Get REST endpoint configuration

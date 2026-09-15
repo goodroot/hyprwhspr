@@ -1,6 +1,9 @@
+import subprocess
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
@@ -50,6 +53,55 @@ class BackendProxyTests(unittest.TestCase):
         for name, cls in BACKENDS.items():
             self.assertEqual(cls.name, name)
             self.assertTrue(issubclass(cls, TranscriptionBackend))
+
+    def test_backend_registry_import_does_not_require_requests(self):
+        script = f'''\
+import importlib.abc
+import sys
+
+class BlockRequests(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "requests" or fullname.startswith("requests."):
+            raise ModuleNotFoundError("No module named 'requests'")
+        return None
+
+sys.meta_path.insert(0, BlockRequests())
+sys.path.insert(0, {str(ROOT / "lib" / "src")!r})
+from whisper_manager import WhisperManager
+from backends import BACKENDS
+assert "qwen3-asr" in BACKENDS
+assert WhisperManager is not None
+'''
+        result = subprocess.run(
+            [sys.executable, '-I', '-c', script],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_rest_backend_loads_requests_when_initialized(self):
+        config = mock.Mock()
+        config.get_setting.side_effect = lambda key, default=None: {
+            'rest_endpoint_url': 'https://example.invalid/transcribe',
+        }.get(key, default)
+        manager = SimpleNamespace(
+            config=config,
+            current_model='old',
+            ready=False,
+            temp_dir='/tmp',
+            _last_use_time=0.0,
+        )
+        backend = BACKENDS['rest-api'](manager)
+        client = object()
+
+        with mock.patch(
+                'backends.rest_api_backend.require_package',
+                return_value=client,
+        ) as require:
+            self.assertTrue(backend.initialize())
+
+        require.assert_called_once_with('requests')
+        self.assertIs(backend._requests, client)
 
 
 if __name__ == "__main__":
