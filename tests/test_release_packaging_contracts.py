@@ -53,6 +53,14 @@ class ReleasePackagingContractTests(unittest.TestCase):
         self.assertIn("runtime_dir = USER_BASE / 'runtime'", source)
         self.assertIn("Optional GUI runtimes", source)
 
+    def test_release_smoke_installs_pulsectl_native_runtime(self):
+        workflow = (ROOT / ".github" / "workflows" / "release-application.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("apt-get install -y", workflow)
+        self.assertIn("libpulse0", workflow)
+        self.assertIn("pulseaudio-libs", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
