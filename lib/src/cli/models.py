@@ -468,14 +468,21 @@ def faster_whisper_model_status():
         log_warning("No faster-whisper models downloaded yet.")
         return
 
-    model_dirs = sorted(hf_hub_dir.glob('models--Systran--faster-whisper-*'))
+    # faster-whisper resolves model names across HF namespaces: the classic
+    # Systran/faster-whisper-* family and the newer mobiuslabsgmbh/
+    # faster-whisper-* family (large-v3-turbo, turbo). Scan the whole
+    # 'models--*--faster-whisper-*' pattern instead of hardcoding Systran.
+    model_dirs = sorted(
+        hf_hub_dir.glob('models--*--faster-whisper-*'),
+        key=lambda d: d.name)
     if not model_dirs:
         log_warning("No faster-whisper models found in ~/.cache/huggingface/hub/")
         return
 
     print("Installed faster-whisper models:")
     for model_dir in model_dirs:
-        model_name = model_dir.name.replace('models--Systran--faster-whisper-', '')
+        model_name = model_dir.name.split('--', 2)[-1]
+        model_name = model_name.replace('faster-whisper-', '', 1)
         # Calculate total size
         total_bytes = sum(f.stat().st_size for f in model_dir.rglob('*') if f.is_file())
         size_mb = total_bytes / (1024 * 1024)
