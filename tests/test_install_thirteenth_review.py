@@ -89,7 +89,7 @@ class ThirteenthReviewTests(fixtures.ManagedFixture):
             with self.assertRaisesRegex(RuntimeError, 'Conflicting command'):
                 self.install.check_integrations()
 
-    def permission_setup(self, missing_user=False):
+    def permission_setup(self, missing_user=False, rule_exists=True, uinput_writable=True):
         import pwd
         import grp
         with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}', 'SUDO_USER': 'target'}), \
@@ -99,8 +99,9 @@ class ThirteenthReviewTests(fixtures.ManagedFixture):
                 mock.patch.object(grp, 'getgrnam', side_effect=lambda name: mock.Mock(gr_gid={'input': 777, 'audio': 888, 'tty': 444}[name])), \
                 mock.patch.object(grp, 'getgrgid', side_effect=AssertionError('Do not resolve unrelated GIDs')), \
                 mock.patch.object(setup, 'run_sudo_command', return_value=mock.Mock(returncode=0)) as sudo, \
-                mock.patch.object(setup, '_select_uinput_rule', return_value=mock.Mock(exists=lambda: True)), \
+                mock.patch.object(setup, '_select_uinput_rule', return_value=mock.Mock(exists=lambda: rule_exists)), \
                 mock.patch.object(Path, 'exists', return_value=True), \
+                mock.patch.object(os, 'access', return_value=uinput_writable), \
                 mock.patch.object(managed, 'record_permission') as record:
             setup.setup_permissions()
         return groups, sudo, record
@@ -116,6 +117,25 @@ class ThirteenthReviewTests(fixtures.ManagedFixture):
         _, sudo, record = self.permission_setup(missing_user=True)
         self.assertIn(mock.call(['usermod', '-a', '-G', 'input,audio,tty', 'target'], check=False), sudo.call_args_list)
         record.assert_not_called()
+
+    UDEV_RELOAD = [['udevadm', 'control', '--reload-rules'], ['udevadm', 'trigger', '--name-match=uinput']]
+
+    def test_existing_uinput_rule_with_usable_device_is_not_reloaded_or_retriggered(self):
+        _, sudo, _ = self.permission_setup()
+        commands = [call.args[0] for call in sudo.call_args_list]
+        self.assertEqual(commands, [['usermod', '-a', '-G', 'input,audio,tty', 'target']])
+
+    def test_new_uinput_rule_is_reloaded_and_retriggered(self):
+        _, sudo, _ = self.permission_setup(rule_exists=False)
+        commands = [call.args[0] for call in sudo.call_args_list]
+        self.assertEqual(commands[-2:], self.UDEV_RELOAD)
+
+    def test_existing_rule_is_retriggered_when_device_is_still_unwritable(self):
+        # The documented repair path: the rule was left by a failed run or written
+        # by hand, so /dev/uinput still carries its pre-rule ownership.
+        _, sudo, _ = self.permission_setup(uinput_writable=False)
+        commands = [call.args[0] for call in sudo.call_args_list]
+        self.assertEqual(commands[-2:], self.UDEV_RELOAD)
 
     def test_unreadable_recorded_model_is_preserved(self):
         real_digest = managed.digest

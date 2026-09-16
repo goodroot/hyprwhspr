@@ -1642,6 +1642,7 @@ def setup_permissions():
     # group is needed mainly for the global hotkey, which reads /dev/input/event*
     # via evdev (no uaccess ACL there) — not for the ydotool paste path.
     udev_rule = _select_uinput_rule()
+    udev_rule_created = False
     if not udev_rule.exists():
         log_info("Creating udev rule...")
         rule_content = UINPUT_RULE_CONTENT
@@ -1662,6 +1663,7 @@ def setup_permissions():
                 except (OSError, ValueError, TypeError, ImportError) as exc:
                     log_warning(f'Created the udev rule but could not record ownership: {exc}')
                 log_success("udev rule created")
+                udev_rule_created = True
             else:
                 log_warning(f"Failed to create udev rule (exit code {result.returncode})")
                 log_info("You may need to run manually: sudo tee /etc/udev/rules.d/99-hyprwhspr-uinput.rules")
@@ -1672,19 +1674,30 @@ def setup_permissions():
     else:
         log_info("udev rule already exists")
 
-    # Reload udev
-    try:
-        result1 = run_sudo_command(['udevadm', 'control', '--reload-rules'], check=False)
-        result2 = run_sudo_command(['udevadm', 'trigger', '--name-match=uinput'], check=False)
-        if result1.returncode == 0 and result2.returncode == 0:
-            log_success("udev rules reloaded")
-        else:
-            log_warning("Failed to reload udev rules")
-            log_info("You may need to run manually: sudo udevadm control --reload-rules && sudo udevadm trigger")
+    # Reload udev when this run changed the rules, or when /dev/uinput is still
+    # not writable. udev only applies GROUP=/MODE= on a device event, so a rule
+    # left by an earlier failed run — or written by hand, as the hint above asks
+    # — does nothing for the already-present node until it is re-triggered. This
+    # is the documented repair path ("re-run hyprwhspr setup"), so it must not be
+    # skipped just because the rule file happens to exist.
+    uinput_device = Path('/dev/uinput')
+    if udev_rule_created or (uinput_device.exists() and not os.access(uinput_device, os.W_OK)):
+        try:
+            result1 = run_sudo_command(['udevadm', 'control', '--reload-rules'], check=False)
+            result2 = run_sudo_command(['udevadm', 'trigger', '--name-match=uinput'], check=False)
+            if (result1.returncode == 0 and result2.returncode == 0) or os.access(uinput_device, os.W_OK):
+                # `udevadm trigger` can report EINVAL on otherwise correctly
+                # configured systems; a writable device means it did its job.
+                log_success("udev rules reloaded")
+            else:
+                log_warning("Failed to reload udev rules")
+                log_info("You may need to run manually: sudo udevadm control --reload-rules && sudo udevadm trigger")
+                any_failures = True
+        except Exception as e:
+            log_warning(f"Failed to reload udev rules: {e}")
             any_failures = True
-    except Exception as e:
-        log_warning(f"Failed to reload udev rules: {e}")
-        any_failures = True
+    else:
+        log_info("udev rules already applied")
 
     if any_failures:
         log_warning("Some permission setup commands failed. You may need to run them manually as root.")
