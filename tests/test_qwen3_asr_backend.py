@@ -1,5 +1,7 @@
 import json
+import subprocess
 import sys
+import threading
 import time
 import unittest
 import tempfile
@@ -419,6 +421,45 @@ class QwenBackendTests(unittest.TestCase):
             self.assertFalse(self.backend._start())
         self.assertNotEqual(captured.get("stderr"), sp.PIPE)
         self.assertIsNotNone(captured.get("stderr"))
+
+    def test_sidecar_survives_its_launching_thread(self):
+        real_popen = subprocess.Popen
+        launched = {}
+
+        def launch_harmless_child(args, **kwargs):
+            self.assertNotIn("preexec_fn", kwargs)
+            process = real_popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+            launched["process"] = process
+            return process
+
+        def start():
+            try:
+                launched["started"] = self.backend._start()
+            except BaseException as exc:
+                launched["error"] = exc
+
+        with mock.patch.object(qwen3_asr_backend.subprocess, "Popen",
+                               side_effect=launch_harmless_child), \
+                mock.patch.object(qwen3_asr_backend, "server_path",
+                                  return_value=self._touch("llama-server")), \
+                mock.patch.object(qwen3_asr_backend, "model_paths",
+                                  return_value=(self._touch("d.gguf"), self._touch("p.gguf"))), \
+                mock.patch.object(qwen3_asr_backend, "QWEN3_ASR_LOG", self._log_path), \
+                mock.patch.object(self.backend, "_request", return_value=(200, b"ok")):
+            thread = threading.Thread(target=start)
+            try:
+                thread.start()
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
+                if "error" in launched:
+                    raise launched["error"]
+                self.assertTrue(launched["started"])
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    launched["process"].wait(timeout=1)
+            finally:
+                if "process" in launched:
+                    self.backend._stop()
 
     def test_cleanup_terminates_and_reaps_child(self):
         process = self.backend._process

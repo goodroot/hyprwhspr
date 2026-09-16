@@ -1,11 +1,9 @@
 """Qwen3-ASR batch backend using a private pinned llama-server sidecar."""
 
-import ctypes
 import http.client
 import json
 import os
 import re
-import signal
 import socket
 import subprocess
 import time
@@ -45,8 +43,6 @@ _PREFIX = re.compile(r"^\s*language\s+([^<\r\n]+?)\s*<asr_text>\s*", re.IGNORECA
 _TRAILING_TOKENS = re.compile(
     r"\s*(?:<\|(?:endoftext|im_end|end)\|>|</s>|<asr_text>)\s*$", re.IGNORECASE)
 
-_PR_SET_PDEATHSIG = 1
-
 # Minimum gap between sidecar restarts. This bounds a crash loop — including the
 # retry inside a single transcribe() — without ever permanently disabling the
 # backend: two unrelated crashes hours apart each get their own restart, where a
@@ -73,14 +69,6 @@ _CHUNK_BUCKET_SECONDS = 0.1
 # clean multiple of the cap can otherwise strand a fraction of a second into its
 # own sidecar round trip that transcribes to nothing.
 _CHUNK_MIN_TAIL_SECONDS = 3
-
-# Resolved at import, never inside preexec_fn: that hook runs between fork and
-# exec, where dlopen() can deadlock if another thread held the loader lock at
-# fork time — and the service is multithreaded.
-try:
-    _LIBC = ctypes.CDLL("libc.so.6", use_errno=True)
-except OSError:
-    _LIBC = None
 
 
 class _UnixHTTPConnection(http.client.HTTPConnection):
@@ -169,21 +157,6 @@ def split_for_transcription(audio_data, sample_rate: int, max_seconds: int):
     return chunks
 
 
-def _die_with_parent():
-    """Ask the kernel to SIGTERM the sidecar if hyprwhspr dies abruptly.
-
-    Without this a SIGKILL of the service orphans llama-server holding the whole
-    model resident; the next start binds a fresh socket, so the orphan leaks
-    invisibly.
-    """
-    if _LIBC is None:
-        return
-    try:
-        _LIBC.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
-    except Exception:
-        pass
-
-
 class Qwen3AsrBackend(TranscriptionBackend):
     name = "qwen3-asr"
     # Idle reinit exists to refresh a GPU context invalidated by suspend. The
@@ -254,8 +227,7 @@ class Qwen3AsrBackend(TranscriptionBackend):
             log_handle = QWEN3_ASR_LOG.open("wb")
             self._process = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                                              stdout=subprocess.DEVNULL,
-                                             stderr=log_handle, env=env,
-                                             preexec_fn=_die_with_parent)
+                                             stderr=log_handle, env=env)
             # Floor of 60 s, but a raised qwen3_asr_timeout must be able to
             # extend it: a cold 2.4 GB Q8 load or a first-run Vulkan pipeline
             # build can exceed a minute.
