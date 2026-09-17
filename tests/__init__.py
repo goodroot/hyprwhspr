@@ -15,11 +15,19 @@ model from HuggingFace mid-test-run). Loopback and unix sockets stay allowed.
 Two layers: socket.connect catches any HTTP client on machines with direct
 network access; the urllib wrappers inspect the requested URL so proxied
 environments (where every connection is to a localhost proxy) are covered too.
+
+Notification guard: block the notify-send/gdbus delivery commands, so a test
+that reaches a real notify() cannot post into the developer's own notification
+center (this happened: a partial-failure test left a critical "Qwen3-ASR: 1 of
+3 segments failed" entry sitting in the notification center, with nothing in
+the service log to explain it). Critical notifications never expire, so these
+linger until dismissed by hand.
 """
 import atexit
 import os
 import shutil
 import socket
+import subprocess
 import tempfile
 import urllib.request
 from urllib.parse import urlparse
@@ -77,3 +85,49 @@ def _guarded_urlretrieve(url, *args, **kwargs):
 
 urllib.request.urlopen = _guarded_urlopen
 urllib.request.urlretrieve = _guarded_urlretrieve
+
+
+_NOTIFY_OBJECT = "org.freedesktop.Notifications"
+
+
+def _is_notification_command(args):
+    """True for the two delivery commands desktop_notify shells out to."""
+    if isinstance(args, str):
+        argv = args.split()
+    elif isinstance(args, (list, tuple)):
+        argv = [str(a) for a in args]
+    else:
+        return False
+    if not argv:
+        return False
+    program = os.path.basename(argv[0])
+    if program == "notify-send":
+        return True
+    return program == "gdbus" and any(_NOTIFY_OBJECT in a for a in argv)
+
+
+_real_run = subprocess.run
+_real_popen_init = subprocess.Popen.__init__
+
+
+def _guarded_run(args, *rest, **kwargs):
+    if _is_notification_command(args):
+        _refuse_notification(args)
+    return _real_run(args, *rest, **kwargs)
+
+
+def _guarded_popen_init(self, args, *rest, **kwargs):
+    if _is_notification_command(args):
+        _refuse_notification(args)
+    return _real_popen_init(self, args, *rest, **kwargs)
+
+
+def _refuse_notification(args):
+    raise RuntimeError(
+        f"test attempted a real desktop notification via {args!r} - "
+        "mock the notify path (callers swallow this error)"
+    )
+
+
+subprocess.run = _guarded_run
+subprocess.Popen.__init__ = _guarded_popen_init
