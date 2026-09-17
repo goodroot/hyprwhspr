@@ -40,6 +40,8 @@ from .models import (model_status, onnx_asr_model_status,
                      faster_whisper_model_status, cohere_transcribe_model_status,
                      qwen3_asr_model_status)
 from .waybar import waybar_status
+from .noctalia import (_noctalia_detected, _noctalia_integration_installed,
+                       noctalia_status)
 
 
 # ==================== Status Command ====================
@@ -81,6 +83,16 @@ def status_command():
     # Check waybar config
     print("\n[Waybar Integration]")
     waybar_status()
+
+    # Check Noctalia integration (only meaningful when the shell is present,
+    # and only in detail once the integration has actually been installed)
+    print("\n[Noctalia Integration]")
+    if not _noctalia_detected():
+        log_info("Noctalia not detected - skipping")
+    elif not _noctalia_integration_installed():
+        log_info("Noctalia detected, integration not installed (run: hyprwhspr noctalia install)")
+    else:
+        noctalia_status()
     
     # Check user config
     print("\n[User Config]")

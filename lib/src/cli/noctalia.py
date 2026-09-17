@@ -49,6 +49,17 @@ def _noctalia_detected() -> bool:
     return _noctalia_paths()['settings'].exists()
 
 
+def _noctalia_integration_installed() -> bool:
+    """True when hyprwhspr's Noctalia pieces have been installed at all.
+
+    Distinguishes 'integration is broken' from 'user runs Noctalia but never
+    asked for the integration', so status can stay quiet about the latter.
+    """
+    dst = _noctalia_paths()
+    return ((dst['plugin_dir'] / 'plugin.toml').exists()
+            or dst['template_input'].exists())
+
+
 def _noctalia_msg(*args) -> bool:
     """Send a command to a running Noctalia instance (best effort)."""
     if shutil.which('noctalia') is None:
