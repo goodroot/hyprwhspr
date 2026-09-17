@@ -1045,6 +1045,12 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         self.assertEqual(detect.call_count, 2)
 
+    def test_standard_polish_layout_is_type_safe(self):
+        injector = self._injector()
+
+        with mock.patch.object(injector, "_detect_active_layout", return_value="pl"):
+            self.assertTrue(injector._layout_is_type_safe())
+
     def test_clipboard_restore_default_delay_is_config_default(self):
         injector = self._injector()
 

@@ -503,15 +503,17 @@ class TextInjector:
         return layout
 
     def _layout_is_type_safe(self) -> bool:
-        """True unless we positively detect a non-US keyboard layout.
+        """True for layouts whose unmodified ASCII keys match US QWERTY.
 
         `ydotool type` assumes US/QWERTY keycodes and can only emit ASCII, so on
         non-US layouts (de, fr, ...) it mangles output (z<->y, ?-> _, dropped
-        umlauts). There we must use layout-independent clipboard paste instead.
-        Conservative toward the status quo: an unknown layout keeps direct typing.
+        umlauts). The standard Polish layout keeps the US ASCII positions and adds
+        Polish characters through AltGr, so it is safe for ASCII direct typing.
+        Other layouts use layout-independent clipboard paste instead. Conservative
+        toward the status quo: an unknown layout keeps direct typing.
         """
         layout = self._detect_active_layout()
-        return layout == '' or layout.startswith('us')
+        return layout == '' or layout.startswith('us') or layout == 'pl'
 
     def _force_clipboard_paste(self) -> bool:
         """User override (config `prefer_clipboard_paste`): always use verbatim
