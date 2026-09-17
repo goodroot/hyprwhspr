@@ -1,4 +1,5 @@
 import io
+import shutil
 import subprocess
 import sys
 import types
@@ -20,6 +21,9 @@ from text_injector import (
     _PostTranscriptionHookOutcome,
 )
 
+
+import keyboard_layout
+import text_injector
 
 from tests.text_injector_helpers import ConfigStub, make_injector
 
@@ -936,6 +940,33 @@ class TextInjectorInjectionTests(unittest.TestCase):
         paste_chord.assert_called_once_with("ctrl+v")
         direct_type.assert_not_called()
 
+    def test_non_ascii_text_skips_the_layout_probe(self):
+        """Non-ASCII pastes whatever the layout is, so don't pay to compile it."""
+        injector = self._injector()
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b""),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True),
+            mock.patch.object(injector, "_layout_is_type_safe") as type_safe,
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey("zażółć"))
+
+        type_safe.assert_not_called()
+
     def test_gnome_failed_paste_restores_previous_clipboard(self):
         injector = self._injector()
 
@@ -1037,19 +1068,146 @@ class TextInjectorInjectionTests(unittest.TestCase):
     def test_layout_type_safe_redetects_each_call(self):
         injector = self._injector()
 
-        with mock.patch.object(
-            injector, "_detect_active_layout", side_effect=["us", "de"]
-        ) as detect:
+        with (
+            mock.patch.object(
+                injector, "_detect_active_layout", side_effect=[("us", ""), ("de", "")]
+            ) as detect,
+            mock.patch.object(
+                text_injector.keyboard_layout,
+                "ascii_positions_match_us",
+                side_effect=[True, False],
+            ),
+        ):
             self.assertTrue(injector._layout_is_type_safe())
             self.assertFalse(injector._layout_is_type_safe())
 
         self.assertEqual(detect.call_count, 2)
 
+    @unittest.skipUnless(shutil.which("xkbcli"), "xkbcli not installed")
     def test_standard_polish_layout_is_type_safe(self):
+        """pl keeps US ASCII positions and reaches Polish glyphs via AltGr."""
+        injector = self._injector()
+        keyboard_layout.reset_caches()
+
+        with mock.patch.object(
+            injector, "_detect_active_layout", return_value=("pl", "")
+        ):
+            self.assertTrue(injector._layout_is_type_safe())
+
+    @unittest.skipUnless(shutil.which("xkbcli"), "xkbcli not installed")
+    def test_polish_qwertz_variant_is_not_type_safe(self):
+        """pl(qwertz) swaps z/y, so ydotool type would mangle ASCII."""
+        injector = self._injector()
+        keyboard_layout.reset_caches()
+
+        with mock.patch.object(
+            injector, "_detect_active_layout", return_value=("pl", "qwertz")
+        ):
+            self.assertFalse(injector._layout_is_type_safe())
+
+    @unittest.skipUnless(shutil.which("xkbcli"), "xkbcli not installed")
+    def test_us_dvorak_variant_is_not_type_safe(self):
+        injector = self._injector()
+        keyboard_layout.reset_caches()
+
+        with mock.patch.object(
+            injector, "_detect_active_layout", return_value=("us", "dvorak")
+        ):
+            self.assertFalse(injector._layout_is_type_safe())
+
+    def test_gnome_source_id_variant_is_detected(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(
+            returncode=0, stdout="[('xkb', 'pl+dvorak'), ('xkb', 'us')]"
+        )
+
+        with mock.patch("text_injector.subprocess.run", return_value=completed):
+            self.assertEqual(injector._detect_active_layout(), ("pl", "dvorak"))
+
+    def test_localectl_variant_is_detected(self):
+        injector = self._injector()
+        calls = [
+            types.SimpleNamespace(returncode=1, stdout=""),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout="   X11 Layout: pl\n  X11 Variant: dvorak\n",
+            ),
+        ]
+
+        with mock.patch("text_injector.subprocess.run", side_effect=calls):
+            self.assertEqual(injector._detect_active_layout(), ("pl", "dvorak"))
+
+    def test_localectl_unset_variant_is_empty(self):
+        injector = self._injector()
+        calls = [
+            types.SimpleNamespace(returncode=1, stdout=""),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout="   X11 Layout: pl\n  X11 Variant: (unset)\n",
+            ),
+        ]
+
+        with mock.patch("text_injector.subprocess.run", side_effect=calls):
+            self.assertEqual(injector._detect_active_layout(), ("pl", ""))
+
+    def test_localectl_empty_layout_line_does_not_swallow_the_next(self):
+        injector = self._injector()
+        calls = [
+            types.SimpleNamespace(returncode=1, stdout=""),
+            types.SimpleNamespace(
+                returncode=0, stdout="   X11 Layout:\n  X11 Model: pc105\n"
+            ),
+        ]
+
+        with (
+            mock.patch("text_injector.subprocess.run", side_effect=calls),
+            mock.patch.dict("text_injector.os.environ", {}, clear=True),
+        ):
+            self.assertEqual(injector._detect_active_layout(), ("", ""))
+
+    def test_localectl_empty_variant_line_does_not_swallow_the_next(self):
+        injector = self._injector()
+        calls = [
+            types.SimpleNamespace(returncode=1, stdout=""),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout="   X11 Layout: us\n  X11 Variant: \n  X11 Options: grp:alt\n",
+            ),
+        ]
+
+        with mock.patch("text_injector.subprocess.run", side_effect=calls):
+            self.assertEqual(injector._detect_active_layout(), ("us", ""))
+
+    def test_env_variant_is_detected(self):
         injector = self._injector()
 
-        with mock.patch.object(injector, "_detect_active_layout", return_value="pl"):
-            self.assertTrue(injector._layout_is_type_safe())
+        with (
+            mock.patch("text_injector.subprocess.run", side_effect=OSError("no tool")),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {"XKB_DEFAULT_LAYOUT": "pl,us", "XKB_DEFAULT_VARIANT": "dvorak,"},
+                clear=True,
+            ),
+        ):
+            self.assertEqual(injector._detect_active_layout(), ("pl", "dvorak"))
+
+    def test_type_safety_falls_back_to_name_check_without_xkbcli(self):
+        """No xkbcli: only plain us keeps direct typing, everything else pastes."""
+        injector = self._injector()
+
+        with mock.patch.object(
+            text_injector.keyboard_layout, "ascii_positions_match_us", return_value=None
+        ):
+            for layout, variant, expected in [
+                ("us", "", True),
+                ("us", "dvorak", False),
+                ("pl", "", False),
+                ("de", "", False),
+            ]:
+                with mock.patch.object(
+                    injector, "_detect_active_layout", return_value=(layout, variant)
+                ):
+                    self.assertIs(injector._layout_is_type_safe(), expected)
 
     def test_clipboard_restore_default_delay_is_config_default(self):
         injector = self._injector()
@@ -1087,7 +1245,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
         ]
 
         with mock.patch("text_injector.subprocess.run", side_effect=calls):
-            self.assertEqual(injector._detect_active_layout(), "")
+            self.assertEqual(injector._detect_active_layout(), ("", ""))
 
     def test_gnome_non_xkb_mru_source_is_not_type_safe(self):
         injector = self._injector()
@@ -1110,9 +1268,9 @@ class TextInjectorInjectionTests(unittest.TestCase):
             mock.patch("text_injector.subprocess.run", side_effect=calls) as run,
             mock.patch("text_injector.time.monotonic", side_effect=[10.0, 10.5, 11.2]),
         ):
-            self.assertEqual(injector._detect_active_layout(), "us")
-            self.assertEqual(injector._detect_active_layout(), "us")
-            self.assertEqual(injector._detect_active_layout(), "de")
+            self.assertEqual(injector._detect_active_layout(), ("us", ""))
+            self.assertEqual(injector._detect_active_layout(), ("us", ""))
+            self.assertEqual(injector._detect_active_layout(), ("de", ""))
 
         self.assertEqual(run.call_count, 2)
 
