@@ -94,6 +94,24 @@ class OrukeetTests(unittest.TestCase):
             download.assert_not_called()
             runtime.load_model.assert_called_once_with('nemo-parakeet-tdt-0.6b-v3', quantization='int8')
 
+    def test_status_verifies_only_the_offline_cache(self):
+        from src.cli import models
+        config = types.SimpleNamespace(get_setting=lambda key, default=None: 'orukeet')
+        with patch.object(orukeet, 'download_model', return_value=self.path) as download, \
+             patch.object(models, 'log_success') as success:
+            models.onnx_asr_model_status(config)
+            download.assert_called_once_with(offline=True)
+            success.assert_called_once()
+
+    def test_status_reports_missing_cache_without_downloading(self):
+        from src.cli import models
+        config = types.SimpleNamespace(get_setting=lambda key, default=None: 'orukeet')
+        with patch.object(orukeet, 'download_model', side_effect=FileNotFoundError('missing')) as download, \
+             patch.object(models, 'log_warning') as warning:
+            models.onnx_asr_model_status(config)
+            download.assert_called_once_with(offline=True)
+            warning.assert_called_once()
+
     def test_unsupported_quantization_fails_before_download(self):
         runtime = types.ModuleType('onnx_asr')
         with patch.dict(sys.modules, {'onnx_asr': runtime}), patch.object(orukeet, 'download_model') as download:
