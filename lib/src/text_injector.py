@@ -31,6 +31,11 @@ try:
 except ImportError:
     from filler_filter import filter_filler_words
 
+try:
+    from . import keyboard_layout
+except ImportError:
+    import keyboard_layout
+
 
 class _LazyPyperclip:
     """Load the optional fallback only when native clipboard tools are absent."""
@@ -186,6 +191,7 @@ class InjectionOutcome(Enum):
 
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
 NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'
+_UNSET_LAYOUT_VALUES = {'(unset)', 'unset', 'n/a', 'none'}
 
 PASTE_MODE_CHORDS = {
     'ctrl_shift': 'ctrl+shift+v',
@@ -443,14 +449,14 @@ class TextInjector:
         except Exception:
             return True
 
-    def _read_active_layout(self) -> str:
-        """Best-effort active XKB keyboard layout, lowercased (e.g. 'us', 'de').
+    def _read_active_layout(self) -> Tuple[str, str]:
+        """Best-effort active XKB layout and variant, lowercased: ('pl', 'dvorak').
 
-        Returns '' when undetectable. Returns NON_XKB_INPUT_METHOD_LAYOUT when
+        Returns ('', '') when undetectable, NON_XKB_INPUT_METHOD_LAYOUT when
         GNOME's active source is an input method rather than an XKB layout.
-        Tries, in order: GNOME input-sources
-        (the most-recently-used source is the active one), `localectl` (system
-        X11 layout), then the XKB_DEFAULT_LAYOUT environment variable.
+        Tries, in order: GNOME input-sources (the most-recently-used source is
+        the active one), `localectl`, then XKB_DEFAULT_LAYOUT. The variant
+        counts as much as the layout: pl(dvorak) shares nothing with pl.
         """
         try:
             out = subprocess.run(
@@ -471,47 +477,72 @@ class TextInjector:
                 if sources:
                     source_type, source_id = sources[0][0], sources[0][1]
                     if source_type == 'xkb':
-                        return source_id.split('+')[0].lower()
-                    return NON_XKB_INPUT_METHOD_LAYOUT
+                        # 'pl+dvorak' -> ('pl', 'dvorak')
+                        layout, _, variant = source_id.lower().partition('+')
+                        return layout, variant
+                    return NON_XKB_INPUT_METHOD_LAYOUT, ''
         except Exception:
             pass
         try:
             out = subprocess.run(['localectl', 'status'], capture_output=True, text=True, timeout=2)
             if out.returncode == 0:
-                m = re.search(r'X11 Layout:\s*([^\s,]+)', out.stdout)
+                m = re.search(r'X11 Layout:[^\S\n]*([^\s,]+)', out.stdout)
                 if m:
                     layout = m.group(1).lower()
-                    if layout not in {'(unset)', 'unset', 'n/a', 'none'}:
-                        return layout
+                    if layout not in _UNSET_LAYOUT_VALUES:
+                        return layout, self._first_localectl_variant(out.stdout)
         except Exception:
             pass
         env_layout = os.environ.get('XKB_DEFAULT_LAYOUT', '')
         if env_layout:
-            return env_layout.split(',')[0].strip().lower()
-        return ''
+            variant = os.environ.get('XKB_DEFAULT_VARIANT', '')
+            return (
+                env_layout.split(',')[0].strip().lower(),
+                variant.split(',')[0].strip().lower(),
+            )
+        return '', ''
 
-    def _detect_active_layout(self) -> str:
-        """Return the active layout using a short cache to avoid repeated stalls."""
+    @staticmethod
+    def _first_localectl_variant(status_output: str) -> str:
+        """The `X11 Variant:` line of `localectl status`, '' when absent/unset."""
+        # [^\S\n]* so an empty variant line does not swallow the next one.
+        m = re.search(r'X11 Variant:[^\S\n]*([^\s,]*)', status_output)
+        if not m:
+            return ''
+        variant = m.group(1).lower()
+        return '' if variant in _UNSET_LAYOUT_VALUES else variant
+
+    def _detect_active_layout(self) -> Tuple[str, str]:
+        """Return the active layout/variant using a short cache to avoid stalls."""
         now = time.monotonic()
         cache_time = getattr(self, '_layout_cache_time', None)
         if cache_time is not None and now - cache_time < self._LAYOUT_CACHE_TTL_S:
-            return getattr(self, '_layout_cache_value', '')
+            return getattr(self, '_layout_cache_value', ('', ''))
 
-        layout = self._read_active_layout()
-        self._layout_cache_value = layout
+        detected = self._read_active_layout()
+        self._layout_cache_value = detected
         self._layout_cache_time = now
-        return layout
+        return detected
 
     def _layout_is_type_safe(self) -> bool:
-        """True unless we positively detect a non-US keyboard layout.
+        """True when `ydotool type` would emit ASCII verbatim on this layout.
 
-        `ydotool type` assumes US/QWERTY keycodes and can only emit ASCII, so on
-        non-US layouts (de, fr, ...) it mangles output (z<->y, ?-> _, dropped
-        umlauts). There we must use layout-independent clipboard paste instead.
-        Conservative toward the status quo: an unknown layout keeps direct typing.
+        ydotool holds a built-in US keycode table, so we ask the compiled keymap
+        whether ASCII sits where US puts it rather than keeping a list of country
+        codes — pl and pl(dvorak) sit on opposite sides of that line.
+        Conservative toward the status quo: an undetectable layout keeps direct
+        typing, and without xkbcli we fall back to the name check.
         """
-        layout = self._detect_active_layout()
-        return layout == '' or layout.startswith('us')
+        layout, variant = self._detect_active_layout()
+        if layout == '':
+            return True
+        if layout == NON_XKB_INPUT_METHOD_LAYOUT:
+            return False
+
+        matches_us = keyboard_layout.ascii_positions_match_us(layout, variant)
+        if matches_us is not None:
+            return matches_us
+        return layout == 'us' and not variant
 
     def _force_clipboard_paste(self) -> bool:
         """User override (config `prefer_clipboard_paste`): always use verbatim
@@ -1510,20 +1541,20 @@ except Exception:
 
             # On GNOME/Mutter the layer-shell overlay is unavailable, so we can
             # type directly with `ydotool type` to avoid touching the clipboard.
-            # But that is ONLY correct for pure-ASCII text on a US layout:
-            # ydotool type assumes US keycodes and can't emit non-ASCII, so on a
-            # non-US layout (z<->y, ?-> _) or with umlauts/typographic characters
-            # it mangles the output. In those cases — or with a custom paste
-            # keycode / the prefer_clipboard_paste override — fall through to the
-            # layout-independent verbatim clipboard paste below.
+            # But that is ONLY correct for pure-ASCII text on a layout that keeps
+            # ASCII where US puts it: ydotool type assumes US keycodes and can't
+            # emit non-ASCII, so a layout that moves keys (z<->y, ?-> _) or text
+            # with umlauts/typographic characters comes out mangled. In those
+            # cases — or with a custom paste keycode / the prefer_clipboard_paste
+            # override — fall through to the layout-independent clipboard paste.
             if (
                 gnome_wayland_session
                 and self.ydotool_available
                 and app_match is None
                 and not self._has_custom_paste_keycode()
                 and not self._force_clipboard_paste()
-                and self._layout_is_type_safe()
                 and text.isascii()
+                and self._layout_is_type_safe()
             ):
                 self._clear_stuck_modifiers()
                 time.sleep(0.05)

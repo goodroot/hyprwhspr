@@ -1225,7 +1225,7 @@ Dictation into an app with injection disabled is never retained.
 GNOME/Mutter lacks layer-shell, so visual feedback uses notifications. Injection depends on the session:
 
 - **Window detection** uses the AT-SPI accessibility bridge — `hyprwhspr setup` offers to enable it (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`). Without it, GNOME can't tell terminals apart and paste falls back to Ctrl+V. An explicit `paste_mode` (with no `applications` rules) skips the probe entirely.
-- **GNOME Wayland direct typing:** Mutter blocks `wtype`, so ASCII text on a US layout is typed directly with `ydotool type`; anything else falls back to clipboard paste automatically. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
+- **GNOME Wayland direct typing:** Mutter blocks `wtype`, so ASCII text is typed directly with `ydotool type` on layouts that keep ASCII where US QWERTY does — checked against your compiled XKB keymap, not the layout name, so Polish, Romanian and the like type directly while German, French and any Dvorak/Colemak variant fall back to clipboard paste. Set `"prefer_clipboard_paste": true` to always use clipboard paste.
 - **GNOME X11 clipboard paste:** X11 uses `xclip` and a normal paste chord rather than the Wayland-only direct-typing workaround. GNOME/X11 on Ubuntu 24.04 is the currently validated X11 configuration.
 - **Non-Latin layouts** (Thai, Russian, Arabic, …): no physical key produces a `v` keysym, so hyprwhspr briefly switches to a Latin input source for the paste chord and restores your layout after — just keep a Latin source in Settings → Keyboard → Input Sources.
 
