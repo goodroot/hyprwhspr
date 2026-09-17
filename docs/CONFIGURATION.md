@@ -395,6 +395,20 @@ Run `hyprwhspr setup` and select **[1] Parakeet**. The model (~1 GB) is download
 }
 ```
 
+For optional [Orukeet](https://huggingface.co/oruk/orukeet) local transcription,
+set `"onnx_asr_model": "orukeet"` and keep `"onnx_asr_quantization": "int8"`.
+Orukeet is a Parakeet TDT v3 fine-tune covering 25 European languages. It uses
+the same ONNX backend and VAD threshold as the default model.
+
+The first load downloads about 672 MB from a pinned Hugging Face release. The
+backend verifies the release manifest and every required file's size and SHA-256
+before loading; later loads reuse the verified Hugging Face cache. The manifest
+is used for integrity checking and participates in Hugging Face's normal download
+statistics. Audio stays local. Set `HF_HUB_OFFLINE=1` after installation to require
+cached files. The cache includes the CC BY-SA 4.0 weight license and attribution.
+This model provides final transcription, without translation or streaming partials.
+
+
 Model stored in: `~/.cache/huggingface/hub/`
 
 ### faster-whisper

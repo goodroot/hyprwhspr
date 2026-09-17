@@ -80,7 +80,15 @@ class OnnxAsrBackend(TranscriptionBackend):
             # Suppress stderr during model loading to avoid CUDA library error spam
             # These errors are harmless - ONNX Runtime will fall back to CPU automatically
             with redirect_stderr(StringIO()):
-                if quantization:
+                if model_name == 'orukeet':
+                    from .orukeet import download_model
+                    if quantization != 'int8':
+                        raise ValueError('Orukeet is available as int8; set onnx_asr_quantization to int8')
+                    model_dir = download_model()
+                    self._onnx_asr_model = onnx_asr.load_model(
+                        'nemo-conformer-tdt', path=model_dir, quantization='int8'
+                    )
+                elif quantization:
                     self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
                 else:
                     self._onnx_asr_model = onnx_asr.load_model(model_name)
