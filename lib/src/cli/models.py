@@ -296,8 +296,18 @@ def qwen3_asr_model_status(config=None):
         log_info(f"Also present: {', '.join(others)}")
 
 
-def onnx_asr_model_status():
-    """Check Parakeet/onnx-asr model in Hugging Face cache (~/.cache/huggingface/hub/)"""
+def onnx_asr_model_status(config=None):
+    """Check the configured ONNX model's local cache without downloading."""
+    config = config or ConfigManager()
+    if config.get_setting('onnx_asr_model', '') == 'orukeet':
+        try:
+            from ..backends.orukeet import download_model
+            directory = download_model(offline=True)
+            log_success(f"Orukeet model verified: {directory}")
+        except (ImportError, OSError, ValueError) as error:
+            log_warning(f"Orukeet cache is unavailable or invalid: {error}")
+            log_info("The model is downloaded on first use when the onnx-asr backend starts.")
+        return
     hf_hub_dir = Path.home() / '.cache' / 'huggingface' / 'hub'
     if not hf_hub_dir.exists():
         log_warning("Hugging Face cache directory does not exist (~/.cache/huggingface/hub/)")
@@ -330,9 +340,10 @@ def onnx_asr_model_status():
 
 
 def list_onnx_asr_models():
-    """List Parakeet/onnx-asr model option (single supported model for now)."""
+    """List supported onnx-asr model choices."""
     print("Parakeet (onnx-asr) model:\n")
     print("  - nemo-parakeet-tdt-0.6b-v3  (~1 GB, downloaded during setup)")
+    print("  - orukeet  (~672 MB INT8, optional; set onnx_asr_model in config)")
     print()
     print("Storage: ~/.cache/huggingface/hub/")
     print("To check if the model is cached: hyprwhspr model status")
