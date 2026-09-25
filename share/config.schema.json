@@ -402,6 +402,11 @@
       "default": "turn",
       "description": "OpenAI Realtime converse history: retain the session or delete completed turns"
     },
+    "realtime_incremental_injection": {
+      "type": "boolean",
+      "default": false,
+      "description": "Paste each finalized segment as soon as it lands instead of once when recording stops (append-only; never revises typed text). Requires websocket_provider 'nemo' with a NeMo-Speech.cpp server started with --endpointing."
+    },
     "pywhispercpp_use_vad": {
       "type": "boolean",
       "default": false,

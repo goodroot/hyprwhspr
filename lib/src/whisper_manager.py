@@ -54,6 +54,8 @@ class WhisperManager:
         # Realtime partial-preview callback; owned by the manager (not the
         # realtime backend) so it survives backend re-creation on resume
         self._realtime_partial_callback = None
+        # Same, for incremental (append-only) injection of finalized segments
+        self._realtime_committed_callback = None
 
         # Thread safety for model operations
         # Serializes local model use and backend replacement.  An RLock keeps
@@ -178,6 +180,23 @@ class WhisperManager:
         backend = self._backend
         if backend is not None and backend.name == 'realtime-ws':
             backend.apply_partial_callback(callback)
+
+    def set_realtime_committed_callback(self, callback: Optional[Callable[[str], None]]) -> None:
+        """Set callback for incremental (append-only) injection of each
+        finalized realtime segment as it lands, rather than one paste at the
+        end. Only wired when realtime_incremental_injection is on and the
+        provider supports mid-stream finals (currently 'nemo', whose server
+        must run with --endpointing) - otherwise it is never called."""
+        self._realtime_committed_callback = callback
+        backend = self._backend
+        if backend is not None and backend.name == 'realtime-ws':
+            backend.apply_committed_callback(callback)
+
+    def realtime_delivered_incrementally(self) -> bool:
+        """True when the current recording's text was already injected
+        segment by segment, so an empty final transcript is not a failure."""
+        backend = self._active_realtime_backend()
+        return bool(backend is not None and backend.delivered_incrementally)
 
     def _current_backend_name(self) -> str:
         """Normalized name of the configured transcription backend."""

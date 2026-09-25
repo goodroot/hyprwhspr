@@ -152,6 +152,7 @@ def build_default_config():
         'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
         'realtime_transcription_delay': 'low',  # OpenAI continuous transcription delay: minimal|low|medium|high|xhigh
         'realtime_conversation_history': 'turn',  # OpenAI converse mode: session|turn
+        'realtime_incremental_injection': False,  # Paste each finalized segment mid-recording (nemo + server --endpointing)
         # whisper.cpp (pywhispercpp) backend settings
         'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
         # ONNX-ASR backend settings (CPU-optimized)

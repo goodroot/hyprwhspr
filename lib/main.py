@@ -138,6 +138,8 @@ class hyprwhsprApp:
         # Covers the short stop-recording window before _process_audio claims
         # is_processing, so file requests cannot steal the backend in between.
         self._recording_finalizing = threading.Event()
+        # Worst outcome of segments injected mid-recording (realtime_incremental_injection)
+        self._incremental_outcome = None
         self.audio_level_thread = None
         self._audio_level_stop = threading.Event()  # Signals audio level thread to exit immediately
         self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
@@ -304,6 +306,9 @@ class hyprwhsprApp:
 
         if hasattr(self.whisper_manager, 'set_realtime_partial_callback'):
             self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
+
+        if hasattr(self.whisper_manager, 'set_realtime_committed_callback'):
+            self.whisper_manager.set_realtime_committed_callback(self._inject_committed_segment)
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -1075,6 +1080,7 @@ class hyprwhsprApp:
                 blocked = None
                 # Set flag immediately to prevent duplicate starts
                 self.is_recording = True
+                self._incremental_outcome = None
                 # Store language override for this recording session
                 self._current_language_override = language_override
 
@@ -1505,6 +1511,12 @@ class hyprwhsprApp:
                 # Inject text
                 outcome = self._inject_text(text)
                 success = outcome != InjectionOutcome.FAILED
+            elif self.whisper_manager.realtime_delivered_incrementally():
+                # Segments were already typed as they finalized mid-recording;
+                # the empty remainder isn't a silent recording, and the result
+                # is whatever those segment injections achieved.
+                outcome = self._incremental_outcome
+                success = outcome != InjectionOutcome.FAILED
             else:
                 print("[WARN] No transcription generated")
                 self.audio_manager.play_error_sound()
@@ -1539,6 +1551,37 @@ class hyprwhsprApp:
         if injector is None:
             return False, 'Text delivery is still initializing'
         return injector.recover_last(action)
+
+    def _inject_committed_segment(self, text):
+        """Inject one finalized realtime segment as it lands mid-recording.
+
+        Runs on the realtime receiver thread, once per server-detected pause
+        (realtime_incremental_injection). Returns True when the segment was
+        handled here, so the end-of-recording path knows not to deliver the
+        joined transcript again; False defers everything to that path.
+        """
+        text = (text or '').strip()
+        if not text:
+            return False
+        # A capture client (hyprwhspr record capture) expects one complete
+        # result, so let the normal end-of-recording delivery handle it.
+        if self._recording_control_server.has_capture_subscriber():
+            return False
+        # A segment finalizing after a cancel must not be typed.
+        if not (self.is_recording or self.is_processing or self._recording_finalizing.is_set()):
+            print("[INCREMENTAL] Recording no longer active - segment dropped", flush=True)
+            return False
+        if is_hallucination(text, self.config.get_hallucination_markers()):
+            print(f"[INCREMENTAL] Hallucination ignored: {text!r}", flush=True)
+            return True
+        outcome = self._inject_text(text)
+        if outcome == InjectionOutcome.FAILED:
+            print(f"[INCREMENTAL] Injection failed ({len(text)} chars)", flush=True)
+        # Keep the worst outcome so the recording reports failure if any
+        # segment failed to deliver.
+        if self._incremental_outcome != InjectionOutcome.FAILED:
+            self._incremental_outcome = outcome
+        return True
 
     def _inject_text(self, text):
         """Inject transcribed text into active application"""

@@ -66,6 +66,11 @@ class RealtimeWsBackend(TranscriptionBackend):
         # Owned by the manager so it survives backend re-creation on resume
         return self._manager._realtime_partial_callback
 
+    @property
+    def _realtime_committed_callback(self):
+        # Owned by the manager so it survives backend re-creation on resume
+        return getattr(self._manager, '_realtime_committed_callback', None)
+
     def _update_client_language(
         self,
         language: Optional[str],
@@ -336,6 +341,9 @@ class RealtimeWsBackend(TranscriptionBackend):
             _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
             self._realtime_streaming_callback = _send_direct
 
+            if self._incremental_injection_enabled(provider_id):
+                self.apply_committed_callback(self._realtime_committed_callback)
+
         print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
         print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
 
@@ -428,6 +436,12 @@ class RealtimeWsBackend(TranscriptionBackend):
             # Commit and get text (audio was already streamed via callback)
             transcription = self._realtime_client.commit_and_get_text(timeout=timeout)
             
+            # Segments already delivered one-by-one via the committed-segment
+            # callback (see apply_committed_callback / NemoRealtimeClient) -
+            # returning the joined text here too would paste it twice.
+            if self.delivered_incrementally:
+                return ""
+
             return transcription.strip()
             
         except Exception as e:
@@ -479,6 +493,31 @@ class RealtimeWsBackend(TranscriptionBackend):
         if not enabled:
             self._clear_realtime_partial_preview()
 
+    def _incremental_injection_enabled(self, provider_id: Optional[str]) -> bool:
+        """Opt-in incremental injection, for providers whose client can emit
+        finalized segments mid-recording (currently only 'nemo', which also
+        needs its server started with --endpointing to produce more than one)."""
+        return (
+            provider_id == 'nemo'
+            and bool(self.config.get_setting('realtime_incremental_injection', False))
+        )
+
+    @property
+    def delivered_incrementally(self) -> bool:
+        """Whether this recording's text was already injected segment by
+        segment, so an empty final transcript means success, not silence."""
+        return bool(getattr(self._realtime_client, '_incremental_injected_any', False))
+
+    def apply_committed_callback(self, callback: Optional[Callable[[str], None]]) -> None:
+        """Wire the incremental-injection callback to a provider that supports
+        mid-stream finals (currently only NemoRealtimeClient). A provider
+        without set_committed_segment_callback silently ignores this - it just
+        keeps behaving as it always has, one injection at the end."""
+        if not self._realtime_client:
+            return
+        if hasattr(self._realtime_client, 'set_committed_segment_callback'):
+            self._realtime_client.set_committed_segment_callback(callback)
+
     def _is_partial_preview_enabled(
         self,
         provider_id: str,
@@ -490,6 +529,13 @@ class RealtimeWsBackend(TranscriptionBackend):
             or realtime_mode != 'transcribe'
             or self._realtime_partial_callback is None
         ):
+            return False
+
+        # With incremental injection on, typed text IS the live feedback - it
+        # just lands a beat after the preview would (a segment finalizes only
+        # after the server's end-of-utterance silence). Showing both reads as
+        # a stale duplicate, so the preview yields.
+        if self._incremental_injection_enabled(provider_id):
             return False
 
         # Pill: any provider with partial-transcript support qualifies.

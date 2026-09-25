@@ -42,12 +42,62 @@ class NemoRealtimeClient(RealtimeClient):
         # it to 24000. Put it back for this provider's actual model rate.
         self.sample_rate = 16000
 
+        # Incremental (append-only) injection: fired once per finalized
+        # segment as it lands, instead of waiting for the whole recording to
+        # stop. Requires the server started with --endpointing (see
+        # docs/asr/configuration.md), which makes it emit multiple
+        # conversation.item.input_audio_transcription.completed events per
+        # stream - one per detected pause - rather than only when the client
+        # sends input_audio_buffer.commit. Without --endpointing this callback
+        # simply fires once, same as every other provider.
+        self._committed_segment_callback = None
+        self._incremental_injected_any = False
+
     def _ws_connect_params(self):
         # The server only checks auth when started with --api-key; without a
         # stored key, send no header rather than a literal "Bearer None".
         if self.api_key:
             return self.url, {'Authorization': f'Bearer {self.api_key}'}
         return self.url, None
+
+    def set_committed_segment_callback(self, callback):
+        """Register a callback invoked with each finalized segment's text as
+        it completes mid-stream, for incremental append-only injection."""
+        self._committed_segment_callback = callback
+
+    def clear_audio_buffer(self):
+        super().clear_audio_buffer()
+        self._incremental_injected_any = False
+
+    def _handle_event(self, event: dict):
+        # Deliver the segment BEFORE the shared handling runs: that handling
+        # sets response_event, which wakes commit_and_get_text() on the main
+        # thread. If the callback ran after it, a recording whose only segment
+        # is the final one could be pasted twice - once here and once from the
+        # joined transcript, before _incremental_injected_any was set.
+        if (
+            self._committed_segment_callback
+            and event.get('type') == 'conversation.item.input_audio_transcription.completed'
+            and not self._is_retired_item(event)
+        ):
+            # NeMo-Speech.cpp always populates `transcript` on this event
+            # (unlike providers the base class falls back to the partial
+            # buffer for), so reading it directly here is safe.
+            transcript = (event.get('transcript') or '').strip()
+            if transcript:
+                # Only a segment the callback actually took counts as
+                # delivered; one it deferred (returned falsy) stays in the
+                # joined transcript for the normal end-of-recording path.
+                try:
+                    if self._committed_segment_callback(transcript):
+                        self._incremental_injected_any = True
+                except Exception as e:
+                    self._log(f'Committed-segment callback failed: {e}')
+
+        # Shared OpenAI-shaped handling: buffers the segment into
+        # _committed_segments, so the joined transcript still exists as a
+        # fallback for deferred segments and callers without a callback.
+        super()._handle_event(event)
 
     def _send_session_update(self):
         """Send the flat session.update shape NeMo-Speech.cpp's /v1/realtime expects."""
