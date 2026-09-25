@@ -316,7 +316,7 @@ For up-to-date accuracy rankings across open-source models, see the [Open ASR Le
 | whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Fast | 99 | Very good | — |
 | Qwen3-ASR | Local | Vulkan or CPU | Fast | 30 (+22 zh dialects) | Best for CJK | Experimental · sidecar process |
 | REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
-| Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs |
+| Realtime WebSocket | Cloud or self-hosted | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs, self-hosted NeMo-Speech.cpp |
 
 ### Model commands
 
@@ -680,6 +680,7 @@ Persistent WebSocket streaming. `realtime_mode` selects `transcribe` (speech-to-
 | OpenAI | Yes | Yes, on a `gpt-realtime-*` model |
 | Google Gemini | Yes | Yes |
 | ElevenLabs | Yes | No — hyprwhspr ignores `realtime_mode` |
+| NeMo-Speech.cpp (self-hosted) | Yes | No — hyprwhspr's `nemo` client is transcription-only |
 | Custom | Yes | Yes |
 
 Custom endpoints speak the OpenAI Realtime protocol. Set `websocket_provider: "custom"` and `websocket_url`.
@@ -773,6 +774,29 @@ Uses native 16kHz audio (no resampling) and auto-reconnects on connection drops.
     "websocket_model": "scribe_v2_realtime",
     "realtime_timeout": 30,              // Advanced: seconds to wait after stop for final transcript
     "realtime_buffer_max_seconds": 5     // Advanced: max unsent audio backlog (seconds) before dropping old chunks
+}
+```
+
+#### NeMo-Speech.cpp (self-hosted)
+
+Local streaming transcription against your own [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) server. No API key: the server has no auth unless started with `--api-key`, and the setup wizard asks for one only in that case.
+
+Get the server from its [releases page](https://github.com/NVIDIA/NeMo-Speech.cpp/releases) and the model, [`nemotron-speech-streaming-en-0.6b.q8_0.gguf`](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b/resolve/main/nemotron-speech-streaming-en-0.6b.q8_0.gguf) (700MB, about 2.7GB of VRAM, English only). Start it with:
+
+```bash
+nemo-speech serve --asr-model nemotron-speech-streaming-en-0.6b.q8_0.gguf \
+    --asr.streaming.rnnt_right_context 13
+```
+
+`--asr.streaming.rnnt_right_context 13` gives 1.12s chunks, the setting behind the model card's published WER. The server's default of 1 (160ms chunks) is noticeably less accurate. The server listens on `127.0.0.1:8080`.
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "nemo",
+    "websocket_model": "nemotron-speech-streaming-en-0.6b",
+    "realtime_mode": "transcribe"
+    // "websocket_url": "ws://127.0.0.1:8080/v1/realtime"  // only if the server isn't on the default host/port
 }
 ```
 
