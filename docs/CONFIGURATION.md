@@ -1244,6 +1244,28 @@ exact prepared text without rerunning hooks, and never sends the auto-submit
 Enter. Continuous mode retains the latest segment, not the whole session.
 Dictation into an app with injection disabled is never retained.
 
+### Incremental injection
+
+Opt-in: paste each finalized segment as soon as it lands mid-recording instead of waiting for one paste at the end.
+
+```jsonc
+{
+    "realtime_incremental_injection": true   // default: false
+}
+```
+
+Requires `websocket_provider: "nemo"` — a self-hosted [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) server started with `--endpointing --stop-history-eou-ms <ms>`, which makes it finalize (and emit a transcription-completed event for) each detected pause instead of only at the end of the stream. Without `--endpointing` the server still finalizes only once, so you get the usual single paste. Other providers ignore this setting entirely.
+
+Injection is append-only: once a segment is typed it is never revised. Live rewrite of already-pasted text is a separate, harder problem — see [issue #219](https://github.com/goodroot/hyprwhspr/issues/219).
+
+Tuning `--stop-history-eou-ms`, from real testing: ~1000ms produces sentence-sized segments. 280ms fragments speech into short, choppy segments and visibly hurts accuracy, since each segment gets less surrounding context to transcribe from. Speaking without pauses means nothing lands until you pause or stop recording — the server hasn't finalized anything yet.
+
+A few behavior notes:
+
+- The mic OSD's live transcript preview is turned off while this is on (the waveform itself stays) — the typed text is the live feedback.
+- Canceling a recording can't un-type segments already pasted; only text still in the buffer is dropped.
+- `hyprwhspr record capture` still receives one complete result at the end, not a stream of segments.
+
 ### GNOME/Mutter notes
 
 GNOME/Mutter lacks layer-shell, so visual feedback uses notifications. Injection depends on the session:
