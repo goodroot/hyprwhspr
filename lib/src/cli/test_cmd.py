@@ -25,6 +25,11 @@ except ImportError:
     from credential_manager import get_credential
 
 try:
+    from ..provider_registry import provider_requires_api_key
+except ImportError:
+    from provider_registry import provider_requires_api_key
+
+try:
     from ..output_control import log_info, log_success, log_warning, log_error
 except ImportError:
     from output_control import log_info, log_success, log_warning, log_error
@@ -160,6 +165,10 @@ def test_command(live: bool = False, mic_only: bool = False):
             if api_key:
                 log_success(f"Provider: {provider_id}, Model: {model_id}")
                 log_success("Credentials configured")
+                backend_ready = True
+            elif not provider_requires_api_key(provider_id):
+                log_success(f"Provider: {provider_id}, Model: {model_id}")
+                log_info("No credential needed (self-hosted provider)")
                 backend_ready = True
             else:
                 log_error(f"API key not found for provider: {provider_id}")

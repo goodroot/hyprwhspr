@@ -38,12 +38,14 @@ except ImportError:
 try:
     from ..provider_registry import (
         PROVIDERS, get_provider, list_providers, get_model_config,
-        validate_api_key, get_models_for_backend, get_realtime_mode
+        validate_api_key, get_models_for_backend, get_realtime_mode,
+        provider_requires_api_key,
     )
 except ImportError:
     from provider_registry import (
         PROVIDERS, get_provider, list_providers, get_model_config,
-        validate_api_key, get_models_for_backend, get_realtime_mode
+        validate_api_key, get_models_for_backend, get_realtime_mode,
+        provider_requires_api_key,
     )
 
 try:
@@ -491,6 +493,20 @@ def _prompt_realtime_provider_model_selection():
             provider_id, provider, model_id, model_data = realtime_options[choice_num - 1]
             print(f"\n✓ Selected: {provider['name']}: {model_data['name']}")
 
+            if not provider_requires_api_key(provider_id):
+                # Self-hosted (e.g. NeMo-Speech.cpp): the useful question is
+                # where the server listens, not a key - it runs unauthenticated
+                # unless started with --api-key.
+                default_url = provider['websocket_endpoint']
+                websocket_url = Prompt.ask("Server WebSocket URL", default=default_url)
+                api_key = None
+                if Confirm.ask("Was the server started with --api-key?", default=False):
+                    api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
+                    if api_key:
+                        save_credential(provider_id, api_key)
+                custom_config = {'websocket_url': websocket_url} if websocket_url != default_url else None
+                return (provider_id, model_id, api_key, custom_config)
+
             existing_key = get_credential(provider_id)
             if existing_key:
                 masked = mask_api_key(existing_key)
@@ -750,8 +766,9 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
             'websocket_provider': provider_id,
             'websocket_model': model_id
         }
-        # For custom backends, include websocket_url from custom_config
-        if provider_id == 'custom' and custom_config and 'websocket_url' in custom_config:
+        # Custom backends always carry a websocket_url; self-hosted providers
+        # do when the server isn't on its registry default.
+        if custom_config and custom_config.get('websocket_url'):
             config['websocket_url'] = custom_config['websocket_url']
         return config
     
@@ -1293,7 +1310,7 @@ def setup_command(python_path: Optional[str] = None):
                 if api_key:
                     masked = mask_api_key(api_key)
                     print(f"API Key: {masked}")
-                elif provider_id != 'custom':
+                elif provider_id != 'custom' and provider_requires_api_key(provider_id):
                     print(f"API Key: not found in credential store for provider {provider_id}")
         else:
             print(f"Endpoint: {remote_config.get('rest_endpoint_url', 'N/A')}")

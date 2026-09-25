@@ -183,8 +183,35 @@ PROVIDERS: Dict[str, Dict] = {
                 'realtime': {'default_mode': 'transcribe'},
             }
         }
+    },
+    # Self-hosted, not a cloud service: https://github.com/NVIDIA/NeMo-Speech.cpp
+    # (`nemo-speech serve`). Endpoints are the server's documented defaults;
+    # websocket_url overrides them. The server has no auth unless started with
+    # --api-key, so a credential is optional.
+    'nemo': {
+        'name': 'NeMo-Speech.cpp (self-hosted)',
+        'endpoint': 'http://127.0.0.1:8080/v1/audio/transcriptions',
+        'websocket_endpoint': 'ws://127.0.0.1:8080/v1/realtime',
+        'requires_api_key': False,
+        'api_key_prefix': None,
+        'api_key_description': 'server API key (only if nemo-speech serve was started with --api-key; leave empty otherwise)',
+        'models': {
+            'nemotron-speech-streaming-en-0.6b': {
+                'name': 'Nemotron Speech Streaming EN 0.6B',
+                'description': 'Local cache-aware streaming RNNT, English',
+                'backends': ('realtime-ws',),
+                'realtime': {'default_mode': 'transcribe'},
+            },
+        }
     }
 }
+
+
+def provider_requires_api_key(provider_id: str) -> bool:
+    """Whether a provider needs a stored credential. Unknown providers
+    (including 'custom') are assumed to, preserving existing behaviour."""
+    provider = get_provider(provider_id) or {}
+    return provider.get('requires_api_key', True)
 
 
 def get_provider(provider_id: str) -> Optional[Dict]:

@@ -24,7 +24,7 @@ try:
         is_transcription_only,
         uses_language_context,
     )
-    from ..provider_registry import get_provider
+    from ..provider_registry import get_provider, provider_requires_api_key
 except ImportError:
     from backend_utils import normalize_backend
     from credential_manager import get_credential
@@ -33,7 +33,7 @@ except ImportError:
         is_transcription_only,
         uses_language_context,
     )
-    from provider_registry import get_provider
+    from provider_registry import get_provider, provider_requires_api_key
 
 from .base import TranscriptionBackend
 
@@ -98,9 +98,10 @@ class RealtimeWsBackend(TranscriptionBackend):
             print('ERROR: Realtime WebSocket backend selected but websocket_model not configured')
             return False
 
-        # Get API key from credential manager
+        # Get API key from credential manager. Self-hosted providers (e.g. a
+        # NeMo-Speech.cpp server, whose --api-key is opt-in) don't need one.
         api_key = get_credential(provider_id)
-        if not api_key:
+        if not api_key and provider_requires_api_key(provider_id):
             print(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
             return False
 
@@ -222,11 +223,20 @@ class RealtimeWsBackend(TranscriptionBackend):
             self._realtime_streaming_callback = _send_direct
 
         else:
-            # Use OpenAI-compatible client (default)
-            try:
-                from ..realtime_client import RealtimeClient
-            except ImportError:
-                from realtime_client import RealtimeClient
+            # Use OpenAI-compatible client (default), or the NeMo-Speech.cpp
+            # variant for a self-hosted local server (same event names, but
+            # 16kHz audio and a flat session.update shape - see
+            # nemo_realtime_client.py for why those differ from OpenAI's).
+            if provider_id == 'nemo':
+                try:
+                    from ..nemo_realtime_client import NemoRealtimeClient as RealtimeClient
+                except ImportError:
+                    from nemo_realtime_client import NemoRealtimeClient as RealtimeClient
+            else:
+                try:
+                    from ..realtime_client import RealtimeClient
+                except ImportError:
+                    from realtime_client import RealtimeClient
 
             # Initialize RealtimeClient with mode
             realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
@@ -250,12 +260,17 @@ class RealtimeWsBackend(TranscriptionBackend):
                     print('ERROR: Custom realtime backend requires websocket_url to be configured')
                     return False
 
-                # For known providers, derive from provider registry
-                try:
-                    websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
-                except Exception as e:
-                    print(f'ERROR: Failed to derive WebSocket URL: {e}')
-                    return False
+                # NeMo-Speech.cpp's /v1/realtime takes no OpenAI-style
+                # ?intent= query, so use its registry endpoint verbatim.
+                if provider_id == 'nemo':
+                    websocket_url = get_provider('nemo')['websocket_endpoint']
+                else:
+                    # For known providers, derive from provider registry
+                    try:
+                        websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
+                    except Exception as e:
+                        print(f'ERROR: Failed to derive WebSocket URL: {e}')
+                        return False
 
             # Build instructions from whisper_prompt and language
             language = self.config.get_setting('language', None)
@@ -478,9 +493,13 @@ class RealtimeWsBackend(TranscriptionBackend):
                 and self.config.get_setting('mic_osd_pill_transcript_enabled', False)
             )
 
-        # Waveform: only continuously streaming OpenAI models emit live deltas.
+        # Waveform: only continuously streaming models emit live deltas.
         if provider_id == 'openai':
             return is_continuous(model_id)
+        if provider_id == 'nemo':
+            # NeMo-Speech.cpp's /v1/realtime streams deltas for every model it
+            # serves; there is no per-model allowlist like is_continuous().
+            return True
 
         return False
 
@@ -570,7 +589,12 @@ class RealtimeWsBackend(TranscriptionBackend):
         model_id = params.get('model_id')
         instructions = params.get('instructions')
 
-        if not (websocket_url and api_key and model_id):
+        # Mirrors initialize(): a provider that needs no credential reconnects
+        # with api_key None rather than failing as "missing parameters".
+        provider_id = self.config.get_setting('websocket_provider')
+        api_key_required = provider_requires_api_key(provider_id)
+
+        if not websocket_url or not model_id or (api_key_required and not api_key):
             print('[REALTIME] Missing connection parameters; cannot reconnect', flush=True)
             self._last_connect_failure = 'failed'
             return False

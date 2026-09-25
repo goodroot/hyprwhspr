@@ -360,7 +360,7 @@
     "websocket_provider": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai', 'google', 'elevenlabs')"
+      "description": "Provider identifier for WebSocket credential lookup (e.g., 'openai', 'google', 'elevenlabs', 'nemo' for a self-hosted NeMo-Speech.cpp server)"
     },
     "websocket_model": {
       "type": ["string", "null"],
