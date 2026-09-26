@@ -73,7 +73,7 @@ _lock_file = None
 _lock_file_path = None
 
 from config_manager import ConfigManager
-from hallucination import is_hallucination
+from hallucination import could_be_hallucination, is_hallucination
 from audio_capture import AudioCapture
 from whisper_manager import WhisperManager
 from session_environment import ensure_wayland_display
@@ -140,8 +140,9 @@ class hyprwhsprApp:
         self._recording_finalizing = threading.Event()
         # Worst outcome of chunks injected mid-recording (realtime_incremental_injection)
         self._incremental_outcome = None
-        # A recording's first segment when it matches a hallucination marker:
-        # held until real speech follows it, dropped if nothing does.
+        # A recording's opening words while they could still be a hallucination
+        # marker ("Thank", "Thank you."): held until the text stops matching
+        # one, dropped at the end if it is one.
         self._stream_phantom = None
         self.audio_level_thread = None
         self._audio_level_stop = threading.Event()  # Signals audio level thread to exit immediately
@@ -1480,6 +1481,9 @@ class hyprwhsprApp:
             except Exception:
                 pass  # Best effort cleanup
         finally:
+            # No-op once _process_audio finished it; the broken/silent-stream
+            # paths above never reach _process_audio.
+            self._end_stream(submit=False)
             self._recording_finalizing.clear()
 
     def _process_audio(self, audio_data):
@@ -1583,18 +1587,21 @@ class hyprwhsprApp:
             print("[INCREMENTAL] Recording no longer active - text dropped", flush=True)
             return False
         # Hallucination markers are whole-dictation phantoms ("Thank you.").
-        # A first segment that matches one is held: if speech follows, it was
-        # real and goes out with that speech; if not, _finish_stream drops it.
+        # The first words arrive one chunk at a time, so hold them while they
+        # could still grow into a marker: once the text stops matching one it
+        # was real speech; if the recording ends on a marker, it's dropped.
         if self._stream_phantom is not None:
             text = f"{self._stream_phantom} {text}"
             self._stream_phantom = None
-        elif (
-            whole
-            and self._incremental_outcome is None
-            and is_hallucination(text, self.config.get_hallucination_markers())
+        if self._incremental_outcome is None and could_be_hallucination(
+            text, self.config.get_hallucination_markers()
         ):
             self._stream_phantom = text
             return True
+        self._deliver_stream_chunk(text, final)
+        return True
+
+    def _deliver_stream_chunk(self, text, final):
         try:
             outcome = self.text_injector.inject_stream_chunk(text, final=final)
         except Exception as e:
@@ -1608,7 +1615,6 @@ class hyprwhsprApp:
         # chunk failed to deliver.
         if self._incremental_outcome != InjectionOutcome.FAILED:
             self._incremental_outcome = outcome
-        return True
 
     def _end_stream(self, submit=True):
         injector = getattr(self, 'text_injector', None)
@@ -1624,11 +1630,14 @@ class hyprwhsprApp:
         """Finish a streamed dictation at recording end. Returns its outcome,
         or None when the only text was a hallucination phantom."""
         phantom, self._stream_phantom = self._stream_phantom, None
-        if phantom is not None and self._incremental_outcome is None:
-            print(f"[INFO] Whisper hallucination detected: {phantom!r} - ignoring")
-            self._end_stream(submit=False)
-            self.audio_manager.play_error_sound()
-            return None
+        if phantom is not None:
+            if is_hallucination(phantom, self.config.get_hallucination_markers()):
+                print(f"[INFO] Whisper hallucination detected: {phantom!r} - ignoring")
+                self._end_stream(submit=False)
+                self.audio_manager.play_error_sound()
+                return None
+            # Only the start of a marker ("Thank"): real speech after all.
+            self._deliver_stream_chunk(phantom, final=True)
         outcome = self._end_stream()
         if InjectionOutcome.FAILED in (outcome, self._incremental_outcome):
             print("[ERROR] Streamed text injection failed", flush=True)

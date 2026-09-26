@@ -560,15 +560,32 @@ class MainIncrementalInjectionTests(unittest.TestCase):
         self.assertEqual(app.text_injector.inject_stream_chunk.call_count, 2)
         self.assertIsNone(app._stream_phantom)
 
-    def test_mid_segment_chunk_matching_a_marker_is_typed(self):
+    def test_marker_words_after_real_text_are_typed(self):
         app = self._app()
         app.is_recording = True
         app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
-        self.assertTrue(
-            app._inject_stream_text("thanks for watching", final=False, whole=False)
-        )
+        app._inject_stream_text("I wanted to say", final=False, whole=False)
+        app._inject_stream_text("thanks for watching", final=False, whole=False)
+        self.assertEqual(app.text_injector.inject_stream_chunk.call_count, 2)
+
+    def test_multi_word_phantom_streamed_word_by_word_is_held(self):
+        # The client delivers "Thank" as soon as "you" starts, so a phantom
+        # never arrives whole; it must still not be typed.
+        app = self._app()
+        app.is_recording = True
+        app._inject_stream_text("Thank", final=False, whole=False)
+        app._inject_stream_text("you.", final=True, whole=False)
+        app.text_injector.inject_stream_chunk.assert_not_called()
+        self.assertEqual(app._stream_phantom, "Thank you.")
+
+    def test_marker_prefix_is_released_once_speech_diverges(self):
+        app = self._app()
+        app.is_recording = True
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
+        app._inject_stream_text("Thank", final=False, whole=False)
+        app._inject_stream_text("goodness", final=False, whole=False)
         app.text_injector.inject_stream_chunk.assert_called_once_with(
-            "thanks for watching", final=False
+            "Thank goodness", final=False
         )
 
     def test_injector_exception_is_a_failed_chunk_not_a_deferral(self):
@@ -639,6 +656,38 @@ class MainIncrementalInjectionTests(unittest.TestCase):
         app.audio_manager.play_error_sound.assert_called_once()
         app._show_result_and_hide.assert_called_once_with(False)
         self.assertIsNone(app._stream_phantom)
+
+    def test_process_audio_delivers_a_held_marker_prefix(self):
+        # "Thank" alone is the start of a marker, not a marker: real speech.
+        app = self._app(transcribe_return='', delivered_incrementally=True)
+        app._stream_phantom = "Thank"
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
+        app.text_injector.end_stream.return_value = self.main.InjectionOutcome.INJECTED
+
+        app._process_audio(audio_data=[0.0])
+
+        app.text_injector.inject_stream_chunk.assert_called_once_with("Thank", final=True)
+        app.audio_manager.play_error_sound.assert_not_called()
+        app._show_result_and_hide.assert_called_once_with(True)
+
+    def test_stop_with_a_broken_audio_stream_ends_the_stream(self):
+        # This path never reaches _process_audio, whose finally ends streams.
+        app = self._app()
+        app.is_recording = True
+        for name in (
+            "_autostop_stop_silence_monitor", "_clear_mic_osd_preview_text",
+            "_set_visualizer_state", "_stop_audio_level_monitoring",
+            "_write_recording_status", "_notify_zero_volume",
+        ):
+            setattr(app, name, mock.Mock())
+        app.playback_suppressor = types.SimpleNamespace(is_active=False)
+        app.audio_capture.stop_recording = mock.Mock(return_value=None)
+        app.audio_capture.lock = threading.Lock()
+        app.audio_capture.frames_since_start = 10
+
+        app._stop_recording()
+
+        app.text_injector.end_stream.assert_called_once_with(submit=False)
 
     def test_process_audio_non_delivered_empty_transcription_still_errors(self):
         # Regression guard: the ordinary silent-recording path must be untouched.
@@ -730,6 +779,39 @@ class TextInjectorStreamSessionTests(unittest.TestCase):
         injector.inject_stream_chunk("line second item", final=True)
         self.assertEqual("".join(self.pasted), "first item\nsecond item")
 
+    def test_new_line_after_already_typed_words_survives(self):
+        # "hello" is typed before "new" completes; the newline then starts a
+        # chunk, where preprocessing's strip would otherwise drop it.
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("I said hello", final=False)
+        injector.inject_stream_chunk("new", final=False)
+        injector.inject_stream_chunk("line world", final=False)
+        injector.inject_stream_chunk("again.", final=True)
+        self.assertEqual("".join(self.pasted), "I said hello\nworld again.")
+
+    def test_segment_starting_with_new_line_keeps_it(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("Dear John,", final=True)
+        injector.inject_stream_chunk("new line thanks for the update.", final=True)
+        self.assertEqual("".join(self.pasted), "Dear John,\nthanks for the update.")
+
+    def test_trailing_new_line_is_dropped_like_inject_text_does(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("last item new line", final=True)
+        injector.end_stream()
+        self.assertEqual("".join(self.pasted), "last item")
+
+    def test_multi_word_filler_split_across_chunks_is_filtered(self):
+        injector = self._injector({
+            "append_trailing_space": False,
+            "filter_filler_words": True,
+            "filler_words": ["you know"],
+        })
+        injector.inject_stream_chunk("it was you", final=False)
+        injector.inject_stream_chunk("know great", final=True)
+        self.assertNotIn("you know", "".join(self.pasted))
+        self.assertNotIn("know", "".join(self.pasted))
+
     def test_new_line_at_a_segment_end_waits_for_the_next_word(self):
         injector = self._injector({"append_trailing_space": False})
         injector.inject_stream_chunk("first item new line", final=True)
@@ -784,6 +866,24 @@ class TextInjectorStreamSessionTests(unittest.TestCase):
 
 class TextInjectorStreamClipboardTests(unittest.TestCase):
     """The clipboard is saved before the first chunk and restored once."""
+
+    def test_no_enter_when_injection_is_disabled_for_the_focused_app(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({"auto_submit": True})
+        with (
+            mock.patch.object(injector, "_active_window_lookup_needed", return_value=False),
+            mock.patch.object(injector, "_is_gnome_wayland_session", return_value=False),
+            mock.patch.object(injector, "_resolve_paste_chord", return_value=(False, "keepassxc")),
+            mock.patch.object(injector, "_paste_via_clipboard") as paste,
+            mock.patch.object(injector, "_send_enter_if_auto_submit") as enter,
+            mock.patch.object(injector, "_restore_clipboard") as restore,
+        ):
+            injector.inject_stream_chunk("hunter two", final=True)
+            injector.end_stream()
+
+        paste.assert_not_called()
+        enter.assert_not_called()
+        restore.assert_not_called()
 
     def test_clipboard_saved_once_and_restored_once_to_the_original(self):
         injector = make_injector()

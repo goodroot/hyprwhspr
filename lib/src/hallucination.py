@@ -18,6 +18,20 @@ def _normalize(text: str) -> str:
     return text.lower().replace('_', ' ').strip('[]().!?, ')
 
 
+def could_be_hallucination(text: str, markers=None) -> bool:
+    """True if text is a hallucination marker or the first words of one
+    ("Thank" of "thank you"), for text that arrives a few words at a time."""
+    if is_hallucination(text, markers):
+        return True
+    if markers is None:
+        markers = DEFAULT_HALLUCINATION_MARKERS
+    words = _normalize(text).split()
+    return bool(words) and any(
+        _normalize(marker).split()[:len(words)] == words
+        for marker in markers if marker
+    )
+
+
 def is_hallucination(text: str, markers=None) -> bool:
     """True if text is a stock Whisper phantom rather than real dictation."""
     if not text:

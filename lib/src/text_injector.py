@@ -193,7 +193,7 @@ _CLIPBOARD_UNSAVED = object()
 
 # A chunk starting with one of these attaches to the previous chunk: spoken
 # "comma" renders as ",", which must not follow a separating space.
-_NO_SPACE_BEFORE = set(',.?!:;)]}')
+_NO_SPACE_BEFORE = set(',.?!:;)]}\n')
 # ...and nothing follows these with a space.
 _NO_SPACE_AFTER = set('([{\n\t')
 
@@ -217,7 +217,9 @@ class _StreamSession:
     raw_parts: List[str] = None
     injected_any: bool = False
     failed: bool = False
-    clipboard_only: bool = False
+    # Text never reached the app (injection disabled for it, or no paste
+    # tool): no Enter, no clipboard restore.
+    not_pasted: bool = False
 
     def __post_init__(self):
         self.held = []
@@ -1468,7 +1470,7 @@ except Exception:
 
             if (
                 session.saved_clipboard is not _CLIPBOARD_UNSAVED
-                and not session.clipboard_only
+                and not session.not_pasted
                 and session.last_pasted is not None
             ):
                 restore_delay = 5.0
@@ -1479,16 +1481,26 @@ except Exception:
                     injected=session.last_pasted.encode("utf-8"),
                     delay=restore_delay,
                 )
-            if submit and not session.failed and not session.clipboard_only:
+            if submit and not session.failed and not session.not_pasted:
                 self._send_enter_if_auto_submit()
             return InjectionOutcome.FAILED if session.failed else InjectionOutcome.INJECTED
 
     def _deliver_stream_words(self, session: _StreamSession, words: List[str]) -> InjectionOutcome:
         raw = ' '.join(words)
-        processed = self._preprocess_text(raw)
         session.raw_parts.append(raw)
+        # Preprocessing strips a chunk's edges, which would drop the newline
+        # of a "new line" that starts it, so render leading ones here.
+        newlines = 0
+        if _config_setting(self.config_manager, 'symbol_replacements', True):
+            while [_phrase_word(w) for w in words[:2]] == ['new', 'line']:
+                words = words[2:]
+                newlines += 1
+        processed = self._preprocess_text(' '.join(words))
         if not processed:
+            # Includes a "new line" with nothing after it: like the trailing
+            # newline inject_text trims, it would only act as Enter.
             return InjectionOutcome.INJECTED
+        processed = '\n' * newlines + processed
         if (
             session.injected_any
             and session.last_char not in _NO_SPACE_AFTER
@@ -1506,31 +1518,34 @@ except Exception:
     def _stream_holdback(self, words: List[str], final: bool = False) -> int:
         """How many trailing words to hold for the next chunk.
 
-        A trailing "new line" is held with the word before it: preprocessing
-        strips a chunk's edges, so the newline only survives inside a chunk.
-        Unless `final`, so is any tail that could still grow into a multi-word
-        phrase preprocessing rewrites (spoken commands, word overrides).
+        A trailing "new line" is always held, to start the next chunk (see
+        _deliver_stream_words); if nothing follows it, it's dropped like any
+        trailing newline. Unless `final`, so is any tail that could still grow
+        into a multi-word phrase that preprocessing rewrites (spoken commands,
+        word overrides, filler words).
         """
         symbols = _config_setting(self.config_manager, 'symbol_replacements', True)
         tail = [_phrase_word(w) for w in words]
-        if symbols and len(tail) >= 2 and tuple(tail[-2:]) == ('new', 'line'):
-            return min(3, len(tail))
+        if symbols and tail[-2:] == ['new', 'line']:
+            return 2
         if final:
             return 0
         phrases = []
         if symbols:
             phrases.append(('new', 'line'))
             phrases.extend(tuple(command.split()) for command, _ in _SPOKEN_REPLACEMENTS)
-        if self.config_manager is not None:
-            for original in (self.config_manager.get_word_overrides() or {}):
-                phrases.append(tuple(_phrase_word(w) for w in str(original).split()))
+        config = self.config_manager
+        if config is not None:
+            phrases.extend(config.get_word_overrides() or {})
+            if config.get_filter_filler_words():
+                phrases.extend(config.get_filler_words() or [])
         longest = 0
         for phrase in phrases:
-            for k in range(min(len(phrase) - 1, len(tail)), 0, -1):
+            if isinstance(phrase, str):
+                phrase = tuple(_phrase_word(w) for w in phrase.split())
+            for k in range(min(len(phrase) - 1, len(tail)), longest, -1):
                 if tuple(tail[-k:]) == phrase[:k]:
-                    # "new" of "new line" also keeps the word before it.
-                    hold = min(k + 1, len(tail)) if phrase == ('new', 'line') else k
-                    longest = max(longest, hold)
+                    longest = k
                     break
         return longest
 
@@ -1696,6 +1711,8 @@ except Exception:
                 # avoids leaking dictated text (e.g. into a password field) onto the
                 # clipboard where other apps could read it.
                 print(f"Injection disabled for focused app ({app_match}); leaving it untouched.")
+                if stream is not None:
+                    stream.not_pasted = True
                 return True
 
             # Only ordinary, permitted delivery can replace recovery text.
@@ -1807,7 +1824,7 @@ except Exception:
                 # Text is clipboard-only: don't restore old clipboard (would erase it)
                 # and don't auto-submit (nothing was pasted into the field).
                 if stream is not None:
-                    stream.clipboard_only = True
+                    stream.not_pasted = True
                 return True
 
             # Only restore clipboard after successful injection — if injection failed,

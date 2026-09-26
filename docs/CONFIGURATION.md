@@ -1267,8 +1267,8 @@ A few behavior notes:
 - The mic OSD's live transcript preview is turned off while this is on (the waveform itself stays). The typed text is the live feedback.
 - Per-dictation behavior still happens once, when recording stops: `auto_submit` presses Enter after the last chunk, the trailing space from `append_trailing_space` goes after the last chunk, the clipboard is restored once (to what it held before the first chunk), and `record copy-last`/`paste-last` recover the whole dictation.
 - Chunks are joined with a space, except before punctuation (a spoken "comma" attaches to the previous word) and after an opening bracket.
-- Multi-word spoken commands and `word_overrides` still match across chunks: when a chunk ends with words that could start one ("new" of "new line", "question" of "question mark"), those words wait for the next chunk. A spoken "new line" also waits for the word after it.
-- A recording whose first segment matches a hallucination marker holds it until more speech follows. If nothing does, it is dropped, the same as a whole-dictation phantom.
+- Multi-word spoken commands, `word_overrides` and filler words still match across chunks: when a chunk ends with words that could start one ("new" of "new line", "question" of "question mark"), those words wait for the next chunk. A spoken "new line" also waits for the word after it, and is dropped if the dictation ends on it.
+- A recording's opening words are held while they could still be a hallucination marker ("Thank", then "Thank you."). They're typed as soon as the speech stops matching one; if the recording ends on a marker, it's dropped, the same as a whole-dictation phantom.
 - Text is typed wherever the cursor is when each chunk lands, so switching windows mid-recording moves the rest of the dictation.
 - Canceling a recording can't un-type text already pasted; only text not yet typed is dropped.
 - `hyprwhspr record capture` still receives one complete result at the end, not a stream of chunks.
