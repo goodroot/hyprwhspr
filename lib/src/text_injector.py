@@ -1367,10 +1367,10 @@ except Exception:
 
     # ------------------------ Public API ------------------------
 
-    def inject_text(self, text: str) -> InjectionOutcome:
+    def inject_text(self, text: str, trailing_space: Optional[bool] = None) -> InjectionOutcome:
         """Prepare, retain and deliver one dictation at a time."""
         with self._delivery_lock:
-            return self._prepare_and_inject_text(text)
+            return self._prepare_and_inject_text(text, trailing_space)
 
     def recover_last(self, action):
         """Recover prepared text without rerunning hooks or submitting Enter."""
@@ -1397,7 +1397,7 @@ except Exception:
         finally:
             self._delivery_lock.release()
 
-    def _prepare_and_inject_text(self, text: str) -> InjectionOutcome:
+    def _prepare_and_inject_text(self, text: str, trailing_space: Optional[bool] = None) -> InjectionOutcome:
         """
         Inject text into the currently focused application
 
@@ -1424,7 +1424,11 @@ except Exception:
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
         processed_text = hook_result.text
-        if self._should_append_trailing_space(processed_text):
+        # trailing_space (when given) overrides append_trailing_space - a
+        # mid-sentence streamed chunk must never glue onto the next one.
+        if trailing_space is None:
+            trailing_space = self._should_append_trailing_space(processed_text)
+        if trailing_space:
             processed_text += ' '
 
         try:

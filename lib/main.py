@@ -307,8 +307,8 @@ class hyprwhsprApp:
         if hasattr(self.whisper_manager, 'set_realtime_partial_callback'):
             self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
 
-        if hasattr(self.whisper_manager, 'set_realtime_committed_callback'):
-            self.whisper_manager.set_realtime_committed_callback(self._inject_committed_segment)
+        if hasattr(self.whisper_manager, 'set_realtime_stream_callback'):
+            self.whisper_manager.set_realtime_stream_callback(self._inject_stream_text)
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -1552,13 +1552,15 @@ class hyprwhsprApp:
             return False, 'Text delivery is still initializing'
         return injector.recover_last(action)
 
-    def _inject_committed_segment(self, text):
-        """Inject one finalized realtime segment as it lands mid-recording.
+    def _inject_stream_text(self, text, final=True, whole=True):
+        """Inject realtime text as it streams in mid-recording.
 
-        Runs on the realtime receiver thread, once per server-detected pause
-        (realtime_incremental_injection). Returns True when the segment was
-        handled here, so the end-of-recording path knows not to deliver the
-        joined transcript again; False defers everything to that path.
+        Runs on the realtime receiver thread (realtime_incremental_injection):
+        once per chunk of completed words, and once with the tail of each
+        finalized segment (`final`); `whole` means that tail is the entire
+        segment. Returns True when the text was handled here, so the
+        end-of-recording path doesn't deliver the joined transcript again;
+        False defers it to that path.
         """
         text = (text or '').strip()
         if not text:
@@ -1567,24 +1569,32 @@ class hyprwhsprApp:
         # result, so let the normal end-of-recording delivery handle it.
         if self._recording_control_server.has_capture_subscriber():
             return False
-        # A segment finalizing after a cancel must not be typed.
+        # Text arriving after a cancel must not be typed.
         if not (self.is_recording or self.is_processing or self._recording_finalizing.is_set()):
-            print("[INCREMENTAL] Recording no longer active - segment dropped", flush=True)
+            print("[INCREMENTAL] Recording no longer active - text dropped", flush=True)
             return False
-        if is_hallucination(text, self.config.get_hallucination_markers()):
+        # Hallucination markers are whole-transcript phantoms ("Thank you.");
+        # matching them against a mid-sentence chunk would drop real speech.
+        if whole and is_hallucination(text, self.config.get_hallucination_markers()):
             print(f"[INCREMENTAL] Hallucination ignored: {text!r}", flush=True)
             return True
-        outcome = self._inject_text(text)
+        # Mid-segment chunks always need a separating space, or the next chunk
+        # glues onto this word; a segment's tail follows append_trailing_space.
+        outcome = self._inject_text(text, trailing_space=None if final else True)
         if outcome == InjectionOutcome.FAILED:
             print(f"[INCREMENTAL] Injection failed ({len(text)} chars)", flush=True)
         # Keep the worst outcome so the recording reports failure if any
-        # segment failed to deliver.
+        # chunk failed to deliver.
         if self._incremental_outcome != InjectionOutcome.FAILED:
             self._incremental_outcome = outcome
         return True
 
-    def _inject_text(self, text):
-        """Inject transcribed text into active application"""
+    def _inject_text(self, text, trailing_space=None):
+        """Inject transcribed text into active application.
+
+        trailing_space overrides append_trailing_space for this injection
+        (None = use the setting).
+        """
 
         # Capture mode: route text to client instead of injecting into active app
         if self._recording_control_server.has_capture_subscriber():
@@ -1592,7 +1602,7 @@ class hyprwhsprApp:
             return InjectionOutcome.INJECTED
 
         try:
-            outcome = self.text_injector.inject_text(text)
+            outcome = self.text_injector.inject_text(text, trailing_space=trailing_space)
             if outcome == InjectionOutcome.FAILED:
                 print(f"[ERROR] Text injection failed ({len(text)} chars)", flush=True)
                 notify = True

@@ -55,7 +55,7 @@ class WhisperManager:
         # realtime backend) so it survives backend re-creation on resume
         self._realtime_partial_callback = None
         # Same, for incremental (append-only) injection of finalized segments
-        self._realtime_committed_callback = None
+        self._realtime_stream_callback = None
 
         # Thread safety for model operations
         # Serializes local model use and backend replacement.  An RLock keeps
@@ -181,16 +181,16 @@ class WhisperManager:
         if backend is not None and backend.name == 'realtime-ws':
             backend.apply_partial_callback(callback)
 
-    def set_realtime_committed_callback(self, callback: Optional[Callable[[str], None]]) -> None:
-        """Set callback for incremental (append-only) injection of each
-        finalized realtime segment as it lands, rather than one paste at the
-        end. Only wired when realtime_incremental_injection is on and the
-        provider supports mid-stream finals (currently 'nemo', whose server
-        must run with --endpointing) - otherwise it is never called."""
-        self._realtime_committed_callback = callback
+    def set_realtime_stream_callback(self, callback: Optional[Callable[[str, bool, bool], bool]]) -> None:
+        """Set callback(text, final, whole) -> bool for incremental
+        (append-only) injection of realtime text as it streams in, rather than
+        one paste at the end. Only wired when realtime_incremental_injection is
+        on and the provider supports it (currently 'nemo'); otherwise never
+        called."""
+        self._realtime_stream_callback = callback
         backend = self._backend
         if backend is not None and backend.name == 'realtime-ws':
-            backend.apply_committed_callback(callback)
+            backend.apply_stream_callback(callback)
 
     def realtime_delivered_incrementally(self) -> bool:
         """True when the current recording's text was already injected
