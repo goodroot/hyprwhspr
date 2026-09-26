@@ -67,6 +67,9 @@ def classify_vad_mode(config):
         return 'provider_managed'
     if provider == 'google':
         return 'server_vad'
+    if provider == 'nemo':
+        # No turn_detection is sent; the turn is committed when recording stops.
+        return 'manual_commit'
     if realtime_mode == 'converse' or uses_manual_commit(model):
         return 'manual_commit'
     return 'server_vad'

@@ -146,6 +146,7 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             # Connect (API key goes in URL query param, handled by client)
             self._realtime_connect_params = {
+                'provider_id': provider_id,
                 'websocket_url': websocket_url,
                 'api_key': api_key,
                 'model_id': model_id,
@@ -198,6 +199,7 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             # Connect (ElevenLabs doesn't use instructions)
             self._realtime_connect_params = {
+                'provider_id': provider_id,
                 'websocket_url': websocket_url,
                 'api_key': api_key,
                 'model_id': model_id,
@@ -250,6 +252,10 @@ class RealtimeWsBackend(TranscriptionBackend):
                     flush=True,
                 )
                 return False
+            if provider_id == 'nemo' and realtime_mode != 'transcribe':
+                # NeMo-Speech.cpp only transcribes: it has no response.create.
+                print(f'[REALTIME] nemo is transcription-only; ignoring realtime_mode="{realtime_mode}"', flush=True)
+                realtime_mode = 'transcribe'
             self._realtime_client = RealtimeClient(mode=realtime_mode)
 
             # Get WebSocket URL
@@ -304,6 +310,7 @@ class RealtimeWsBackend(TranscriptionBackend):
 
             # Connect
             self._realtime_connect_params = {
+                'provider_id': provider_id,
                 'websocket_url': websocket_url,
                 'api_key': api_key,
                 'model_id': model_id,
@@ -591,7 +598,9 @@ class RealtimeWsBackend(TranscriptionBackend):
 
         # Mirrors initialize(): a provider that needs no credential reconnects
         # with api_key None rather than failing as "missing parameters".
-        provider_id = self.config.get_setting('websocket_provider')
+        # Judged for the provider the client was built for, not the config's
+        # current one.
+        provider_id = params.get('provider_id') or self.config.get_setting('websocket_provider')
         api_key_required = provider_requires_api_key(provider_id)
 
         if not websocket_url or not model_id or (api_key_required and not api_key):

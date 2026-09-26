@@ -74,16 +74,11 @@ class NemoRealtimeClientTests(unittest.TestCase):
         self.assertEqual(session["language"], "en")
         self.assertNotIn("audio", session)
 
-    def test_session_update_includes_prompt_only_in_transcribe_mode_when_set(self):
+    def test_session_update_never_sends_a_prompt(self):
+        # The backend only sets transcription_prompt for OpenAI models with
+        # language context, so nemo has no prompt to send.
         client = self._client_with_ws()
         client.transcription_prompt = "Linux dictation."
-        client._send_session_update()
-
-        session = client.ws.sent[-1]["session"]
-        self.assertEqual(session["prompt"], "Linux dictation.")
-
-    def test_session_update_omits_prompt_when_unset(self):
-        client = self._client_with_ws()
         client._send_session_update()
         self.assertNotIn("prompt", client.ws.sent[-1]["session"])
 
@@ -192,6 +187,28 @@ class NemoBackendInitializeTests(unittest.TestCase):
 
         self.assertEqual(captured["url"], "ws://10.0.0.5:9000/v1/realtime")
 
+    def test_converse_mode_is_forced_to_transcribe(self):
+        # NeMo-Speech.cpp has no response.create; converse would wait out
+        # realtime_timeout on every dictation.
+        manager = self._manager({"realtime_mode": "converse"})
+        backend = RealtimeWsBackend(manager)
+
+        with mock.patch.object(realtime_ws_backend, "get_credential", return_value=None), \
+             mock.patch.object(NemoRealtimeClient, "connect", return_value=True):
+            self.assertTrue(backend.initialize())
+
+        self.assertEqual(backend._realtime_client.mode, "transcribe")
+
+    def test_connect_params_record_the_provider(self):
+        manager = self._manager()
+        backend = RealtimeWsBackend(manager)
+
+        with mock.patch.object(realtime_ws_backend, "get_credential", return_value=None), \
+             mock.patch.object(NemoRealtimeClient, "connect", return_value=True):
+            backend.initialize()
+
+        self.assertEqual(backend._realtime_connect_params["provider_id"], "nemo")
+
     def test_openai_without_credential_still_fails(self):
         values = {
             "transcription_backend": "realtime-ws",
@@ -238,6 +255,14 @@ class NemoReconnectTests(unittest.TestCase):
 
         self.assertTrue(backend._reconnect_realtime_client())
         backend._realtime_client.connect.assert_called_once()
+
+    def test_reconnect_judges_the_key_by_the_clients_provider_not_the_config(self):
+        # The config moved to openai, but the live client was built for nemo.
+        backend = self._backend_with_params("openai", api_key=None)
+        backend._realtime_connect_params["provider_id"] = "nemo"
+        backend._realtime_client.connect.return_value = True
+
+        self.assertTrue(backend._reconnect_realtime_client())
 
     def test_openai_reconnect_reports_missing_parameters_without_api_key(self):
         backend = self._backend_with_params("openai", api_key=None)
@@ -304,15 +329,59 @@ class GenerateRemoteConfigNemoTests(unittest.TestCase):
         self.assertEqual(config["websocket_provider"], "nemo")
         self.assertEqual(config["websocket_model"], "nemotron-speech-streaming-en-0.6b")
 
-    def test_omits_websocket_url_when_custom_config_is_none(self):
-        config = setup_cli._generate_remote_config(
-            "nemo",
-            "nemotron-speech-streaming-en-0.6b",
-            None,
-            None,
-            backend_type="realtime-ws",
+    def test_clears_websocket_url_when_custom_config_is_none(self):
+        # Setup merges into the existing config, so a URL from an earlier
+        # setup has to be overwritten with None to stop overriding the default.
+        for provider, model in (("nemo", "nemotron-speech-streaming-en-0.6b"), ("openai", "gpt-transcribe")):
+            config = setup_cli._generate_remote_config(
+                provider, model, None, None, backend_type="realtime-ws",
+            )
+            self.assertIn("websocket_url", config)
+            self.assertIsNone(config["websocket_url"], provider)
+
+
+class NemoSetupPromptTests(unittest.TestCase):
+    """The wizard's nemo branch of _prompt_realtime_provider_model_selection."""
+
+    def _run(self, url_answers, api_key_answer, saved_key=None):
+        options = [
+            (pid, mid)
+            for pid, provider in setup_cli.PROVIDERS.items()
+            if provider.get("websocket_endpoint")
+            for mid in setup_cli.get_models_for_backend(pid, "realtime-ws")
+        ]
+        choice = str(options.index(("nemo", "nemotron-speech-streaming-en-0.6b")) + 1)
+        answers = iter([choice, *url_answers])
+        with mock.patch.object(setup_cli.Prompt, "ask", side_effect=lambda *a, **k: next(answers)), \
+             mock.patch.object(setup_cli.Confirm, "ask", return_value=api_key_answer), \
+             mock.patch.object(setup_cli, "get_credential", return_value=saved_key), \
+             mock.patch.object(setup_cli, "delete_credential") as delete, \
+             mock.patch.object(setup_cli, "save_credential"):
+            result = setup_cli._prompt_realtime_provider_model_selection()
+        return result, delete
+
+    def test_default_url_writes_none(self):
+        default = setup_cli.PROVIDERS["nemo"]["websocket_endpoint"]
+        (provider, _, _, custom), _ = self._run([default], api_key_answer=False)
+        self.assertEqual(provider, "nemo")
+        self.assertEqual(custom, {"websocket_url": None})
+
+    def test_url_without_a_ws_scheme_is_asked_again(self):
+        (_, _, _, custom), _ = self._run(
+            ["http://box:8080/v1/realtime", "ws://box:8080/v1/realtime"], api_key_answer=False,
         )
-        self.assertNotIn("websocket_url", config)
+        self.assertEqual(custom, {"websocket_url": "ws://box:8080/v1/realtime"})
+
+    def test_no_api_key_answer_removes_a_stale_saved_key(self):
+        default = setup_cli.PROVIDERS["nemo"]["websocket_endpoint"]
+        (_, _, api_key, _), delete = self._run([default], api_key_answer=False, saved_key="old-key")
+        self.assertIsNone(api_key)
+        delete.assert_called_once_with("nemo")
+
+    def test_no_api_key_answer_without_a_saved_key_deletes_nothing(self):
+        default = setup_cli.PROVIDERS["nemo"]["websocket_endpoint"]
+        _, delete = self._run([default], api_key_answer=False)
+        delete.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +389,21 @@ class GenerateRemoteConfigNemoTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class NemoDiagnosticsTests(unittest.TestCase):
+    def test_trace_reports_manual_commit_not_server_vad(self):
+        import processing_trace
+        config = FakeConfig({
+            "transcription_backend": "realtime-ws",
+            "websocket_provider": "nemo",
+            "websocket_model": "nemotron-speech-streaming-en-0.6b",
+        })
+        self.assertEqual(processing_trace.classify_vad_mode(config), "manual_commit")
+
+    def test_legacy_rest_key_migration_never_matches_nemo(self):
+        # A local OpenAI-compatible REST server on nemo's port must not be
+        # labelled nemo: the entry has no REST endpoint to match.
+        from provider_registry import PROVIDERS
+        self.assertNotIn("endpoint", PROVIDERS["nemo"])
+
     def test_nemo_realtime_config_produces_no_realtime_model_error(self):
         payload = {
             "transcription_backend": "realtime-ws",

@@ -57,8 +57,6 @@ class NemoRealtimeClient(RealtimeClient):
         session_data = {'sample_rate': self.sample_rate}
         if self.language:
             session_data['language'] = self.language
-        if self.mode == 'transcribe' and self.transcription_prompt:
-            session_data['prompt'] = self.transcription_prompt
 
         event = {'type': 'session.update', 'session': session_data}
 

@@ -49,9 +49,9 @@ except ImportError:
     )
 
 try:
-    from ..credential_manager import save_credential, get_credential, mask_api_key
+    from ..credential_manager import save_credential, get_credential, delete_credential, mask_api_key
 except ImportError:
-    from credential_manager import save_credential, get_credential, mask_api_key
+    from credential_manager import save_credential, get_credential, delete_credential, mask_api_key
 
 try:
     from ..output_control import (
@@ -498,13 +498,24 @@ def _prompt_realtime_provider_model_selection():
                 # where the server listens, not a key - it runs unauthenticated
                 # unless started with --api-key.
                 default_url = provider['websocket_endpoint']
-                websocket_url = Prompt.ask("Server WebSocket URL", default=default_url)
+                while True:
+                    websocket_url = Prompt.ask("Server WebSocket URL", default=default_url)
+                    if websocket_url.startswith(('ws://', 'wss://')):
+                        break
+                    print("URL must start with ws:// or wss://")
                 api_key = None
                 if Confirm.ask("Was the server started with --api-key?", default=False):
                     api_key = getpass.getpass(f"Enter {provider['api_key_description']}: ")
                     if api_key:
                         save_credential(provider_id, api_key)
-                custom_config = {'websocket_url': websocket_url} if websocket_url != default_url else None
+                elif get_credential(provider_id):
+                    # A key saved for an earlier --api-key server would still
+                    # be sent to this unauthenticated one.
+                    delete_credential(provider_id)
+                    print("Removed the previously saved server API key.")
+                # None clears a websocket_url left by an earlier setup, so the
+                # registry default applies.
+                custom_config = {'websocket_url': websocket_url if websocket_url != default_url else None}
                 return (provider_id, model_id, api_key, custom_config)
 
             existing_key = get_credential(provider_id)
@@ -767,9 +778,10 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
             'websocket_model': model_id
         }
         # Custom backends always carry a websocket_url; self-hosted providers
-        # do when the server isn't on its registry default.
-        if custom_config and custom_config.get('websocket_url'):
-            config['websocket_url'] = custom_config['websocket_url']
+        # do when the server isn't on its registry default. Otherwise write
+        # None, so a URL from an earlier setup doesn't linger and override
+        # the provider's derived endpoint.
+        config['websocket_url'] = (custom_config or {}).get('websocket_url')
         return config
     
     config = {

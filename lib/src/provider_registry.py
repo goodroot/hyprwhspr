@@ -185,12 +185,12 @@ PROVIDERS: Dict[str, Dict] = {
         }
     },
     # Self-hosted, not a cloud service: https://github.com/NVIDIA/NeMo-Speech.cpp
-    # (`nemo-speech serve`). Endpoints are the server's documented defaults;
-    # websocket_url overrides them. The server has no auth unless started with
+    # (`nemo-speech serve`). The endpoint is the server's documented default;
+    # websocket_url overrides it. Realtime only, so no REST 'endpoint': the
+    # legacy rest_api_key migration matches providers on that field. The server has no auth unless started with
     # --api-key, so a credential is optional.
     'nemo': {
         'name': 'NeMo-Speech.cpp (self-hosted)',
-        'endpoint': 'http://127.0.0.1:8080/v1/audio/transcriptions',
         'websocket_endpoint': 'ws://127.0.0.1:8080/v1/realtime',
         'requires_api_key': False,
         'api_key_prefix': None,
@@ -281,7 +281,7 @@ def get_model_config(provider_id: str, model_id: str) -> Optional[Dict]:
         return None
     
     return {
-        'endpoint': provider['endpoint'],
+        'endpoint': provider.get('endpoint'),
         'body': model_config.get('body', {}).copy(),
         'model_name': model_config.get('name', model_id),
         'model_description': model_config.get('description', '')
