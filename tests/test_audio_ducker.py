@@ -302,6 +302,37 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
             ducker.restore()
         self.assertNotIn(2, pulse.set_volumes)
 
+    def test_pending_entry_lives_through_the_very_next_cycle(self):
+        # Unrelated streams in the same cycle must not age it out early.
+        pulse = FakePulse([])
+        ducker = audio_ducker.AudioDucker(reduction_percent=50)
+        with patched(pulse):
+            self._leave_chrome_pending(ducker, pulse)
+            pulse.streams = [
+                FakeStream(20, pid=200, name="Game", binary="game"),
+                FakeStream(21, pid=101, name="Chrome", binary="chrome", volume=0.5),
+            ]
+            ducker.duck()
+            ducker.restore()
+        self.assertAlmostEqual(pulse.set_volumes[21], 1.0)
+
+    def test_pending_entry_expires_after_one_silent_cycle(self):
+        # A recording later, 0.5 is far more likely a level the user picked
+        # than one we left behind, so it is taken at face value.
+        pulse = FakePulse([])
+        ducker = audio_ducker.AudioDucker(reduction_percent=50)
+        with patched(pulse):
+            self._leave_chrome_pending(ducker, pulse)
+            pulse.streams = [FakeStream(20, pid=200, name="Game", binary="game")]
+            ducker.duck()
+            ducker.restore()
+
+            pulse.streams = [FakeStream(22, pid=101, name="Chrome", binary="chrome", volume=0.5)]
+            ducker.duck()
+            self.assertAlmostEqual(pulse.set_volumes[22], 0.25)
+            ducker.restore()
+        self.assertAlmostEqual(pulse.set_volumes[22], 0.5)
+
     def test_quiet_neighbour_is_not_mistaken_for_a_ducked_stream(self):
         # Pending ducked level 0.01; another stream of the app at 0.018 is
         # nowhere near it relative to its size.

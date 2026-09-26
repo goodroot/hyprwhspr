@@ -13,6 +13,10 @@ Known tradeoff: streams are snapshot once at duck time, so a stream that
 STARTS during the recording (notification ping, autoplaying video) plays at
 full volume. Covering late arrivals needs a sink-input event subscription;
 until then this is the accepted cost of not touching the master volume.
+
+An app left at the ducked level by a stream that ended mid-recording is healed
+on the next recording, but only from memory: restart the daemon while an app is
+stuck and its volume has to be reset by hand.
 """
 
 import threading
@@ -33,6 +37,11 @@ _OWN_PLAYBACK_BINARIES = {'paplay', 'pw-play', 'ffplay', 'aplay'}
 # MPRIS player. Browsers play audio from a child process, not the process that
 # owns the MPRIS bus name, so a direct PID match alone misses them.
 _PID_ANCESTOR_DEPTH = 4
+
+# How many duck/restore cycles a pending original survives. A replacement stream
+# normally turns up on the very next recording, so anything older is more likely
+# a level the user picked than one we left behind.
+_PENDING_MAX_CYCLES = 1
 
 
 def _pid_ancestry(pid: int, depth: int = _PID_ANCESTOR_DEPTH) -> list:
@@ -69,9 +78,11 @@ class AudioDucker:
         """
         self._reduction_percent = max(0.0, min(100.0, reduction_percent))
         self._original_volumes = {}  # sink_input index -> (identity, original, ducked volume)
-        # app key -> (original, ducked volume) for apps whose ducked stream
-        # ended before restore() reached it, so a later cycle can heal it.
+        # app key -> (original, ducked volume, cycle) for apps whose ducked
+        # stream ended before restore() reached it, so a later cycle can heal
+        # it. Dropped once _PENDING_MAX_CYCLES have passed.
         self._pending_restores = {}
+        self._cycle = 0
         self._lock = threading.Lock()
         self._is_ducked = False
 
@@ -170,6 +181,9 @@ class AudioDucker:
             if self._is_ducked:
                 return True  # Already ducked
 
+            self._cycle += 1
+            self._expire_pending()
+
             try:
                 with pulsectl.Pulse('hyprwhspr-ducker') as pulse:
                     multiplier = (100.0 - self._reduction_percent) / 100.0
@@ -238,6 +252,7 @@ class AudioDucker:
                 with pulsectl.Pulse('hyprwhspr-ducker') as pulse:
                     streams = list(pulse.sink_input_list())
                     restored_count = 0
+                    healed_count = 0
                     for stream in streams:
                         entry = self._original_volumes.get(stream.index)
                         if entry is None or entry[0] != self._stream_identity(stream):
@@ -254,11 +269,11 @@ class AudioDucker:
                         key = self._app_key(stream)
                         if stream.index in live or key not in self._pending_restores:
                             continue
-                        original_vol, ducked_vol = self._pending_restores[key]
+                        original_vol, ducked_vol, _ = self._pending_restores[key]
                         if self._at_level(self._stream_volume(stream), ducked_vol):
                             pulse.volume_set_all_chans(stream, original_vol)
                             healed.add(key)
-                            restored_count += 1
+                            healed_count += 1
                     for key in healed:
                         self._pending_restores.pop(key, None)
 
@@ -266,6 +281,8 @@ class AudioDucker:
                     self._is_ducked = False
                     if restored_count > 0:
                         print(f"[AUDIO_DUCKER] Restored {restored_count} stream(s) to original volume", flush=True)
+                    if healed_count > 0:
+                        print(f"[AUDIO_DUCKER] Healed {healed_count} stream(s) left at the ducked volume", flush=True)
                     return True
 
             except Exception as e:
@@ -276,6 +293,12 @@ class AudioDucker:
                 self._original_volumes.clear()
                 self._is_ducked = False
                 return False
+
+    def _expire_pending(self):
+        """Drop pending originals too old to still be ours. Call under _lock."""
+        for key, entry in list(self._pending_restores.items()):
+            if self._cycle - entry[2] > _PENDING_MAX_CYCLES:
+                del self._pending_restores[key]
 
     def _carry_unrestored(self, live):
         """Mark snapshot entries that weren't restored as pending.
@@ -288,7 +311,8 @@ class AudioDucker:
                 continue
             key = self._key_from(identity[1], identity[2])
             if key is not None:
-                self._pending_restores[key] = (original_vol, ducked_vol)
+                self._pending_restores[key] = (original_vol, ducked_vol,
+                                               self._cycle)
 
     def set_reduction_percent(self, percent: float):
         """Update the reduction percentage"""
