@@ -112,6 +112,17 @@ class NemoRealtimeClient(RealtimeClient):
         if tail:
             self._deliver(tail, final=True, whole=(already == 0))
 
+    def flush_stream(self):
+        """Deliver whatever the current segment has streamed but not yet
+        delivered, including a trailing partial word, for when it will never
+        finalize."""
+        if not self._stream_text_callback:
+            return
+        pending = self._stream_text[self._stream_delivered:].strip()
+        if pending:
+            self._deliver(pending, final=True, whole=self._stream_delivered == 0)
+        self._reset_stream()
+
     def _handle_event(self, event: dict):
         event_type = event.get('type')
         if self._stream_text_callback and not self._is_retired_item(event):

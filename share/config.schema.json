@@ -405,7 +405,7 @@
     "realtime_incremental_injection": {
       "type": "boolean",
       "default": false,
-      "description": "Type recognized words as they stream in instead of one paste when recording stops (append-only; never revises typed text). Requires websocket_provider 'nemo'; a NeMo-Speech.cpp server started with --endpointing additionally finalizes sentences at pauses."
+      "description": "Type recognized words as they stream in instead of one paste when recording stops (append-only; never revises typed text). Requires websocket_provider 'nemo' in transcribe mode, and is off while post_transcription_hook is set; a NeMo-Speech.cpp server started with --endpointing additionally finalizes sentences at pauses."
     },
     "pywhispercpp_use_vad": {
       "type": "boolean",

@@ -138,8 +138,11 @@ class hyprwhsprApp:
         # Covers the short stop-recording window before _process_audio claims
         # is_processing, so file requests cannot steal the backend in between.
         self._recording_finalizing = threading.Event()
-        # Worst outcome of segments injected mid-recording (realtime_incremental_injection)
+        # Worst outcome of chunks injected mid-recording (realtime_incremental_injection)
         self._incremental_outcome = None
+        # A recording's first segment when it matches a hallucination marker:
+        # held until real speech follows it, dropped if nothing does.
+        self._stream_phantom = None
         self.audio_level_thread = None
         self._audio_level_stop = threading.Event()  # Signals audio level thread to exit immediately
         self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
@@ -1081,6 +1084,7 @@ class hyprwhsprApp:
                 # Set flag immediately to prevent duplicate starts
                 self.is_recording = True
                 self._incremental_outcome = None
+                self._stream_phantom = None
                 # Store language override for this recording session
                 self._current_language_override = language_override
 
@@ -1361,6 +1365,7 @@ class hyprwhsprApp:
         print("[MUTE] Recording cancelled - microphone returned silence for 1 second", flush=True)
 
         self._cleanup_recording_state()
+        self._end_stream(submit=False)
         try:
             self.audio_capture.stop_recording()
             self.audio_manager.play_error_sound()
@@ -1379,6 +1384,7 @@ class hyprwhsprApp:
         print("Recording cancelled (discarded)", flush=True)
 
         self._cleanup_recording_state()
+        self._end_stream(submit=False)
         try:
             # Stop capture and discard the audio data
             self.audio_capture.stop_recording()
@@ -1512,11 +1518,11 @@ class hyprwhsprApp:
                 outcome = self._inject_text(text)
                 success = outcome != InjectionOutcome.FAILED
             elif self.whisper_manager.realtime_delivered_incrementally():
-                # Segments were already typed as they finalized mid-recording;
-                # the empty remainder isn't a silent recording, and the result
-                # is whatever those segment injections achieved.
-                outcome = self._incremental_outcome
-                success = outcome != InjectionOutcome.FAILED
+                # The text was already typed as it streamed in; the empty
+                # remainder isn't a silent recording. Finish the dictation
+                # (held words, trailing space, auto_submit, clipboard restore).
+                outcome = self._finish_stream()
+                success = outcome is not None and outcome != InjectionOutcome.FAILED
             else:
                 print("[WARN] No transcription generated")
                 self.audio_manager.play_error_sound()
@@ -1524,6 +1530,8 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Error processing audio: {e}", flush=True)
         finally:
+            # No-op after _finish_stream; ends a stream an error left open.
+            self._end_stream(submit=False)
             self._notify_capture("", final=True)
             self._clear_mic_osd_preview_text()
             with self._recording_lock:
@@ -1560,7 +1568,8 @@ class hyprwhsprApp:
         finalized segment (`final`); `whole` means that tail is the entire
         segment. Returns True when the text was handled here, so the
         end-of-recording path doesn't deliver the joined transcript again;
-        False defers it to that path.
+        False defers it to that path. Per-dictation work (auto_submit,
+        clipboard restore, failure notification) waits for _finish_stream.
         """
         text = (text or '').strip()
         if not text:
@@ -1573,28 +1582,65 @@ class hyprwhsprApp:
         if not (self.is_recording or self.is_processing or self._recording_finalizing.is_set()):
             print("[INCREMENTAL] Recording no longer active - text dropped", flush=True)
             return False
-        # Hallucination markers are whole-transcript phantoms ("Thank you.");
-        # matching them against a mid-sentence chunk would drop real speech.
-        if whole and is_hallucination(text, self.config.get_hallucination_markers()):
-            print(f"[INCREMENTAL] Hallucination ignored: {text!r}", flush=True)
+        # Hallucination markers are whole-dictation phantoms ("Thank you.").
+        # A first segment that matches one is held: if speech follows, it was
+        # real and goes out with that speech; if not, _finish_stream drops it.
+        if self._stream_phantom is not None:
+            text = f"{self._stream_phantom} {text}"
+            self._stream_phantom = None
+        elif (
+            whole
+            and self._incremental_outcome is None
+            and is_hallucination(text, self.config.get_hallucination_markers())
+        ):
+            self._stream_phantom = text
             return True
-        # Mid-segment chunks always need a separating space, or the next chunk
-        # glues onto this word; a segment's tail follows append_trailing_space.
-        outcome = self._inject_text(text, trailing_space=None if final else True)
+        try:
+            outcome = self.text_injector.inject_stream_chunk(text, final=final)
+        except Exception as e:
+            print(f"[INCREMENTAL] Injection failed: {e}", flush=True)
+            outcome = InjectionOutcome.FAILED
         if outcome == InjectionOutcome.FAILED:
             print(f"[INCREMENTAL] Injection failed ({len(text)} chars)", flush=True)
+        else:
+            print(f"[INCREMENTAL] Chunk dispatched ({len(text)} chars, final={final})", flush=True)
         # Keep the worst outcome so the recording reports failure if any
         # chunk failed to deliver.
         if self._incremental_outcome != InjectionOutcome.FAILED:
             self._incremental_outcome = outcome
         return True
 
-    def _inject_text(self, text, trailing_space=None):
-        """Inject transcribed text into active application.
+    def _end_stream(self, submit=True):
+        injector = getattr(self, 'text_injector', None)
+        if injector is None:
+            return None
+        try:
+            return injector.end_stream(submit=submit)
+        except Exception as e:
+            print(f"[INCREMENTAL] Finishing streamed text failed: {e}", flush=True)
+            return InjectionOutcome.FAILED
 
-        trailing_space overrides append_trailing_space for this injection
-        (None = use the setting).
-        """
+    def _finish_stream(self):
+        """Finish a streamed dictation at recording end. Returns its outcome,
+        or None when the only text was a hallucination phantom."""
+        phantom, self._stream_phantom = self._stream_phantom, None
+        if phantom is not None and self._incremental_outcome is None:
+            print(f"[INFO] Whisper hallucination detected: {phantom!r} - ignoring")
+            self._end_stream(submit=False)
+            self.audio_manager.play_error_sound()
+            return None
+        outcome = self._end_stream()
+        if InjectionOutcome.FAILED in (outcome, self._incremental_outcome):
+            print("[ERROR] Streamed text injection failed", flush=True)
+            self._notify_user(
+                "hyprwhspr", "Text delivery failed. Recover with hyprwhspr record copy-last or record paste-last",
+                urgency="normal",
+            )
+            return InjectionOutcome.FAILED
+        return outcome or self._incremental_outcome or InjectionOutcome.INJECTED
+
+    def _inject_text(self, text):
+        """Inject transcribed text into active application"""
 
         # Capture mode: route text to client instead of injecting into active app
         if self._recording_control_server.has_capture_subscriber():
@@ -1602,7 +1648,7 @@ class hyprwhsprApp:
             return InjectionOutcome.INJECTED
 
         try:
-            outcome = self.text_injector.inject_text(text, trailing_space=trailing_space)
+            outcome = self.text_injector.inject_text(text)
             if outcome == InjectionOutcome.FAILED:
                 print(f"[ERROR] Text injection failed ({len(text)} chars)", flush=True)
                 notify = True

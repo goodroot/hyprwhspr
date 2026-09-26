@@ -6,9 +6,11 @@ Covers three layers:
   (set_stream_text_callback: cb(text, final, whole) -> bool).
 - RealtimeWsBackend: wiring rules, transcribe() suppression, preview
   suppression.
-- main.hyprwhsprApp: _inject_stream_text defer/drop/inject branches and
-  the _process_audio delivered-incrementally path.
-- text_injector.TextInjector: trailing_space override behavior.
+- main.hyprwhsprApp: _inject_stream_text defer/drop/inject branches, the
+  held hallucination phantom, and finishing the stream in _process_audio /
+  on cancel.
+- text_injector.TextInjector: the stream session (chunk joining, phrase
+  hold-back, once-per-dictation clipboard restore / auto_submit / retention).
 """
 
 import json
@@ -93,6 +95,22 @@ class NemoRealtimeClientIncrementalTests(unittest.TestCase):
                 ("slushy", False, False),
             ],
         )
+
+    def test_flush_stream_delivers_pending_words_including_a_partial_one(self):
+        # The socket dropped before the segment finalized: the words already
+        # streamed must not vanish behind the empty "delivered" transcript.
+        client = _client_with_ws()
+        calls = []
+        client.set_stream_text_callback(
+            lambda text, final, whole: calls.append((text, final, whole)) or True
+        )
+        for delta in ["Going", " along", " slu"]:
+            client._handle_event(_delta_event(delta))
+
+        client.flush_stream()
+
+        self.assertEqual(calls[-1], ("slu", True, False))
+        self.assertEqual(client._stream_text, "")
 
     def test_falsy_return_keeps_text_pending_for_retry(self):
         client = _client_with_ws()
@@ -332,6 +350,50 @@ class RealtimeWsBackendIncrementalTests(unittest.TestCase):
         )
         self.assertIsNone(backend._realtime_client._stream_text_callback)
 
+    def test_callback_not_wired_in_converse_mode(self):
+        # Converse returns the model's reply; typing the user's own speech
+        # instead, and then discarding the reply, is wrong.
+        backend, callback = self._init_backend(
+            "nemo", {"realtime_incremental_injection": True, "realtime_mode": "converse"}
+        )
+        self.assertIsNone(backend._realtime_client._stream_text_callback)
+
+    def test_callback_not_wired_while_a_post_transcription_hook_is_set(self):
+        backend, callback = self._init_backend(
+            "nemo", {"realtime_incremental_injection": True, "post_transcription_hook": "cat"}
+        )
+        self.assertIsNone(backend._realtime_client._stream_text_callback)
+
+    def test_rewiring_rechecks_the_opt_in(self):
+        # set_realtime_stream_callback can reach a live backend after init;
+        # it must not switch streaming on for users who left it off.
+        backend, callback = self._init_backend(
+            "nemo", {"realtime_incremental_injection": False}
+        )
+        backend.apply_stream_callback(callback)
+        self.assertIsNone(backend._realtime_client._stream_text_callback)
+
+    def test_transcribe_flushes_streamed_words_when_not_connected(self):
+        backend = RealtimeWsBackend(self._manager(FakeConfig({})))
+        backend._realtime_client = types.SimpleNamespace(
+            connected=False, _incremental_injected_any=True, flush_stream=mock.Mock(),
+        )
+
+        self.assertEqual(backend.transcribe(_audio_data=None), "")
+        backend._realtime_client.flush_stream.assert_called_once()
+
+    def test_transcribe_flushes_streamed_words_when_commit_fails(self):
+        backend = RealtimeWsBackend(self._manager(FakeConfig({})))
+        backend._realtime_client = types.SimpleNamespace(
+            connected=True,
+            _incremental_injected_any=True,
+            commit_and_get_text=mock.Mock(side_effect=TimeoutError("no final")),
+            flush_stream=mock.Mock(),
+        )
+
+        self.assertEqual(backend.transcribe(_audio_data=None), "")
+        backend._realtime_client.flush_stream.assert_called_once()
+
     def test_transcribe_returns_empty_when_delivered_incrementally(self):
         config = FakeConfig({})
         backend = RealtimeWsBackend(self._manager(config))
@@ -404,6 +466,7 @@ class MainIncrementalInjectionTests(unittest.TestCase):
         app.is_recording = False
         app.is_processing = False
         app._incremental_outcome = None
+        app._stream_phantom = None
         app._current_language_override = None
         app.audio_capture = types.SimpleNamespace(
             sample_rate=16000, abort_recovery=mock.Mock()
@@ -441,83 +504,141 @@ class MainIncrementalInjectionTests(unittest.TestCase):
         self.assertFalse(app._inject_stream_text("hello"))
         app.text_injector.inject_text.assert_not_called()
 
-    def test_proceeds_while_recording_final_uses_none_trailing_space(self):
+    def test_chunk_goes_to_the_stream_session_with_its_final_flag(self):
         app = self._app()
         app.is_recording = True
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.INJECTED
-        self.assertTrue(app._inject_stream_text("hello there"))
-        app.text_injector.inject_text.assert_called_once_with("hello there", trailing_space=None)
-
-    def test_non_final_chunk_forces_trailing_space_true(self):
-        app = self._app()
-        app.is_recording = True
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.INJECTED
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
         self.assertTrue(app._inject_stream_text("hello", final=False, whole=False))
-        app.text_injector.inject_text.assert_called_once_with("hello", trailing_space=True)
+        self.assertTrue(app._inject_stream_text("there.", final=True, whole=False))
+        self.assertEqual(
+            app.text_injector.inject_stream_chunk.call_args_list,
+            [mock.call("hello", final=False), mock.call("there.", final=True)],
+        )
+        # Per-dictation delivery (hook, retention, auto_submit) is not per chunk.
+        app.text_injector.inject_text.assert_not_called()
+        self.assertEqual(app._incremental_outcome, self.main.InjectionOutcome.INJECTED)
 
     def test_proceeds_while_processing(self):
         app = self._app()
         app.is_processing = True
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.INJECTED
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
         self.assertTrue(app._inject_stream_text("hello there"))
+        app.text_injector.inject_stream_chunk.assert_called_once()
 
     def test_proceeds_while_finalizing(self):
         app = self._app()
         app._recording_finalizing.set()
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.INJECTED
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
         self.assertTrue(app._inject_stream_text("hello there"))
+        app.text_injector.inject_stream_chunk.assert_called_once()
 
-    def test_hallucination_filtered_without_injecting_when_whole(self):
+    def test_first_whole_segment_phantom_is_held_not_typed(self):
         app = self._app()
         app.is_recording = True
         self.assertTrue(app._inject_stream_text("thanks for watching", final=True, whole=True))
-        app.text_injector.inject_text.assert_not_called()
-        self.assertIsNone(app._incremental_outcome)
+        app.text_injector.inject_stream_chunk.assert_not_called()
+        self.assertEqual(app._stream_phantom, "thanks for watching")
 
-    def test_hallucination_text_is_injected_when_not_whole(self):
-        # A mid-stream chunk that happens to match a hallucination marker
-        # is real speech, not a whole-transcript phantom - it must go through.
+    def test_held_phantom_goes_out_with_the_speech_that_follows_it(self):
+        # "Thank you." opening a longer dictation is real speech.
         app = self._app()
         app.is_recording = True
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.INJECTED
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
+        app._inject_stream_text("Thank you.", final=True, whole=True)
+        app._inject_stream_text("for the help", final=False, whole=False)
+        app.text_injector.inject_stream_chunk.assert_called_once_with(
+            "Thank you. for the help", final=False
+        )
+        self.assertIsNone(app._stream_phantom)
+
+    def test_phantom_matching_segment_after_real_text_is_typed(self):
+        app = self._app()
+        app.is_recording = True
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
+        app._inject_stream_text("Dear Sam, the report is done.", final=True, whole=True)
+        app._inject_stream_text("Thank you.", final=True, whole=True)
+        self.assertEqual(app.text_injector.inject_stream_chunk.call_count, 2)
+        self.assertIsNone(app._stream_phantom)
+
+    def test_mid_segment_chunk_matching_a_marker_is_typed(self):
+        app = self._app()
+        app.is_recording = True
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
         self.assertTrue(
             app._inject_stream_text("thanks for watching", final=False, whole=False)
         )
-        app.text_injector.inject_text.assert_called_once_with(
-            "thanks for watching", trailing_space=True
+        app.text_injector.inject_stream_chunk.assert_called_once_with(
+            "thanks for watching", final=False
         )
+
+    def test_injector_exception_is_a_failed_chunk_not_a_deferral(self):
+        # Returning False here would leave the text for a joined transcript
+        # that transcribe() discards once anything was delivered.
+        app = self._app()
+        app.is_recording = True
+        app.text_injector.inject_stream_chunk.side_effect = RuntimeError("boom")
+        self.assertTrue(app._inject_stream_text("hello"))
+        self.assertEqual(app._incremental_outcome, self.main.InjectionOutcome.FAILED)
 
     def test_failed_outcome_is_sticky_across_later_injected_chunks(self):
         app = self._app()
         app.is_recording = True
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.FAILED
-        app._notify_user = mock.Mock()
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.FAILED
         self.assertTrue(app._inject_stream_text("first segment"))
         self.assertEqual(app._incremental_outcome, self.main.InjectionOutcome.FAILED)
 
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.INJECTED
+        app.text_injector.inject_stream_chunk.return_value = self.main.InjectionOutcome.INJECTED
         self.assertTrue(app._inject_stream_text("second segment"))
         self.assertEqual(app._incremental_outcome, self.main.InjectionOutcome.FAILED)
+        # One notification for the dictation, at the end - not one per chunk.
+        app._notify_user.assert_not_called()
 
     # -- _process_audio ---------------------------------------------------
 
-    def test_process_audio_delivered_incrementally_no_error_sound_success(self):
+    def test_process_audio_delivered_incrementally_finishes_the_stream(self):
         app = self._app(transcribe_return='', delivered_incrementally=True)
         app._incremental_outcome = self.main.InjectionOutcome.INJECTED
+        app.text_injector.end_stream.return_value = self.main.InjectionOutcome.INJECTED
 
         app._process_audio(audio_data=[0.0])
 
+        self.assertEqual(app.text_injector.end_stream.call_args_list[0], mock.call(submit=True))
         app.audio_manager.play_error_sound.assert_not_called()
+        app._notify_user.assert_not_called()
         app._show_result_and_hide.assert_called_once_with(True)
 
-    def test_process_audio_delivered_incrementally_failed_outcome_no_error_sound(self):
+    def test_process_audio_failed_chunk_reports_failure_and_notifies_once(self):
         app = self._app(transcribe_return='', delivered_incrementally=True)
         app._incremental_outcome = self.main.InjectionOutcome.FAILED
+        app.text_injector.end_stream.return_value = self.main.InjectionOutcome.INJECTED
 
         app._process_audio(audio_data=[0.0])
 
         app.audio_manager.play_error_sound.assert_not_called()
+        app._notify_user.assert_called_once()
         app._show_result_and_hide.assert_called_once_with(False)
+
+    def test_process_audio_failed_finish_reports_failure(self):
+        app = self._app(transcribe_return='', delivered_incrementally=True)
+        app._incremental_outcome = self.main.InjectionOutcome.INJECTED
+        app.text_injector.end_stream.return_value = self.main.InjectionOutcome.FAILED
+
+        app._process_audio(audio_data=[0.0])
+
+        app._notify_user.assert_called_once()
+        app._show_result_and_hide.assert_called_once_with(False)
+
+    def test_process_audio_phantom_only_recording_is_dropped(self):
+        app = self._app(transcribe_return='', delivered_incrementally=True)
+        app._stream_phantom = "thanks for watching"
+
+        app._process_audio(audio_data=[0.0])
+
+        app.text_injector.inject_stream_chunk.assert_not_called()
+        self.assertEqual(app.text_injector.end_stream.call_args_list[0], mock.call(submit=False))
+        app.audio_manager.play_error_sound.assert_called_once()
+        app._show_result_and_hide.assert_called_once_with(False)
+        self.assertIsNone(app._stream_phantom)
 
     def test_process_audio_non_delivered_empty_transcription_still_errors(self):
         # Regression guard: the ordinary silent-recording path must be untouched.
@@ -528,36 +649,173 @@ class MainIncrementalInjectionTests(unittest.TestCase):
         app.audio_manager.play_error_sound.assert_called_once()
         app._show_result_and_hide.assert_called_once_with(False)
 
+    def test_cancel_ends_the_stream_without_submitting(self):
+        app = self._app()
+        app.is_recording = True
+        app._current_language_override = None
+        app._cleanup_recording_state = mock.Mock()
+        app.audio_capture.stop_recording = mock.Mock()
+        app.whisper_manager.discard_realtime_audio = mock.Mock()
 
-class TextInjectorTrailingSpaceOverrideTests(unittest.TestCase):
-    """Layer 4: trailing_space override on TextInjector.inject_text."""
+        app._cancel_recording()
 
-    def _injected(self, text, settings, trailing_space):
+        app.text_injector.end_stream.assert_called_once_with(submit=False)
+
+
+class TextInjectorStreamSessionTests(unittest.TestCase):
+    """Layer 4: TextInjector.inject_stream_chunk / end_stream."""
+
+    def _injector(self, settings=None):
         injector = make_injector()
-        injector.config_manager = ConfigStub(settings)
+        injector.config_manager = ConfigStub(settings or {})
+        self.pasted = []
+
+        def paste(text, auto_submit=True, retain=False, stream=None):
+            self.assertFalse(auto_submit)
+            self.assertFalse(retain)
+            self.assertIsNotNone(stream)
+            self.pasted.append(text)
+            return True
+
+        patcher = mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", side_effect=paste)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.enter = mock.patch.object(injector, "_send_enter_if_auto_submit").start()
+        self.restore = mock.patch.object(injector, "_restore_clipboard").start()
+        self.addCleanup(mock.patch.stopall)
+        return injector
+
+    def test_chunks_are_joined_with_a_leading_space(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("can you", final=False)
+        injector.inject_stream_chunk("check the logs", final=False)
+        self.assertEqual(self.pasted, ["can you", " check the logs"])
+
+    def test_auto_submit_enter_is_sent_once_at_the_end(self):
+        injector = self._injector({"auto_submit": True})
+        injector.inject_stream_chunk("can you", final=False)
+        injector.inject_stream_chunk("check the logs", final=True)
+        self.enter.assert_not_called()
+        self.assertEqual(injector.end_stream(), InjectionOutcome.INJECTED)
+        self.enter.assert_called_once()
+
+    def test_segments_stay_separated_when_trailing_space_is_off(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("Hello.", final=True)
+        injector.inject_stream_chunk("How are you?", final=True)
+        injector.end_stream()
+        self.assertEqual("".join(self.pasted), "Hello. How are you?")
+
+    def test_trailing_space_setting_applies_once_at_the_end(self):
+        injector = self._injector({"append_trailing_space": True})
+        injector.inject_stream_chunk("Hello there.", final=True)
+        injector.end_stream()
+        self.assertEqual(self.pasted, ["Hello there.", " "])
+
+    def test_spoken_punctuation_attaches_to_the_previous_chunk(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("hello", final=False)
+        injector.inject_stream_chunk("comma world", final=False)
+        self.assertEqual("".join(self.pasted), "hello, world")
+
+    def test_multi_word_command_split_across_chunks_is_held_together(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("is it done question", final=False)
+        injector.inject_stream_chunk("mark", final=True)
+        self.assertEqual("".join(self.pasted), "is it done?")
+
+    def test_new_line_split_across_chunks_survives(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("first item new", final=False)
+        injector.inject_stream_chunk("line second item", final=True)
+        self.assertEqual("".join(self.pasted), "first item\nsecond item")
+
+    def test_new_line_at_a_segment_end_waits_for_the_next_word(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("first item new line", final=True)
+        injector.inject_stream_chunk("second item", final=True)
+        injector.end_stream()
+        self.assertEqual("".join(self.pasted), "first item\nsecond item")
+
+    def test_multi_word_override_split_across_chunks_matches(self):
+        injector = self._injector({
+            "append_trailing_space": False,
+            "word_overrides": {"hyper whisper": "hyprwhspr"},
+        })
+        injector.inject_stream_chunk("I use hyper", final=False)
+        injector.inject_stream_chunk("whisper daily", final=False)
+        self.assertEqual("".join(self.pasted), "I use hyprwhspr daily")
+
+    def test_held_words_are_delivered_at_the_end(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("open the question", final=False)
+        injector.end_stream()
+        self.assertEqual("".join(self.pasted), "open the question")
+
+    def test_whole_dictation_is_retained_for_recovery(self):
+        injector = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk("hello", final=False)
+        injector.inject_stream_chunk("there friend.", final=True)
+        injector.end_stream()
+        self.assertEqual(injector._last_text, "hello there friend.")
+
+    def test_cancel_skips_held_words_and_enter(self):
+        injector = self._injector({"auto_submit": True, "append_trailing_space": True})
+        injector.inject_stream_chunk("open the question", final=False)
+        injector.end_stream(submit=False)
+        self.assertEqual(self.pasted, ["open the"])
+        self.enter.assert_not_called()
+
+    def test_failed_chunk_makes_the_dictation_fail_without_enter(self):
+        injector = self._injector({"auto_submit": True})
+        with mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=False):
+            self.assertEqual(
+                injector.inject_stream_chunk("hello", final=True), InjectionOutcome.FAILED
+            )
+        self.assertEqual(injector.end_stream(), InjectionOutcome.FAILED)
+        self.enter.assert_not_called()
+
+    def test_end_without_a_stream_is_a_noop(self):
+        injector = self._injector()
+        self.assertIsNone(injector.end_stream())
+        self.enter.assert_not_called()
+        self.restore.assert_not_called()
+
+
+class TextInjectorStreamClipboardTests(unittest.TestCase):
+    """The clipboard is saved before the first chunk and restored once."""
+
+    def test_clipboard_saved_once_and_restored_once_to_the_original(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({"append_trailing_space": False})
+        clipboard = {"value": b"https://original.example"}
+
+        def copy(text):
+            clipboard["value"] = text.encode("utf-8")
+            return True
 
         with (
-            mock.patch.object(injector, "_preprocess_text", return_value=text),
-            mock.patch.object(
-                injector, "_inject_via_clipboard_and_hotkey", return_value=True
-            ) as inject,
+            mock.patch.object(injector, "_save_clipboard", side_effect=lambda: clipboard["value"]) as save,
+            mock.patch.object(injector, "_copy_text_to_clipboard", side_effect=copy),
+            mock.patch.object(injector, "_is_x11_session", return_value=False),
+            mock.patch.object(injector, "_is_hyprland_session", return_value=True),
+            mock.patch.object(injector, "_is_gnome_wayland_session", return_value=False),
+            mock.patch.object(injector, "_active_window_lookup_needed", return_value=False),
+            mock.patch.object(injector, "_resolve_paste_chord", return_value=("ctrl+v", None)),
+            mock.patch.object(injector, "_send_shortcut_hyprland", return_value=True),
+            mock.patch.object(injector, "_restore_clipboard") as restore,
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch("text_injector.time.sleep"),
         ):
-            outcome = injector.inject_text(text, trailing_space=trailing_space)
-            self.assertEqual(outcome, InjectionOutcome.INJECTED)
+            injector.inject_stream_chunk("hello there", final=False)
+            injector.inject_stream_chunk("friend", final=True)
+            restore.assert_not_called()
+            injector.end_stream()
 
-        return inject.call_args[0][0]
-
-    def test_trailing_space_true_overrides_setting_false(self):
-        result = self._injected("hello", {"append_trailing_space": False}, trailing_space=True)
-        self.assertEqual(result, "hello ")
-
-    def test_trailing_space_false_overrides_setting_true(self):
-        result = self._injected("hello", {"append_trailing_space": True}, trailing_space=False)
-        self.assertEqual(result, "hello")
-
-    def test_trailing_space_none_falls_back_to_setting(self):
-        result = self._injected("hello", {"append_trailing_space": False}, trailing_space=None)
-        self.assertEqual(result, "hello")
+        save.assert_called_once()
+        restore.assert_called_once()
+        self.assertEqual(restore.call_args.args[0], b"https://original.example")
+        self.assertEqual(restore.call_args.kwargs["injected"], b" friend")
 
 
 if __name__ == "__main__":

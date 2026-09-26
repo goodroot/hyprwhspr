@@ -413,6 +413,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         
         if not self._realtime_client.connected:
             print('[REALTIME] Client not connected')
+            self._flush_stream_text()
             return ""
         
         try:
@@ -446,7 +447,15 @@ class RealtimeWsBackend(TranscriptionBackend):
             
         except Exception as e:
             print(f'[REALTIME] Transcription failed: {e}')
+            self._flush_stream_text()
             return ""
+
+    def _flush_stream_text(self) -> None:
+        """The segment will never finalize (socket gone, commit failed):
+        deliver the streamed words still waiting on it rather than losing
+        them behind an empty transcript that counts as success."""
+        if self.delivered_incrementally and hasattr(self._realtime_client, 'flush_stream'):
+            self._realtime_client.flush_stream()
 
     def get_streaming_callback(self) -> Optional[Callable]:
         """
@@ -495,11 +504,16 @@ class RealtimeWsBackend(TranscriptionBackend):
 
     def _incremental_injection_enabled(self, provider_id: Optional[str]) -> bool:
         """Opt-in incremental injection, for providers whose client can stream
-        append-only text mid-recording (currently only 'nemo').
+        append-only text mid-recording (currently only 'nemo'). Transcribe
+        mode only: in converse mode the delivered text is the model's reply,
+        not the user's speech. Off while a post_transcription_hook is set, since
+        the hook takes a whole dictation, which streaming never has.
         """
         return (
             provider_id == 'nemo'
             and bool(self.config.get_setting('realtime_incremental_injection', False))
+            and self.config.get_setting('realtime_mode', 'transcribe') == 'transcribe'
+            and not self.config.get_setting('post_transcription_hook', None)
         )
 
     @property
@@ -515,6 +529,9 @@ class RealtimeWsBackend(TranscriptionBackend):
         keeps behaving as it always has, one injection at the end."""
         if not self._realtime_client:
             return
+        # Re-check the opt-in on every wiring, not just at initialize().
+        if not self._incremental_injection_enabled(self.config.get_setting('websocket_provider')):
+            callback = None
         if hasattr(self._realtime_client, 'set_stream_text_callback'):
             self._realtime_client.set_stream_text_callback(callback)
 

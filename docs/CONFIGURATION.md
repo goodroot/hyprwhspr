@@ -1254,7 +1254,7 @@ Opt-in: type words into the focused app as they are recognized, instead of one p
 }
 ```
 
-Requires `websocket_provider: "nemo"` (a self-hosted [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) server). Other providers ignore this setting.
+Requires `websocket_provider: "nemo"` (a self-hosted [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) server) with `realtime_mode: "transcribe"`. Other providers ignore this setting. It is also off while a [`post_transcription_hook`](#post-transcription-hook) is set, because the hook needs the whole dictation, which doesn't exist until you stop.
 
 Completed words are pasted each time the server streams more text, so text lands about once per server chunk: every ~1.12s with the recommended `--asr.streaming.rnnt_right_context 13`, faster with a smaller right context at some cost in accuracy. You don't need to pause. This works because the server's streaming model never changes a word once it has emitted it. Only whole words are pasted. The last partial word waits for the next chunk, or for the end of the segment.
 
@@ -1265,8 +1265,10 @@ Starting the server with `--endpointing --stop-history-eou-ms 1000` is optional 
 A few behavior notes:
 
 - The mic OSD's live transcript preview is turned off while this is on (the waveform itself stays). The typed text is the live feedback.
-- Hallucination markers are only matched against a whole segment, never a mid-sentence chunk.
-- `word_overrides` and the `post_transcription_hook` see one chunk at a time, so a multi-word override that spans two chunks won't match. `record copy-last`/`paste-last` recover only the latest chunk.
+- Per-dictation behavior still happens once, when recording stops: `auto_submit` presses Enter after the last chunk, the trailing space from `append_trailing_space` goes after the last chunk, the clipboard is restored once (to what it held before the first chunk), and `record copy-last`/`paste-last` recover the whole dictation.
+- Chunks are joined with a space, except before punctuation (a spoken "comma" attaches to the previous word) and after an opening bracket.
+- Multi-word spoken commands and `word_overrides` still match across chunks: when a chunk ends with words that could start one ("new" of "new line", "question" of "question mark"), those words wait for the next chunk. A spoken "new line" also waits for the word after it.
+- A recording whose first segment matches a hallucination marker holds it until more speech follows. If nothing does, it is dropped, the same as a whole-dictation phantom.
 - Text is typed wherever the cursor is when each chunk lands, so switching windows mid-recording moves the rest of the dictation.
 - Canceling a recording can't un-type text already pasted; only text not yet typed is dropped.
 - `hyprwhspr record capture` still receives one complete result at the end, not a stream of chunks.
