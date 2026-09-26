@@ -785,10 +785,10 @@ Get the server from its [releases page](https://github.com/NVIDIA/NeMo-Speech.cp
 
 ```bash
 nemo-speech serve --asr-model nemotron-speech-streaming-en-0.6b.q8_0.gguf \
-    --asr.streaming.rnnt_right_context 13
+    --asr.streaming.rnnt_right_context 13 --endpointing --stop-history-eou-ms 1000
 ```
 
-`--asr.streaming.rnnt_right_context 13` gives 1.12s chunks, the setting behind the model card's published WER. The server's default of 1 (160ms chunks) is noticeably less accurate. The server listens on `127.0.0.1:8080`.
+`--asr.streaming.rnnt_right_context 13` gives 1.12s chunks, the setting behind the model card's published WER. The server's default of 1 (160ms chunks) is noticeably less accurate. `--endpointing` finalizes a sentence, with its punctuation, at each pause of about a second; without it, closing punctuation arrives only when you stop. In testing, a 280ms pause threshold fragmented speech and hurt accuracy. The server listens on `127.0.0.1:8080`.
 
 ```jsonc
 {
@@ -799,6 +799,8 @@ nemo-speech serve --asr-model nemotron-speech-streaming-en-0.6b.q8_0.gguf \
     // "websocket_url": "ws://127.0.0.1:8080/v1/realtime"  // only if the server isn't on the default host/port
 }
 ```
+
+To have words typed while you talk, see [Incremental injection](#incremental-injection).
 
 ## Audio and visual feedback
 
@@ -1246,7 +1248,7 @@ Dictation into an app with injection disabled is never retained.
 
 ### Incremental injection
 
-Opt-in: type words into the focused app as they are recognized, instead of one paste when recording stops.
+Opt-in: type words into the focused app as they are recognized, instead of pasting once when recording stops.
 
 ```jsonc
 {
@@ -1254,24 +1256,20 @@ Opt-in: type words into the focused app as they are recognized, instead of one p
 }
 ```
 
-Requires `websocket_provider: "nemo"` (a self-hosted [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) server) with `realtime_mode: "transcribe"`. Other providers ignore this setting. It is also off while a [`post_transcription_hook`](#post-transcription-hook) is set, because the hook needs the whole dictation, which doesn't exist until you stop.
+Requires `websocket_provider: "nemo"` (see [NeMo-Speech.cpp](#nemo-speechcpp-self-hosted)) with `realtime_mode: "transcribe"`. Other providers ignore this setting. It is also off while a [`post_transcription_hook`](#post-transcription-hook) is set, because the hook needs the whole dictation.
 
-Completed words are pasted each time the server streams more text, so text lands about once per server chunk: every ~1.12s with the recommended `--asr.streaming.rnnt_right_context 13`, faster with a smaller right context at some cost in accuracy. You don't need to pause. This works because the server's streaming model never changes a word once it has emitted it. Only whole words are pasted. The last partial word waits for the next chunk, or for the end of the segment.
+hyprwhspr pastes completed words each time the server streams more text: about every 1.12s at the recommended right context, with no pause needed. Only whole words go out; a partial last word waits for the next chunk. This works because the streaming model never changes a word after emitting it, so typed text is never revised. Rewriting already-pasted text is tracked in [issue #219](https://github.com/goodroot/hyprwhspr/issues/219).
 
-Injection is append-only: typed text is never revised. Live rewrite of already-pasted text is a separate, harder problem; see [issue #219](https://github.com/goodroot/hyprwhspr/issues/219).
+Behavior notes:
 
-Starting the server with `--endpointing --stop-history-eou-ms 1000` is optional but recommended. Streaming doesn't need it, but it is what ends sentences: at each detected pause the server finalizes the segment with its punctuation, so the next sentence starts cleanly. Without it, finalization (and its closing punctuation) happens only when you stop. In testing, ~1000ms gave sentence-sized segments. 280ms fragmented speech and visibly hurt accuracy.
-
-A few behavior notes:
-
-- The mic OSD's live transcript preview is turned off while this is on (the waveform itself stays). The typed text is the live feedback.
-- Per-dictation behavior still happens once, when recording stops: `auto_submit` presses Enter after the last chunk, the trailing space from `append_trailing_space` goes after the last chunk, the clipboard is restored once (to what it held before the first chunk), and `record copy-last`/`paste-last` recover the whole dictation.
+- The mic OSD's live transcript preview is off in this mode. The waveform stays.
+- Per-dictation behavior happens once, when recording stops: `auto_submit`'s Enter, the trailing space from `append_trailing_space`, one clipboard restore (to what it held before the first chunk), and `record copy-last`/`paste-last`, which recover the whole dictation.
 - Chunks are joined with a space, except before punctuation (a spoken "comma" attaches to the previous word) and after an opening bracket.
-- Multi-word spoken commands, `word_overrides` and filler words still match across chunks: when a chunk ends with words that could start one ("new" of "new line", "question" of "question mark"), those words wait for the next chunk. A spoken "new line" also waits for the word after it, and is dropped if the dictation ends on it.
-- A recording's opening words are held while they could still be a hallucination marker ("Thank", then "Thank you."). They're typed as soon as the speech stops matching one; if the recording ends on a marker, it's dropped, the same as a whole-dictation phantom.
-- Text is typed wherever the cursor is when each chunk lands, so switching windows mid-recording moves the rest of the dictation.
-- Canceling a recording can't un-type text already pasted; only text not yet typed is dropped.
-- `hyprwhspr record capture` still receives one complete result at the end, not a stream of chunks.
+- Multi-word spoken commands, `word_overrides` and filler words still match across chunks. If a chunk ends with words that could start one ("new" of "new line", "question" of "question mark"), those words wait for the next chunk. A dictation that ends on "new line" drops it.
+- The opening words are held while they could still be a hallucination marker ("Thank", then "Thank you."). They're typed as soon as the speech stops matching one, and dropped if the recording ends on a marker.
+- Each chunk lands wherever the cursor is, so switching windows mid-recording moves the rest of the dictation.
+- Canceling can't un-type pasted text; it drops only what hasn't been typed yet.
+- `hyprwhspr record capture` still receives one complete result at the end.
 
 ### GNOME/Mutter notes
 
