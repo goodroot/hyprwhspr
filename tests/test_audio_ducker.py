@@ -222,19 +222,19 @@ class DuckerSelfHealTests(unittest.TestCase):
 
 
 class DuckerSelfHealEdgeTests(unittest.TestCase):
-    def _owe_chrome(self, ducker, pulse):
+    def _leave_chrome_pending(self, ducker, pulse):
         pulse.streams = [FakeStream(1, pid=100, name="Chrome", binary="chrome")]
         ducker.duck()
         pulse.streams = []  # ducked stream ended before restore
         ducker.restore()
 
-    def test_debt_survives_a_fresh_stream_of_the_same_app_listed_first(self):
-        # A new tab's stream at full volume must not consume the debt owed
-        # to the replacement stream sitting at the ducked level.
+    def test_pending_survives_a_fresh_stream_of_the_same_app_listed_first(self):
+        # A new tab's stream at full volume must not clear the pending entry
+        # before the stream sitting at the ducked level is healed.
         pulse = FakePulse([])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
         with patched(pulse):
-            self._owe_chrome(ducker, pulse)
+            self._leave_chrome_pending(ducker, pulse)
             pulse.streams = [
                 FakeStream(10, pid=101, name="Chrome", binary="chrome", volume=1.0),
                 FakeStream(11, pid=102, name="Chrome", binary="chrome", volume=0.5),
@@ -248,7 +248,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
         pulse = FakePulse([])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
         with patched(pulse):
-            self._owe_chrome(ducker, pulse)
+            self._leave_chrome_pending(ducker, pulse)
             pulse.streams = [
                 FakeStream(12, pid=101, name="Chrome", binary="chrome", volume=0.5),
                 FakeStream(13, pid=102, name="Chrome", binary="chrome", volume=0.5),
@@ -259,7 +259,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
         self.assertAlmostEqual(pulse.set_volumes[13], 1.0)
 
     def test_reduction_change_between_duck_and_restore_still_heals(self):
-        # The owed ducked level is what duck() actually applied, not one
+        # The pending ducked level is what duck() actually applied, not one
         # recomputed from a reduction percent changed in between.
         pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome")])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
@@ -273,7 +273,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
             ducker.restore()
         self.assertAlmostEqual(pulse.set_volumes[2], 1.0)
 
-    def test_failed_restore_keeps_unrestored_streams_owed(self):
+    def test_failed_restore_keeps_unrestored_streams_pending(self):
         pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome")])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
         with patched(pulse):
@@ -291,7 +291,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
             ducker.restore()
         self.assertAlmostEqual(pulse.set_volumes[2], 1.0)
 
-    def test_streams_naming_no_application_never_carry_a_debt(self):
+    def test_streams_naming_no_application_are_never_tracked(self):
         pulse = FakePulse([FakeStream(1, pid=100, name=None, binary=None)])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
         with patched(pulse):
@@ -303,7 +303,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
         self.assertNotIn(2, pulse.set_volumes)
 
     def test_quiet_neighbour_is_not_mistaken_for_a_ducked_stream(self):
-        # Owed ducked level 0.01; a different stream of the app at 0.018 is
+        # Pending ducked level 0.01; another stream of the app at 0.018 is
         # nowhere near it relative to its size.
         pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome", volume=0.02)])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)

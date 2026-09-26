@@ -69,9 +69,8 @@ class AudioDucker:
         """
         self._reduction_percent = max(0.0, min(100.0, reduction_percent))
         self._original_volumes = {}  # sink_input index -> (identity, original, ducked volume)
-        # app key -> (original volume, ducked volume) for apps whose ducked
-        # stream ended before restore() reached it. Kept until a later restore
-        # lands, so a stream left at the ducked level heals on the next cycle.
+        # app key -> (original, ducked volume) for apps whose ducked stream
+        # ended before restore() reached it, so a later cycle can heal it.
         self._pending_restores = {}
         self._lock = threading.Lock()
         self._is_ducked = False
@@ -95,18 +94,20 @@ class AudioDucker:
 
     @staticmethod
     def _app_key(sink_input) -> tuple:
-        """Identity of the application rather than the stream. An app's
-        streams come and go (a browser recreates one per tab or video), and
-        PulseAudio's stream-restore database hands each new one the app's last
-        volume - so a stream that ended while ducked leaves its app ducked."""
+        """Identity of the application rather than the stream.
+
+        An app's streams come and go (a browser makes one per tab or video),
+        and stream-restore hands each new one the app's last volume, so a
+        stream that ended while ducked leaves its app ducked.
+        """
         props = sink_input.proplist
         return AudioDucker._key_from(props.get('application.name'),
                                      props.get('application.process.binary'))
 
     @staticmethod
     def _key_from(name, binary):
-        # Streams that name no application can't be told apart, so they never
-        # carry a debt - healing one could change an unrelated stream.
+        # Streams naming no application can't be told apart, so healing one
+        # could hit an unrelated stream. Never track them.
         if name is None and binary is None:
             return None
         return (name, binary)
@@ -118,7 +119,7 @@ class AudioDucker:
     @staticmethod
     def _at_level(volume: float, level: float) -> bool:
         # Relative, so a quiet stream's tiny ducked level doesn't match its
-        # neighbours; the floor stays well above PulseAudio's integer rounding.
+        # neighbours; the floor absorbs PulseAudio's integer rounding.
         return abs(volume - level) <= max(0.002, 0.02 * level)
 
     @staticmethod
@@ -188,10 +189,8 @@ class AudioDucker:
                         key = self._app_key(stream)
                         pending = self._pending_restores.get(key) if key else None
                         if pending and self._at_level(original_vol, pending[1]):
-                            # Still at the level an unfinished earlier duck
-                            # left it: that's not this stream's real volume.
-                            # Every such stream of the app gets it, so the debt
-                            # is only settled once the loop is done.
+                            # Still at an earlier duck's level, so that's
+                            # not this stream's real volume.
                             original_vol = pending[0]
                             settled.add(key)
                         ducked_vol = original_vol * multiplier
@@ -200,9 +199,9 @@ class AudioDucker:
 
                         pulse.volume_set_all_chans(stream, ducked_vol)
 
-                    # Settled debts now live in this cycle's snapshot. One that
-                    # matched no stream stays: a stream at another level only
-                    # means the app has other streams or the user changed it.
+                    # Cleared only after the loop, so every stream of the app
+                    # gets the real volume. An entry that matched nothing stays
+                    # pending: the app may have other streams still to heal.
                     for key in settled:
                         self._pending_restores.pop(key, None)
                     self._is_ducked = True
@@ -247,10 +246,8 @@ class AudioDucker:
                         live.add(stream.index)
                         restored_count += 1
 
-                    # A ducked stream that ended leaves its app's next stream at
-                    # the ducked level (stream-restore). Heal any stream of that
-                    # app still sitting exactly there, and remember the rest so a
-                    # later cycle heals them.
+                    # Heal any stream of a pending app still sitting at the
+                    # ducked level; the rest stay pending for a later cycle.
                     self._carry_unrestored(live)
                     healed = set()
                     for stream in streams:
@@ -273,17 +270,19 @@ class AudioDucker:
 
             except Exception as e:
                 print(f"[AUDIO_DUCKER] Failed to restore audio: {e}", flush=True)
-                # Whatever wasn't restored stays owed, so a later cycle can
-                # still heal it; then clear state to avoid stuck ducking.
+                # Keep what wasn't restored pending for a later cycle, then
+                # clear state to avoid stuck ducking.
                 self._carry_unrestored(live)
                 self._original_volumes.clear()
                 self._is_ducked = False
                 return False
 
     def _carry_unrestored(self, live):
-        """Move snapshot entries that weren't restored into the per-app debts,
-        keeping the ducked level actually applied (not one recomputed from a
-        reduction percent that may have changed since). Call under _lock."""
+        """Mark snapshot entries that weren't restored as pending.
+
+        Keeps the ducked level actually applied, not one recomputed from a
+        reduction percent that may have changed since. Call under _lock.
+        """
         for index, (identity, original_vol, ducked_vol) in self._original_volumes.items():
             if index in live:
                 continue
