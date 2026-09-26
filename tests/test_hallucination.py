@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
-from hallucination import DEFAULT_HALLUCINATION_MARKERS, is_hallucination
+from hallucination import DEFAULT_HALLUCINATION_MARKERS, could_be_hallucination, is_hallucination
 
 
 class HallucinationTests(unittest.TestCase):
@@ -51,6 +51,31 @@ class HallucinationTests(unittest.TestCase):
         for markers in ({"silence"}, ["silence"], ("silence",)):
             self.assertTrue(is_hallucination("Silence.", markers), type(markers))
 
+
+
+class CouldBeHallucinationTests(unittest.TestCase):
+    """Streamed text arrives a few words at a time, so a marker's opening
+    words must be recognized before the marker is complete."""
+
+    def test_opening_words_of_a_marker_match(self):
+        for text in ("Thank", "thank you", "Thanks for", "Thank you for"):
+            self.assertTrue(could_be_hallucination(text), text)
+
+    def test_complete_markers_match(self):
+        for text in ("Thank you.", "[Music]", "♪ la la"):
+            self.assertTrue(could_be_hallucination(text), text)
+
+    def test_speech_that_diverges_from_every_marker_does_not(self):
+        for text in ("Thank goodness", "hello", "you know what", "Thank you for the coffee"):
+            self.assertFalse(could_be_hallucination(text), text)
+
+    def test_custom_markers_replace_the_defaults(self):
+        self.assertTrue(could_be_hallucination("Background", ["background noise"]))
+        self.assertFalse(could_be_hallucination("Thank", ["background noise"]))
+
+    def test_empty_input_is_safe(self):
+        self.assertFalse(could_be_hallucination(""))
+        self.assertFalse(could_be_hallucination("  "))
 
 if __name__ == "__main__":
     unittest.main()

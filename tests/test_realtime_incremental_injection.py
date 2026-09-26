@@ -918,5 +918,53 @@ class TextInjectorStreamClipboardTests(unittest.TestCase):
         self.assertEqual(restore.call_args.kwargs["injected"], b" friend")
 
 
+
+class ClientToInjectorIntegrationTests(unittest.TestCase):
+    """The real NemoRealtimeClient feeding the real TextInjector stream
+    session: chunk boundaries come from the client's word delivery, not a
+    test's choice of chunks."""
+
+    def _run(self, events, settings=None):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({"append_trailing_space": False, **(settings or {})})
+        pasted = []
+
+        def paste(text, auto_submit=True, retain=False, stream=None):
+            pasted.append(text)
+            return True
+
+        client = _client_with_ws()
+        client.set_stream_text_callback(
+            lambda text, final, whole: injector.inject_stream_chunk(text, final=final) is not None
+        )
+        with (
+            mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", side_effect=paste),
+            mock.patch.object(injector, "_send_enter_if_auto_submit"),
+            mock.patch.object(injector, "_restore_clipboard"),
+        ):
+            for event in events:
+                client._handle_event(event)
+            injector.end_stream()
+        return "".join(pasted)
+
+    def test_new_line_completing_after_the_previous_word_was_typed(self):
+        events = [_delta_event(d) for d in ["I said hello", " new", " line world", " again"]]
+        events.append(_completed_event("I said hello new line world again."))
+        self.assertEqual(self._run(events), "I said hello\nworld again.")
+
+    def test_question_mark_split_across_deltas(self):
+        events = [_delta_event(d) for d in ["is it", " done question", " mark"]]
+        events.append(_completed_event("is it done question mark"))
+        self.assertEqual(self._run(events), "is it done?")
+
+    def test_override_split_across_deltas_and_segments(self):
+        events = [_delta_event(d) for d in ["I use", " hyper", " whisper daily"]]
+        events.append(_completed_event("I use hyper whisper daily."))
+        events += [_delta_event(" It works", "item_2"), _completed_event("It works.", "item_2")]
+        self.assertEqual(
+            self._run(events, {"word_overrides": {"hyper whisper": "hyprwhspr"}}),
+            "I use hyprwhspr daily. It works.",
+        )
+
 if __name__ == "__main__":
     unittest.main()
