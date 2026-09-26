@@ -1246,7 +1246,7 @@ Dictation into an app with injection disabled is never retained.
 
 ### Incremental injection
 
-Opt-in: paste each finalized segment as soon as it lands mid-recording instead of waiting for one paste at the end.
+Opt-in: type words into the focused app as they are recognized, instead of one paste when recording stops.
 
 ```jsonc
 {
@@ -1254,17 +1254,22 @@ Opt-in: paste each finalized segment as soon as it lands mid-recording instead o
 }
 ```
 
-Requires `websocket_provider: "nemo"` — a self-hosted [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) server started with `--endpointing --stop-history-eou-ms <ms>`, which makes it finalize (and emit a transcription-completed event for) each detected pause instead of only at the end of the stream. Without `--endpointing` the server still finalizes only once, so you get the usual single paste. Other providers ignore this setting entirely.
+Requires `websocket_provider: "nemo"` (a self-hosted [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) server). Other providers ignore this setting.
 
-Injection is append-only: once a segment is typed it is never revised. Live rewrite of already-pasted text is a separate, harder problem — see [issue #219](https://github.com/goodroot/hyprwhspr/issues/219).
+Completed words are pasted each time the server streams more text, so text lands about once per server chunk: every ~1.12s with the recommended `--asr.streaming.rnnt_right_context 13`, faster with a smaller right context at some cost in accuracy. You don't need to pause. This works because the server's streaming model never changes a word once it has emitted it. Only whole words are pasted. The last partial word waits for the next chunk, or for the end of the segment.
 
-Tuning `--stop-history-eou-ms`, from real testing: ~1000ms produces sentence-sized segments. 280ms fragments speech into short, choppy segments and visibly hurts accuracy, since each segment gets less surrounding context to transcribe from. Speaking without pauses means nothing lands until you pause or stop recording — the server hasn't finalized anything yet.
+Injection is append-only: typed text is never revised. Live rewrite of already-pasted text is a separate, harder problem; see [issue #219](https://github.com/goodroot/hyprwhspr/issues/219).
+
+Starting the server with `--endpointing --stop-history-eou-ms 1000` is optional but recommended. Streaming doesn't need it, but it is what ends sentences: at each detected pause the server finalizes the segment with its punctuation, so the next sentence starts cleanly. Without it, finalization (and its closing punctuation) happens only when you stop. In testing, ~1000ms gave sentence-sized segments. 280ms fragmented speech and visibly hurt accuracy.
 
 A few behavior notes:
 
-- The mic OSD's live transcript preview is turned off while this is on (the waveform itself stays) — the typed text is the live feedback.
-- Canceling a recording can't un-type segments already pasted; only text still in the buffer is dropped.
-- `hyprwhspr record capture` still receives one complete result at the end, not a stream of segments.
+- The mic OSD's live transcript preview is turned off while this is on (the waveform itself stays). The typed text is the live feedback.
+- Hallucination markers are only matched against a whole segment, never a mid-sentence chunk.
+- `word_overrides` and the `post_transcription_hook` see one chunk at a time, so a multi-word override that spans two chunks won't match. `record copy-last`/`paste-last` recover only the latest chunk.
+- Text is typed wherever the cursor is when each chunk lands, so switching windows mid-recording moves the rest of the dictation.
+- Canceling a recording can't un-type text already pasted; only text not yet typed is dropped.
+- `hyprwhspr record capture` still receives one complete result at the end, not a stream of chunks.
 
 ### GNOME/Mutter notes
 
