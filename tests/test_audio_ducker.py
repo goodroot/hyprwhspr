@@ -221,6 +221,100 @@ class DuckerSelfHealTests(unittest.TestCase):
         self.assertNotIn(5, pulse.set_volumes)
 
 
+class DuckerSelfHealEdgeTests(unittest.TestCase):
+    def _owe_chrome(self, ducker, pulse):
+        pulse.streams = [FakeStream(1, pid=100, name="Chrome", binary="chrome")]
+        ducker.duck()
+        pulse.streams = []  # ducked stream ended before restore
+        ducker.restore()
+
+    def test_debt_survives_a_fresh_stream_of_the_same_app_listed_first(self):
+        # A new tab's stream at full volume must not consume the debt owed
+        # to the replacement stream sitting at the ducked level.
+        pulse = FakePulse([])
+        ducker = audio_ducker.AudioDucker(reduction_percent=50)
+        with patched(pulse):
+            self._owe_chrome(ducker, pulse)
+            pulse.streams = [
+                FakeStream(10, pid=101, name="Chrome", binary="chrome", volume=1.0),
+                FakeStream(11, pid=102, name="Chrome", binary="chrome", volume=0.5),
+            ]
+            ducker.duck()
+            ducker.restore()
+        self.assertAlmostEqual(pulse.set_volumes[10], 1.0)
+        self.assertAlmostEqual(pulse.set_volumes[11], 1.0)
+
+    def test_every_stuck_stream_of_the_app_is_healed(self):
+        pulse = FakePulse([])
+        ducker = audio_ducker.AudioDucker(reduction_percent=50)
+        with patched(pulse):
+            self._owe_chrome(ducker, pulse)
+            pulse.streams = [
+                FakeStream(12, pid=101, name="Chrome", binary="chrome", volume=0.5),
+                FakeStream(13, pid=102, name="Chrome", binary="chrome", volume=0.5),
+            ]
+            ducker.duck()
+            ducker.restore()
+        self.assertAlmostEqual(pulse.set_volumes[12], 1.0)
+        self.assertAlmostEqual(pulse.set_volumes[13], 1.0)
+
+    def test_reduction_change_between_duck_and_restore_still_heals(self):
+        # The owed ducked level is what duck() actually applied, not one
+        # recomputed from a reduction percent changed in between.
+        pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome")])
+        ducker = audio_ducker.AudioDucker(reduction_percent=50)
+        with patched(pulse):
+            ducker.duck()
+            pulse.streams = []
+            ducker.set_reduction_percent(20)
+            ducker.restore()
+            pulse.streams = [FakeStream(2, pid=101, name="Chrome", binary="chrome", volume=0.5)]
+            ducker.duck()
+            ducker.restore()
+        self.assertAlmostEqual(pulse.set_volumes[2], 1.0)
+
+    def test_failed_restore_keeps_unrestored_streams_owed(self):
+        pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome")])
+        ducker = audio_ducker.AudioDucker(reduction_percent=50)
+        with patched(pulse):
+            ducker.duck()
+            original_set = pulse.volume_set_all_chans
+
+            def fail(stream, volume):
+                raise RuntimeError("pulse died")
+
+            pulse.volume_set_all_chans = fail
+            self.assertFalse(ducker.restore())
+            pulse.volume_set_all_chans = original_set
+            pulse.streams = [FakeStream(2, pid=101, name="Chrome", binary="chrome", volume=0.5)]
+            ducker.duck()
+            ducker.restore()
+        self.assertAlmostEqual(pulse.set_volumes[2], 1.0)
+
+    def test_streams_naming_no_application_never_carry_a_debt(self):
+        pulse = FakePulse([FakeStream(1, pid=100, name=None, binary=None)])
+        ducker = audio_ducker.AudioDucker(reduction_percent=50)
+        with patched(pulse):
+            ducker.duck()
+            # An unrelated anonymous stream happens to sit at 0.5.
+            pulse.streams = [FakeStream(2, pid=200, name=None, binary=None, volume=0.5)]
+            pulse.set_volumes.clear()
+            ducker.restore()
+        self.assertNotIn(2, pulse.set_volumes)
+
+    def test_quiet_neighbour_is_not_mistaken_for_a_ducked_stream(self):
+        # Owed ducked level 0.01; a different stream of the app at 0.018 is
+        # nowhere near it relative to its size.
+        pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome", volume=0.02)])
+        ducker = audio_ducker.AudioDucker(reduction_percent=50)
+        with patched(pulse):
+            ducker.duck()
+            pulse.streams = [FakeStream(3, pid=101, name="Chrome", binary="chrome", volume=0.018)]
+            pulse.set_volumes.clear()
+            ducker.restore()
+        self.assertNotIn(3, pulse.set_volumes)
+
+
 class PidAncestryTests(unittest.TestCase):
     def test_walks_parents_from_proc(self):
         chain = {5: 4, 4: 3, 3: 1}

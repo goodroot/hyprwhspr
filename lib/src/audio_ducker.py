@@ -68,7 +68,7 @@ class AudioDucker:
                               50 means reduce to 50% of original volume.
         """
         self._reduction_percent = max(0.0, min(100.0, reduction_percent))
-        self._original_volumes = {}  # sink_input index -> (identity, original volume)
+        self._original_volumes = {}  # sink_input index -> (identity, original, ducked volume)
         # app key -> (original volume, ducked volume) for apps whose ducked
         # stream ended before restore() reached it. Kept until a later restore
         # lands, so a stream left at the ducked level heals on the next cycle.
@@ -100,7 +100,16 @@ class AudioDucker:
         PulseAudio's stream-restore database hands each new one the app's last
         volume - so a stream that ended while ducked leaves its app ducked."""
         props = sink_input.proplist
-        return (props.get('application.name'), props.get('application.process.binary'))
+        return AudioDucker._key_from(props.get('application.name'),
+                                     props.get('application.process.binary'))
+
+    @staticmethod
+    def _key_from(name, binary):
+        # Streams that name no application can't be told apart, so they never
+        # carry a debt - healing one could change an unrelated stream.
+        if name is None and binary is None:
+            return None
+        return (name, binary)
 
     @staticmethod
     def _stream_volume(sink_input) -> float:
@@ -108,9 +117,9 @@ class AudioDucker:
 
     @staticmethod
     def _at_level(volume: float, level: float) -> bool:
-        # Volumes round-trip through PulseAudio's integer scale; one percent
-        # is well above that rounding and well below a deliberate change.
-        return abs(volume - level) <= 0.01
+        # Relative, so a quiet stream's tiny ducked level doesn't match its
+        # neighbours; the floor stays well above PulseAudio's integer rounding.
+        return abs(volume - level) <= max(0.002, 0.02 * level)
 
     @staticmethod
     def _is_own_stream(sink_input) -> bool:
@@ -163,6 +172,7 @@ class AudioDucker:
             try:
                 with pulsectl.Pulse('hyprwhspr-ducker') as pulse:
                     multiplier = (100.0 - self._reduction_percent) / 100.0
+                    settled = set()
 
                     for stream in pulse.sink_input_list():
                         if self._is_own_stream(stream):
@@ -175,18 +185,26 @@ class AudioDucker:
 
                         # Store original volume (average of channels)
                         original_vol = self._stream_volume(stream)
-                        pending = self._pending_restores.pop(self._app_key(stream), None)
+                        key = self._app_key(stream)
+                        pending = self._pending_restores.get(key) if key else None
                         if pending and self._at_level(original_vol, pending[1]):
                             # Still at the level an unfinished earlier duck
                             # left it: that's not this stream's real volume.
+                            # Every such stream of the app gets it, so the debt
+                            # is only settled once the loop is done.
                             original_vol = pending[0]
-                        # (A pending entry at any other level means the user
-                        # changed the volume since; their choice wins.)
+                            settled.add(key)
+                        ducked_vol = original_vol * multiplier
                         self._original_volumes[stream.index] = (
-                            self._stream_identity(stream), original_vol)
+                            self._stream_identity(stream), original_vol, ducked_vol)
 
-                        pulse.volume_set_all_chans(stream, original_vol * multiplier)
+                        pulse.volume_set_all_chans(stream, ducked_vol)
 
+                    # Settled debts now live in this cycle's snapshot. One that
+                    # matched no stream stays: a stream at another level only
+                    # means the app has other streams or the user changed it.
+                    for key in settled:
+                        self._pending_restores.pop(key, None)
                     self._is_ducked = True
                     stream_count = len(self._original_volumes)
                     if stream_count > 0:
@@ -216,12 +234,11 @@ class AudioDucker:
             if not self._is_ducked:
                 return True  # Not ducked, nothing to restore
 
+            live = set()
             try:
                 with pulsectl.Pulse('hyprwhspr-ducker') as pulse:
-                    multiplier = (100.0 - self._reduction_percent) / 100.0
                     streams = list(pulse.sink_input_list())
                     restored_count = 0
-                    live = set()
                     for stream in streams:
                         entry = self._original_volumes.get(stream.index)
                         if entry is None or entry[0] != self._stream_identity(stream):
@@ -234,23 +251,19 @@ class AudioDucker:
                     # the ducked level (stream-restore). Heal any stream of that
                     # app still sitting exactly there, and remember the rest so a
                     # later cycle heals them.
-                    owed = dict(self._pending_restores)
-                    for index, (identity, original_vol) in self._original_volumes.items():
-                        if index not in live:
-                            owed[(identity[1], identity[2])] = (original_vol, original_vol * multiplier)
+                    self._carry_unrestored(live)
                     healed = set()
                     for stream in streams:
                         key = self._app_key(stream)
-                        if stream.index in live or key not in owed:
+                        if stream.index in live or key not in self._pending_restores:
                             continue
-                        original_vol, ducked_vol = owed[key]
+                        original_vol, ducked_vol = self._pending_restores[key]
                         if self._at_level(self._stream_volume(stream), ducked_vol):
                             pulse.volume_set_all_chans(stream, original_vol)
                             healed.add(key)
                             restored_count += 1
-                    self._pending_restores = {
-                        key: value for key, value in owed.items() if key not in healed
-                    }
+                    for key in healed:
+                        self._pending_restores.pop(key, None)
 
                     self._original_volumes.clear()
                     self._is_ducked = False
@@ -260,10 +273,23 @@ class AudioDucker:
 
             except Exception as e:
                 print(f"[AUDIO_DUCKER] Failed to restore audio: {e}", flush=True)
-                # Clear state anyway to avoid stuck ducking
+                # Whatever wasn't restored stays owed, so a later cycle can
+                # still heal it; then clear state to avoid stuck ducking.
+                self._carry_unrestored(live)
                 self._original_volumes.clear()
                 self._is_ducked = False
                 return False
+
+    def _carry_unrestored(self, live):
+        """Move snapshot entries that weren't restored into the per-app debts,
+        keeping the ducked level actually applied (not one recomputed from a
+        reduction percent that may have changed since). Call under _lock."""
+        for index, (identity, original_vol, ducked_vol) in self._original_volumes.items():
+            if index in live:
+                continue
+            key = self._key_from(identity[1], identity[2])
+            if key is not None:
+                self._pending_restores[key] = (original_vol, ducked_vol)
 
     def set_reduction_percent(self, percent: float):
         """Update the reduction percentage"""
