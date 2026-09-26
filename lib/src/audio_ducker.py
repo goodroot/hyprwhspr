@@ -1,22 +1,7 @@
-"""
-Audio ducking for hyprwhspr
-Reduces application playback volume during recording to prevent interference.
+"""Duck application streams without changing the master volume.
 
-Ducking operates on sink inputs (per-application streams), not on the sinks
-themselves. Changing a sink's volume moves the master volume of the output
-device, which desktop shells (Noctalia, GNOME, swayosd, ...) watch and answer
-with a volume OSD on every recording — and it also means a crash while ducked
-leaves the user's speaker volume wrong. Per-stream ducking is invisible to
-master-volume watchers and leaves the device volume untouched.
-
-Known tradeoff: streams are snapshot once at duck time, so a stream that
-STARTS during the recording (notification ping, autoplaying video) plays at
-full volume. Covering late arrivals needs a sink-input event subscription;
-until then this is the accepted cost of not touching the master volume.
-
-An app left at the ducked level by a stream that ended mid-recording is healed
-on the next recording, but only from memory: restart the daemon while an app is
-stuck and its volume has to be reset by hand.
+New streams are not ducked mid-recording. Replacements inheriting a ducked
+volume can heal during restore or the next cycle; recovery is memory-only.
 """
 
 import threading
@@ -28,19 +13,13 @@ except ImportError:
     PULSECTL_AVAILABLE = False
 
 
-# Playback tools hyprwhspr itself uses for start/stop/error pings (see
-# audio_manager._play_sound). Their streams must never be ducked, or a ping
-# that races the duck snapshot gets caught and restored to a ducked level.
+# Leave feedback sounds at their intended volume.
 _OWN_PLAYBACK_BINARIES = {'paplay', 'pw-play', 'ffplay', 'aplay'}
 
-# How far up the process tree to look when matching a stream against a paused
-# MPRIS player. Browsers play audio from a child process, not the process that
-# owns the MPRIS bus name, so a direct PID match alone misses them.
+# Browser audio may run in a child of the MPRIS process.
 _PID_ANCESTOR_DEPTH = 4
 
-# How many duck/restore cycles a pending original survives. A replacement stream
-# normally turns up on the very next recording, so anything older is more likely
-# a level the user picked than one we left behind.
+# Avoid mistaking later user-selected levels for stale ducking.
 _PENDING_MAX_CYCLES = 1
 
 
@@ -69,19 +48,11 @@ class AudioDucker:
     """Manages audio ducking (volume reduction) during recording"""
 
     def __init__(self, reduction_percent: float = 50.0):
-        """
-        Initialize audio ducker.
-
-        Args:
-            reduction_percent: How much to reduce volume BY (0-100).
-                              50 means reduce to 50% of original volume.
-        """
+        """Reduce volume by 0–100 percent; 50 halves it."""
         self._reduction_percent = max(0.0, min(100.0, reduction_percent))
         self._original_volumes = {}  # sink_input index -> (identity, original, ducked volume)
-        # app key -> (original, ducked volume, cycle) for apps whose ducked
-        # stream ended before restore() reached it, so a later cycle can heal
-        # it. Dropped once _PENDING_MAX_CYCLES have passed.
-        self._pending_restores = {}
+        self._pending_restores = {}  # app key -> {(original, ducked): cycle}
+        self._matched_pending = set()  # (app key, volume pair, cycle)
         self._cycle = 0
         self._lock = threading.Lock()
         self._is_ducked = False
@@ -91,13 +62,7 @@ class AudioDucker:
 
     @staticmethod
     def _stream_identity(sink_input) -> tuple:
-        """Best-effort identity beyond the numeric index.
-
-        Sink-input indices can be reused (PipeWire recycles object ids), so a
-        stream that ends while ducked could hand its index to an unrelated new
-        stream. Restore only when the identity still matches, never blindly by
-        index.
-        """
+        """Guard against stream-index reuse."""
         props = sink_input.proplist
         return (props.get('application.process.id'),
                 props.get('application.name'),
@@ -105,20 +70,14 @@ class AudioDucker:
 
     @staticmethod
     def _app_key(sink_input) -> tuple:
-        """Identity of the application rather than the stream.
-
-        An app's streams come and go (a browser makes one per tab or video),
-        and stream-restore hands each new one the app's last volume, so a
-        stream that ended while ducked leaves its app ducked.
-        """
+        """Identify replacement streams across process changes."""
         props = sink_input.proplist
         return AudioDucker._key_from(props.get('application.name'),
                                      props.get('application.process.binary'))
 
     @staticmethod
     def _key_from(name, binary):
-        # Streams naming no application can't be told apart, so healing one
-        # could hit an unrelated stream. Never track them.
+        # Anonymous streams cannot be matched safely.
         if name is None and binary is None:
             return None
         return (name, binary)
@@ -129,17 +88,12 @@ class AudioDucker:
 
     @staticmethod
     def _at_level(volume: float, level: float) -> bool:
-        # Relative, so a quiet stream's tiny ducked level doesn't match its
-        # neighbours; the floor absorbs PulseAudio's integer rounding.
+        # Relative tolerance with a floor for PulseAudio rounding.
         return abs(volume - level) <= max(0.002, 0.02 * level)
 
     @staticmethod
     def _is_own_stream(sink_input) -> bool:
-        """True for streams spawned by hyprwhspr's own sound playback.
-
-        PipeWire-native clients (pw-play) don't set application.process.binary,
-        only application.name, so check both.
-        """
+        """Check both properties: pw-play may omit the binary."""
         props = sink_input.proplist
         binary = (props.get('application.process.binary') or '').lower()
         app_name = (props.get('application.name') or '').lower()
@@ -156,21 +110,9 @@ class AudioDucker:
         return any(ancestor in pids for ancestor in _pid_ancestry(pid))
 
     def duck(self, skip_pids=None) -> bool:
-        """
-        Reduce playback volume of running application streams.
-        Stores original volumes for later restoration.
+        """Duck active streams except corked players and skip_pids descendants.
 
-        Args:
-            skip_pids: PIDs whose streams must be left alone (players already
-                       paused via MPRIS).
-
-        A paused stream is worth nothing to duck and costs something: if it goes
-        away before restore() runs, PulseAudio's stream-restore database keeps the
-        ducked volume against that app and hands it back to its next stream. So
-        anything corked, or belonging to a player we just paused, is skipped.
-
-        Returns:
-            True if ducking was applied, False otherwise
+        Return whether ducking succeeded; partial failures remain restorable.
         """
         if not PULSECTL_AVAILABLE:
             return False
@@ -187,7 +129,6 @@ class AudioDucker:
             try:
                 with pulsectl.Pulse('hyprwhspr-ducker') as pulse:
                     multiplier = (100.0 - self._reduction_percent) / 100.0
-                    settled = set()
 
                     for stream in pulse.sink_input_list():
                         if self._is_own_stream(stream):
@@ -198,26 +139,19 @@ class AudioDucker:
                         if skip_pids and self._belongs_to_pids(stream, skip_pids):
                             continue
 
-                        # Store original volume (average of channels)
                         original_vol = self._stream_volume(stream)
                         key = self._app_key(stream)
-                        pending = self._pending_restores.get(key) if key else None
-                        if pending and self._at_level(original_vol, pending[1]):
-                            # Still at an earlier duck's level, so that's
-                            # not this stream's real volume.
-                            original_vol = pending[0]
-                            settled.add(key)
+                        matches = self._pending_matches(key, original_vol)
+                        if matches:
+                            original_vol = next(iter(matches))[0]
+                            self._matched_pending.update(
+                                (key, pair, cycle) for pair, cycle in matches.items())
                         ducked_vol = original_vol * multiplier
                         self._original_volumes[stream.index] = (
                             self._stream_identity(stream), original_vol, ducked_vol)
 
                         pulse.volume_set_all_chans(stream, ducked_vol)
 
-                    # Cleared only after the loop, so every stream of the app
-                    # gets the real volume. An entry that matched nothing stays
-                    # pending: the app may have other streams still to heal.
-                    for key in settled:
-                        self._pending_restores.pop(key, None)
                     self._is_ducked = True
                     stream_count = len(self._original_volumes)
                     if stream_count > 0:
@@ -226,20 +160,12 @@ class AudioDucker:
 
             except Exception as e:
                 print(f"[AUDIO_DUCKER] Failed to duck audio: {e}", flush=True)
-                # Whatever was lowered before the failure still needs restoring,
-                # so keep the snapshot and stay "ducked" - dropping it here would
-                # leave those streams quiet for good.
+                # Keep partial ducking restorable.
                 self._is_ducked = bool(self._original_volumes)
                 return False
 
     def restore(self) -> bool:
-        """
-        Restore application streams to their original volume.
-        Streams that ended while ducked are silently skipped.
-
-        Returns:
-            True if restoration was successful, False otherwise
-        """
+        """Restore snapshots and heal matching replacements; return success."""
         if not PULSECTL_AVAILABLE:
             return False
 
@@ -261,21 +187,27 @@ class AudioDucker:
                         live.add(stream.index)
                         restored_count += 1
 
-                    # Heal any stream of a pending app still sitting at the
-                    # ducked level; the rest stay pending for a later cycle.
+                    # Keep candidates through the full pass for late siblings.
                     self._carry_unrestored(live)
                     healed = set()
                     for stream in streams:
                         key = self._app_key(stream)
                         if stream.index in live or key not in self._pending_restores:
                             continue
-                        original_vol, ducked_vol, _ = self._pending_restores[key]
-                        if self._at_level(self._stream_volume(stream), ducked_vol):
-                            pulse.volume_set_all_chans(stream, original_vol)
-                            healed.add(key)
+                        matches = self._pending_matches(key, self._stream_volume(stream))
+                        if matches:
+                            pulse.volume_set_all_chans(stream, next(iter(matches))[0])
+                            healed.update(
+                                (key, pair, cycle) for pair, cycle in matches.items())
                             healed_count += 1
-                    for key in healed:
-                        self._pending_restores.pop(key, None)
+                    for key, pair, cycle in self._matched_pending | healed:
+                        pending = self._pending_restores.get(key, {})
+                        # A vanished snapshot may have renewed the same pair.
+                        if pending.get(pair) == cycle:
+                            del pending[pair]
+                        if not pending:
+                            self._pending_restores.pop(key, None)
+                    self._matched_pending.clear()
 
                     self._original_volumes.clear()
                     self._is_ducked = False
@@ -287,32 +219,41 @@ class AudioDucker:
 
             except Exception as e:
                 print(f"[AUDIO_DUCKER] Failed to restore audio: {e}", flush=True)
-                # Keep what wasn't restored pending for a later cycle, then
-                # clear state to avoid stuck ducking.
+                # Retain recovery data, but release the active cycle.
                 self._carry_unrestored(live)
+                self._matched_pending.clear()
                 self._original_volumes.clear()
                 self._is_ducked = False
                 return False
 
+    def _pending_matches(self, key, volume):
+        """Find candidates with one agreed original volume. Call under _lock."""
+        matches = {
+            pair: cycle for pair, cycle in self._pending_restores.get(key, {}).items()
+            if self._at_level(volume, pair[1])
+        }
+        if len({pair[0] for pair in matches}) != 1:
+            return {}
+        return matches
+
     def _expire_pending(self):
-        """Drop pending originals too old to still be ours. Call under _lock."""
-        for key, entry in list(self._pending_restores.items()):
-            if self._cycle - entry[2] > _PENDING_MAX_CYCLES:
+        """Expire each volume pair independently. Call under _lock."""
+        for key, pending in list(self._pending_restores.items()):
+            for pair, cycle in list(pending.items()):
+                if self._cycle - cycle > _PENDING_MAX_CYCLES:
+                    del pending[pair]
+            if not pending:
                 del self._pending_restores[key]
 
     def _carry_unrestored(self, live):
-        """Mark snapshot entries that weren't restored as pending.
-
-        Keeps the ducked level actually applied, not one recomputed from a
-        reduction percent that may have changed since. Call under _lock.
-        """
+        """Keep unapplied restores at their actual ducked levels. Call under _lock."""
         for index, (identity, original_vol, ducked_vol) in self._original_volumes.items():
             if index in live:
                 continue
             key = self._key_from(identity[1], identity[2])
             if key is not None:
-                self._pending_restores[key] = (original_vol, ducked_vol,
-                                               self._cycle)
+                pending = self._pending_restores.setdefault(key, {})
+                pending[(original_vol, ducked_vol)] = self._cycle
 
     def set_reduction_percent(self, percent: float):
         """Update the reduction percentage"""

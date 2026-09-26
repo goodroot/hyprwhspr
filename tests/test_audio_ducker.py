@@ -90,8 +90,7 @@ class AudioDuckerTests(unittest.TestCase):
         self.assertEqual(pulse.set_volumes, {})
 
     def test_corked_streams_are_never_ducked(self):
-        # Nothing to gain (they're silent) and something to lose: if the stream
-        # goes away, stream-restore hands the ducked volume to its replacement.
+        # Corked streams need no ducking.
         corked = FakeStream(1, pid=100, corked=True)
         playing = FakeStream(2, pid=200)
         pulse = FakePulse([corked, playing])
@@ -155,10 +154,7 @@ class AudioDuckerTests(unittest.TestCase):
 
 
 class DuckerSelfHealTests(unittest.TestCase):
-    """A ducked stream that ends before restore() leaves PulseAudio's
-    stream-restore database holding the ducked volume for its app, so the
-    app's next stream starts ducked. The ducker must heal that, not adopt it
-    as the app's real volume."""
+    """Recover replacements that inherit ducked volumes."""
 
     def test_replacement_stream_at_ducked_level_is_healed_on_restore(self):
         pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome")])
@@ -166,8 +162,7 @@ class DuckerSelfHealTests(unittest.TestCase):
 
         with patched(pulse):
             ducker.duck()
-            # Chrome ended the stream mid-recording and started a new one,
-            # which stream-restore opened at the ducked 0.5.
+            # The replacement inherits the ducked level.
             pulse.streams = [FakeStream(2, pid=101, name="Chrome", binary="chrome", volume=0.5)]
             pulse.set_volumes.clear()
             ducker.restore()
@@ -175,8 +170,6 @@ class DuckerSelfHealTests(unittest.TestCase):
         self.assertAlmostEqual(pulse.set_volumes[2], 1.0)
 
     def test_app_stuck_at_ducked_level_heals_on_the_next_cycle(self):
-        # The reported failure: the ducked stream is gone at restore with no
-        # replacement yet, so the next duck used to record 0.5 as "original".
         pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome")])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
 
@@ -229,8 +222,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
         ducker.restore()
 
     def test_pending_survives_a_fresh_stream_of_the_same_app_listed_first(self):
-        # A new tab's stream at full volume must not clear the pending entry
-        # before the stream sitting at the ducked level is healed.
+        # A fresh stream must not consume another stream's recovery.
         pulse = FakePulse([])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
         with patched(pulse):
@@ -259,8 +251,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
         self.assertAlmostEqual(pulse.set_volumes[13], 1.0)
 
     def test_reduction_change_between_duck_and_restore_still_heals(self):
-        # The pending ducked level is what duck() actually applied, not one
-        # recomputed from a reduction percent changed in between.
+        # Match the applied level, even after a configuration change.
         pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome")])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
         with patched(pulse):
@@ -317,8 +308,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
         self.assertAlmostEqual(pulse.set_volumes[21], 1.0)
 
     def test_pending_entry_expires_after_one_silent_cycle(self):
-        # A recording later, 0.5 is far more likely a level the user picked
-        # than one we left behind, so it is taken at face value.
+        # Expired levels are taken at face value.
         pulse = FakePulse([])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
         with patched(pulse):
@@ -334,8 +324,7 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
         self.assertAlmostEqual(pulse.set_volumes[22], 0.5)
 
     def test_quiet_neighbour_is_not_mistaken_for_a_ducked_stream(self):
-        # Pending ducked level 0.01; another stream of the app at 0.018 is
-        # nowhere near it relative to its size.
+        # Nearby quiet levels must remain distinct.
         pulse = FakePulse([FakeStream(1, pid=100, name="Chrome", binary="chrome", volume=0.02)])
         ducker = audio_ducker.AudioDucker(reduction_percent=50)
         with patched(pulse):
@@ -344,6 +333,139 @@ class DuckerSelfHealEdgeTests(unittest.TestCase):
             pulse.set_volumes.clear()
             ducker.restore()
         self.assertNotIn(3, pulse.set_volumes)
+
+
+class DuckerPendingPairTests(unittest.TestCase):
+    def _leave_pending(self, ducker, pulse, volumes):
+        pulse.streams = [FakeStream(i, pid=100 + i, volume=volume)
+                         for i, volume in enumerate(volumes)]
+        self.assertTrue(ducker.duck())
+        pulse.streams = []
+        self.assertTrue(ducker.restore())
+
+    def test_distinct_levels_heal_regardless_of_order_and_arrival(self):
+        for reverse in (False, True):
+            for next_cycle in (False, True):
+                with self.subTest(reverse=reverse, next_cycle=next_cycle):
+                    streams = [FakeStream(1, volume=1.0), FakeStream(2, volume=0.6)]
+                    pulse = FakePulse(streams[::-1] if reverse else streams)
+                    ducker = audio_ducker.AudioDucker(50)
+                    with patched(pulse):
+                        ducker.duck()
+                        if next_cycle:
+                            pulse.streams = []
+                            ducker.restore()
+                        replacements = [FakeStream(3, volume=0.5), FakeStream(4, volume=0.3)]
+                        pulse.streams = replacements[::-1] if reverse else replacements
+                        if next_cycle:
+                            ducker.duck()
+                        self.assertTrue(ducker.restore())
+                    self.assertEqual([s.volume.values[0] for s in replacements], [1.0, 0.6])
+                    self.assertFalse(ducker._pending_restores)
+
+    def test_pending_match_survives_for_late_or_corked_sibling(self):
+        for corked in (False, True):
+            with self.subTest(corked=corked):
+                pulse = FakePulse([])
+                ducker = audio_ducker.AudioDucker(50)
+                with patched(pulse):
+                    self._leave_pending(ducker, pulse, [1.0])
+                    first = FakeStream(10, volume=0.5)
+                    sibling = FakeStream(11, volume=0.5, corked=corked)
+                    pulse.streams = [first, sibling] if corked else [first]
+                    ducker.duck()
+                    if not corked:
+                        pulse.streams.append(sibling)
+                    self.assertTrue(ducker.restore())
+                self.assertEqual(first.volume.values, [1.0, 1.0])
+                self.assertEqual(sibling.volume.values, [1.0, 1.0])
+                self.assertFalse(ducker._pending_restores)
+
+    def test_consuming_one_pair_preserves_another(self):
+        pulse = FakePulse([FakeStream(1, volume=1.0), FakeStream(2, volume=0.6)])
+        ducker = audio_ducker.AudioDucker(50)
+        with patched(pulse):
+            ducker.duck()
+            pulse.streams = [FakeStream(10, volume=0.5)]
+            ducker.restore()
+            self.assertEqual(ducker._pending_restores, {('player', 'player'): {(0.6, 0.3): 1}})
+            pulse.streams = [FakeStream(11, volume=0.3)]
+            ducker.duck()
+            ducker.restore()
+        self.assertEqual(pulse.streams[0].volume.values, [0.6, 0.6])
+
+    def test_pairs_expire_independently(self):
+        pulse = FakePulse([])
+        ducker = audio_ducker.AudioDucker(50)
+        with patched(pulse):
+            self._leave_pending(ducker, pulse, [1.0])
+            self._leave_pending(ducker, pulse, [0.6])
+            pulse.streams = [FakeStream(10, volume=0.5), FakeStream(11, volume=0.3)]
+            ducker.duck()
+            ducker.restore()
+        self.assertEqual([s.volume.values[0] for s in pulse.streams], [0.5, 0.6])
+        self.assertFalse(ducker._pending_restores)
+
+    def test_duplicate_pairs_heal_all_replacements(self):
+        pulse = FakePulse([])
+        ducker = audio_ducker.AudioDucker(50)
+        with patched(pulse):
+            self._leave_pending(ducker, pulse, [1.0, 1.0])
+            self.assertEqual(ducker._pending_restores, {('player', 'player'): {(1.0, 0.5): 1}})
+            pulse.streams = [FakeStream(10, volume=0.5), FakeStream(11, volume=0.5)]
+            ducker.duck()
+            ducker.restore()
+        self.assertEqual([s.volume.values[0] for s in pulse.streams], [1.0, 1.0])
+
+    def test_ambiguous_matches_are_not_healed(self):
+        for reduction, originals, replacement in ((100, [1.0, 0.6], 0.0),
+                                                  (50, [1.0, 0.99], 0.497)):
+            for next_cycle in (False, True):
+                with self.subTest(reduction=reduction, next_cycle=next_cycle):
+                    pulse = FakePulse([FakeStream(i, volume=v) for i, v in enumerate(originals)])
+                    ducker = audio_ducker.AudioDucker(reduction)
+                    with patched(pulse):
+                        ducker.duck()
+                        if next_cycle:
+                            pulse.streams = []
+                            ducker.restore()
+                        pulse.streams = [FakeStream(10, volume=replacement)]
+                        if next_cycle:
+                            ducker.duck()
+                        ducker.restore()
+                    self.assertEqual(pulse.streams[0].volume.values, [replacement, replacement])
+
+    def test_disappearing_matched_stream_renews_recovery(self):
+        pulse = FakePulse([])
+        ducker = audio_ducker.AudioDucker(50)
+        with patched(pulse):
+            self._leave_pending(ducker, pulse, [1.0])
+            self._leave_pending(ducker, pulse, [0.5])
+            pulse.streams = [FakeStream(10, volume=0.5)]
+            ducker.duck()
+            ducker.restore()
+        self.assertEqual(pulse.streams[0].volume.values, [1.0, 1.0])
+
+    def test_partial_healing_failure_retains_both_pairs(self):
+        pulse = FakePulse([FakeStream(1, volume=1.0), FakeStream(2, volume=0.6)])
+        ducker = audio_ducker.AudioDucker(50)
+        with patched(pulse):
+            ducker.duck()
+            pulse.streams = [FakeStream(10, volume=0.5), FakeStream(11, volume=0.3)]
+            original_set = pulse.volume_set_all_chans
+
+            def fail_second(stream, volume):
+                if stream.index == 11:
+                    raise RuntimeError("pulse died")
+                original_set(stream, volume)
+
+            with mock.patch.object(pulse, 'volume_set_all_chans', side_effect=fail_second):
+                self.assertFalse(ducker.restore())
+            self.assertFalse(ducker.is_ducked)
+            self.assertEqual(len(ducker._pending_restores[('player', 'player')]), 2)
+            ducker.duck()
+            ducker.restore()
+        self.assertEqual([s.volume.values[0] for s in pulse.streams], [1.0, 0.6])
 
 
 class PidAncestryTests(unittest.TestCase):
