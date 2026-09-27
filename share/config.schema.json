@@ -121,6 +121,12 @@
       "default": null,
       "description": "USB model ID for audio device (most stable identifier, from udev)"
     },
+    "debug_recordings": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Number of recent recordings to keep in $XDG_RUNTIME_DIR/hyprwhspr/recordings for debugging. 0 disables."
+    },
     "model": {
       "type": "string",
       "default": "base",

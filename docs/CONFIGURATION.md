@@ -943,6 +943,18 @@ This holds a silent input stream open in the background so the device stays warm
 
 **Leave this off unless you need it** — an open input stream triggers the microphone-in-use indicator on most desktops (GNOME, KDE, Ubuntu, etc.), making it appear as though hyprwhspr is always listening. It's not!
 
+### Debug recordings
+
+To reproduce a bad transcription, keep the last N raw recordings as `.wav` files in `$XDG_RUNTIME_DIR/hyprwhspr/recordings` (cleared at logout):
+
+```jsonc
+{
+  "debug_recordings": 20
+}
+```
+
+`0` (default) disables it. Long-form mode is not covered; it already keeps its segments on disk.
+
 ### Audio ducking
 
 Quiet other audio on record:

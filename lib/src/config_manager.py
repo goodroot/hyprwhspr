@@ -207,7 +207,10 @@ def build_default_config():
         # timeouts on some hardware. Disabled by default because active input streams
         # trigger the microphone-in-use indicator on many desktops (GNOME, Ubuntu, etc.).
         # Enable only if you see paTimedOut errors on your first recording after idle.
-        'keepalive_stream': False
+        'keepalive_stream': False,
+        # Keep the last N raw recordings in $XDG_RUNTIME_DIR/hyprwhspr/recordings
+        # for reproducing bad transcriptions. 0 disables.
+        'debug_recordings': 0
     }
 
 

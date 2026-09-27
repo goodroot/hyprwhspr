@@ -87,7 +87,7 @@ from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
     RECOVERY_RESULT_FILE, MIC_ZERO_VOLUME_FILE, LOCK_FILE, LONGFORM_STATE_FILE, LONGFORM_SEGMENTS_DIR,
-    MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE, CONFIG_DIR, RUNTIME_DIR
+    MODEL_UNLOADED_FILE, SOCKET_FILE, TRANSCRIPT_PREVIEW_FILE, CONFIG_DIR, RUNTIME_DIR, DEBUG_RECORDINGS_DIR
 )
 from backend_utils import normalize_backend
 from longform_controller import LongFormController
@@ -1385,6 +1385,20 @@ class hyprwhsprApp:
         except Exception as e:
             print(f"[ERROR] Error cancelling recording: {e}", flush=True)
 
+    def _save_debug_recording(self, audio_data):
+        """Keep the last `debug_recordings` recordings in DEBUG_RECORDINGS_DIR."""
+        keep = self.config.get_setting('debug_recordings', 0)
+        if not keep or audio_data is None:
+            return
+        try:
+            DEBUG_RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+            path = DEBUG_RECORDINGS_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}.wav"
+            self.audio_capture.save_audio_to_wav(audio_data, str(path))
+            for old in sorted(DEBUG_RECORDINGS_DIR.glob('*.wav'))[:-keep]:
+                old.unlink()
+        except Exception as e:
+            print(f"[WARN] Failed to save debug recording: {e}", flush=True)
+
     def _stop_recording(self):
         """Stop voice recording and process audio"""
         with self._recording_lock:
@@ -1420,6 +1434,7 @@ class hyprwhsprApp:
             
             # Stop audio capture
             audio_data = self.audio_capture.stop_recording()
+            self._save_debug_recording(audio_data)
 
             # Check for zero-volume or broken stream
             if audio_data is None:
