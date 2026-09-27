@@ -143,7 +143,7 @@ class FakePywhispercppModel:
 
 
 class PywhispercppPromptWiringTests(unittest.TestCase):
-    def _transcribe(self, model, overrides=None):
+    def _transcribe(self, model, overrides=None, prompt_context=None):
         from backends.pywhispercpp_backend import PywhispercppBackend
 
         manager = FakeManager(FakeConfig(overrides))
@@ -151,7 +151,7 @@ class PywhispercppPromptWiringTests(unittest.TestCase):
         manager._last_use_time = 0.0
         backend = PywhispercppBackend(manager)
         backend._pywhisper_model = model
-        backend.transcribe(np.zeros(16000, dtype=np.float32))
+        backend.transcribe(np.zeros(16000, dtype=np.float32), prompt_context=prompt_context)
         return model.transcribe_kwargs
 
     def test_auto_detected_portuguese_gets_no_english_prompt(self):
@@ -162,6 +162,21 @@ class PywhispercppPromptWiringTests(unittest.TestCase):
     def test_auto_detected_english_keeps_the_shipped_prompt(self):
         kwargs = self._transcribe(FakePywhispercppModel(detected=("en", 0.97)))
         self.assertEqual(kwargs["initial_prompt"], ENGLISH_DEFAULT)
+
+    def test_prompt_context_follows_the_configured_prompt(self):
+        kwargs = self._transcribe(FakePywhispercppModel(detected=("en", 0.97)), prompt_context="Earlier words.")
+        self.assertEqual(kwargs["initial_prompt"], ENGLISH_DEFAULT + " Earlier words.")
+
+    def test_long_prompt_context_keeps_only_its_last_words(self):
+        # whisper.cpp drops the oldest prompt tokens, which would be the configured prompt
+        context = " ".join(f"word{i}" for i in range(200))
+        kwargs = self._transcribe(FakePywhispercppModel(detected=("en", 0.97)), prompt_context=context)
+        prompt = kwargs["initial_prompt"]
+        self.assertTrue(prompt.startswith(ENGLISH_DEFAULT + " word"))
+        self.assertTrue(prompt.endswith("word199"))
+        tail = prompt[len(ENGLISH_DEFAULT) + 1:]
+        self.assertLessEqual(len(tail), 200)
+        self.assertIn(tail.split()[0], context.split())  # starts on a whole word
 
 
 if __name__ == "__main__":

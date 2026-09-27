@@ -37,6 +37,10 @@ class PywhispercppBackend(TranscriptionBackend):
     """whisper.cpp backend; GPU context needs a refresh after long idle/resume."""
 
     name = 'pywhispercpp'
+    supports_prompt_context = True
+    # whisper.cpp keeps only the last 224 prompt tokens, so a long context would
+    # push the configured prompt (which comes first) out entirely
+    _PROMPT_CONTEXT_CHARS = 200
     reinit_on_idle = True
     reinit_on_resume = True
 
@@ -362,8 +366,13 @@ class PywhispercppBackend(TranscriptionBackend):
             sys.stderr = original_stderr
 
     def transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000,
-                   language_override: Optional[str] = None) -> str:
-        """Transcribe using the local pywhispercpp model."""
+                   language_override: Optional[str] = None,
+                   prompt_context: Optional[str] = None) -> str:
+        """Transcribe using the local pywhispercpp model.
+
+        prompt_context: text spoken just before this audio; it follows the
+        configured prompt so a piece of a chunked recording carries on from it.
+        """
         try:
             audio_data = self._resample_audio(audio_data, sample_rate, 16000)
 
@@ -384,6 +393,11 @@ class PywhispercppBackend(TranscriptionBackend):
                     language = 'en'
 
             whisper_prompt, prompt_source = self.resolve_whisper_prompt(language)
+            if prompt_context:
+                context = prompt_context[-self._PROMPT_CONTEXT_CHARS:]
+                if len(context) < len(prompt_context):
+                    context = context.partition(' ')[2] or context  # don't start mid-word
+                whisper_prompt = f'{whisper_prompt} {context}' if whisper_prompt else context
             if detected_prob is not None:
                 print(f'[LANG] auto-detected: {language} (p={detected_prob:.2f}), prompt={prompt_source}', flush=True)
 

@@ -244,7 +244,8 @@ class WhisperManager:
         """Check if whisper is ready for transcription"""
         return self.ready
 
-    def transcribe_audio(self, audio_data: np.ndarray, sample_rate: int = 16000, language_override: Optional[str] = None) -> str:
+    def transcribe_audio(self, audio_data: np.ndarray, sample_rate: int = 16000, language_override: Optional[str] = None,
+                         prompt_context: Optional[str] = None) -> str:
         """
         Transcribe audio data using whisper
 
@@ -252,6 +253,8 @@ class WhisperManager:
             audio_data: NumPy array of audio samples (float32)
             sample_rate: Sample rate of the audio data
             language_override: Optional language code to override config language (e.g., 'it', 'en', 'fr')
+            prompt_context: Optional text spoken just before this audio; ignored by
+                            backends without supports_prompt_context
 
         Returns:
             Transcribed text string
@@ -352,7 +355,10 @@ class WhisperManager:
         with self._model_lock:
             if not self._ensure_backend_fresh_locked(backend):
                 return ""
-            return self._backend.transcribe(audio_data, sample_rate, language_override=language_override)
+            extra = {}
+            if prompt_context and self._backend.supports_prompt_context:
+                extra['prompt_context'] = prompt_context
+            return self._backend.transcribe(audio_data, sample_rate, language_override=language_override, **extra)
 
     def _ensure_backend_fresh_locked(self, backend: str) -> bool:
         """Reinitialize a long-idle local model (call under _model_lock).

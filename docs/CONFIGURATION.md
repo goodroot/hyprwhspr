@@ -30,7 +30,7 @@ hyprwhspr config show --all  # Show all settings including defaults
 
 - [Minimal configuration](#minimal-configuration)
 - [Environment variable substitution](#environment-variable-substitution)
-- [Recording modes](#recording-modes) -- toggle, push-to-talk, auto, silence auto-stop, continuous, long-form
+- [Recording modes](#recording-modes) -- toggle, push-to-talk, auto, silence auto-stop, chunked transcription, continuous, long-form
 - [Custom hotkeys](#custom-hotkeys) -- key support, secondary shortcuts, cancel, Hyprland bindings
 - [Backends](#backends) -- Cohere Transcribe, Parakeet, faster-whisper, whisper.cpp, Qwen3-ASR, REST API, Realtime WebSocket
 - [Audio and visual feedback](#audio-and-visual-feedback) -- themed visualizer, audio feedback, microphone selection, keepalive, ducking
@@ -114,6 +114,24 @@ In **toggle** and **auto** modes, `silence_timeout` automatically stops recordin
 - The timer **only arms after speech is detected**, so it won't fire while you're still composing your first sentence.
 - The silence threshold auto-calibrates from your mic's noise floor (shares `continuous_silence_threshold`).
 - Manual stop still works at any time; the stop beep signals the auto-stop. This is purely additive.
+
+### Chunked transcription
+
+With a local backend, a long recording normally makes you wait at stop while all of it is transcribed. `chunked_transcription` transcribes it piece by piece while you speak, so stopping only waits for the last piece:
+
+```jsonc
+{
+    "chunked_transcription": true,  // Default: false
+    "chunked_min_seconds": 20.0,    // Optional: never cut a piece shorter than this (default: 20.0)
+    "chunked_silence_seconds": 0.5  // Optional: seconds of silence that end a piece (default: 0.5)
+}
+```
+
+- Works in **toggle**, **push_to_talk** and **auto** modes with every backend except `realtime-ws` (which already streams)
+- Once `chunked_min_seconds` of audio has built up, the next pause ends a piece and it is transcribed in the background
+- Text is still pasted once, when you stop; short recordings behave exactly as before
+- With `pywhispercpp`, each piece is prompted with the text before it so sentences carry on across cuts
+- Pause detection shares the auto-calibrated threshold with continuous mode (`continuous_silence_threshold`)
 
 ### Continuous mode
 
@@ -1445,8 +1463,8 @@ It does not run hooks, append space, save the transcript, or inject text.
 
 `vad_mode`: `none`; `silero_filter` (pre-inference filtering); `silero_segmented` (ONNX segmentation after the reported
 duration gate); `server_vad`; `manual_commit`; or `provider_managed`. `boundary_mode` is `manual_stop`,
-`silence_auto_stop`, or `continuous_silence`. Continuous silence flushing and realtime server VAD can turn pauses into
-independently punctuated segments. Trace does not change VAD or silence defaults.
+`silence_auto_stop`, or `continuous_silence`. Continuous silence flushing, `chunked_transcription` and realtime server VAD
+can turn pauses into independently punctuated segments. Trace does not change VAD or silence defaults.
 
 `--lang` overrides the default language for that recording session — handy for per-language hotkeys. Bind the commands in KDE, GNOME, sxhkd, or any other hotkey system:
 

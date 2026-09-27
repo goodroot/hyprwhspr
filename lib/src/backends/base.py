@@ -33,6 +33,7 @@ class TranscriptionBackend:
     is_local = True           # False: rest-api, realtime-ws (no model lock / unload no-op)
     reinit_on_idle = False    # long-idle (>30 min) reinit before transcribing
     reinit_on_resume = False  # reinit after suspend/resume recovery
+    supports_prompt_context = False  # transcribe() takes prompt_context (chunked_transcription)
 
     def __init__(self, manager):
         self._manager = manager

@@ -97,6 +97,9 @@ def build_processing_trace(raw, config):
         'silence_timeout': _finite_float_setting(config, 'silence_timeout', 0),
         'continuous_silence_seconds': _finite_float_setting(config, 'continuous_silence_seconds', 2.0),
         'continuous_silence_threshold': _finite_float_setting(config, 'continuous_silence_threshold', 0),
+        'chunked_transcription': bool(_setting(config, 'chunked_transcription', False)),
+        'chunked_min_seconds': _finite_float_setting(config, 'chunked_min_seconds', 20.0),
+        'chunked_silence_seconds': _finite_float_setting(config, 'chunked_silence_seconds', 0.5),
         'vad_mode': classify_vad_mode(config),
         'boundary_mode': classify_boundary_mode(config),
     }

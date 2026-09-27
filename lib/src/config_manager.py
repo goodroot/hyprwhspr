@@ -58,6 +58,9 @@ def build_default_config():
         'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
         'continuous_silence_threshold': 0,  # RMS silence threshold; 0 = auto-calibrate from noise floor at session start
         'silence_timeout': 0,   # Auto-stop after N seconds of silence in toggle/auto modes; 0 = disabled (arms only after speech)
+        'chunked_transcription': False,  # Transcribe long recordings in pieces at pauses while recording; paste once at stop
+        'chunked_min_seconds': 20.0,  # chunked_transcription: never cut a piece shorter than this
+        'chunked_silence_seconds': 0.5,  # chunked_transcription: seconds of silence that end a piece
         'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
         'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
         'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
