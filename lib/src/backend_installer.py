@@ -2859,27 +2859,6 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                     set_install_state('failed', error_msg)
                     return False
 
-            # Pre-download models so they're ready on first use
-            log_info("Downloading ONNX-ASR model and VAD (this may take a moment)...")
-            venv_python = VENV_DIR / 'bin' / 'python'
-            try:
-                # Download and cache the ASR model + Silero VAD
-                # This mirrors what happens at runtime but ensures everything is ready
-                download_script = '''
-import onnx_asr
-print("Downloading Parakeet TDT V3 model...", flush=True)
-model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", quantization="int8")
-print("Downloading Silero VAD...", flush=True)
-vad = onnx_asr.load_vad("silero")
-print("Models cached successfully", flush=True)
-'''
-                run_command([str(venv_python), '-c', download_script], check=True)
-                log_success("Models downloaded and cached")
-            except Exception as e:
-                log_warning(f"Model download failed: {e}")
-                log_warning("Models will be downloaded on first use instead")
-                # Don't fail installation - models can still be downloaded on first use
-
             # Installation successful for ONNX-ASR
             set_install_state('completed')
             log_success("ONNX-ASR backend installation completed!")

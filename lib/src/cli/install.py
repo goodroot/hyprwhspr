@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .onnx import resolve_model, prepare_selection, apply_selection, orukeet_needs_onnx
+
 try:
     from ..config_manager import ConfigManager
 except ImportError:
@@ -20,9 +22,9 @@ except ImportError:
     from paths import CONFIG_FILE
 
 try:
-    from ..backend_utils import BACKEND_IMPORT_MODULES, LOCAL_INSTALL_BACKENDS
+    from ..backend_utils import BACKEND_IMPORT_MODULES, LOCAL_INSTALL_BACKENDS, normalize_backend
 except ImportError:
-    from backend_utils import BACKEND_IMPORT_MODULES, LOCAL_INSTALL_BACKENDS
+    from backend_utils import BACKEND_IMPORT_MODULES, LOCAL_INSTALL_BACKENDS, normalize_backend
 
 try:
     from ..backend_installer import VENV_DIR, PYWHISPERCPP_MODELS_DIR
@@ -312,7 +314,8 @@ def omarchy_command(args=None):
     This command:
     1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU) or uses specified backend
     2. Installs appropriate backend (CUDA for NVIDIA, Vulkan for others, CPU fallback)
-    3. Configures defaults (auto recording mode, bar integration for detected shells)
+    3. Configures defaults (auto recording mode unless you chose another,
+       bar integration for detected shells); other existing settings are kept
     4. Sets up and starts systemd service
     5. Validates installation
 
@@ -383,6 +386,15 @@ def omarchy_command(args=None):
     # another afterward.
     if not _prepare_qwen_model(backend, explicit_model):
         return False
+    if orukeet_needs_onnx(explicit_model, backend):
+        return False
+
+    onnx_selection = None
+    if backend == 'onnx-asr':
+        settings = ConfigManager().get_all_settings()
+        onnx_selection = resolve_model(settings, explicit_model)
+        unchanged = normalize_backend(settings.get('transcription_backend')) == 'onnx-asr'
+        current = resolve_model(settings) if unchanged else None
 
     # 4. Install backend
     print("\n" + "="*60)
@@ -401,18 +413,20 @@ def omarchy_command(args=None):
         log_error("Backend installation verification failed - installation may be incomplete")
         return False
 
+    if onnx_selection:
+        onnx_selection = prepare_selection(onnx_selection, current)
+
     # 5. Configure defaults
     log_info("Configuring defaults...")
     config = ConfigManager()
-    config.set_setting('recording_mode', 'auto')
+    # Config is saved sparse, so a default value means the user never chose one.
+    if config.get_setting('recording_mode') == config.default_config.get('recording_mode'):
+        config.set_setting('recording_mode', 'auto')
 
     # Configure backend-specific settings
     if backend == 'onnx-asr':
-        config.set_setting('transcription_backend', 'onnx-asr')
-        # Set onnx-asr model (defaults to parakeet)
-        onnx_model = explicit_model or 'nemo-parakeet-tdt-0.6b-v3'
-        config.set_setting('onnx_asr_model', onnx_model)
-        log_info(f"Configured onnx-asr with model: {onnx_model}")
+        apply_selection(config, onnx_selection)
+        log_info(f"Configured onnx-asr with model: {onnx_selection[0]}")
     elif backend == 'qwen3-asr':
         try:
             from ..qwen3_asr_runtime import DEFAULT_MODEL
@@ -429,8 +443,9 @@ def omarchy_command(args=None):
         config.set_setting('model', whisper_model)
         log_info(f"Configured pywhispercpp with model: {whisper_model}")
 
-    # Configure mic-osd (enabled unless --no-mic-osd specified)
-    config.set_setting('mic_osd_enabled', not skip_mic_osd)
+    # Configure mic-osd (enabled by default; --no-mic-osd disables it)
+    if skip_mic_osd:
+        config.set_setting('mic_osd_enabled', False)
 
     # Configure Hyprland bindings if requested
     if enable_hypr_bindings:
@@ -438,7 +453,9 @@ def omarchy_command(args=None):
         config.set_setting('grab_keys', False)
         log_info("Hyprland compositor bindings enabled")
 
-    config.save_config()
+    if not config.save_config():
+        log_error('Could not save configuration; retry setup. Downloaded files are retained.')
+        return False
     log_success("Configuration saved")
     
     # 5.5. Verify config creation
@@ -535,7 +552,10 @@ def omarchy_command(args=None):
     print("\nNext steps:")
     print("  1. Log out and back in (for group permissions)")
     print("  2. Press Super+Alt+D to start dictating")
-    print("  3. Tap (<400ms) to toggle, hold (>=400ms) for push-to-talk")
+    if config.get_setting('recording_mode') == 'auto':
+        print("  3. Tap (<400ms) to toggle, hold (>=400ms) for push-to-talk")
+    else:
+        print(f"  3. Recording mode kept as '{config.get_setting('recording_mode')}'")
     print("\nFor help: hyprwhspr --help")
 
     return True
