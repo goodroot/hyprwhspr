@@ -14,7 +14,9 @@ from service_log import log  # noqa: E402
 
 # Service modules whose line output goes through log(); print() is reserved
 # for the few deliberate stderr writes (file=...).
-CONVERTED = []
+CONVERTED = [
+    'lib/src/whisper_manager.py',
+]
 
 
 class ChunkRecorder(io.StringIO):
