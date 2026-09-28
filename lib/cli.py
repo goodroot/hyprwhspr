@@ -84,7 +84,7 @@ def main():
                              help='Backend to install (default: auto-detect GPU)')
     auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
     auto_parser.add_argument('--no-waybar', action='store_true', help='Skip bar integration (Waybar/Noctalia)')
-    auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization')
+    auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization (otherwise the current setting is kept)')
     auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')
     auto_parser.add_argument('--hypr-bindings', action='store_true', help='Enable Hyprland compositor bindings')
     auto_parser.add_argument('--python', dest='python_path', metavar='PATH',
@@ -148,7 +148,7 @@ def main():
     model_parser = subparsers.add_parser('model', help='Model management')
     model_subparsers = model_parser.add_subparsers(dest='model_action', help='Model actions')
     model_download_parser = model_subparsers.add_parser('download', help='Download model')
-    model_download_parser.add_argument('name', nargs='?', default='base', help='Model name (default: base)')
+    model_download_parser.add_argument('name', nargs='?', default=None, help='Model name (default: configured ONNX model or base)')
     model_subparsers.add_parser('list', help='List available models')
     model_subparsers.add_parser('status', help='Check installed models')
     model_subparsers.add_parser('unload', help='Unload model from memory to free GPU resources')
@@ -288,7 +288,8 @@ def main():
                 sys.exit(1)
             else:
                 python_path = getattr(args, 'python_path', None)
-                setup_command(python_path=python_path)
+                if setup_command(python_path=python_path) is False:
+                    sys.exit(1)
         elif args.command == 'install':
             from cli.install import omarchy_command
             if not args.install_action:
@@ -335,7 +336,7 @@ def main():
                 model_parser.print_help()
                 sys.exit(1)
             from cli.models import model_command
-            model_name = getattr(args, 'name', 'base')
+            model_name = getattr(args, 'name', None)
             if not model_command(args.model_action, model_name):
                 sys.exit(1)
         elif args.command == 'status':

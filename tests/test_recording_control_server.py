@@ -134,9 +134,11 @@ class RecordingControlServerTests(unittest.TestCase):
         self.recording = True
         self.assertTrue(self.server.prepare_fifo())
         self.assertTrue(self.server.start())
+        self.server._write_fifo = mock.Mock(wraps=self.server._write_fifo)
         client = self._connect(b"capture:fr\n")
         self.assertTrue(self._wait_for(self.server.has_capture_subscriber))
         time.sleep(0.05)
+        self.server._write_fifo.assert_not_called()
         self.assertEqual(self.commands, [])
         self.server.notify_capture("bonjour", final=True)
         self.assertEqual(client.recv(100), b"bonjour")
@@ -155,7 +157,7 @@ class RecordingControlServerTests(unittest.TestCase):
         self.assertTrue(self.server.start())
         client = self._connect(b"capture_trace:de\n")
         self.assertTrue(self._wait_for(self.server.is_trace_capture))
-        self.assertEqual(self.commands, [("start", "de")])
+        self.assertTrue(self._wait_for(lambda: self.commands == [("start", "de")]))
         payload = '{"raw":"Grüße","preprocessed":"Grüße"}\n'
         self.recording = True
         self.server.notify_capture(payload, final=True)

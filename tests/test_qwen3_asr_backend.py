@@ -1,5 +1,7 @@
 import json
+import subprocess
 import sys
+import threading
 import time
 import unittest
 import tempfile
@@ -262,7 +264,10 @@ class QwenBackendTests(unittest.TestCase):
     def test_a_failed_chunk_does_not_discard_the_rest(self):
         audio = np.ones(300 * 16000, dtype=np.float32)
         responses = [(200, b'{"text":"one"}'), (500, b''), (200, b'{"text":"three"}')]
-        with mock.patch.object(self.backend, "_request", side_effect=responses):
+        # The partial failure here also notifies; keep that off the real
+        # desktop, where a critical notification would linger until dismissed.
+        with mock.patch.object(self.backend, "_notify_incomplete"), \
+                mock.patch.object(self.backend, "_request", side_effect=responses):
             self.assertEqual(self.backend.transcribe(audio, sample_rate=16000), "one three")
 
     def test_language_is_sent_as_a_name_and_no_prompt_is_sent(self):
@@ -423,6 +428,45 @@ class QwenBackendTests(unittest.TestCase):
             self.assertFalse(self.backend._start())
         self.assertNotEqual(captured.get("stderr"), sp.PIPE)
         self.assertIsNotNone(captured.get("stderr"))
+
+    def test_sidecar_survives_its_launching_thread(self):
+        real_popen = subprocess.Popen
+        launched = {}
+
+        def launch_harmless_child(args, **kwargs):
+            self.assertNotIn("preexec_fn", kwargs)
+            process = real_popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+            launched["process"] = process
+            return process
+
+        def start():
+            try:
+                launched["started"] = self.backend._start()
+            except BaseException as exc:
+                launched["error"] = exc
+
+        with mock.patch.object(qwen3_asr_backend.subprocess, "Popen",
+                               side_effect=launch_harmless_child), \
+                mock.patch.object(qwen3_asr_backend, "server_path",
+                                  return_value=self._touch("llama-server")), \
+                mock.patch.object(qwen3_asr_backend, "model_paths",
+                                  return_value=(self._touch("d.gguf"), self._touch("p.gguf"))), \
+                mock.patch.object(qwen3_asr_backend, "QWEN3_ASR_LOG", self._log_path), \
+                mock.patch.object(self.backend, "_request", return_value=(200, b"ok")):
+            thread = threading.Thread(target=start)
+            try:
+                thread.start()
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
+                if "error" in launched:
+                    raise launched["error"]
+                self.assertTrue(launched["started"])
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    launched["process"].wait(timeout=1)
+            finally:
+                if "process" in launched:
+                    self.backend._stop()
 
     def test_cleanup_terminates_and_reaps_child(self):
         process = self.backend._process

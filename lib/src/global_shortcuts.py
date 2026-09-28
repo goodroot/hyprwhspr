@@ -27,9 +27,13 @@ except ImportError:
     from keyboard_monitor import KeyboardMonitor, PYUDEV_AVAILABLE  # noqa: F401
 
 
+try:
+    from .keyboard_layout import X11_TO_EVDEV_OFFSET, compile_keymap
+except ImportError:
+    from keyboard_layout import X11_TO_EVDEV_OFFSET, compile_keymap
+
+
 # Layout detection for non-QWERTY keyboard layouts
-# X11 keycode = evdev keycode + 8
-_X11_TO_EVDEV_OFFSET = 8
 _layout_map_cache = None
 
 
@@ -63,13 +67,8 @@ def _compile_and_parse_keymap(layout: str, variant: str = '') -> dict[str, int]:
     keyboard layout (Colemak, Dvorak, Workman, etc.) by finding which
     physical key produces the character 'd' in that layout.
     """
-    try:
-        cmd = ['xkbcli', 'compile-keymap', '--layout', layout]
-        if variant:
-            cmd.extend(['--variant', variant])
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        keymap_text = result.stdout
-    except Exception:
+    keymap_text = compile_keymap(layout, variant, timeout=5)
+    if not keymap_text:
         return {}
 
     char_to_evdev = {}
@@ -85,7 +84,7 @@ def _compile_and_parse_keymap(layout: str, variant: str = '') -> dict[str, int]:
         xkb_name, char = match.groups()
         # Only map single lowercase letters
         if len(char) == 1 and char.islower() and xkb_name in xkb_to_x11:
-            char_to_evdev[char] = xkb_to_x11[xkb_name] - _X11_TO_EVDEV_OFFSET
+            char_to_evdev[char] = xkb_to_x11[xkb_name] - X11_TO_EVDEV_OFFSET
 
     return char_to_evdev
 

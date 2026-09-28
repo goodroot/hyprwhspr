@@ -225,6 +225,7 @@ class InstallationStatusTests(unittest.TestCase):
                               return_value=('failed', 'numpy.dtype size changed')),
             mock.patch.object(status, 'run_command', return_value=inactive),
             mock.patch.object(status, 'waybar_status'),
+            mock.patch.object(status, '_noctalia_detected', return_value=False),
             mock.patch.object(status.paths, 'CONFIG_FILE', Path('/does/not/exist')),
             mock.patch.object(status, 'model_status'),
             mock.patch.object(status, 'check_permissions'),
@@ -244,6 +245,7 @@ class InstallationStatusTests(unittest.TestCase):
             mock.patch.object(status, 'get_install_state', return_value=('failed', error)),
             mock.patch.object(status, 'run_command', return_value=inactive),
             mock.patch.object(status, 'waybar_status'),
+            mock.patch.object(status, '_noctalia_detected', return_value=False),
             mock.patch.object(status.paths, 'CONFIG_FILE', Path('/does/not/exist')),
             mock.patch.object(status, 'model_status'),
             mock.patch.object(status, 'check_permissions'),
@@ -255,6 +257,46 @@ class InstallationStatusTests(unittest.TestCase):
         self.assertIn('line 19', rendered)
         self.assertNotIn('line 20', rendered)
         self.assertIn(str(status.STATE_FILE), rendered)
+
+    def test_noctalia_section_is_skipped_when_shell_absent(self):
+        with mock.patch.object(status, 'noctalia_status') as noctalia_status:
+            rendered = self._run_status(detected=False, installed=False)
+        noctalia_status.assert_not_called()
+        self.assertIn('[Noctalia Integration]', rendered)
+        self.assertIn('Noctalia not detected', rendered)
+
+    def test_noctalia_section_stays_quiet_when_integration_not_installed(self):
+        with mock.patch.object(status, 'noctalia_status') as noctalia_status:
+            rendered = self._run_status(detected=True, installed=False)
+        noctalia_status.assert_not_called()
+        self.assertIn('integration not installed', rendered)
+
+    def test_noctalia_section_reports_status_when_integration_installed(self):
+        with mock.patch.object(status, 'noctalia_status') as noctalia_status:
+            rendered = self._run_status(detected=True, installed=True)
+        noctalia_status.assert_called_once_with()
+        self.assertIn('[Noctalia Integration]', rendered)
+        self.assertNotIn('Noctalia not detected', rendered)
+        self.assertNotIn('integration not installed', rendered)
+
+    def _run_status(self, detected, installed):
+        inactive = types.SimpleNamespace(returncode=1)
+        output = io.StringIO()
+        with (
+            mock.patch.object(status, 'get_install_state', return_value=('completed', None)),
+            mock.patch.object(status, 'run_command', return_value=inactive),
+            mock.patch.object(status, 'waybar_status'),
+            mock.patch.object(status, '_noctalia_detected', return_value=detected),
+            mock.patch.object(status, '_noctalia_integration_installed',
+                              return_value=installed),
+            mock.patch.object(status.paths, 'CONFIG_FILE', Path('/does/not/exist')),
+            mock.patch.object(status, 'model_status'),
+            mock.patch.object(status, 'check_permissions'),
+            mock.patch.object(status, 'ConfigManager', side_effect=RuntimeError),
+            contextlib.redirect_stdout(output),
+        ):
+            status.status_command()
+        return output.getvalue()
 
 
 if __name__ == '__main__':
