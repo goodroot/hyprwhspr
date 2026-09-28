@@ -21,6 +21,7 @@ class EarlyPlaybackTests(unittest.TestCase):
         app._recording_session = object()
         app._playback_shutdown = False
         app._recording_starting = False
+        app._start_settled = threading.Event(); app._start_settled.set(); app._start_owner = None
         app._model_initializing = app._backend_init_failed = False
         app._file_transcription_active = app._model_operation_active = False
         app.is_recording = False
@@ -110,9 +111,58 @@ class EarlyPlaybackTests(unittest.TestCase):
         app.audio_capture.start_recording.side_effect = start
         app._start_recording()
         app.audio_capture.start_recording.assert_called_once()
-        app.audio_capture.stop_recording.assert_called_once()
+        # The stopper owns teardown and the audio; the aborted start leaves capture alone.
+        app.audio_capture.stop_recording.assert_not_called()
         app.playback_suppressor.suppress.assert_not_called()
         app._notify_zero_volume.assert_not_called()
         # The refused restart's capture client must not wait forever.
         app._release_blocked_capture.assert_called_once()
         self.assertFalse(app._recording_starting)
+
+    def test_stop_in_stability_window_is_not_an_unstable_stream(self):
+        app = self.app()
+        def sleep(delay):
+            # Stop lands during the 0.2s check; frames freeze once stop is signalled.
+            with app._recording_lock:
+                app.is_recording = False
+        with mock.patch('time.sleep', side_effect=sleep):
+            app._start_recording()
+        app._notify_zero_volume.assert_not_called()
+        app.audio_capture.stop_recording.assert_not_called()
+        self.assertTrue(app._start_settled.is_set())
+
+    def test_stop_waits_for_start_and_alone_stops_capture(self):
+        app = self.app()
+        entered, release = threading.Event(), threading.Event()
+        def suppress(**kwargs):
+            entered.set()
+            release.wait(2)
+        app.playback_suppressor.suppress.side_effect = suppress
+        starter = threading.Thread(target=app._start_recording)
+        starter.start()
+        self.assertTrue(entered.wait(2))
+        with app._recording_lock:
+            app.is_recording = False
+        stopped = threading.Event()
+        def stop():
+            app._wait_for_start_settled()
+            app.audio_capture.stop_recording()
+            stopped.set()
+        stopper = threading.Thread(target=stop)
+        stopper.start()
+        self.assertFalse(stopped.wait(0.2))
+        release.set()
+        starter.join(2)
+        stopper.join(2)
+        self.assertTrue(stopped.is_set())
+        app.audio_capture.stop_recording.assert_called_once()
+        app.playback_suppressor.restore.assert_called_once()
+
+    def test_shutdown_during_start_releases_capture(self):
+        app = self.app()
+        def start(**kwargs):
+            app._playback_shutdown = True
+            return True
+        app.audio_capture.start_recording.side_effect = start
+        app._start_recording()
+        app.audio_capture.stop_recording.assert_called_once()

@@ -159,6 +159,9 @@ class hyprwhsprApp:
         self._playback_session = None
         self._recording_session = None
         self._recording_starting = False
+        self._start_settled = threading.Event()
+        self._start_settled.set()
+        self._start_owner = None
         self._playback_shutdown = False
 
         # Lock for auto mode state variables (protects against race conditions between trigger/release callbacks)
@@ -1098,6 +1101,16 @@ class hyprwhsprApp:
                 self.playback_suppressor.restore()
                 self._playback_session = None
 
+    def _wait_for_start_settled(self):
+        """Let an in-flight start finish before a stop touches capture.
+
+        Otherwise the stop can run before capture opens (orphaning it), or race
+        the aborted start's teardown and lose the recorded audio.
+        """
+        if self._start_owner != threading.get_ident():
+            if not self._start_settled.wait(timeout=5.0):
+                log("[WARN] Recording start still settling; stopping capture anyway")
+
     def _start_recording(self, language_override=None):
         """Start voice recording
         
@@ -1131,6 +1144,8 @@ class hyprwhsprApp:
                 # Set flag immediately to prevent duplicate starts
                 self.is_recording = True
                 self._recording_starting = True
+                self._start_settled.clear()
+                self._start_owner = threading.get_ident()
                 session = object()
                 self._recording_session = session
                 # Store language override for this recording session
@@ -1259,6 +1274,13 @@ class hyprwhsprApp:
                     # Stream should have received more callbacks if it's stable
                     return current_frames > initial_frames
             
+            def abandon_start():
+                # Stop/cancel wait for this start to settle and then own capture
+                # teardown (and the audio). Shutdown may already have stopped
+                # capture before it opened here, so release it ourselves.
+                if self._playback_shutdown:
+                    self.audio_capture.stop_recording()
+
             # Start audio capture (with streaming callback for realtime-ws)
             try:
                 if not self.audio_capture.start_recording(streaming_callback=streaming_callback):
@@ -1267,7 +1289,7 @@ class hyprwhsprApp:
                 # Verify stream is working before playing sound
                 verified = verify_and_play_sound()
                 if verified is None:
-                    self.audio_capture.stop_recording()
+                    abandon_start()
                     return
                 if not verified:
                     # Stream broken - stop recording (thread will clean up stream)
@@ -1291,7 +1313,7 @@ class hyprwhsprApp:
                     return  # Don't attempt recovery during user-initiated recording
 
                 if not self._suppress_recording_playback(session):
-                    self.audio_capture.stop_recording()
+                    abandon_start()
                     return
 
                 # Stream is verified working - show mic-osd visualization
@@ -1299,7 +1321,14 @@ class hyprwhsprApp:
                 self._show_mic_osd()
                 
                 # Additional stability check - verify stream continues working
-                if not verify_stream_stable():
+                stable = verify_stream_stable()
+                with self._recording_lock:
+                    stopped = not self.is_recording or self._playback_shutdown
+                if stopped:
+                    # Stop freezes the frame count; that is not an unstable stream.
+                    abandon_start()
+                    return
+                if not stable:
                     # Stream stopped working shortly after starting
                     self.audio_capture.stop_recording()
                     with self._recording_lock:
@@ -1385,6 +1414,7 @@ class hyprwhsprApp:
         finally:
             with self._recording_lock:
                 self._recording_starting = False
+            self._start_settled.set()
 
     def _cleanup_recording_state(self, session=None):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
@@ -1431,6 +1461,7 @@ class hyprwhsprApp:
 
         self._cleanup_recording_state(session)
         try:
+            self._wait_for_start_settled()
             self.audio_capture.stop_recording()
             self.audio_manager.play_error_sound()
             # Note: No desktop notification - tray will detect muted state via audio level monitoring
@@ -1451,6 +1482,7 @@ class hyprwhsprApp:
         self._cleanup_recording_state(session)
         try:
             # Stop capture and discard the audio data
+            self._wait_for_start_settled()
             self.audio_capture.stop_recording()
 
             # Discard buffered realtime audio but keep the WebSocket alive so the
@@ -1495,6 +1527,7 @@ class hyprwhsprApp:
             backend = normalize_backend(backend)
             
             # Stop audio capture
+            self._wait_for_start_settled()
             audio_data = self.audio_capture.stop_recording()
 
             # Check for zero-volume or broken stream
