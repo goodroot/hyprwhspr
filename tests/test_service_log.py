@@ -18,6 +18,7 @@ CONVERTED = [
     'lib/src/whisper_manager.py',
     'lib/src/audio_capture.py',
     'lib/src/global_shortcuts.py',
+    'lib/src/text_injector.py',
 ]
 
 
