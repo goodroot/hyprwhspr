@@ -16,6 +16,7 @@ from service_log import log  # noqa: E402
 # for the few deliberate stderr writes (file=...).
 CONVERTED = [
     'lib/src/whisper_manager.py',
+    'lib/src/audio_capture.py',
 ]
 
 

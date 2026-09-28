@@ -5,7 +5,9 @@ aggregate, so name matching used to pin the hardware and bypass everything the
 sound server applies (EasyEffects, noise suppression, virtual sources).
 """
 
+import contextlib
 import importlib
+import io
 import os
 import sys
 import types
@@ -238,12 +240,12 @@ class SoundServerRoutingTests(unittest.TestCase):
         module = self._load_audio_capture(fake_sd)
 
         with mock.patch("os.path.exists", return_value=True), \
-                mock.patch("builtins.print") as fake_print:
+                contextlib.redirect_stdout(io.StringIO()) as output:
             capture = self._build(module, FakeConfig({"audio_device_name": "Elgato"}))
 
         self.assertEqual(capture.device_id, 0)
         self.assertNotIn("PULSE_SOURCE", os.environ)
-        printed = " ".join(str(call.args[0]) for call in fake_print.call_args_list if call.args)
+        printed = output.getvalue()
         self.assertIn("raw ALSA hardware", printed)
 
     def test_no_warning_without_a_sound_server(self):
@@ -259,11 +261,11 @@ class SoundServerRoutingTests(unittest.TestCase):
         module = self._load_audio_capture(fake_sd)
 
         with mock.patch("os.path.exists", return_value=False), \
-                mock.patch("builtins.print") as fake_print:
+                contextlib.redirect_stdout(io.StringIO()) as output:
             capture = self._build(module, FakeConfig({"audio_device_name": "Elgato"}))
 
         self.assertEqual(capture.device_id, 0)
-        printed = " ".join(str(call.args[0]) for call in fake_print.call_args_list if call.args)
+        printed = output.getvalue()
         self.assertNotIn("raw ALSA hardware", printed)
 
     def test_hardware_named_pulse_is_not_mistaken_for_the_aggregate(self):
