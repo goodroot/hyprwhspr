@@ -11,6 +11,11 @@ import uuid
 from typing import Optional
 
 try:
+    from ..service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     from ..dependencies import require_package
     from ..text_script import join_segments
 except ImportError:
@@ -195,8 +200,8 @@ class Qwen3AsrBackend(TranscriptionBackend):
         server = server_path(device)
         for path in (server, decoder, projector):
             if not path.exists():
-                print(f"[ERROR] Qwen3-ASR component not found: {path}", flush=True)
-                print("[ERROR] Run 'hyprwhspr setup' to install the Qwen3-ASR backend", flush=True)
+                log(f"[ERROR] Qwen3-ASR component not found: {path}")
+                log("[ERROR] Run 'hyprwhspr setup' to install the Qwen3-ASR backend")
                 return False
         # AF_UNIX sun_path holds 108 bytes including the NUL. Over that, the
         # bind fails inside llama-server and surfaces only as its own opaque
@@ -204,9 +209,9 @@ class Qwen3AsrBackend(TranscriptionBackend):
         # port conflict and sends people hunting for the wrong thing.
         socket_bytes = len(str(self._socket_path).encode("utf-8"))
         if socket_bytes > _MAX_UNIX_SOCKET_BYTES:
-            print(f"[ERROR] Qwen3-ASR socket path is {socket_bytes} bytes; the kernel "
-                  f"limit is {_MAX_UNIX_SOCKET_BYTES}: {self._socket_path}", flush=True)
-            print("[ERROR] Set a shorter XDG_RUNTIME_DIR for hyprwhspr", flush=True)
+            log(f"[ERROR] Qwen3-ASR socket path is {socket_bytes} bytes; the kernel "
+                  f"limit is {_MAX_UNIX_SOCKET_BYTES}: {self._socket_path}")
+            log("[ERROR] Set a shorter XDG_RUNTIME_DIR for hyprwhspr")
             return False
         self._socket_path.parent.mkdir(parents=True, exist_ok=True)
         self._socket_path.unlink(missing_ok=True)
@@ -246,9 +251,9 @@ class Qwen3AsrBackend(TranscriptionBackend):
             raise TimeoutError("llama-server health check timed out")
         except Exception as exc:
             detail = self._log_tail()
-            print(f"[ERROR] Qwen3-ASR initialization failed: {exc}", flush=True)
+            log(f"[ERROR] Qwen3-ASR initialization failed: {exc}")
             if detail:
-                print(f"[ERROR] llama-server: {detail}", flush=True)
+                log(f"[ERROR] llama-server: {detail}")
             self._stop()
             return False
         finally:
@@ -263,7 +268,7 @@ class Qwen3AsrBackend(TranscriptionBackend):
         self.cleanup()
         self.current_model = self.config.get_setting("qwen3_asr_model", DEFAULT_MODEL)
         if self.current_model not in QWEN3_ASR_MODELS:
-            print(f"[ERROR] Unsupported Qwen3-ASR model: {self.current_model}", flush=True)
+            log(f"[ERROR] Unsupported Qwen3-ASR model: {self.current_model}")
             return False
         self._last_restart = None
         self.ready = self._start()
@@ -337,12 +342,12 @@ class Qwen3AsrBackend(TranscriptionBackend):
             return self._transcribe_one(chunks[0], sample_rate, hint)[0]
 
         total_seconds = len(audio_data) / sample_rate
-        print(f"[QWEN3-ASR] Splitting {total_seconds:.1f}s into {len(chunks)} chunks", flush=True)
+        log(f"[QWEN3-ASR] Splitting {total_seconds:.1f}s into {len(chunks)} chunks")
         parts = []
         failed = 0
         for index, chunk in enumerate(chunks, start=1):
-            print(f"[QWEN3-ASR] chunk {index}/{len(chunks)} "
-                  f"({len(chunk) / sample_rate:.1f}s)", flush=True)
+            log(f"[QWEN3-ASR] chunk {index}/{len(chunks)} "
+                  f"({len(chunk) / sample_rate:.1f}s)")
             text, detected = self._transcribe_one(chunk, sample_rate, hint)
             if text:
                 parts.append(text)
@@ -352,12 +357,12 @@ class Qwen3AsrBackend(TranscriptionBackend):
                 # silence or music would otherwise mispin the whole session.
                 if hint is None and detected:
                     hint = detected
-                    print(f"[QWEN3-ASR] pinning detected language: {detected}", flush=True)
+                    log(f"[QWEN3-ASR] pinning detected language: {detected}")
             else:
                 # Keep what we have: partial output beats discarding a long
                 # dictation because one chunk failed.
                 failed += 1
-                print(f"[QWEN3-ASR] chunk {index}/{len(chunks)} produced no text", flush=True)
+                log(f"[QWEN3-ASR] chunk {index}/{len(chunks)} produced no text")
         # join_segments omits the space between CJK neighbours, which matters
         # for the languages this backend exists to serve.
         result = join_segments(parts)
@@ -396,13 +401,13 @@ class Qwen3AsrBackend(TranscriptionBackend):
                     # already refuses to dispatch in this state; this keeps the
                     # backend correct on its own terms rather than relying on a
                     # caller's invariant.
-                    print("[ERROR] Qwen3-ASR model is unloaded; run 'hyprwhspr model reload'", flush=True)
+                    log("[ERROR] Qwen3-ASR model is unloaded; run 'hyprwhspr model reload'")
                     return "", None
                 since = (None if self._last_restart is None
                          else time.monotonic() - self._last_restart)
                 if since is not None and since < _RESTART_COOLDOWN_SECONDS:
-                    print(f"[ERROR] Qwen3-ASR sidecar restarted {since:.0f}s ago; "
-                          f"not restarting again within {_RESTART_COOLDOWN_SECONDS}s", flush=True)
+                    log(f"[ERROR] Qwen3-ASR sidecar restarted {since:.0f}s ago; "
+                          f"not restarting again within {_RESTART_COOLDOWN_SECONDS}s")
                     return "", None
                 self._last_restart = time.monotonic()
                 self._stop()
@@ -420,7 +425,7 @@ class Qwen3AsrBackend(TranscriptionBackend):
                                                 {"Content-Type": content_type,
                                                  "Content-Length": str(len(body))})
                 if status != 200:
-                    print(f"[ERROR] Qwen3-ASR server returned HTTP {status}", flush=True)
+                    log(f"[ERROR] Qwen3-ASR server returned HTTP {status}")
                     return "", None
                 result = json.loads(payload.decode("utf-8"))
                 text = result.get("text", "") if isinstance(result, dict) else ""
@@ -432,10 +437,10 @@ class Qwen3AsrBackend(TranscriptionBackend):
                 # server must not create two expensive inference jobs.
                 if attempt == 0 and not self.is_loaded:
                     continue
-                print(f"[ERROR] Qwen3-ASR transcription failed: {exc}", flush=True)
+                log(f"[ERROR] Qwen3-ASR transcription failed: {exc}")
                 return "", None
             except (ValueError, json.JSONDecodeError) as exc:
-                print(f"[ERROR] Qwen3-ASR returned invalid JSON: {exc}", flush=True)
+                log(f"[ERROR] Qwen3-ASR returned invalid JSON: {exc}")
                 return "", None
         return "", None
 

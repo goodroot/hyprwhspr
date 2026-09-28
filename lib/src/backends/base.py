@@ -14,6 +14,11 @@ from io import BytesIO
 from typing import Callable, Optional
 
 try:
+    from ..service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     from ..audio_resampler import resample_audio
 except ImportError:
     from audio_resampler import resample_audio
@@ -161,7 +166,7 @@ class TranscriptionBackend:
         try:
             return resample_audio(audio_data, source_rate, target_rate)
         except Exception as e:
-            print(f"ERROR: {e}", flush=True)
+            log(f"ERROR: {e}")
             raise
 
     def _numpy_to_wav_bytes(self, audio_data: 'np.ndarray', sample_rate: int = 16000) -> bytes:
@@ -199,5 +204,5 @@ class TranscriptionBackend:
             return wav_buffer.getvalue()
 
         except Exception as e:
-            print(f'ERROR: Failed to convert audio to WAV: {e}')
+            log(f'ERROR: Failed to convert audio to WAV: {e}')
             raise

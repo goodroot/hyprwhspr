@@ -19,6 +19,14 @@ CONVERTED = [
     'lib/src/audio_capture.py',
     'lib/src/global_shortcuts.py',
     'lib/src/text_injector.py',
+    'lib/src/backends/base.py',
+    'lib/src/backends/cohere_backend.py',
+    'lib/src/backends/faster_whisper_backend.py',
+    'lib/src/backends/onnx_asr_backend.py',
+    'lib/src/backends/pywhispercpp_backend.py',
+    'lib/src/backends/qwen3_asr_backend.py',
+    'lib/src/backends/realtime_ws_backend.py',
+    'lib/src/backends/rest_api_backend.py',
 ]
 
 

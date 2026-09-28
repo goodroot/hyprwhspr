@@ -10,6 +10,11 @@ import time
 from typing import Optional
 
 try:
+    from ..service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     from ..dependencies import require_package
     from ..text_script import join_segments
 except ImportError:
@@ -40,7 +45,7 @@ class FasterWhisperBackend(TranscriptionBackend):
         try:
             from faster_whisper import WhisperModel
         except ImportError:
-            print('ERROR: faster-whisper not installed. Run: hyprwhspr setup and select faster-whisper', flush=True)
+            log('ERROR: faster-whisper not installed. Run: hyprwhspr setup and select faster-whisper')
             return False
 
         model_name = self.config.get_setting('faster_whisper_model', 'base')
@@ -117,13 +122,13 @@ class FasterWhisperBackend(TranscriptionBackend):
                                             except OSError:
                                                 continue
                             if _preloaded:
-                                print(f'[BACKEND] Preloaded CUDA libs: {", ".join(_preloaded)}', flush=True)
+                                log(f'[BACKEND] Preloaded CUDA libs: {", ".join(_preloaded)}')
                         except Exception as _e:
-                            print(f'[WARN] Could not preload CUDA libs: {_e}', flush=True)
+                            log(f'[WARN] Could not preload CUDA libs: {_e}')
                     else:
-                        print('[WARN] NVIDIA GPU detected but CUDA libraries not found.', flush=True)
-                        print('[WARN] Re-run: hyprwhspr setup (select faster-whisper) to install CUDA libs.', flush=True)
-                        print('[WARN] Falling back to CPU.', flush=True)
+                        log('[WARN] NVIDIA GPU detected but CUDA libraries not found.')
+                        log('[WARN] Re-run: hyprwhspr setup (select faster-whisper) to install CUDA libs.')
+                        log('[WARN] Falling back to CPU.')
             except Exception:
                 pass
 
@@ -132,11 +137,11 @@ class FasterWhisperBackend(TranscriptionBackend):
             compute_type = 'int8' if device == 'cuda' else 'float32'
 
         try:
-            print(f'[BACKEND] Loading faster-whisper model: {model_name} (device={device}, compute_type={compute_type})', flush=True)
+            log(f'[BACKEND] Loading faster-whisper model: {model_name} (device={device}, compute_type={compute_type})')
             self._faster_whisper_model = WhisperModel(model_name, device=device, compute_type=compute_type)
-            print(f'[BACKEND] faster-whisper ready (model={model_name}, device={device}, compute_type={compute_type})', flush=True)
+            log(f'[BACKEND] faster-whisper ready (model={model_name}, device={device}, compute_type={compute_type})')
         except Exception as e:
-            print(f'ERROR: Failed to load faster-whisper model: {e}', flush=True)
+            log(f'ERROR: Failed to load faster-whisper model: {e}')
             import traceback
             traceback.print_exc()
             return False
@@ -150,7 +155,7 @@ class FasterWhisperBackend(TranscriptionBackend):
                    language_override: Optional[str] = None) -> str:
         """Transcribe using faster-whisper (CTranslate2)."""
         if self._faster_whisper_model is None:
-            print('[ERROR] faster-whisper model not initialized', flush=True)
+            log('[ERROR] faster-whisper model not initialized')
             return ''
         audio_data = self._resample_audio(audio_data, sample_rate, 16000)
 
@@ -171,12 +176,12 @@ class FasterWhisperBackend(TranscriptionBackend):
             try:
                 language, detected_prob = self._faster_whisper_model.detect_language(audio_data)[:2]
             except Exception as e:
-                print(f'[WARN] language auto-detect failed: {e}; letting faster-whisper detect', flush=True)
+                log(f'[WARN] language auto-detect failed: {e}; letting faster-whisper detect')
                 language = None
 
         whisper_prompt, prompt_source = self.resolve_whisper_prompt(language)
         if detected_prob is not None:
-            print(f'[LANG] auto-detected: {language} (p={detected_prob:.2f}), prompt={prompt_source}', flush=True)
+            log(f'[LANG] auto-detected: {language} (p={detected_prob:.2f}), prompt={prompt_source}')
 
         vad_filter = self.config.get_setting('faster_whisper_vad_filter', True)
         task = self.config.get_setting('task', 'transcribe')
@@ -198,7 +203,7 @@ class FasterWhisperBackend(TranscriptionBackend):
             return result
         except RuntimeError as e:
             if 'cannot be loaded' in str(e) or 'not found' in str(e):
-                print(f'[WARN] CUDA library unavailable ({e}), falling back to CPU', flush=True)
+                log(f'[WARN] CUDA library unavailable ({e}), falling back to CPU')
                 if self.reinitialize(force_cpu=True):
                     try:
                         segments, _ = self._faster_whisper_model.transcribe(audio_data, **transcribe_kwargs)
@@ -206,14 +211,14 @@ class FasterWhisperBackend(TranscriptionBackend):
                         self._last_use_time = time.monotonic()
                         return result
                     except Exception as retry_e:
-                        print(f'[ERROR] faster-whisper CPU fallback failed: {retry_e}', flush=True)
+                        log(f'[ERROR] faster-whisper CPU fallback failed: {retry_e}')
                 return ''
-            print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
+            log(f'[ERROR] faster-whisper transcription failed: {e}')
             import traceback
             traceback.print_exc()
             return ''
         except Exception as e:
-            print(f'[ERROR] faster-whisper transcription failed: {e}', flush=True)
+            log(f'[ERROR] faster-whisper transcription failed: {e}')
             import traceback
             traceback.print_exc()
             return ''
@@ -226,7 +231,7 @@ class FasterWhisperBackend(TranscriptionBackend):
             if force_cpu:
                 device = 'cpu'
                 compute_type = 'float32'
-                print('[MODEL] Reinitializing faster-whisper on CPU (CUDA libraries unavailable)', flush=True)
+                log('[MODEL] Reinitializing faster-whisper on CPU (CUDA libraries unavailable)')
             else:
                 device = self.config.get_setting('faster_whisper_device', 'auto')
                 compute_type = self.config.get_setting('faster_whisper_compute_type', 'auto')
@@ -293,7 +298,7 @@ class FasterWhisperBackend(TranscriptionBackend):
             self._last_use_time = time.monotonic()
             return True
         except Exception as e:
-            print(f'[ERROR] faster-whisper reinitialization failed: {e}', flush=True)
+            log(f'[ERROR] faster-whisper reinitialization failed: {e}')
             return False
 
     def unload(self) -> None:

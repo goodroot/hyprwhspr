@@ -11,6 +11,11 @@ import types
 from typing import Optional
 
 try:
+    from ..service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     from ..dependencies import require_package
     from ..text_script import join_segments
 except ImportError:
@@ -54,8 +59,8 @@ class OnnxAsrBackend(TranscriptionBackend):
         try:
             import onnx_asr
         except ImportError:
-            print('ERROR: onnx-asr not installed. Run: hyprwhspr setup')
-            print('ERROR: Select option [1] ONNX Parakeet to install')
+            log('ERROR: onnx-asr not installed. Run: hyprwhspr setup')
+            log('ERROR: Select option [1] ONNX Parakeet to install')
             return False
 
         # Suppress ONNX Runtime verbose error logging
@@ -89,10 +94,10 @@ class OnnxAsrBackend(TranscriptionBackend):
         use_vad = self.config.get_setting('onnx_asr_use_vad', True)
         vad_min_duration = self._get_onnx_asr_vad_min_duration()
 
-        print(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})', flush=True)
+        log(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})')
         if model_name == 'orukeet' and _orukeet().cache_state() != 'verified':
             # Download progress is hidden with the CUDA noise below, so say why it is slow.
-            print('[BACKEND] Fetching or verifying Orukeet (~672 MB); first start takes a while', flush=True)
+            log('[BACKEND] Fetching or verifying Orukeet (~672 MB); first start takes a while')
 
         try:
             # onnx-asr uses GPU providers when available and falls back to CPU.
@@ -104,12 +109,12 @@ class OnnxAsrBackend(TranscriptionBackend):
             )
 
             vad_info = f', vad_min_duration={vad_min_duration}s' if use_vad else ''
-            print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})', flush=True)
+            log(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})')
 
         except Exception as e:
-            print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)
+            log(f'ERROR: Failed to load onnx-asr model: {e}')
             if isinstance(e, _orukeet().ChecksumError):
-                print("Repair the cache with 'hyprwhspr model download', then restart.", flush=True)
+                log("Repair the cache with 'hyprwhspr model download', then restart.")
             import traceback
             traceback.print_exc()
             return False
@@ -140,12 +145,12 @@ class OnnxAsrBackend(TranscriptionBackend):
             Transcribed text string
         """
         if not self._onnx_asr_model:
-            print('[ONNX-ASR] Model not loaded')
+            log('[ONNX-ASR] Model not loaded')
             return ""
 
         try:
             audio_duration = len(audio_data) / sample_rate
-            print(f'[ONNX-ASR] Transcribing {audio_duration:.2f}s of audio', flush=True)
+            log(f'[ONNX-ASR] Transcribing {audio_duration:.2f}s of audio')
 
             # onnx-asr accepts numpy arrays directly (float32)
             # It handles resampling internally if needed
@@ -157,7 +162,7 @@ class OnnxAsrBackend(TranscriptionBackend):
             model = self._onnx_asr_vad_model if use_vad_model else self._onnx_asr_model
             if self._onnx_asr_vad_model is not None:
                 mode = 'vad' if use_vad_model else 'direct'
-                print(f'[ONNX-ASR] Mode: {mode} (vad_min_duration={vad_min_duration}s)', flush=True)
+                log(f'[ONNX-ASR] Mode: {mode} (vad_min_duration={vad_min_duration}s)')
             start_time = time.time()
             result = model.recognize(audio_data, sample_rate=sample_rate)
             elapsed = time.time() - start_time
@@ -189,12 +194,12 @@ class OnnxAsrBackend(TranscriptionBackend):
                 else:
                     transcription = str(result)
 
-            print(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s', flush=True)
+            log(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s')
 
             return transcription.strip()
 
         except Exception as e:
-            print(f'[ONNX-ASR] Transcription failed: {e}', flush=True)
+            log(f'[ONNX-ASR] Transcription failed: {e}')
             import traceback
             traceback.print_exc()
             return ""
