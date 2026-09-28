@@ -1207,6 +1207,11 @@ Automatically press Enter after pasting — aka Dictation YOLO. Handy for chat b
 
 ### Clipboard behavior
 
+`clipboard_settle_delay` controls the wait between a successful clipboard copy and
+the paste shortcut (default `0.15` seconds). It accepts finite nonnegative numbers;
+`0` skips the wait. Lower values are an advanced compatibility tradeoff: some
+applications may paste stale clipboard contents. Direct typing is unaffected.
+
 hyprwhspr saves your clipboard before injection and restores it afterward — dictated text never permanently overwrites it. To instead clear the clipboard a few seconds after pasting:
 
 ```jsonc

@@ -12,6 +12,7 @@ import time
 import threading
 import json
 import ast
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Dict, Any, List, Tuple
@@ -1581,7 +1582,12 @@ except Exception:
             # Copy text to clipboard
             if not self._copy_text_to_clipboard(text):
                 return False
-            time.sleep(0.15)
+            delay = self.config_manager.get_setting('clipboard_settle_delay', 0.15) if self.config_manager else 0.15
+            if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not math.isfinite(delay) or delay < 0:
+                log(f"Invalid clipboard_settle_delay {delay!r}; using 0.15 seconds")
+                delay = 0.15
+            if delay:
+                time.sleep(delay)
 
             # Send paste hotkey through the session-native path first: xdotool on
             # X11, Hyprland's dispatcher there, or wtype on other Wayland sessions.

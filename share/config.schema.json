@@ -216,6 +216,12 @@
       "default": false,
       "description": "True = clear clipboard after delay, false = keep clipboard contents"
     },
+    "clipboard_settle_delay": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0.15,
+      "description": "Seconds between successful clipboard copy and paste; lower values may reduce compatibility."
+    },
     "clipboard_clear_delay": {
       "type": "number",
       "minimum": 0,
