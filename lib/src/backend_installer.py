@@ -1660,7 +1660,7 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
     if os.environ.get('HYPRWHSPR_GENERATION'):
         backend = {'rest': 'rest-api', 'realtime': 'realtime-ws', 'elevenlabs': 'realtime-ws',
                    'cohere': 'cohere-transcribe', 'onnx': 'onnx-asr', 'faster-whisper': 'faster-whisper',
-                   'qwen3-asr': 'qwen3-asr', 'pywhispercpp': 'pywhispercpp'}[plan.family]
+                   'parakeet-cpp': 'parakeet-cpp', 'qwen3-asr': 'qwen3-asr', 'pywhispercpp': 'pywhispercpp'}[plan.family]
         _managed_select(backend, custom_python, force_rebuild,
                         provider='elevenlabs' if plan.family == 'elevenlabs' else None,
                         variant=plan.accelerated_variant)
@@ -2015,6 +2015,16 @@ def install_qwen3_asr_runtime(device: str, force: bool = False) -> bool:
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+
+
+def _install_parakeet_cpp_payload(force_rebuild=False):
+    try:
+        from .parakeet_cpp_installer import install_payload
+        from .config_manager import ConfigManager
+    except ImportError:
+        from parakeet_cpp_installer import install_payload
+        from config_manager import ConfigManager
+    return install_payload(ConfigManager(), force=force_rebuild)
 
 
 def _install_qwen3_asr_payload(force_rebuild: bool = False) -> bool:
@@ -2687,6 +2697,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         try:
             selected, variant = _managed_backend_variant(backend_type)
             _managed_select(selected, custom_python, force_rebuild, variant=variant)
+            if backend_type == 'parakeet-cpp':
+                return _install_parakeet_cpp_payload(force_rebuild)
             if backend_type == 'qwen3-asr':
                 # Unlike cohere/onnx/faster-whisper, this backend has no lazy
                 # first-use download — the sidecar and GGUF pair must be placed
@@ -2798,6 +2810,21 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
 
             set_install_state('completed')
             log_success("Cohere Transcribe backend installation completed!")
+            return True
+
+        elif backend_type == 'parakeet-cpp':
+            try:
+                execute_dependency_plan(initial_plan, custom_python=custom_python,
+                                        force_rebuild=force_rebuild)
+            except Exception as exc:
+                error_msg = f"Failed to install Parakeet.cpp dependencies: {exc}"
+                log_error(error_msg)
+                set_install_state('failed', error_msg)
+                return False
+            if not _install_parakeet_cpp_payload(force_rebuild):
+                set_install_state('failed', 'Parakeet.cpp runtime or model installation failed')
+                return False
+            set_install_state('completed')
             return True
 
         elif backend_type == 'qwen3-asr':

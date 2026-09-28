@@ -80,7 +80,7 @@ def main():
     # Only backends omarchy_command can actually configure belong here; a value
     # it does not handle installs one backend and writes another into config.
     auto_parser.add_argument('--backend',
-                             choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr', 'qwen3-asr'],
+                             choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr', 'parakeet-cpp', 'qwen3-asr'],
                              help='Backend to install (default: auto-detect GPU)')
     auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
     auto_parser.add_argument('--no-waybar', action='store_true', help='Skip bar integration (Waybar/Noctalia)')

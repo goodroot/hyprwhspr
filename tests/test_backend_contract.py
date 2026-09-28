@@ -36,7 +36,7 @@ class BackendContractTests(unittest.TestCase):
         background = {name for name, cls in BACKENDS.items() if cls.loads_in_background}
         self.assertEqual(streaming, {'realtime-ws'})
         # faster-whisper stays synchronous: its init mutates process env and dlopens CUDA globally.
-        self.assertEqual(background, {'cohere-transcribe', 'qwen3-asr', 'onnx-asr'})
+        self.assertEqual(background, {'cohere-transcribe', 'qwen3-asr', 'onnx-asr', 'parakeet-cpp'})
 
     def test_base_streaming_surface_is_harmless(self):
         backend = TranscriptionBackend(WhisperManager(config_manager=FakeConfig('rest-api')))

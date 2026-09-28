@@ -134,6 +134,7 @@ def build_default_config():
         'prefer_clipboard_paste': False,  # Force clipboard paste instead of direct typing on GNOME/Mutter
         # Transcription backend settings
         'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"vulkan"/"amd") or "rest-api"
+        'parakeet_cpp_device': 'auto',  # auto | cpu | vulkan
         'qwen3_asr_model': '1.7b-q8_0',       # Quality-first Q8 decoder/projector pair
         'qwen3_asr_device': 'auto',           # 'auto' | 'cpu' | 'vulkan' (no Linux CUDA build upstream)
         'qwen3_asr_timeout': 180,              # Sidecar request timeout (1-600 seconds)

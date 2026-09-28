@@ -155,6 +155,27 @@ def model_command(action: str, model_name: str = None) -> bool:
             log_success("Model reload requested — service will load model back into memory.")
         return success
 
+    if backend == 'parakeet-cpp':
+        try:
+            from ..parakeet_cpp_runtime import MODEL_ID
+            from ..parakeet_cpp_installer import download_model
+        except ImportError:
+            from parakeet_cpp_runtime import MODEL_ID
+            from parakeet_cpp_installer import download_model
+        if explicit_model and explicit_model != MODEL_ID:
+            log_error(f'Parakeet.cpp supports only {MODEL_ID}')
+            return False
+        if action == 'download':
+            return download_model(explicit_model or MODEL_ID)
+        if action == 'list':
+            print(f'Parakeet.cpp (experimental): {MODEL_ID}')
+            return True
+        if action == 'status':
+            parakeet_cpp_model_status(config)
+            return True
+        log_error(f'Unknown model action: {action}')
+        return False
+
     if backend == 'qwen3-asr':
         selected = explicit_model or config.get_setting('qwen3_asr_model', '1.7b-q8_0')
         if action == 'download':
@@ -503,3 +524,21 @@ def faster_whisper_model_status():
         else:
             size_str = f"{size_mb:.0f} MB"
         print(f"  - {model_name} ({size_str})")
+
+
+def parakeet_cpp_model_status(config=None):
+    try:
+        from .. import parakeet_cpp_runtime as runtime
+    except ImportError:
+        import parakeet_cpp_runtime as runtime
+    config = config or ConfigManager()
+    print(f'Parakeet.cpp {runtime.RELEASE} (experimental), ABI {runtime.ABI_VERSION}')
+    print(f'Model: {runtime.MODEL_ID} — {"present" if runtime.model_installed() else "missing"}')
+    try:
+        device = runtime.resolve_device(config)
+        path = runtime.library_path(device)
+        ok, detail = runtime.probe_library(path) if path.is_file() else (False, 'missing')
+        print(f'Runtime: {device} — {"ready" if ok else detail}')
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(f'Runtime unavailable: {exc}')
+    print('Repair with hyprwhspr setup → Parakeet → Parakeet.cpp → reinstall.')

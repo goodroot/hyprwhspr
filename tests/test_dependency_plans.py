@@ -34,6 +34,7 @@ class DependencyPlanTests(unittest.TestCase):
             ('faster-whisper', None, None): 'requirements-faster-whisper.txt',
             ('faster-whisper', None, 'cuda'): 'requirements-faster-whisper-cuda.txt',
             ('qwen3-asr', None, None): 'requirements-qwen3-asr.txt',
+            ('parakeet-cpp', None, None): 'requirements-parakeet-cpp.txt',
         }
         for args, filename in cases.items():
             with self.subTest(args=args):

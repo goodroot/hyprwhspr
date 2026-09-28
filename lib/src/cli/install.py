@@ -233,6 +233,13 @@ def _verify_backend_installation(backend: str) -> bool:
         # For non-local backends, skip import check
         return True
 
+    if backend == 'parakeet-cpp':
+        try:
+            from ..parakeet_cpp_runtime import is_installed
+        except ImportError:
+            from parakeet_cpp_runtime import is_installed
+        return is_installed(config=ConfigManager())
+
     if backend == 'qwen3-asr':
         # Inference lives in the llama.cpp sidecar, so there is no import to
         # check; is_installed() is the same resolver the backend launches with,
@@ -384,6 +391,14 @@ def omarchy_command(args=None):
     # The payload installer reads this setting to choose the GGUF pair. Resolve
     # it before installation so setup cannot download one model and configure
     # another afterward.
+    if backend == 'parakeet-cpp' and explicit_model:
+        try:
+            from ..parakeet_cpp_runtime import MODEL_ID
+        except ImportError:
+            from parakeet_cpp_runtime import MODEL_ID
+        if explicit_model != MODEL_ID:
+            log_error(f'Parakeet.cpp supports only {MODEL_ID}')
+            return False
     if not _prepare_qwen_model(backend, explicit_model):
         return False
     if orukeet_needs_onnx(explicit_model, backend):
@@ -427,6 +442,8 @@ def omarchy_command(args=None):
     if backend == 'onnx-asr':
         apply_selection(config, onnx_selection)
         log_info(f"Configured onnx-asr with model: {onnx_selection[0]}")
+    elif backend == 'parakeet-cpp':
+        config.set_setting('transcription_backend', 'parakeet-cpp')
     elif backend == 'qwen3-asr':
         try:
             from ..qwen3_asr_runtime import DEFAULT_MODEL

@@ -193,6 +193,12 @@ def _detect_current_backend(existing_cfg: Optional[dict] = None) -> Optional[str
                 except Exception:
                     pass
             # cohere-transcribe configured but not installed - fall through to return None
+        if backend == 'parakeet-cpp':
+            try:
+                from ..parakeet_cpp_runtime import is_installed
+            except ImportError:
+                from parakeet_cpp_runtime import is_installed
+            return 'parakeet-cpp' if is_installed(config=ConfigManager()) else None
         if backend == 'qwen3-asr':
             # No venv import to probe: inference lives in the llama.cpp sidecar,
             # so presence is the binary plus the configured model pair.

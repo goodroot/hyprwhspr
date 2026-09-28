@@ -48,6 +48,7 @@ class BackendProxyTests(unittest.TestCase):
                 "realtime-ws",
                 "rest-api",
                 "qwen3-asr",
+                "parakeet-cpp",
             },
         )
         for name, cls in BACKENDS.items():

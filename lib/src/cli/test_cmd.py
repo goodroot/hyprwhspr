@@ -202,6 +202,15 @@ def test_command(live: bool = False, mic_only: bool = False):
             log_error("transformers not installed. Run: hyprwhspr setup and select cohere-transcribe")
             all_passed = False
 
+    elif backend == 'parakeet-cpp':
+        try:
+            from ..parakeet_cpp_runtime import is_installed
+        except ImportError:
+            from parakeet_cpp_runtime import is_installed
+        if is_installed(config):
+            log_success('Parakeet.cpp runtime and model available (experimental)')
+        else:
+            log_error('Parakeet.cpp unavailable; run hyprwhspr setup and reinstall')
     elif backend == 'qwen3-asr':
         # Nothing to import: inference runs in the llama.cpp sidecar.
         try:

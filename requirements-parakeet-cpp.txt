@@ -1,0 +1,2 @@
+# Inference uses the pinned native library; Python needs only core dependencies.
+-r requirements.txt

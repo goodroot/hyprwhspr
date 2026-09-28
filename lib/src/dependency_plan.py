@@ -14,6 +14,7 @@ CORE_IMPORTS = ('sounddevice', 'numpy', 'soxr', 'soundfile')
 
 
 PLAN_SPECS = {
+    'parakeet-cpp': ('requirements-parakeet-cpp.txt', CORE_IMPORTS, 'parakeet-cpp'),
     'pywhispercpp': ('requirements-pywhispercpp.txt', CORE_IMPORTS + ('pywhispercpp',), 'pywhispercpp'),
     'rest': ('requirements-rest.txt', CORE_IMPORTS + ('requests',), 'rest'),
     'realtime': ('requirements-realtime.txt', CORE_IMPORTS + ('websocket',), 'realtime'),
@@ -53,8 +54,8 @@ def plan_key(backend: str, provider: Optional[str], variant: Optional[str], erro
         return 'onnx-gpu' if variant in ('gpu', 'cuda') else 'onnx-cpu'
     if backend == 'faster-whisper':
         return 'faster-cuda' if variant in ('gpu', 'cuda') else 'faster-cpu'
-    if backend == 'qwen3-asr':
-        return 'qwen3-asr'
+    if backend in ('qwen3-asr', 'parakeet-cpp'):
+        return backend
     raise error(f"No dependency manifest is defined for backend {backend!r}")
 
 

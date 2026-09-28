@@ -38,7 +38,7 @@ except ImportError:
 from ._shared import SERVICE_NAME
 from .models import (model_status, onnx_asr_model_status,
                      faster_whisper_model_status, cohere_transcribe_model_status,
-                     qwen3_asr_model_status)
+                     qwen3_asr_model_status, parakeet_cpp_model_status)
 from .waybar import waybar_status
 from .noctalia import (_noctalia_detected, _noctalia_integration_installed,
                        noctalia_status)
@@ -118,6 +118,8 @@ def status_command():
             onnx_asr_model_status()
         elif backend == 'cohere-transcribe':
             cohere_transcribe_model_status(config)
+        elif backend == 'parakeet-cpp':
+            parakeet_cpp_model_status(config)
         elif backend == 'qwen3-asr':
             qwen3_asr_model_status(config)
         else:

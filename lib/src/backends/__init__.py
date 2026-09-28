@@ -8,6 +8,7 @@ backend means adding a module here and registering its class in BACKENDS.
 """
 
 from .base import TranscriptionBackend
+from .parakeet_cpp_backend import ParakeetCppBackend
 from .cohere_backend import CohereBackend
 from .faster_whisper_backend import FasterWhisperBackend
 from .onnx_asr_backend import OnnxAsrBackend
@@ -17,6 +18,7 @@ from .realtime_ws_backend import RealtimeWsBackend
 from .rest_api_backend import RestApiBackend
 
 BACKENDS = {
+    ParakeetCppBackend.name: ParakeetCppBackend,
     CohereBackend.name: CohereBackend,
     FasterWhisperBackend.name: FasterWhisperBackend,
     OnnxAsrBackend.name: OnnxAsrBackend,
@@ -28,6 +30,7 @@ BACKENDS = {
 
 __all__ = [
     'BACKENDS',
+    'ParakeetCppBackend',
     'TranscriptionBackend',
     'CohereBackend',
     'FasterWhisperBackend',

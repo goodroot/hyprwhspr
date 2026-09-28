@@ -301,9 +301,15 @@
     },
     "transcription_backend": {
       "type": "string",
-      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "faster-whisper", "cohere-transcribe", "qwen3-asr"],
+      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "parakeet-cpp", "faster-whisper", "cohere-transcribe", "qwen3-asr"],
       "default": "pywhispercpp",
       "description": "Transcription backend to use"
+    },
+    "parakeet_cpp_device": {
+      "type": "string",
+      "enum": ["auto", "cpu", "vulkan"],
+      "default": "auto",
+      "description": "Experimental Parakeet.cpp runtime; auto preserves a compatible installed runtime."
     },
     "qwen3_asr_model": {
       "type": "string",
