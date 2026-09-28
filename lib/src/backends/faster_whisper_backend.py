@@ -25,7 +25,8 @@ class FasterWhisperBackend(TranscriptionBackend):
     """CTranslate2 backend; GPU context needs a refresh after long idle/resume."""
 
     name = 'faster-whisper'
-    loads_in_background = True
+    # Not loaded in the background: initialize() edits LD_LIBRARY_PATH and dlopens
+    # CUDA libs globally, which is only safe before other threads start.
     reinit_on_idle = True
     reinit_on_resume = True
 

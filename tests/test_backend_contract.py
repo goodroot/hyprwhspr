@@ -35,7 +35,8 @@ class BackendContractTests(unittest.TestCase):
         streaming = {name for name, cls in BACKENDS.items() if cls.streams_audio}
         background = {name for name, cls in BACKENDS.items() if cls.loads_in_background}
         self.assertEqual(streaming, {'realtime-ws'})
-        self.assertEqual(background, {'cohere-transcribe', 'qwen3-asr', 'onnx-asr', 'faster-whisper'})
+        # faster-whisper stays synchronous: its init mutates process env and dlopens CUDA globally.
+        self.assertEqual(background, {'cohere-transcribe', 'qwen3-asr', 'onnx-asr'})
 
     def test_base_streaming_surface_is_harmless(self):
         backend = TranscriptionBackend(WhisperManager(config_manager=FakeConfig('rest-api')))
@@ -46,11 +47,27 @@ class BackendContractTests(unittest.TestCase):
             self.assertIsNone(call())
 
     def test_manager_reads_background_loading_from_the_configured_class(self):
-        for configured, expected in (('onnx-asr', True), ('faster-whisper', True),
+        for configured, expected in (('onnx-asr', True), ('faster-whisper', False),
                                      ('realtime-ws', False), ('cpu', False), ('unknown', False)):
             manager = WhisperManager(config_manager=FakeConfig(configured))
             self.assertEqual(manager.configured_backend_loads_in_background(), expected, configured)
         self.assertFalse(PywhispercppBackend.loads_in_background)
+
+    def test_background_loaders_never_write_the_environment_in_initialize(self):
+        # initialize() runs on a worker thread for these; os.environ writes race other threads.
+        import inspect
+        import textwrap
+        for name, cls in BACKENDS.items():
+            if not cls.loads_in_background:
+                continue
+            tree = ast.parse(textwrap.dedent(inspect.getsource(cls.initialize)))
+            for node in ast.walk(tree):
+                target = node.targets[0] if isinstance(node, ast.Assign) else None
+                call = node.func if isinstance(node, ast.Call) else None
+                writes = (isinstance(target, ast.Subscript) and ast.unparse(target.value) == 'os.environ') or \
+                         (isinstance(call, ast.Attribute) and ast.unparse(call) in
+                          ('os.environ.setdefault', 'os.environ.update', 'os.putenv'))
+                self.assertFalse(writes, f'{name}.initialize writes os.environ: {ast.unparse(node)}')
 
     def test_manager_has_no_backend_name_checks_on_objects(self):
         # Capabilities replace `backend.name == ...` branches on live backend objects.

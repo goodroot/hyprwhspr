@@ -19,6 +19,12 @@ except ImportError:
 
 np = require_package('numpy')
 
+# Set at import, on the main thread: initialize() runs on a background thread
+# once the service is live, and writing os.environ there races other threads.
+os.environ['ORT_LOGGING_LEVEL'] = '4'  # 4 = FATAL (suppress ERROR/WARNING/INFO)
+# A first-start download would otherwise flood the journal with progress bars
+os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
+
 from .base import TranscriptionBackend
 
 
@@ -56,10 +62,6 @@ class OnnxAsrBackend(TranscriptionBackend):
         # Errors about missing CUDA libraries are expected and will fall back to CPU
         import logging
 
-        # Set ONNX Runtime log level to suppress warnings/errors
-        os.environ['ORT_LOGGING_LEVEL'] = '4'  # 4 = FATAL (suppress ERROR/WARNING/INFO)
-        # A first-start download would otherwise flood the journal with progress bars
-        os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
         # Detect GPU availability at runtime (but don't claim it if libraries aren't available)
         use_gpu = False
