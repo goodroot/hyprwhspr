@@ -32,6 +32,7 @@ class CohereBackend(TranscriptionBackend):
     """Transformers backend; CUDA context needs a refresh after long idle."""
 
     name = 'cohere-transcribe'
+    loads_in_background = True
     reinit_on_idle = True
 
     def __init__(self, manager):

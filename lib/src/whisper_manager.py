@@ -125,7 +125,7 @@ class WhisperManager:
 
             self._backend = backend_cls(self)
             initialized = self._backend.initialize()
-            if initialized and self._backend.name == 'realtime-ws':
+            if initialized and self._backend.streams_audio:
                 self._backend.apply_partial_callback(
                     self._realtime_partial_callback
                 )
@@ -136,16 +136,9 @@ class WhisperManager:
             return False
 
     def get_realtime_streaming_callback(self) -> Optional[Callable]:
-        """
-        Get the streaming callback for realtime-ws backend.
-
-        Returns:
-            Callback function if realtime-ws backend is active, None otherwise
-        """
+        """Audio-chunk callback of a streaming backend (realtime-ws), else None."""
         backend = self._backend
-        if backend is not None and backend.name == 'realtime-ws':
-            return backend.get_streaming_callback()
-        return None
+        return backend.get_streaming_callback() if backend is not None else None
 
     def realtime_connect_failure(self) -> Optional[str]:
         """Why realtime recovery last failed ('connecting'/'cooldown'/'failed'), else None.
@@ -154,30 +147,30 @@ class WhisperManager:
         excludes exactly the torn-down case we most need to explain.
         """
         backend = self._backend
-        if backend is not None and backend.name == 'realtime-ws':
-            return getattr(backend, 'last_connect_failure', None)
-        return None
+        return backend.last_connect_failure if backend is not None else None
 
     def _active_realtime_backend(self):
-        """The realtime-ws backend when it has a live client, else None."""
+        """The streaming backend when it has a live client, else None."""
         backend = self._backend
-        if (backend is not None and backend.name == 'realtime-ws'
-                and backend.is_loaded):
+        if backend is not None and backend.streams_audio and backend.is_loaded:
             return backend
         return None
 
     def realtime_client_missing(self) -> bool:
-        """True when the configured realtime-ws backend has no client (destructive close)."""
+        """True when the streaming backend has no client (destructive close)."""
         backend = self._backend
-        return (backend is not None and backend.name == 'realtime-ws'
-                and not backend.is_loaded)
+        return backend is not None and backend.streams_audio and not backend.is_loaded
 
     def set_realtime_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         """Set callback for realtime partial transcript previews."""
         self._realtime_partial_callback = callback
         backend = self._backend
-        if backend is not None and backend.name == 'realtime-ws':
+        if backend is not None:
             backend.apply_partial_callback(callback)
+
+    def configured_backend_loads_in_background(self) -> bool:
+        """Whether the configured backend's load can outlast startup (read from its class)."""
+        return BACKENDS.get(self._current_backend_name(), PywhispercppBackend).loads_in_background
 
     def _current_backend_name(self) -> str:
         """Normalized name of the configured transcription backend."""

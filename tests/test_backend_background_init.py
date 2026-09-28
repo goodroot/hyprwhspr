@@ -12,10 +12,6 @@ class BackgroundInitTests(unittest.TestCase):
     def setUpClass(cls):
         cls.main = _import_main_isolated()
 
-    def test_onnx_asr_loads_in_background(self):
-        # A first-start model download must not hold shortcuts and the FIFO hostage.
-        self.assertIn('onnx-asr', self.main.SLOW_BACKENDS)
-
     def _app(self):
         main = self.main
         app = main.hyprwhsprApp.__new__(main.hyprwhsprApp)

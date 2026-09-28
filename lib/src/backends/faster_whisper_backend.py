@@ -25,6 +25,7 @@ class FasterWhisperBackend(TranscriptionBackend):
     """CTranslate2 backend; GPU context needs a refresh after long idle/resume."""
 
     name = 'faster-whisper'
+    loads_in_background = True
     reinit_on_idle = True
     reinit_on_resume = True
 

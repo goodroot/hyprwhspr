@@ -35,6 +35,7 @@ class OnnxAsrBackend(TranscriptionBackend):
     """In-process ONNX Runtime backend (no GPU-context reinit concerns)."""
 
     name = 'onnx-asr'
+    loads_in_background = True
 
     def __init__(self, manager):
         super().__init__(manager)

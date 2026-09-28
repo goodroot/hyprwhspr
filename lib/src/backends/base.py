@@ -11,7 +11,7 @@ facade and main.py observe.
 import sys
 import wave
 from io import BytesIO
-from typing import Optional
+from typing import Callable, Optional
 
 try:
     from ..audio_resampler import resample_audio
@@ -33,6 +33,8 @@ class TranscriptionBackend:
     is_local = True           # False: rest-api, realtime-ws (no model lock / unload no-op)
     reinit_on_idle = False    # long-idle (>30 min) reinit before transcribing
     reinit_on_resume = False  # reinit after suspend/resume recovery
+    loads_in_background = False  # load can outlast startup (GPU transfer, sidecar, first-run download)
+    streams_audio = False     # consumes audio live over a connection (realtime-ws)
 
     def __init__(self, manager):
         self._manager = manager
@@ -100,6 +102,31 @@ class TranscriptionBackend:
     def is_loaded(self) -> bool:
         """Whether a model/connection is currently held."""
         return False
+
+    # ------------------------------------------------------------------
+    # Streaming surface (streams_audio backends override; no-ops elsewhere)
+    # ------------------------------------------------------------------
+
+    def get_streaming_callback(self) -> Optional[Callable]:
+        """Audio-chunk callback for live streaming, or None."""
+        return None
+
+    def apply_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
+        """Route partial-transcript previews to `callback`."""
+
+    @property
+    def last_connect_failure(self) -> Optional[str]:
+        """Why the last reconnect failed ('connecting'/'cooldown'/'failed'), or None."""
+        return None
+
+    def discard_audio(self) -> None:
+        """Drop buffered streamed audio, keeping the connection."""
+
+    def update_language(self, language: Optional[str]) -> None:
+        """Apply a language override to the live connection."""
+
+    def close(self) -> None:
+        """Close the live connection."""
 
     # ------------------------------------------------------------------
     # Shared prompt resolution

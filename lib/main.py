@@ -27,9 +27,6 @@ try:
 except ImportError:
     np = None  # Will be checked when needed
 
-# Model loads that can outlast startup (GPU transfer, a sidecar, or a first-run
-# download) run in the background so shortcuts and the FIFO are live at once.
-SLOW_BACKENDS = frozenset({'cohere-transcribe', 'qwen3-asr', 'onnx-asr'})
 # Announce readiness when the load took long enough to be noticed, or when
 # someone was told to wait for it.
 READY_NOTIFY_AFTER_S = 5
@@ -2508,8 +2505,7 @@ class hyprwhsprApp:
         # Initialize whisper backend. Slow backends (e.g. cohere-transcribe loading a
         # 4 GB model onto the GPU) run in a background thread so shortcuts and the FIFO
         # listener are active immediately. Recording is blocked until ready.
-        backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        if backend in SLOW_BACKENDS:
+        if self.whisper_manager.configured_backend_loads_in_background():
             print(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...", flush=True)
             self._start_backend_init_background()
         else:

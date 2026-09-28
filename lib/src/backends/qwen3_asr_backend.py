@@ -159,6 +159,7 @@ def split_for_transcription(audio_data, sample_rate: int, max_seconds: int):
 
 class Qwen3AsrBackend(TranscriptionBackend):
     name = "qwen3-asr"
+    loads_in_background = True
     # Idle reinit exists to refresh a GPU context invalidated by suspend. The
     # sidecar holds its own context out of process, so a long idle costs nothing
     # and reloading would only make the next recording pay a full model load.

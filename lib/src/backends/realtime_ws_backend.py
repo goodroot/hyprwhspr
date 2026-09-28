@@ -44,6 +44,7 @@ class RealtimeWsBackend(TranscriptionBackend):
     name = 'realtime-ws'
     is_local = False
     reinit_on_resume = True
+    streams_audio = True
 
     # Don't rebuild a torn-down client on every keypress while an endpoint is down.
     REBUILD_COOLDOWN_SECS = 5.0
