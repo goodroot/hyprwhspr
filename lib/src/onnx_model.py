@@ -12,15 +12,21 @@ def resolve_model(settings, explicit=None):
     return model, settings.get('onnx_asr_quantization', 'int8'), settings.get('onnx_asr_use_vad', True)
 
 
+def effective_quantization(model, quantization):
+    """Orukeet ships only int8 files, whatever onnx_asr_quantization says."""
+    return 'int8' if model == 'orukeet' else quantization
+
+
 def load_model(model, quantization='int8', use_vad=True, *, offline=False, repair=False):
     import onnx_asr
+    quantization = effective_quantization(model, quantization)
     if model == 'orukeet':
         try:
             from .orukeet import download_model
         except ImportError:
             from orukeet import download_model
         directory = download_model(offline=offline, repair=repair)
-        loaded = onnx_asr.load_model('nemo-conformer-tdt', path=directory, quantization='int8')
+        loaded = onnx_asr.load_model('nemo-conformer-tdt', path=directory, quantization=quantization)
     elif quantization:
         loaded = onnx_asr.load_model(model, quantization=quantization)
     else:

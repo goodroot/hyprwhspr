@@ -27,6 +27,12 @@ try:
 except ImportError:
     np = None  # Will be checked when needed
 
+# Model loads that can outlast startup (GPU transfer, a sidecar, or a first-run
+# download) run in the background so shortcuts and the FIFO are live at once.
+SLOW_BACKENDS = frozenset({'cohere-transcribe', 'qwen3-asr', 'onnx-asr'})
+# Announce readiness only when the load took long enough to be noticed.
+READY_NOTIFY_AFTER_S = 5
+
 
 def _looks_like_wlroots_session() -> bool:
     desktop = ':'.join([
@@ -2164,12 +2170,14 @@ class hyprwhsprApp:
             self._backend_init_failed = False
 
         def _bg_init():
+            started = time.monotonic()
             ok = self.whisper_manager.initialize()
             self._backend_init_failed = not ok
             self._model_initializing = False
             if ok:
                 print("[READY] Model ready — recording now available", flush=True)
-                self._notify_user("hyprwhspr", "Ready", urgency="low")
+                if time.monotonic() - started >= READY_NOTIFY_AFTER_S:
+                    self._notify_user("hyprwhspr", "Ready", urgency="low")
             else:
                 print("[ERROR] Failed to initialize backend in background", flush=True)
 
@@ -2486,10 +2494,7 @@ class hyprwhsprApp:
         # 4 GB model onto the GPU) run in a background thread so shortcuts and the FIFO
         # listener are active immediately. Recording is blocked until ready.
         backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-        # qwen3-asr spawns a llama.cpp sidecar and waits on it loading a
-        # multi-GB GGUF pair, so it belongs here alongside cohere-transcribe.
-        slow_backends = {'cohere-transcribe', 'qwen3-asr'}
-        if backend in slow_backends:
+        if backend in SLOW_BACKENDS:
             print(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...", flush=True)
             self._start_backend_init_background()
         else:

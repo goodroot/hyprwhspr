@@ -1,6 +1,8 @@
 """Orukeet remains optional and fails closed on invalid downloaded files."""
 
+import contextlib
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -24,6 +26,10 @@ class OrukeetTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        # The backend checks cache_state(); keep it off the user's real HF cache.
+        cache = patch.object(orukeet, 'hub_cache_dir', return_value=Path(self.temp.name))
+        cache.start()
+        self.addCleanup(cache.stop)
         self.path = Path(self.temp.name) / 'models--oruk--orukeet' / 'snapshots' / orukeet.REVISION / orukeet.SUBFOLDER
         self.path.mkdir(parents=True)
         entries = {}
@@ -229,6 +235,28 @@ class OrukeetTests(unittest.TestCase):
             self.assertFalse(backend.is_loaded)
             self.assertFalse(backend.ready)
             runtime.load_model.assert_not_called()
+
+    def test_repair_hint_only_for_checksum_errors(self):
+        runtime = types.ModuleType('onnx_asr')
+        for error, hinted in ((orukeet.ChecksumError('Orukeet checksum mismatch: vocab.txt'), True),
+                              (ValueError('checksum mismatch in some library'), False)):
+            with patch.dict(sys.modules, {'onnx_asr': runtime}), \
+                 patch.object(orukeet, 'download_model', side_effect=error), \
+                 contextlib.redirect_stdout(io.StringIO()) as out, \
+                 contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(self.backend('orukeet').initialize())
+            self.assertEqual("hyprwhspr model download" in out.getvalue(), hinted)
+
+    def test_first_start_hint_only_while_cache_is_unverified(self):
+        runtime = types.ModuleType('onnx_asr')
+        runtime.load_model = Mock(return_value=object())
+        for state, hinted in (('unverified', True), ('missing', True), ('verified', False)):
+            with patch.dict(sys.modules, {'onnx_asr': runtime}), \
+                 patch.object(orukeet, 'download_model', return_value=self.path), \
+                 patch.object(orukeet, 'cache_state', return_value=state), \
+                 contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertTrue(self.backend('orukeet').initialize())
+            self.assertEqual('first start' in out.getvalue(), hinted, state)
 
     def test_orukeet_ignores_the_quantization_setting(self):
         runtime = types.ModuleType('onnx_asr')

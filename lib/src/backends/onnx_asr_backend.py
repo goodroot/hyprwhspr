@@ -23,6 +23,15 @@ np = require_package('numpy')
 from .base import TranscriptionBackend
 
 
+def _orukeet():
+    """Import the stdlib-only Orukeet helpers lazily (package or flat layout)."""
+    try:
+        from .. import orukeet
+    except ImportError:
+        import orukeet
+    return orukeet
+
+
 class OnnxAsrBackend(TranscriptionBackend):
     """In-process ONNX Runtime backend (no GPU-context reinit concerns)."""
 
@@ -67,14 +76,20 @@ class OnnxAsrBackend(TranscriptionBackend):
         except Exception:
             pass
 
+        try:
+            from ..onnx_model import load_model, effective_quantization
+        except ImportError:
+            from onnx_model import load_model, effective_quantization
         model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
-        quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
-        if model_name == 'orukeet':
-            quantization = 'int8'  # Orukeet ships only int8 files and ignores the setting
+        quantization = effective_quantization(
+            model_name, self.config.get_setting('onnx_asr_quantization', 'int8'))
         use_vad = self.config.get_setting('onnx_asr_use_vad', True)
         vad_min_duration = self._get_onnx_asr_vad_min_duration()
 
         print(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})', flush=True)
+        if model_name == 'orukeet' and _orukeet().cache_state() != 'verified':
+            # Download progress is hidden with the CUDA noise below, so say why it is slow.
+            print('[BACKEND] Fetching or verifying Orukeet (~672 MB); first start takes a while', flush=True)
 
         try:
             # Load model with optional quantization
@@ -82,10 +97,6 @@ class OnnxAsrBackend(TranscriptionBackend):
             # Suppress stderr during model loading to avoid CUDA library error spam
             # These errors are harmless - ONNX Runtime will fall back to CPU automatically
             with redirect_stderr(StringIO()):
-                try:
-                    from ..onnx_model import load_model
-                except ImportError:
-                    from onnx_model import load_model
                 self._onnx_asr_model, self._onnx_asr_vad_model = load_model(
                     model_name, quantization, use_vad
                 )
@@ -95,7 +106,7 @@ class OnnxAsrBackend(TranscriptionBackend):
 
         except Exception as e:
             print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)
-            if 'checksum mismatch' in str(e):
+            if isinstance(e, _orukeet().ChecksumError):
                 print("Repair the cache with 'hyprwhspr model download', then restart.", flush=True)
             import traceback
             traceback.print_exc()
