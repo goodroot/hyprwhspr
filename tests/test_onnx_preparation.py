@@ -100,6 +100,9 @@ class PrepareModelTests(unittest.TestCase):
             self.assertTrue(ready)
             (probe,) = calls
             self.assertEqual(probe.args[0][0], str(venv / 'bin' / 'python'))
+            # Isolated mode, with only lib/src added to the path.
+            self.assertEqual(probe.args[0][1:3], ['-I', '-c'])
+            self.assertIn(repr(str(Path(onnx.__file__).resolve().parents[1])), probe.args[0][3])
             self.assertEqual(probe.args[0][-1], '1')
             self.assertEqual(probe.kwargs['env']['HF_HUB_OFFLINE'], '1')
             self.assertEqual(probe.kwargs['env']['HF_HOME'], '/tmp/test-hf')
@@ -276,6 +279,17 @@ class ModelCommandTests(unittest.TestCase):
                 self.assertTrue(models.model_command('download', explicit))
             self.assertEqual(prepare.call_args.args[0], (expected, 'int8', False))
             config.save_config.assert_not_called()
+
+    def test_download_of_another_model_says_it_is_not_selected(self):
+        config = Mock()
+        config.get_setting.return_value = 'onnx-asr'
+        config.get_all_settings.return_value = {'onnx_asr_model': DEFAULT_MODEL}
+        for explicit, noted in ((None, False), (DEFAULT_MODEL, False), ('orukeet', True)):
+            with patch.object(models, 'ConfigManager', return_value=config), \
+                 patch.object(models, 'prepare_model', return_value=True), \
+                 patch.object(models, 'log_info') as info:
+                self.assertTrue(models.model_command('download', explicit))
+            self.assertEqual(any('not selected' in c.args[0] for c in info.call_args_list), noted, explicit)
 
     def test_orukeet_download_requires_onnx_backend(self):
         config = Mock()

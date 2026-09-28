@@ -191,7 +191,13 @@ def model_command(action: str, model_name: str = None) -> bool:
             onnx_asr_model_status(config)
             return True
         elif action == 'download':
-            return prepare_model(resolve_model(config.get_all_settings(), explicit_model))
+            settings = config.get_all_settings()
+            selection = resolve_model(settings, explicit_model)
+            if not prepare_model(selection):
+                return False
+            if selection[0] != resolve_model(settings)[0]:
+                log_info(f"{selection[0]} is ready but not selected; switch with 'hyprwhspr setup'.")
+            return True
         else:
             log_error(f"Unknown model action: {action}")
             return False

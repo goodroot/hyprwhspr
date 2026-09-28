@@ -17,13 +17,15 @@ def prepare_model(selection):
     """Load the model once in the backend venv, downloading or repairing only when needed."""
     model = selection[0]
     python = backend_installer.VENV_DIR / 'bin' / 'python'
+    # -I keeps the cwd and PYTHON* variables off the path; lib/src (not lib, whose
+    # cli.py would shadow the cli package) is the only addition.
     script = (
         'import sys,json; '
-        f'sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r}); '
-        'from src.onnx_model import prepare; '
+        f'sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r}); '
+        'from onnx_model import prepare; '
         'sys.exit(prepare(json.loads(sys.argv[1]), offline=sys.argv[2] == "1"))'
     )
-    command = [str(python), '-c', script, json.dumps(selection)]
+    command = [str(python), '-I', '-c', script, json.dumps(selection)]
     # An explicit env bypasses run_command's own mise handling, so apply it here.
     env = (backend_installer._create_mise_free_environment()
            if backend_installer._check_mise_active() else os.environ.copy())
