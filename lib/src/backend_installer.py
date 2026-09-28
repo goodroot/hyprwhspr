@@ -658,11 +658,9 @@ def get_install_state() -> Tuple[str, Optional[str]]:
 def compute_file_hash(file_path: Path) -> str:
     """Compute SHA256 hash of a file"""
     if file_path.exists():
-        sha256_hash = hashlib.sha256()
+        # file_digest streams in large chunks; the old 4 KB loop crawled on GB models.
         with open(file_path, 'rb') as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
+            return hashlib.file_digest(f, 'sha256').hexdigest()
     return ''
 
 

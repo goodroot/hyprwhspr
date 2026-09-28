@@ -86,6 +86,15 @@ class ConfigDefaultsTests(unittest.TestCase):
 
 
 class ModelValidityTests(unittest.TestCase):
+    def test_file_hash_is_sha256_and_empty_for_missing_files(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "model.bin"
+            data = bytes(range(256)) * 5000  # spans several read chunks
+            f.write_bytes(data)
+            self.assertEqual(backend_installer.compute_file_hash(f), hashlib.sha256(data).hexdigest())
+            self.assertEqual(backend_installer.compute_file_hash(Path(tmp) / "absent.bin"), '')
+
     def test_hash_key_is_per_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "ggml-tiny.bin"
