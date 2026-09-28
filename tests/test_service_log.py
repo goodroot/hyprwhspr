@@ -17,6 +17,7 @@ from service_log import log  # noqa: E402
 CONVERTED = [
     'lib/src/whisper_manager.py',
     'lib/src/audio_capture.py',
+    'lib/src/global_shortcuts.py',
 ]
 
 
