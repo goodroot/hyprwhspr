@@ -100,8 +100,8 @@ class PrepareModelTests(unittest.TestCase):
             self.assertTrue(ready)
             (probe,) = calls
             self.assertEqual(probe.args[0][0], str(venv / 'bin' / 'python'))
-            # Isolated mode, with only lib/src added to the path.
-            self.assertEqual(probe.args[0][1:3], ['-I', '-c'])
+            # cwd kept off the path (-P) but the service's environment intact; only lib/src added.
+            self.assertEqual(probe.args[0][1:3], ['-P', '-c'])
             self.assertIn(repr(str(Path(onnx.__file__).resolve().parents[1])), probe.args[0][3])
             self.assertEqual(probe.args[0][-1], '1')
             self.assertEqual(probe.kwargs['env']['HF_HUB_OFFLINE'], '1')

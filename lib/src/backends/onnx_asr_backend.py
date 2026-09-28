@@ -8,7 +8,6 @@ with optional Silero VAD routing for long recordings.
 import os
 import time
 import types
-from contextlib import redirect_stderr
 from typing import Optional
 
 try:
@@ -55,10 +54,11 @@ class OnnxAsrBackend(TranscriptionBackend):
         # Suppress ONNX Runtime verbose error logging
         # Errors about missing CUDA libraries are expected and will fall back to CPU
         import logging
-        from io import StringIO
 
         # Set ONNX Runtime log level to suppress warnings/errors
         os.environ['ORT_LOGGING_LEVEL'] = '4'  # 4 = FATAL (suppress ERROR/WARNING/INFO)
+        # A first-start download would otherwise flood the journal with progress bars
+        os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
         # Detect GPU availability at runtime (but don't claim it if libraries aren't available)
         use_gpu = False
@@ -92,14 +92,13 @@ class OnnxAsrBackend(TranscriptionBackend):
             print('[BACKEND] Fetching or verifying Orukeet (~672 MB); first start takes a while', flush=True)
 
         try:
-            # Load model with optional quantization
-            # onnx-asr automatically uses GPU providers if available
-            # Suppress stderr during model loading to avoid CUDA library error spam
-            # These errors are harmless - ONNX Runtime will fall back to CPU automatically
-            with redirect_stderr(StringIO()):
-                self._onnx_asr_model, self._onnx_asr_vad_model = load_model(
-                    model_name, quantization, use_vad
-                )
+            # onnx-asr uses GPU providers when available and falls back to CPU.
+            # No stderr redirect: this runs on a background thread while the
+            # service is live, and swapping sys.stderr would swallow other
+            # threads' output. ORT's own noise is silenced by the log level above.
+            self._onnx_asr_model, self._onnx_asr_vad_model = load_model(
+                model_name, quantization, use_vad
+            )
 
             vad_info = f', vad_min_duration={vad_min_duration}s' if use_vad else ''
             print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})', flush=True)
