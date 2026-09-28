@@ -410,13 +410,13 @@
     "onnx_asr_model": {
       "type": "string",
       "default": "nemo-parakeet-tdt-0.6b-v3",
-      "description": "ONNX ASR model name (CPU-optimized)"
+      "description": "ONNX ASR model name: Parakeet v3 (default), orukeet (optional INT8 fine-tune), or a custom model"
     },
     "onnx_asr_quantization": {
       "type": ["string", "null"],
       "enum": ["int8", null],
       "default": "int8",
-      "description": "Quantization mode for ONNX ASR. 'int8' for CPU performance, null for fp32."
+      "description": "Quantization mode for ONNX ASR. 'int8' (default) or null for FP32. Orukeet ignores this."
     },
     "onnx_asr_use_vad": {
       "type": "boolean",

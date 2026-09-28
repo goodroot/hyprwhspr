@@ -19,32 +19,17 @@ class OnnxAsrVadRoutingTests(unittest.TestCase):
         return None
 
     def test_onnx_vad_model_is_kept_separate_from_direct_model(self):
-        tree = self._parse_onnx_backend()
-        init_onnx = self._find_function(tree, "initialize")
-        self.assertIsNotNone(init_onnx)
-
-        assigns_vad_model = False
-        overwrites_direct_model_with_vad = False
-        for node in ast.walk(init_onnx):
-            if not isinstance(node, ast.Assign):
-                continue
-            target_names = [
-                target.attr
-                for target in node.targets
-                if isinstance(target, ast.Attribute)
-            ]
-            calls_with_vad = (
-                isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Attribute)
-                and node.value.func.attr == "with_vad"
-            )
-            if "_onnx_asr_vad_model" in target_names and calls_with_vad:
-                assigns_vad_model = True
-            if "_onnx_asr_model" in target_names and calls_with_vad:
-                overwrites_direct_model_with_vad = True
-
-        self.assertTrue(assigns_vad_model)
-        self.assertFalse(overwrites_direct_model_with_vad)
+        import sys
+        from unittest.mock import Mock, patch
+        if str(ROOT / 'lib' / 'src') not in sys.path:
+            sys.path.insert(0, str(ROOT / 'lib' / 'src'))
+        from onnx_model import load_model
+        runtime = Mock()
+        with patch.dict(sys.modules, {'onnx_asr': runtime}):
+            direct, vad = load_model('custom', use_vad=True)
+        self.assertIs(direct, runtime.load_model.return_value)
+        self.assertIs(vad, direct.with_vad.return_value)
+        direct.with_vad.assert_called_once_with(runtime.load_vad.return_value)
 
     def test_onnx_vad_is_duration_gated_at_transcription_time(self):
         tree = self._parse_onnx_backend()

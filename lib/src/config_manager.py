@@ -155,7 +155,7 @@ def build_default_config():
         # whisper.cpp (pywhispercpp) backend settings
         'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
         # ONNX-ASR backend settings (CPU-optimized)
-        'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
+        'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Parakeet default; orukeet is an optional INT8 fine-tune
         'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
         'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
         'onnx_asr_vad_min_duration': 30,             # Only use ONNX VAD for recordings at least this many seconds long

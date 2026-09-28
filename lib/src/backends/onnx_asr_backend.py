@@ -69,6 +69,8 @@ class OnnxAsrBackend(TranscriptionBackend):
 
         model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
         quantization = self.config.get_setting('onnx_asr_quantization', 'int8')
+        if model_name == 'orukeet':
+            quantization = 'int8'  # Orukeet ships only int8 files and ignores the setting
         use_vad = self.config.get_setting('onnx_asr_use_vad', True)
         vad_min_duration = self._get_onnx_asr_vad_min_duration()
 
@@ -80,32 +82,21 @@ class OnnxAsrBackend(TranscriptionBackend):
             # Suppress stderr during model loading to avoid CUDA library error spam
             # These errors are harmless - ONNX Runtime will fall back to CPU automatically
             with redirect_stderr(StringIO()):
-                if model_name == 'orukeet':
-                    from .orukeet import download_model
-                    if quantization != 'int8':
-                        raise ValueError('Orukeet is available as int8; set onnx_asr_quantization to int8')
-                    model_dir = download_model()
-                    self._onnx_asr_model = onnx_asr.load_model(
-                        'nemo-conformer-tdt', path=model_dir, quantization='int8'
-                    )
-                elif quantization:
-                    self._onnx_asr_model = onnx_asr.load_model(model_name, quantization=quantization)
-                else:
-                    self._onnx_asr_model = onnx_asr.load_model(model_name)
-
-            self._onnx_asr_vad_model = None
-            # Add VAD for long audio handling without putting short
-            # dictations through an aggressive speech-boundary trimmer.
-            if use_vad:
-                print('[BACKEND] Loading Silero VAD for long audio support', flush=True)
-                vad = onnx_asr.load_vad('silero')
-                self._onnx_asr_vad_model = self._onnx_asr_model.with_vad(vad)
+                try:
+                    from ..onnx_model import load_model
+                except ImportError:
+                    from onnx_model import load_model
+                self._onnx_asr_model, self._onnx_asr_vad_model = load_model(
+                    model_name, quantization, use_vad
+                )
 
             vad_info = f', vad_min_duration={vad_min_duration}s' if use_vad else ''
             print(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})', flush=True)
 
         except Exception as e:
             print(f'ERROR: Failed to load onnx-asr model: {e}', flush=True)
+            if 'checksum mismatch' in str(e):
+                print("Repair the cache with 'hyprwhspr model download', then restart.", flush=True)
             import traceback
             traceback.print_exc()
             return False

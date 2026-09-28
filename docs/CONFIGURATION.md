@@ -389,27 +389,26 @@ Run `hyprwhspr setup` and select **[1] Parakeet**. The model (~1 GB) is download
 {
     "transcription_backend": "onnx-asr",
     "onnx_asr_model": "nemo-parakeet-tdt-0.6b-v3",  // default
-    "onnx_asr_quantization": "int8",                  // int8 (default) | fp32
+    "onnx_asr_quantization": "int8",                  // int8 (default) | null (FP32)
     "onnx_asr_use_vad": true,                         // Silero VAD for longer recordings (default: true)
     "onnx_asr_vad_min_duration": 30                   // seconds before VAD is used (default: 30)
 }
 ```
 
-For optional [Orukeet](https://huggingface.co/oruk/orukeet) local transcription,
-set `"onnx_asr_model": "orukeet"` and keep `"onnx_asr_quantization": "int8"`.
-Orukeet is a Parakeet TDT v3 fine-tune covering 25 European languages. It uses
-the same ONNX backend and VAD threshold as the default model.
+[Orukeet](https://huggingface.co/oruk/orukeet): an optional Parakeet v3
+fine-tune for 25 European languages. Pick **Parakeet → Orukeet** in setup, or:
 
-The first load downloads about 672 MB from a pinned Hugging Face release. The
-backend verifies the release manifest and every required file's size and SHA-256
-before loading; later loads reuse the verified Hugging Face cache. The manifest
-is used for integrity checking and participates in Hugging Face's normal download
-statistics. Audio stays local. Set `HF_HUB_OFFLINE=1` after installation to require
-cached files. The cache includes the CC BY-SA 4.0 weight license and attribution.
-This model provides final transcription, without translation or streaming partials.
+```sh
+hyprwhspr setup auto --backend onnx-asr --model orukeet
+```
 
+Or set `"onnx_asr_model": "orukeet"`. Always int8; your
+`onnx_asr_quantization` stays put for Parakeet.
 
-Model stored in: `~/.cache/huggingface/hub/`
+About 672 MB, checked against pinned checksums, run locally. On a checksum
+error, `hyprwhspr model download` repairs the file.
+
+[Benchmarks and limitations](benchmarks/orukeet-linux-20260918.md).
 
 ### faster-whisper
 
