@@ -187,7 +187,7 @@ class MainStartupSafetyTests(unittest.TestCase):
             elif (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id == "print"
+                and node.func.id in ("print", "log")
                 and node.args
                 and isinstance(node.args[0], ast.JoinedStr)
                 and any(

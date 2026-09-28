@@ -1,4 +1,6 @@
 """Slow backends load in the background and only announce readiness when slow."""
+import contextlib
+import io
 import threading
 import types
 import unittest
@@ -35,7 +37,7 @@ class BackgroundInitTests(unittest.TestCase):
         inline = lambda target, **kwargs: types.SimpleNamespace(start=target)
         with mock.patch.object(main.threading, 'Thread', inline), \
              mock.patch.object(main.time, 'monotonic', side_effect=[0, elapsed]), \
-             mock.patch('builtins.print'):
+             contextlib.redirect_stdout(io.StringIO()):
             app._start_backend_init_background()
         return app
 

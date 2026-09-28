@@ -27,6 +27,7 @@ CONVERTED = [
     'lib/src/backends/qwen3_asr_backend.py',
     'lib/src/backends/realtime_ws_backend.py',
     'lib/src/backends/rest_api_backend.py',
+    'lib/main.py',
 ]
 
 
