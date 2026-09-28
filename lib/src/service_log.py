@@ -8,8 +8,8 @@ print(message, flush=True) would have.
 import sys
 import threading
 
-# Reentrant so a signal handler that logs while the main thread holds it cannot deadlock.
-_lock = threading.RLock()
+# Keeps each line's write and flush together across threads.
+_lock = threading.Lock()
 
 
 def log(message: object = '') -> None:
