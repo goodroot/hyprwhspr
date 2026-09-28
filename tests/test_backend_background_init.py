@@ -16,12 +16,23 @@ class BackgroundInitTests(unittest.TestCase):
         # A first-start model download must not hold shortcuts and the FIFO hostage.
         self.assertIn('onnx-asr', self.main.SLOW_BACKENDS)
 
-    def _init(self, elapsed, ok=True):
+    def _app(self):
         main = self.main
         app = main.hyprwhsprApp.__new__(main.hyprwhsprApp)
         app._backend_init_lock = threading.Lock()
+        app._recording_lock = threading.Lock()
         app._model_initializing = False
         app._backend_init_failed = False
+        app._notify_when_ready = False
+        app._file_transcription_active = False
+        app._model_operation_active = False
+        app._longform_active = False
+        return app
+
+    def _init(self, elapsed, ok=True, waiting=False):
+        main = self.main
+        app = self._app()
+        app._notify_when_ready = waiting
         app.whisper_manager = types.SimpleNamespace(initialize=lambda: ok)
         app._notify_user = mock.Mock()
         # Run the init thread inline so the test can assert on its effects.
@@ -35,6 +46,25 @@ class BackgroundInitTests(unittest.TestCase):
     def test_ready_notification_only_after_a_noticeable_load(self):
         self.assertFalse(self._init(1)._notify_user.called)
         self.assertTrue(self._init(self.main.READY_NOTIFY_AFTER_S)._notify_user.called)
+
+    def test_ready_is_announced_to_anyone_told_to_wait_even_when_quick(self):
+        app = self._init(1, waiting=True)
+        self.assertTrue(app._notify_user.called)
+        self.assertFalse(app._notify_when_ready)
+
+    def test_longform_cannot_start_before_the_backend_loads(self):
+        for loading, failed in ((True, False), (False, True)):
+            app = self._app()
+            app._model_initializing, app._backend_init_failed = loading, failed
+            app._start_backend_init_background = mock.Mock()
+            self.assertFalse(app._claim_longform_recording())
+            self.assertFalse(app._longform_active)
+            self.assertTrue(app._notify_when_ready)
+            # A failed init is retried, as for a refused normal start.
+            self.assertEqual(app._start_backend_init_background.called, failed)
+        app = self._app()
+        self.assertTrue(app._claim_longform_recording())
+        self.assertTrue(app._longform_active)
 
     def test_failed_init_marks_failure_without_notifying(self):
         app = self._init(30, ok=False)

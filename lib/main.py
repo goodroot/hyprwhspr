@@ -30,7 +30,8 @@ except ImportError:
 # Model loads that can outlast startup (GPU transfer, a sidecar, or a first-run
 # download) run in the background so shortcuts and the FIFO are live at once.
 SLOW_BACKENDS = frozenset({'cohere-transcribe', 'qwen3-asr', 'onnx-asr'})
-# Announce readiness only when the load took long enough to be noticed.
+# Announce readiness when the load took long enough to be noticed, or when
+# someone was told to wait for it.
 READY_NOTIFY_AFTER_S = 5
 
 
@@ -189,6 +190,9 @@ class hyprwhsprApp:
         # of recording audio that can never be transcribed
         self._backend_init_failed = False
         self._backend_init_lock = threading.Lock()
+        # Set when a start was refused while loading; the next successful init
+        # announces Ready even if it was quick
+        self._notify_when_ready = False
 
         self._recording_control_server = RecordingControlServer(
             fifo_path=RECORDING_CONTROL_FILE,
@@ -1041,12 +1045,19 @@ class hyprwhsprApp:
             self.is_processing = processing
 
     def _claim_longform_recording(self):
-        """Reserve the backend for a long-form session; False if one is in use."""
+        """Reserve the backend for a long-form session; False if busy or not loaded."""
         with self._recording_lock:
-            if self._file_transcription_active or self._model_operation_active:
-                return False
-            self._longform_active = True
-            return True
+            busy = self._file_transcription_active or self._model_operation_active
+            loading = self._model_initializing or self._backend_init_failed
+            if not (busy or loading):
+                self._longform_active = True
+                return True
+        if loading:
+            # As for a refused normal start: announce Ready later, retry a failed init
+            self._notify_when_ready = True
+            if self._backend_init_failed:
+                self._start_backend_init_background()
+        return False
 
     def _release_longform_recording(self):
         with self._recording_lock:
@@ -1091,6 +1102,9 @@ class hyprwhsprApp:
             self._release_blocked_capture()
 
         # Model is still loading in background
+        if blocked in ('initializing', 'init-failed', 'realtime-reconnect'):
+            self._notify_when_ready = True
+
         if blocked == 'initializing':
             self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
             print("[CONTROL] Recording blocked: model is still initializing", flush=True)
@@ -2176,7 +2190,8 @@ class hyprwhsprApp:
             self._model_initializing = False
             if ok:
                 print("[READY] Model ready — recording now available", flush=True)
-                if time.monotonic() - started >= READY_NOTIFY_AFTER_S:
+                if self._notify_when_ready or time.monotonic() - started >= READY_NOTIFY_AFTER_S:
+                    self._notify_when_ready = False
                     self._notify_user("hyprwhspr", "Ready", urgency="low")
             else:
                 print("[ERROR] Failed to initialize backend in background", flush=True)
