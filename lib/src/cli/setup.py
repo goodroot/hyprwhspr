@@ -13,6 +13,8 @@ from typing import Optional
 
 from rich.prompt import Prompt, Confirm
 
+from .onnx import resolve_model, prepare_selection, save_selection
+
 try:
     from ..config_manager import ConfigManager
 except ImportError:
@@ -239,7 +241,7 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
     print()
     # Not "In-Memory": Qwen3-ASR runs a sidecar process, not an in-process model.
     print("Local Backends:")
-    print("  [1] Parakeet TDT V3       - Optimized for light hardware (autodetects CPU/GPU)")
+    print("  [1] Parakeet              - Optimized for light hardware (autodetects CPU/GPU)")
     print("  [2] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
     print("  [3] Whisper (CPU)         - whisper.cpp, works everywhere")
     print("  [4] Whisper (NVIDIA)      - whisper.cpp + CUDA, premium local transcription for NVIDIA GPUs")
@@ -352,6 +354,17 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
         except (ValueError, IndexError):
             print("\nInvalid selection. Please try again.")
             continue
+
+
+def _prompt_onnx_model_selection(existing):
+    current = existing.get('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
+    print("  [1] Parakeet TDT v3 — default")
+    print("  [2] Orukeet — experimental Parakeet variant for improved accuracy and speed")
+    print("      Results vary by language and hardware; Parakeet v3 remains the default.")
+    print(f"  Enter keeps: {current}")
+    choice = Prompt.ask("Select Parakeet model", choices=['', '1', '2'], default='')
+    explicit = {'1': 'nemo-parakeet-tdt-0.6b-v3', '2': 'orukeet'}.get(choice)
+    return resolve_model(existing, explicit)
 
 
 def _prompt_model_selection(current_model: Optional[str] = None):
@@ -889,7 +902,7 @@ def setup_command(python_path: Optional[str] = None):
     backend_result = _prompt_backend_selection(existing_cfg)
     if not backend_result:
         log_error("Backend selection is required. Exiting.")
-        return
+        return False
     
     # Handle tuple or string return (backward compatibility)
     if isinstance(backend_result, tuple):
@@ -914,6 +927,10 @@ def setup_command(python_path: Optional[str] = None):
         current_backend = normalize_backend(current_backend)
     backend_normalized = normalize_backend(backend)
     
+    onnx_selection = None
+    if backend_normalized == 'onnx-asr':
+        onnx_selection = _prompt_onnx_model_selection(existing_cfg)
+
     # Handle backend switching
     if current_backend and current_backend != backend_normalized and not os.environ.get("HYPRWHSPR_GENERATION"):
         if current_backend not in ['rest-api', 'remote', 'realtime-ws']:
@@ -1005,9 +1022,13 @@ def setup_command(python_path: Optional[str] = None):
                 # Use normalized backend to ensure 'amd' -> 'vulkan' for new installs
                 if not install_backend(backend_normalized, force_rebuild=wants_reinstall, custom_python=python_path):
                     log_error("Backend installation failed. Setup cannot continue.")
-                    return
+                    return False
                 
     
+    if onnx_selection and not backend_install_skipped:
+        current = resolve_model(existing_cfg) if current_backend == backend_normalized else None
+        onnx_selection = prepare_selection(onnx_selection, current)
+
     # Step 2: Provider/model selection (if REST API backend)
     remote_config = None
     selected_model = None
@@ -1017,7 +1038,7 @@ def setup_command(python_path: Optional[str] = None):
         provider_result = _prompt_remote_provider_selection()
         if not provider_result:
             log_error("Provider selection cancelled. Exiting.")
-            return
+            return False
         
         provider_id, model_id, api_key, custom_config = provider_result
         
@@ -1027,12 +1048,12 @@ def setup_command(python_path: Optional[str] = None):
             log_success("Remote configuration generated")
         except Exception as e:
             log_error(f"Failed to generate remote configuration: {e}")
-            return
+            return False
     elif backend_normalized == 'realtime-ws':
         provider_result = _prompt_realtime_provider_model_selection()
         if not provider_result:
             log_error("Provider selection cancelled. Exiting.")
-            return
+            return False
         
         provider_id, model_id, api_key, custom_config = provider_result
         
@@ -1042,7 +1063,7 @@ def setup_command(python_path: Optional[str] = None):
             log_success("Realtime WebSocket configuration generated")
         except Exception as e:
             log_error(f"Failed to generate realtime configuration: {e}")
-            return
+            return False
         
         realtime_mode = get_realtime_mode(provider_id, model_id)
         remote_config['realtime_mode'] = realtime_mode
@@ -1065,7 +1086,7 @@ def setup_command(python_path: Optional[str] = None):
             execute_dependency_plan(plan, custom_python=python_path)
         except Exception as e:
             log_error(f"Failed to install Python dependencies: {e}")
-            return
+            return False
         log_success("Python dependencies installed and verified")
     
     # Model selection for local backends
@@ -1319,7 +1340,7 @@ def setup_command(python_path: Optional[str] = None):
     elif selected_model:
         print(f"Model: {selected_model}")
     elif backend_normalized == 'onnx-asr':
-        print("Model: nemo-parakeet-tdt-0.6b-v3 (~1 GB, downloaded during setup)")
+        print(f"Model: {onnx_selection[0]}")
     elif backend_normalized == 'cohere-transcribe':
         print("Model: CohereLabs/cohere-transcribe-03-2026 (~4 GB, downloaded during setup)")
     elif backend_normalized == 'qwen3-asr':
@@ -1379,7 +1400,9 @@ def setup_command(python_path: Optional[str] = None):
     # Execute selected steps
     try:
         # Step 1: Config
-        if remote_config:
+        if onnx_selection:
+            save_selection(ConfigManager(), onnx_selection)
+        elif remote_config:
             setup_config(backend=backend_normalized, remote_config=remote_config)
         else:
             setup_config(backend=backend_normalized, model=selected_model)
