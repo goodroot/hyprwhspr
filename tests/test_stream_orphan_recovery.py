@@ -205,6 +205,7 @@ class StreamOrphanRecoveryTests(unittest.TestCase):
     def _stop_and_join(self, capture):
         with capture.lock:
             capture.is_recording = False
+            capture._record_stop_event.set()
         if capture.record_thread is not None:
             capture.record_thread.join(timeout=3.0)
 

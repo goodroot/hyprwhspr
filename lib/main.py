@@ -155,6 +155,11 @@ class hyprwhsprApp:
         
         # Lock to prevent concurrent recording starts (race condition protection)
         self._recording_lock = threading.Lock()
+        self._playback_lock = threading.Lock()
+        self._playback_session = None
+        self._recording_session = None
+        self._recording_starting = False
+        self._playback_shutdown = False
 
         # Lock for auto mode state variables (protects against race conditions between trigger/release callbacks)
         self._auto_mode_lock = threading.Lock()
@@ -1061,6 +1066,38 @@ class hyprwhsprApp:
         with self._recording_lock:
             self._longform_active = False
 
+    def _suppress_recording_playback(self, session):
+        """Serialize external audio operations without holding recording state."""
+        with self._playback_lock:
+            with self._recording_lock:
+                active = (self.is_recording and self._recording_session is session
+                          and not self._playback_shutdown)
+            if not active:
+                return False
+            if self.config.get_setting('audio_ducking', False):
+                self._playback_session = session
+                try:
+                    self.playback_suppressor.suppress(
+                        mode=self.config.get_setting('audio_ducking_mode', 'duck'),
+                        reduction_percent=self.config.get_setting('audio_ducking_percent', 50))
+                finally:
+                    with self._recording_lock:
+                        active = (self.is_recording and self._recording_session is session
+                                  and not self._playback_shutdown)
+                    if not active:
+                        self.playback_suppressor.restore()
+                        self._playback_session = None
+            return active
+
+    def _restore_recording_playback(self, session=None, shutdown=False):
+        with self._playback_lock:
+            if shutdown:
+                self._playback_shutdown = True
+            owned = session is not None and self._playback_session is session
+            if shutdown or owned:
+                self.playback_suppressor.restore()
+                self._playback_session = None
+
     def _start_recording(self, language_override=None):
         """Start voice recording
         
@@ -1074,7 +1111,10 @@ class hyprwhsprApp:
         with self._recording_lock:
             if self.is_recording:
                 return
-            if self._model_initializing:
+            if self._recording_starting:
+                # A stopped start is still releasing capture; refuse until it settles.
+                blocked = 'starting'
+            elif self._model_initializing:
                 blocked = 'initializing'
             elif self._backend_init_failed:
                 blocked = 'init-failed'
@@ -1090,6 +1130,9 @@ class hyprwhsprApp:
                 blocked = None
                 # Set flag immediately to prevent duplicate starts
                 self.is_recording = True
+                self._recording_starting = True
+                session = object()
+                self._recording_session = session
                 # Store language override for this recording session
                 self._current_language_override = language_override
 
@@ -1102,6 +1145,10 @@ class hyprwhsprApp:
         # Model is still loading in background
         if blocked in ('initializing', 'init-failed', 'realtime-reconnect'):
             self._notify_when_ready = True
+
+        if blocked == 'starting':
+            log("[CONTROL] Recording blocked: previous start still settling")
+            return
 
         if blocked == 'initializing':
             self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
@@ -1173,8 +1220,7 @@ class hyprwhsprApp:
                     log_level="ERROR",
                 )
                 # Restore audio if it was ducked or paused
-                if self.playback_suppressor.is_active:
-                    self.playback_suppressor.restore()
+                self._restore_recording_playback(session)
                 return
             
             # Helper function to verify stream is working and play sound
@@ -1183,6 +1229,9 @@ class hyprwhsprApp:
                 import time
                 start_time = time.monotonic()
                 while time.monotonic() - start_time < 1.5:  # Wait up to 1.5s
+                    with self._recording_lock:
+                        if not self.is_recording or self._playback_shutdown:
+                            return None
                     # Read frames_since_start with lock held to avoid data race
                     with self.audio_capture.lock:
                         frames_count = self.audio_capture.frames_since_start
@@ -1216,7 +1265,11 @@ class hyprwhsprApp:
                     raise RuntimeError("start_recording() returned False")
                 
                 # Verify stream is working before playing sound
-                if not verify_and_play_sound():
+                verified = verify_and_play_sound()
+                if verified is None:
+                    self.audio_capture.stop_recording()
+                    return
+                if not verified:
                     # Stream broken - stop recording (thread will clean up stream)
                     self.audio_capture.stop_recording()
 
@@ -1234,9 +1287,12 @@ class hyprwhsprApp:
                     self._notify_zero_volume(message, log_level="ERROR")
 
                     # Restore audio if it was ducked or paused
-                    if self.playback_suppressor.is_active:
-                        self.playback_suppressor.restore()
+                    self._restore_recording_playback(session)
                     return  # Don't attempt recovery during user-initiated recording
+
+                if not self._suppress_recording_playback(session):
+                    self.audio_capture.stop_recording()
+                    return
 
                 # Stream is verified working - show mic-osd visualization
                 log("Recording started")
@@ -1259,10 +1315,13 @@ class hyprwhsprApp:
                     self._notify_zero_volume(message, log_level="WARN" if message == fallback else "ERROR")
 
                     # Restore audio if it was ducked or paused
-                    if self.playback_suppressor.is_active:
-                        self.playback_suppressor.restore()
+                    self._restore_recording_playback(session)
                     return
                 
+                with self._recording_lock:
+                    if not self.is_recording or self._playback_shutdown:
+                        return
+
                 # Recording is confirmed working - abort any in-progress recovery and clear background retries
                 try:
                     self.audio_capture.abort_recovery()
@@ -1272,12 +1331,6 @@ class hyprwhsprApp:
                     log("[HEALTH] Recording succeeded - canceling background recovery")
                     self._background_recovery_needed.clear()
                 
-                # Quiet other audio now that stream is confirmed working
-                if self.config.get_setting('audio_ducking', False):
-                    self.playback_suppressor.suppress(
-                        mode=self.config.get_setting('audio_ducking_mode', 'duck'),
-                        reduction_percent=self.config.get_setting('audio_ducking_percent', 50))
-
                 # Stream is working and stable - start monitoring
                 self._start_audio_level_monitoring()
                     
@@ -1307,8 +1360,7 @@ class hyprwhsprApp:
                     log_level="ERROR")
 
                 # Restore audio if it was ducked or paused
-                if self.playback_suppressor.is_active:
-                    self.playback_suppressor.restore()
+                self._restore_recording_playback(session)
                 return
 
         except Exception as e:
@@ -1328,17 +1380,22 @@ class hyprwhsprApp:
             self._release_blocked_capture()
 
             # Restore audio if it was ducked or paused
-            if self.playback_suppressor.is_active:
-                self.playback_suppressor.restore()
+            self._restore_recording_playback(session)
 
-    def _cleanup_recording_state(self):
+        finally:
+            with self._recording_lock:
+                self._recording_starting = False
+
+    def _cleanup_recording_state(self, session=None):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
+        session = session if session is not None else self._recording_session
         # Release recording state and capture clients before teardown can block.
         try:
             self._write_recording_status(False)
         except Exception:
             pass
         self._notify_capture("", final=True)
+        self._restore_recording_playback(session)
 
         # Retire this recording's monitor before hide can block long enough for
         # a later recording to install its own monitor in the shared slot.
@@ -1357,8 +1414,7 @@ class hyprwhsprApp:
         except Exception:
             pass
         try:
-            if self.playback_suppressor.is_active:
-                self.playback_suppressor.restore()
+            self._restore_recording_playback(session)
         except Exception:
             pass
 
@@ -1367,12 +1423,13 @@ class hyprwhsprApp:
         with self._recording_lock:
             if not self.is_recording:
                 return
+            session = self._recording_session
             self.is_recording = False
             self._current_language_override = None  # Clear language override on error
 
         log("[MUTE] Recording cancelled - microphone returned silence for 1 second")
 
-        self._cleanup_recording_state()
+        self._cleanup_recording_state(session)
         try:
             self.audio_capture.stop_recording()
             self.audio_manager.play_error_sound()
@@ -1385,12 +1442,13 @@ class hyprwhsprApp:
         with self._recording_lock:
             if not self.is_recording:
                 return
+            session = self._recording_session
             self.is_recording = False
             self._current_language_override = None
 
         log("Recording cancelled (discarded)")
 
-        self._cleanup_recording_state()
+        self._cleanup_recording_state(session)
         try:
             # Stop capture and discard the audio data
             self.audio_capture.stop_recording()
@@ -1410,6 +1468,7 @@ class hyprwhsprApp:
                 return
             self.is_recording = False
             self._recording_finalizing.set()
+            session = self._recording_session
 
         try:
             log("Recording stopped")
@@ -1429,8 +1488,7 @@ class hyprwhsprApp:
             self._write_recording_status(False)
 
             # Restore system audio if it was ducked or paused
-            if self.playback_suppressor.is_active:
-                self.playback_suppressor.restore()
+            self._restore_recording_playback(session)
 
             # Check backend type
             backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
@@ -1481,6 +1539,7 @@ class hyprwhsprApp:
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
                 self._continuous_stop_silence_monitor()
+                self._restore_recording_playback(session)
 
                 self.whisper_manager.close_realtime_connection("recording stop error")
             except Exception:
@@ -2543,6 +2602,7 @@ class hyprwhsprApp:
 
     def _cleanup(self):
         """Clean up resources when shutting down"""
+        self._playback_shutdown = True
         def cleanup_step(name, action):
             try:
                 action()
@@ -2606,7 +2666,7 @@ class hyprwhsprApp:
                 cleanup_step("stop audio capture", lambda: call_optional('audio_capture', 'stop_recording'))
 
             # Shutting down mid-recording must not leave other apps ducked or paused
-            cleanup_step("restore playback", lambda: call_optional('playback_suppressor', 'restore'))
+            cleanup_step("restore playback", lambda: self._restore_recording_playback(shutdown=True))
 
             # Cleanup whisper manager (closes WebSocket connections, etc.)
             cleanup_step("close transcription backend", lambda: call_optional('whisper_manager', 'cleanup'))

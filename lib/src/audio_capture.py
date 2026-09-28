@@ -73,6 +73,7 @@ class AudioCapture:
         
         # Recording state
         self.is_recording = False
+        self._record_stop_event = threading.Event()
         self.is_monitoring = False
         self.audio_data = []
         self._buffered_samples = 0
@@ -1119,6 +1120,8 @@ class AudioCapture:
             with self.lock:
                 self._reset_audio_buffer_locked()
                 self.is_recording = True
+                stop_event = threading.Event()
+                self._record_stop_event = stop_event
                 self.streaming_callback = streaming_callback
                 self._viz_chunk = None
                 self._viz_chunk_time = 0.0
@@ -1134,7 +1137,7 @@ class AudioCapture:
             self._abort_cleanup = False
             
             # Start recording thread
-            self.record_thread = threading.Thread(target=self._record_audio, daemon=True)
+            self.record_thread = threading.Thread(target=self._record_audio, args=(stop_event,), daemon=True)
             self.record_thread.start()
             
             return True
@@ -1148,6 +1151,8 @@ class AudioCapture:
                 pass
             with self.lock:
                 self.is_recording = False
+                self._record_stop_event.set()
+            self._cleanup_complete.set()
             return False
     
     def stop_recording(self) -> Optional[np.ndarray]:
@@ -1158,6 +1163,7 @@ class AudioCapture:
         # Signal to stop recording
         with self.lock:
             self.is_recording = False
+            self._record_stop_event.set()
         
         # Wait for recording thread to finish (it handles cleanup in finally block)
         if self.record_thread and self.record_thread.is_alive():
@@ -1254,6 +1260,7 @@ class AudioCapture:
         # Signal to stop recording
         with self.lock:
             self.is_recording = False
+            self._record_stop_event.set()
 
         # Wait for recording thread to finish
         if self.record_thread and self.record_thread.is_alive():
@@ -1337,20 +1344,21 @@ class AudioCapture:
             daemon=True,
         ).start()
 
-    def _record_audio(self):
+    def _record_audio(self, stop_event):
         """Internal method to record audio in a separate thread"""
+        stream_box = [None]
+        published = False
         try:
             chunk_count = 0
             # Holds the stream this thread opens; the callback only trusts
             # chunks while its stream is still the active one, so a torn-down
             # or replaced stream can't keep writing into shared state (#209).
-            stream_box = [None]
 
             # Callback function for sounddevice
             def audio_callback(indata, frames, time_info, status):
                 nonlocal chunk_count
                 with self.lock:
-                    if stream_box[0] is None or self.stream is not stream_box[0]:
+                    if stop_event.is_set() or stream_box[0] is None or self.stream is not stream_box[0]:
                         return  # stale stream
                     if status:
                         log(f"[WARN] Audio callback status: {status}")
@@ -1417,10 +1425,12 @@ class AudioCapture:
             _max_start_attempts = 3
             refreshed_after_failure = False
             for _attempt in range(_max_start_attempts):
+                if stop_event.is_set():
+                    return
                 try:
                     device_to_use = self.device_id
                     with _quiet_alsa_stderr():
-                        self.stream = sd.InputStream(
+                        stream_box[0] = sd.InputStream(
                             device=device_to_use,
                             samplerate=self.sample_rate,
                             channels=self.channels,
@@ -1428,9 +1438,16 @@ class AudioCapture:
                             blocksize=self.chunk_size,
                             callback=audio_callback
                         )
-                        stream_box[0] = self.stream
-                        self.stream.start()
-                    self.stream_opened = True
+                        with self.lock:
+                            if stop_event.is_set() or self._record_stop_event is not stop_event:
+                                return
+                            self.stream = stream_box[0]
+                            published = True
+                        stream_box[0].start()
+                    with self.lock:
+                        if stop_event.is_set() or self._record_stop_event is not stop_event:
+                            return
+                        self.stream_opened = True
                     self._stop_keepalive()  # Node is warm; safe to release keepalive now
                     break  # success
                 except Exception as _start_err:
@@ -1441,12 +1458,16 @@ class AudioCapture:
                     )
                     if _attempt < _max_start_attempts - 1 and is_retriable:
                         log(f"[WARN] Stream open failed (attempt {_attempt + 1}): {_start_err}")
-                        if self.stream is not None:
-                            try:
-                                self.stream.close()
-                            except Exception:
-                                pass
-                            self.stream = None
+                        with self.lock:
+                            stream = stream_box[0] if not published or self.stream is stream_box[0] else None
+                            if self.stream is stream_box[0]:
+                                self.stream = None
+                        if stream is not None:
+                            self._teardown_stream_with_timeout(stream, 'start retry')
+                        stream_box[0] = None
+                        published = False
+                        if stop_event.is_set():
+                            return
                         if not refreshed_after_failure and not self._has_configured_audio_device():
                             refreshed_after_failure = True
                             self.refresh_default_input("record_start_retry")
@@ -1458,39 +1479,13 @@ class AudioCapture:
                                 raise RuntimeError(self._input_selection_error)
                             self._notify_streaming_sample_rate()
                         retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
-                        time.sleep(retry_delay)
+                        if stop_event.wait(retry_delay):
+                            return
                     else:
                         raise
 
-            # Keep recording while is_recording is True
-            try:
-                while self.is_recording:
-                    time.sleep(0.1)
-            finally:
-                # Clean up stream on exit (recording thread owns this cleanup)
-                # Check abort flag - if set, exit early to avoid blocking
-                if self._abort_cleanup:
-                    log("[RECOVERY] Thread cleanup aborted by recovery")
-                    # Leave self.stream in place: recovery pops and tears it
-                    # down, escalating to a PortAudio reset if it's wedged.
-                    # Dropping the reference here orphaned the live C stream (#209).
-                    self._cleanup_complete.set()  # Signal cleanup attempt finished (even if aborted)
-                else:
-                    stream = None
-                    with self.lock:
-                        stream = self.stream
-                        if stream is not None:
-                            self.stream = None  # Clear reference immediately
-                    
-                    # Clean up outside lock with timeout protection
-                    if stream is not None:
-                        self._teardown_stream_with_timeout(stream, "thread cleanup")
-                    
-                    # Signal cleanup is complete
-                    self._cleanup_complete.set()
-
-                    # Keep the device awake for the next recording
-                    self._start_keepalive()
+            # This event belongs only to this worker; rapid restarts cannot reuse it.
+            stop_event.wait()
 
         except Exception as e:
             # Always log the error message
@@ -1498,7 +1493,7 @@ class AudioCapture:
 
             # Record the open failure so the app layer can distinguish
             # "device missing" from "device wedged" when choosing user advice
-            if not self.stream_opened:
+            if self._record_stop_event is stop_event and not self.stream_opened:
                 self.stream_open_error = str(e)
 
             # Only print traceback for unexpected errors (not common device/stream errors)
@@ -1509,21 +1504,21 @@ class AudioCapture:
                 import traceback
                 traceback.print_exc()
         finally:
-            # Ensure stream is cleaned up even on exception during stream
-            # creation (recovery owns the teardown when it aborted us)
-            stream = None
-            if not self._abort_cleanup:
-                with self.lock:
+            # Pop only our own stream. Recovery/stop may already own teardown;
+            # an abandoned worker must never close a later recording's stream.
+            with self.lock:
+                stream = stream_box[0] if not published else None
+                if published and self.stream is stream_box[0] and not self._abort_cleanup:
                     stream = self.stream
                     self.stream = None
             if stream is not None:
-                self._teardown_stream_with_timeout(stream, "final cleanup")
-            # Signal cleanup is complete (even if exception occurred)
-            self._cleanup_complete.set()
-
-            # Cycle the keepalive so it's always on the current device state
-            self._stop_keepalive()
-            self._start_keepalive()
+                self._teardown_stream_with_timeout(stream, "thread cleanup")
+            stop_event.set()
+            if self._record_stop_event is stop_event and not self.recovery_in_progress:
+                # Publish completion only after all worker-owned cleanup finishes.
+                self._stop_keepalive()
+                self._start_keepalive()
+                self._cleanup_complete.set()
 
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
         """Start monitoring audio levels without recording"""
@@ -1742,7 +1737,9 @@ class AudioCapture:
 
             with self.lock:
                 was_recording = self.is_recording
+                self._abort_cleanup = True
                 self.is_recording = False
+                self._record_stop_event.set()
 
             # Check for abort request before proceeding
             if self._abort_recovery.is_set():
@@ -1780,10 +1777,11 @@ class AudioCapture:
                     self.record_thread.join(timeout=3.0)
 
                     if self.record_thread.is_alive():
-                        # Still stuck after 5s - wait for cleanup flag
-                        cleanup_waited = self._cleanup_complete.wait(timeout=5.0)
+                        # Still stuck after 5s. The worker leaves _cleanup_complete
+                        # to recovery, so wait on the thread itself.
+                        self.record_thread.join(timeout=5.0)
 
-                        if not cleanup_waited or self.record_thread.is_alive():
+                        if self.record_thread.is_alive():
                             # Still stuck after 10s - reset PortAudio and abandon thread
                             log("[RECOVERY] Thread stuck after 10s - abandoning and resetting PortAudio")
                             self._reset_portaudio_state()
