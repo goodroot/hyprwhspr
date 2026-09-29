@@ -79,13 +79,9 @@ class PushToTalkLockTests(unittest.TestCase):
 
     def setUp(self):
         self.clock = _FrozenClock()
-        # The press is stamped when recording starts and read by the latch
-        # check; patch the clock wherever each of them reads it.
-        app = self.main.hyprwhsprApp
-        for method in (app._start_recording, app._ptt_mark_press, app._ptt_release_latches):
-            patcher = patch_app_global(method, 'time', self.clock)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = patch_app_global(self.main.hyprwhsprApp, 'time', self.clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _app(self, recording_mode='push_to_talk', lock_seconds=0.0, lock_absent=False,
              recording=False, mock_stop=True, mock_start=True, mock_cancel=True):
@@ -294,7 +290,7 @@ class PushToTalkLockTests(unittest.TestCase):
         self.assertFalse(app._ptt_locked)
 
     def test_ptt_state_is_reset_under_the_recording_lock(self):
-        for path in ('_stop_recording', '_cancel_recording'):
+        for path in ('_stop_recording', '_cancel_recording', '_cancel_recording_muted'):
             with self.subTest(path=path):
                 app = self._app(lock_seconds=3.0, recording=True,
                                 mock_stop=False, mock_cancel=False)

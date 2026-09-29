@@ -26,8 +26,7 @@ class RecordingCleanupStateTests(unittest.TestCase):
         app._autostop_stop_silence_monitor = mock.Mock()
         app._clear_mic_osd_preview_text = mock.Mock()
         app._stop_audio_level_monitoring = mock.Mock()
-        patcher = patch_app_global(
-            self.main.hyprwhsprApp._write_recording_status, 'RECORDING_STATUS_FILE', status_path)
+        patcher = patch_app_global(self.main.hyprwhsprApp, 'RECORDING_STATUS_FILE', status_path)
         patcher.start()
         self.addCleanup(patcher.stop)
         return app

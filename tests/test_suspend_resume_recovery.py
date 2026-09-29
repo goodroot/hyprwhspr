@@ -6,6 +6,7 @@ NameError that the outer handler swallowed - so the background retry thread
 was never started and a realtime-ws backend stayed disconnected.
 """
 
+import dis
 import importlib
 import sys
 import threading
@@ -81,30 +82,81 @@ def _import_main_isolated():
         sys.modules.update(saved)
 
 
-def _code_names(code):
-    names = set(code.co_names)
+def app_functions(app):
+    """(class, name, function) for every function on hyprwhsprApp's MRO."""
+    for klass in app.__mro__:
+        if klass is object:
+            continue
+        for name, member in vars(klass).items():
+            if isinstance(member, (staticmethod, classmethod)):
+                member = member.__func__
+            functions = ([f for f in (member.fget, member.fset, member.fdel) if f]
+                         if isinstance(member, property) else [member])
+            for function in functions:
+                if isinstance(function, types.FunctionType):
+                    yield klass, name, function
+
+
+def global_reads(code):
+    """Names a code object (and any nested code) loads as globals."""
+    names = {ins.argval for ins in dis.get_instructions(code) if ins.opname == "LOAD_GLOBAL"}
     for const in code.co_consts:
         if isinstance(const, types.CodeType):
-            names |= _code_names(const)
+            names |= global_reads(const)
     return names
 
 
-def patch_app_global(method, name, value):
-    """Patch a global in the module a hyprwhsprApp method actually reads.
+def _app_namespaces(app, name):
+    """Every module namespace whose hyprwhsprApp methods read global ``name``."""
+    spaces = {}
+    for _klass, _name, function in app_functions(app):
+        if name in global_reads(function.__code__) and name in function.__globals__:
+            spaces[id(function.__globals__)] = function.__globals__
+    if not spaces:
+        raise AssertionError(f"no hyprwhsprApp method reads global {name!r}")
+    return list(spaces.values())
 
-    App methods live in main.py and the lib/src/app/ mixins, so patching
-    ``main`` by name stops reaching a method once it moves. Patch the
-    method's own namespace instead, and fail loudly unless it reads ``name``.
+
+class _GlobalPatch:
+    """Set one global in several module namespaces; restore only that key."""
+
+    def __init__(self, namespaces, name, value):
+        self.namespaces, self.name, self.value = namespaces, name, value
+        self._saved = None
+
+    def start(self):
+        self._saved = [(space, space[self.name]) for space in self.namespaces]
+        for space in self.namespaces:
+            space[self.name] = self.value
+        return self.value
+
+    def stop(self):
+        for space, original in self._saved:
+            space[self.name] = original
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, *exc):
+        self.stop()
+
+
+def patch_app_global(app, name, value):
+    """Patch global ``name`` for every hyprwhsprApp method that reads it.
+
+    App methods live in main.py and the lib/src/app/ mixins, and one name
+    (a path, ``time``) is often bound in several of them. Patching ``main``
+    by name would miss the mixins; this patches each module that reads it.
     """
-    app_global(method, name)  # fails loudly if the method doesn't read it
-    return mock.patch.dict(method.__globals__, {name: value})
+    return _GlobalPatch(_app_namespaces(app, name), name, value)
 
 
-def app_global(method, name):
-    """The object a hyprwhsprApp method sees as global ``name``."""
-    if name not in _code_names(method.__code__) or name not in method.__globals__:
-        raise AssertionError(f"{method.__qualname__} does not read global {name!r}")
-    return method.__globals__[name]
+def app_global(app, name):
+    """The object hyprwhsprApp methods see as global ``name`` (one, shared)."""
+    values = {id(space[name]): space[name] for space in _app_namespaces(app, name)}
+    if len(values) != 1:
+        raise AssertionError(f"hyprwhsprApp modules bind {name!r} to different objects")
+    return next(iter(values.values()))
 
 
 class FakeConfig:

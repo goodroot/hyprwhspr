@@ -1,4 +1,5 @@
 import ast
+import functools
 import unittest
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@functools.lru_cache(maxsize=None)
 def _app_trees():
     """main.py plus the lib/src/app/ mixins that make up hyprwhsprApp."""
     paths = [ROOT / "lib" / "main.py", *sorted((ROOT / "lib" / "src" / "app").glob("*.py"))]

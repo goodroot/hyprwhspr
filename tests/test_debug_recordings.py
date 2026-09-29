@@ -24,8 +24,7 @@ class DebugRecordingsTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name) / 'recordings'
-        patcher = patch_app_global(
-            self.main.hyprwhsprApp._save_debug_recording, 'DEBUG_RECORDINGS_DIR', self.dir)
+        patcher = patch_app_global(self.main.hyprwhsprApp, 'DEBUG_RECORDINGS_DIR', self.dir)
         patcher.start()
         self.addCleanup(patcher.stop)
 
