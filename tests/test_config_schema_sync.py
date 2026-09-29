@@ -1,6 +1,7 @@
 import json
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -72,11 +73,14 @@ class ConfigSchemaSyncTests(unittest.TestCase):
         from realtime_client import RealtimeClient
 
         expected = self.schema_properties["realtime_conversation_history"]["default"]
-        self.assertEqual(RealtimeClient(mode="converse").conversation_history, expected)
+        # websocket-client is optional; this checks defaults, not the transport.
+        stub = types.SimpleNamespace(WebSocketApp=object)
+        with mock.patch.dict(sys.modules, {"websocket": stub}):
+            self.assertEqual(RealtimeClient(mode="converse").conversation_history, expected)
 
-        client = RealtimeClient(mode="converse")
-        client.set_conversation_history("nonsense")
-        self.assertEqual(client.conversation_history, expected)
+            client = RealtimeClient(mode="converse")
+            client.set_conversation_history("nonsense")
+            self.assertEqual(client.conversation_history, expected)
 
 
 if __name__ == "__main__":
