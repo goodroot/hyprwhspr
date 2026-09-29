@@ -73,7 +73,7 @@ from session_environment import ensure_wayland_display
 from text_injector import TextInjector
 from audio_manager import AudioManager
 from playback_suppressor import PlaybackSuppressor
-from paths import RECORDING_CONTROL_FILE, LOCK_FILE, LONGFORM_SEGMENTS_DIR, SOCKET_FILE
+from paths import RECORDING_CONTROL_FILE, LOCK_FILE, SOCKET_FILE
 from longform_controller import LongFormController
 from recording_control_server import RecordingControlServer
 from app.recording import RecordingMixin
