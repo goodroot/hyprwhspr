@@ -223,7 +223,7 @@ class hyprwhsprApp:
             self._tap_threshold = None
 
         # Push-to-talk hold-to-lock state (push_to_talk mode)
-        self._ptt_press_time = None        # time.time() of the accepted press that started the session
+        self._ptt_press_time = None        # time.monotonic() of the press the current hold is measured from
         self._ptt_locked = False
         self._ptt_lock = threading.Lock()
 
@@ -734,12 +734,14 @@ class hyprwhsprApp:
                     self._autostop_start_silence_monitor()
         elif recording_mode == 'push_to_talk':
             # A latched session ends on the next press; an unlocked live recording
-            # keeps today's no-op press.
+            # (e.g. started from the tray) just restarts the hold clock.
             if not self.is_recording:
                 self._start_recording(language_override=language_override)
             elif self._ptt_locked:
                 log("[CONTROL] Locked push-to-talk session ended by key press")
                 self._stop_recording()
+            else:
+                self._ptt_mark_press()
         elif recording_mode == 'auto':
             # Auto mode (hybrid tap/hold): record timestamp and start if not recording
             # Synchronize access to state variables to prevent race conditions
@@ -842,18 +844,25 @@ class hyprwhsprApp:
             self._ptt_press_time = None
             self._ptt_locked = False
 
-    def _ptt_release_latches(self):
-        """True when this release latches the session instead of stopping it.
+    def _ptt_mark_press(self):
+        """Measure the hold from this press, for a recording already running."""
+        with self._ptt_lock:
+            self._ptt_press_time = time.monotonic()
 
-        Consumes the pending press, so the release that latches does not also end the
-        session: the next press (raw FIFO bindings) or the next release (CLI bindings,
-        whose press never reaches the daemon while recording) stops the recording.
+    def _ptt_release_latches(self):
+        """True when this release latches the session, or it is already latched.
+
+        Consumes the pending press. A latched session ends only on the next
+        press, never a release: evdev runs press and release callbacks on
+        separate threads, so a quick tap's release can arrive first.
         """
         lock_seconds = self._get_float_setting('push_to_talk_lock_seconds', 0.0)
         if lock_seconds <= 0:
             return False
-        now = time.time()
+        now = time.monotonic()
         with self._ptt_lock:
+            if self._ptt_locked:
+                return True
             press_time = self._ptt_press_time
             if press_time is None:
                 return False
@@ -1191,7 +1200,7 @@ class hyprwhsprApp:
                 self._current_language_override = language_override
                 # Push-to-talk hold is measured from this accepted press
                 with self._ptt_lock:
-                    self._ptt_press_time = time.time()
+                    self._ptt_press_time = time.monotonic()
                     self._ptt_locked = False
 
         # A capture client self-triggered this start over the FIFO and is now
@@ -2247,6 +2256,8 @@ class hyprwhsprApp:
                     log("[CONTROL] Locked push-to-talk session ended by start request")
                     self._stop_recording()
                 else:
+                    if recording_mode == "push_to_talk":
+                        self._ptt_mark_press()
                     log("[CONTROL] Recording already in progress, ignoring start request")
         elif action in ("stop", "release"):
             # "release" is a key-up from an external binding and may latch a

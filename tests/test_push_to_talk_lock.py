@@ -40,6 +40,9 @@ class _FrozenClock:
     def time(self):
         return self.now
 
+    def monotonic(self):
+        return self.now
+
     def __getattr__(self, name):
         return getattr(time, name)
 
@@ -225,6 +228,38 @@ class PushToTalkLockTests(unittest.TestCase):
         self.assertTrue(app._ptt_locked)
 
         app._handle_control_command('start')
+        self.assertFalse(app.is_recording)
+        self.assertFalse(app._ptt_locked)
+
+    def test_tap_after_non_key_start_stops_instead_of_latching(self):
+        # Started long ago from the tray; a quick key tap measures from its own press.
+        for press in ('shortcut', 'control'):
+            with self.subTest(press=press):
+                app = self._app(lock_seconds=3.0, recording=True)
+                self._pending_press(app, held_seconds=10.0)
+                if press == 'shortcut':
+                    app._handle_shortcut_triggered()
+                else:
+                    app._handle_control_command('start')
+                self.clock.now += 0.2
+                if press == 'shortcut':
+                    app._on_shortcut_released()
+                else:
+                    app._handle_control_command('release')
+                self.assertEqual(app._stop_recording.call_count, 1)
+                self.assertFalse(app._ptt_locked)
+                self.assertEqual(app._notify_user.call_count, 0)
+
+    def test_release_racing_ahead_of_press_keeps_latched_session(self):
+        # evdev runs press and release on separate threads; a tap's release can win.
+        app = self._app(lock_seconds=3.0, recording=True, mock_stop=False, mock_start=False)
+        self._pending_press(app, held_seconds=4.0)
+        app._on_shortcut_released()
+        self.assertTrue(app._ptt_locked)
+
+        app._on_shortcut_released()
+        self.assertTrue(app.is_recording)
+        app._handle_shortcut_triggered()
         self.assertFalse(app.is_recording)
         self.assertFalse(app._ptt_locked)
 
