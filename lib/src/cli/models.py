@@ -158,15 +158,15 @@ def model_command(action: str, model_name: str = None) -> bool:
     if backend == 'parakeet-cpp':
         try:
             from ..parakeet_cpp_runtime import MODEL_ID
-            from ..parakeet_cpp_installer import download_model
+            from ..parakeet_cpp_installer import download_model as download_parakeet_model
         except ImportError:
             from parakeet_cpp_runtime import MODEL_ID
-            from parakeet_cpp_installer import download_model
+            from parakeet_cpp_installer import download_model as download_parakeet_model
         if explicit_model and explicit_model != MODEL_ID:
             log_error(f'Parakeet.cpp supports only {MODEL_ID}')
             return False
         if action == 'download':
-            return download_model(explicit_model or MODEL_ID)
+            return download_parakeet_model(explicit_model or MODEL_ID)
         if action == 'list':
             print(f'Parakeet.cpp (experimental): {MODEL_ID}')
             return True
@@ -535,7 +535,7 @@ def parakeet_cpp_model_status(config=None):
     print(f'Parakeet.cpp {runtime.RELEASE} (experimental), ABI {runtime.ABI_VERSION}')
     print(f'Model: {runtime.MODEL_ID} — {"present" if runtime.model_installed() else "missing"}')
     try:
-        device = runtime.resolve_device(config)
+        device = runtime.resolve_device(config, probe=False)
         path = runtime.library_path(device)
         ok, detail = runtime.probe_library(path) if path.is_file() else (False, 'missing')
         print(f'Runtime: {device} — {"ready" if ok else detail}')
