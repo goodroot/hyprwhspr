@@ -389,6 +389,41 @@ class RealtimeSetupCatalogTests(unittest.TestCase):
         )
 
 
+class RemoteConfigSwitchTests(unittest.TestCase):
+    """setup_config merges into the existing config, so a switch must
+    overwrite every remote key an earlier setup may have left behind."""
+
+    def _switch(self, stale, *args, **kwargs):
+        config = dict(stale)
+        config.update(setup._generate_remote_config(*args, **kwargs))
+        return config
+
+    def test_realtime_switch_clears_a_custom_websocket_url(self):
+        stale = {'websocket_url': 'ws://old.example/v1/realtime'}
+        config = self._switch(stale, 'openai', 'gpt-transcribe', 'sk', backend_type='realtime-ws')
+        self.assertIsNone(config['websocket_url'])
+
+    def test_realtime_custom_keeps_its_websocket_url(self):
+        url = 'ws://127.0.0.1:8080/v1/realtime'
+        config = self._switch({}, 'custom', 'model', None, {'websocket_url': url}, backend_type='realtime-ws')
+        self.assertEqual(config['websocket_url'], url)
+
+    def test_rest_custom_without_key_drops_the_previous_provider(self):
+        stale = {'rest_api_provider': 'openai'}
+        config = self._switch(stale, 'custom', None, None, {'endpoint': 'http://localhost:9000/asr'})
+        self.assertIsNone(config['rest_api_provider'])
+
+    def test_rest_known_provider_drops_custom_headers(self):
+        stale = {'rest_headers': {'Authorization': 'Bearer custom-secret'}}
+        config = self._switch(stale, 'openai', 'whisper-1', 'sk')
+        self.assertEqual(config['rest_headers'], {})
+
+    def test_rest_custom_without_body_drops_the_previous_body(self):
+        stale = {'rest_body': {'model': 'whisper-1'}}
+        config = self._switch(stale, 'custom', None, 'key', {'endpoint': 'http://localhost:9000/asr'})
+        self.assertEqual(config['rest_body'], {})
+
+
 class ConfigDefaultTests(unittest.TestCase):
     def test_defaults_match_schema_for_new_settings(self):
         with mock.patch.object(ConfigManager, "_ensure_config_dir"), \

@@ -756,9 +756,10 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
             'websocket_provider': provider_id,
             'websocket_model': model_id
         }
-        # For custom backends, include websocket_url from custom_config
-        if provider_id == 'custom' and custom_config and 'websocket_url' in custom_config:
-            config['websocket_url'] = custom_config['websocket_url']
+        # setup_config merges into the existing config: write None rather than
+        # omit, or a custom URL from an earlier setup overrides the provider's
+        # own endpoint.
+        config['websocket_url'] = (custom_config or {}).get('websocket_url')
         return config
     
     config = {
@@ -768,14 +769,13 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
     if custom_config:
         # Custom backend
         config['rest_endpoint_url'] = custom_config['endpoint']
-        if api_key:
-            # Store provider identifier instead of API key
-            # API key is already saved securely via credential_manager
-            config['rest_api_provider'] = 'custom'
-        if custom_config.get('headers'):
-            config['rest_headers'] = custom_config['headers']
-        if custom_config.get('body'):
-            config['rest_body'] = custom_config['body']
+        # Store provider identifier instead of API key
+        # API key is already saved securely via credential_manager.
+        # Written even when empty: setup_config merges into the existing
+        # config, and a stale provider would send its key to this endpoint.
+        config['rest_api_provider'] = 'custom' if api_key else None
+        config['rest_headers'] = custom_config.get('headers') or {}
+        config['rest_body'] = custom_config.get('body') or {}
     else:
         # Known provider
         model_config = get_model_config(provider_id, model_id)
@@ -786,6 +786,7 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         # Store provider identifier instead of API key
         # API key is already saved securely via credential_manager
         config['rest_api_provider'] = provider_id
+        config['rest_headers'] = {}  # Clear custom headers from an earlier setup
         config['rest_body'] = model_config['body'].copy()
     
     return config
