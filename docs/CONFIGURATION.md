@@ -1007,7 +1007,7 @@ Quiet other audio on record:
 
 - `audio_ducking: true` — set true to quiet other audio while recording
 - `audio_ducking_mode: "duck"` — `"duck"` lowers volume; `"pause"` pauses media players instead
-- `audio_ducking_percent: 50` — how much to reduce volume BY (default 50 = reduce to 50% of original; 70 = reduce to 30%)
+- `audio_ducking_percent: 50` — how much to reduce volume BY (default 50 = reduce to 50% of original; 70 = reduce to 30%); in pause mode, applies to apps without player controls
 
 Ducking lowers each application stream's volume, not the device master — your speaker setting is untouched and shell volume OSDs don't fire on every recording. Streams that start mid-recording aren't ducked.
 

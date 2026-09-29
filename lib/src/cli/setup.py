@@ -1200,7 +1200,11 @@ def setup_command(python_path: Optional[str] = None):
             existing_mode = 'duck'
         audio_ducking_mode = Prompt.ask("Mode", choices=['duck', 'pause'], default=existing_mode)
 
-        print("\nHow much to reduce volume BY during recording?")
+        if audio_ducking_mode == 'pause':
+            # Pause mode still ducks apps without MPRIS controls (PlaybackSuppressor)
+            print("\nApps without player controls are lowered instead. By how much?")
+        else:
+            print("\nHow much to reduce volume BY during recording?")
         print("  50 = reduce to 50% of original (recommended)")
         print("  70 = reduce to 30% of original (aggressive)")
         print("  30 = reduce to 70% of original (subtle)")
