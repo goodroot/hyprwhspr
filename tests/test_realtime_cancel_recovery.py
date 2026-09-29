@@ -30,6 +30,7 @@ class FakeConfig:
 
 class FakeRealtimeBackend:
     name = 'realtime-ws'
+    streams_audio = True
 
     def __init__(self, loaded=True):
         self.is_loaded = loaded
@@ -138,8 +139,10 @@ class CancelRecoveryManagerTests(unittest.TestCase):
         self.assertFalse(self._manager(FakeRealtimeBackend(loaded=True)).realtime_client_missing())
         self.assertFalse(self._manager(None).realtime_client_missing())
 
+        # Streaming is a capability now, not a name check.
         local = FakeRealtimeBackend(loaded=False)
         local.name = 'pywhispercpp'
+        local.streams_audio = False
         self.assertFalse(self._manager(local).realtime_client_missing())
 
 

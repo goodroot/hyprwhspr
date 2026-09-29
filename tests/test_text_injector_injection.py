@@ -29,6 +29,34 @@ from tests.text_injector_helpers import ConfigStub, make_injector
 
 
 class TextInjectorInjectionTests(unittest.TestCase):
+    def test_clipboard_settle_delay_and_failed_copy(self):
+        for value, expected in [(0.15, 0.15), (0.03, 0.03), (0, None),
+                                (-1, 0.15), (float('nan'), 0.15),
+                                (float('inf'), 0.15), ('0.1', 0.15),
+                                (None, 0.15), (True, 0.15)]:
+            for copied in (True, False):
+                with self.subTest(value=value, copied=copied):
+                    injector = self._injector()
+                    injector.config_manager = ConfigStub({'clipboard_settle_delay': value})
+                    injector.xdotool_available = True
+                    with (
+                        mock.patch.object(injector, '_save_clipboard', return_value=b'old'),
+                        mock.patch.object(injector, '_copy_text_to_clipboard', return_value=copied),
+                        mock.patch.object(injector, '_is_x11_session', return_value=True),
+                        mock.patch.object(injector, '_send_paste_keys_xdotool', return_value=True) as paste,
+                        mock.patch.object(injector, '_restore_clipboard') as restore,
+                        mock.patch.object(injector, '_send_enter_if_auto_submit') as submit,
+                        mock.patch('text_injector.time.sleep') as sleep,
+                    ):
+                        self.assertEqual(injector._paste_via_clipboard('hello', 'ctrl+v', False, False), copied)
+                        if copied and expected:
+                            sleep.assert_called_once_with(expected)
+                        else:
+                            sleep.assert_not_called()
+                        self.assertEqual(paste.called, copied)
+                        self.assertEqual(restore.called, copied)
+                        submit.assert_not_called()
+
     def _injector(self):
         return make_injector()
 

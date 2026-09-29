@@ -149,23 +149,23 @@ class SetupDefaultTests(unittest.TestCase):
         self.assertTrue(setup._bool_default({'audio_ducking': 'yes'}, 'audio_ducking', True))
 
     def test_backend_choice_map_matches_menu(self):
-        # The reported symptom: configured 'vulkan' must default to choice '5'.
-        self.assertEqual(setup._BACKEND_CHOICE['vulkan'], '5')
-        # Legacy 'amd' normalizes to vulkan -> still '5'.
+        # The reported symptom: configured 'vulkan' must default to Whisper.
+        self.assertEqual(setup._BACKEND_CHOICE['vulkan'], '2')
+        # Legacy 'amd' normalizes to vulkan -> still Whisper.
         self.assertEqual(
-            setup._BACKEND_CHOICE.get(setup.normalize_backend('amd'), '1'), '5')
+            setup._BACKEND_CHOICE.get(setup.normalize_backend('amd'), '1'), '2')
         self.assertEqual(setup._BACKEND_CHOICE['onnx-asr'], '1')
         self.assertEqual(setup._BACKEND_CHOICE['faster-whisper'], '2')
-        self.assertEqual(setup._BACKEND_CHOICE['pywhispercpp'], '3')
-        self.assertEqual(setup._BACKEND_CHOICE['cohere-transcribe'], '6')
-        self.assertEqual(setup._BACKEND_CHOICE['qwen3-asr'], '7')
-        self.assertEqual(setup._BACKEND_CHOICE['rest-api'], '8')
-        self.assertEqual(setup._BACKEND_CHOICE['realtime-ws'], '9')
+        self.assertEqual(setup._BACKEND_CHOICE['pywhispercpp'], '2')
+        self.assertEqual(setup._BACKEND_CHOICE['cohere-transcribe'], '3')
+        self.assertEqual(setup._BACKEND_CHOICE['qwen3-asr'], '4')
+        self.assertEqual(setup._BACKEND_CHOICE['rest-api'], '5')
+        self.assertEqual(setup._BACKEND_CHOICE['realtime-ws'], '6')
 
     def test_backend_choices_are_contiguous(self):
-        # The menu is spelled out in five places (this map, the printed lines,
-        # the Prompt choices list, backend_map, and a local display dict); a
-        # gap here means one of them was renumbered and another was not.
+        # The menu is spelled out in three places (this map, the printed lines,
+        # the Prompt choices list); a gap here means one was renumbered and
+        # another was not.
         values = sorted(set(setup._BACKEND_CHOICE.values()), key=int)
         self.assertEqual(values, [str(n) for n in range(1, len(values) + 1)])
 

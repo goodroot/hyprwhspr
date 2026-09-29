@@ -8,12 +8,12 @@ jobs:
   payload:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: python scripts/build-release.py "$GITHUB_REF_NAME" /tmp/release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: application-release
           path: /tmp/release/*
@@ -25,7 +25,7 @@ jobs:
         image: ['ubuntu:24.04', 'debian:bookworm', 'fedora:latest', 'opensuse/tumbleweed:latest']
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: application-release
           path: /tmp/release
@@ -55,7 +55,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: application-release
           path: release

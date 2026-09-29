@@ -50,7 +50,7 @@ def normalize_backend(backend: str) -> str:
 # Backends that install packages into the local venv (vs. remote API backends).
 # Single source of truth — used by setup, install validation, and repair.
 # 'amd' is accepted pre-normalization (normalize_backend maps it to 'vulkan').
-LOCAL_INSTALL_BACKENDS = ('cpu', 'nvidia', 'amd', 'vulkan', 'onnx-asr', 'faster-whisper', 'cohere-transcribe', 'qwen3-asr')
+LOCAL_INSTALL_BACKENDS = ('cpu', 'nvidia', 'amd', 'vulkan', 'parakeet-cpp', 'onnx-asr', 'faster-whisper', 'cohere-transcribe', 'qwen3-asr')
 
 # Python module each local backend needs importable from the venv.
 # Single source of truth — used to verify installs and detect missing backends.
@@ -66,6 +66,7 @@ BACKEND_IMPORT_MODULES = {
     # A bundled executable, not an importable Python package; callers must
     # validate its runtime manifest rather than attempt an import.
     'qwen3-asr': None,
+    'parakeet-cpp': None,
 }
 
 # Languages CohereLabs/cohere-transcribe accepts. The model has no language
@@ -97,9 +98,23 @@ def language_name(language):
         return language
     return LANGUAGE_NAMES.get(language.strip().lower().replace('_', '-'), language)
 
+# One line per local backend, shown before setup installs it. Keep the facts
+# in step with the model table in docs/CONFIGURATION.md.
+BACKEND_SUMMARIES = {
+    'onnx-asr': 'Parakeet via ONNX · CPU or NVIDIA · ~1 GB',
+    'parakeet-cpp': 'Parakeet.cpp · CPU or Vulkan · ~0.9 GB · experimental',
+    'faster-whisper': 'Whisper via faster-whisper · CPU or NVIDIA',
+    'cpu': 'Whisper via whisper.cpp · CPU',
+    'nvidia': 'Whisper via whisper.cpp · NVIDIA (CUDA) · may compile from source',
+    'vulkan': 'Whisper via whisper.cpp · Vulkan (AMD/Intel) · may compile from source',
+    'cohere-transcribe': 'Cohere Transcribe · 4 GB VRAM, or 8 GB RAM on CPU · Hugging Face token required',
+    'qwen3-asr': 'Qwen3-ASR via llama.cpp · CPU or Vulkan · ~2.4 GB · experimental',
+}
+
 # Backend display names for CLI output
 # Single source of truth for user-facing backend names
 BACKEND_DISPLAY_NAMES = {
+    'parakeet-cpp': 'Parakeet.cpp (experimental, CPU/Vulkan)',
     'pywhispercpp': 'Local (pywhispercpp)',
     'onnx-asr': 'Parakeet TDT V3 (onnx-asr, CPU/GPU)',
     'cohere-transcribe': 'Cohere Transcribe 2B (transformers, CPU/GPU)',

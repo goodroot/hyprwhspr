@@ -31,6 +31,10 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         app.text_injector = mock.Mock()
         app._recording_lock = threading.Lock()
         app._continuous_delivery_failure_notified = False
+        app._playback_lock = threading.Lock()
+        app._playback_session = app._recording_session = None
+        app._recording_starting = app._playback_shutdown = False
+        app._start_settled = threading.Event(); app._start_settled.set(); app._start_owner = None
         app._recording_finalizing = threading.Event()
         app.is_recording = False
         app.is_processing = False

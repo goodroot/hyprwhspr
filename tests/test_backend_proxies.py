@@ -37,6 +37,22 @@ class BackendProxyTests(unittest.TestCase):
         self.assertIs(backend.config, manager.config)
         self.assertEqual(backend.temp_dir, manager.temp_dir)
 
+    def test_unload_does_not_import_torch(self):
+        manager = WhisperManager(config_manager=FakeConfig())
+        manager._backend = mock.Mock()
+
+        class BlockTorch:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "torch" or fullname.startswith("torch."):
+                    raise AssertionError("unload imported torch")
+                return None
+
+        modules = {k: v for k, v in sys.modules.items() if k != "torch" and not k.startswith("torch.")}
+        with mock.patch.dict(sys.modules, modules, clear=True), \
+                mock.patch.object(sys, "meta_path", [BlockTorch(), *sys.meta_path]):
+            self.assertTrue(manager.unload_model())
+        manager._backend.unload.assert_called_once()
+
     def test_all_backends_registered(self):
         self.assertEqual(
             set(BACKENDS),
@@ -48,6 +64,7 @@ class BackendProxyTests(unittest.TestCase):
                 "realtime-ws",
                 "rest-api",
                 "qwen3-asr",
+                "parakeet-cpp",
             },
         )
         for name, cls in BACKENDS.items():

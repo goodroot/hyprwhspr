@@ -15,6 +15,11 @@ from contextlib import contextmanager
 from typing import Optional
 
 try:
+    from ..service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     from ..dependencies import require_package
     from ..text_script import join_segments
 except ImportError:
@@ -63,8 +68,8 @@ class PywhispercppBackend(TranscriptionBackend):
                     model_file = models_dir / f"ggml-{self.current_model}.en.bin"
 
             if not model_file.exists():
-                print(f"[ERROR] Model file not found: {model_file}")
-                print(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
+                log(f"[ERROR] Model file not found: {model_file}")
+                log(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
                 return False
 
             self._pywhisper_model = self._create_pywhisper_model(
@@ -72,22 +77,22 @@ class PywhispercppBackend(TranscriptionBackend):
                 self.config.get_setting('threads', 4)
             )
 
-            print(f"[BACKEND] pywhispercpp ({gpu_backend}) - model: {self.current_model}")
+            log(f"[BACKEND] pywhispercpp ({gpu_backend}) - model: {self.current_model}")
             self.ready = True
             # Record initialization time for suspend/resume detection
             self._last_use_time = time.monotonic()
             return True
 
         except ImportError as e:
-            print("")
-            print("ERROR: pywhispercpp is not installed or incompatible.")
-            print(f"Import error: {e}")
-            print("Run: hyprwhspr setup to configure a backend.")
+            log("")
+            log("ERROR: pywhispercpp is not installed or incompatible.")
+            log(f"Import error: {e}")
+            log("Run: hyprwhspr setup to configure a backend.")
 
-            print("")
+            log("")
             return False
         except Exception as e:
-            print(f"[ERROR] pywhispercpp initialization failed: {e}")
+            log(f"[ERROR] pywhispercpp initialization failed: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -121,7 +126,7 @@ class PywhispercppBackend(TranscriptionBackend):
             if 'vad' not in kwargs:
                 raise
             # Installed pywhispercpp predates VAD support (< 1.5.0)
-            print("[BACKEND] WARNING: installed pywhispercpp has no VAD support - re-run 'hyprwhspr setup' to upgrade; continuing without VAD", flush=True)
+            log("[BACKEND] WARNING: installed pywhispercpp has no VAD support - re-run 'hyprwhspr setup' to upgrade; continuing without VAD")
             del kwargs['vad'], kwargs['vad_model_path']
             return Model(**kwargs)
 
@@ -129,9 +134,9 @@ class PywhispercppBackend(TranscriptionBackend):
         """Path to the Silero VAD model, auto-downloading if missing; None on failure"""
         vad_file = PYWHISPERCPP_MODELS_DIR / VAD_MODEL_FILENAME
         if not vad_file.exists():
-            print("[BACKEND] Downloading Silero VAD model (~1MB)", flush=True)
+            log("[BACKEND] Downloading Silero VAD model (~1MB)")
             if not download_vad_model():
-                print("[BACKEND] WARNING: VAD model download failed - continuing without VAD", flush=True)
+                log("[BACKEND] WARNING: VAD model download failed - continuing without VAD")
                 return None
         return vad_file
 
@@ -380,12 +385,12 @@ class PywhispercppBackend(TranscriptionBackend):
                     language = detected
                     detected_prob = prob
                 except Exception as e:
-                    print(f'[WARN] language auto-detect failed: {e}; falling back to en', flush=True)
+                    log(f'[WARN] language auto-detect failed: {e}; falling back to en')
                     language = 'en'
 
             whisper_prompt, prompt_source = self.resolve_whisper_prompt(language)
             if detected_prob is not None:
-                print(f'[LANG] auto-detected: {language} (p={detected_prob:.2f}), prompt={prompt_source}', flush=True)
+                log(f'[LANG] auto-detected: {language} (p={detected_prob:.2f}), prompt={prompt_source}')
 
             task = self.config.get_setting('task', 'transcribe')
 
@@ -412,7 +417,7 @@ class PywhispercppBackend(TranscriptionBackend):
 
             return result
         except Exception as e:
-            print(f"[ERROR] pywhispercpp transcription failed: {e}")
+            log(f"[ERROR] pywhispercpp transcription failed: {e}")
             import traceback
             traceback.print_exc()
             return ""
@@ -444,7 +449,7 @@ class PywhispercppBackend(TranscriptionBackend):
                 # Aggressive cleanup (del + gc.collect) corrupts CUDA contexts
                 self._pywhisper_model = None
             except Exception as e:
-                print(f"[WARN] Failed to cleanup model reference: {e}")
+                log(f"[WARN] Failed to cleanup model reference: {e}")
 
     def reinitialize(self) -> bool:
         """
@@ -466,7 +471,7 @@ class PywhispercppBackend(TranscriptionBackend):
         if backend not in pywhispercpp_variants:
             return True
         
-        print("[MODEL] Reinitializing whisper model (suspend/resume detected)", flush=True)
+        log("[MODEL] Reinitializing whisper model (suspend/resume detected)")
         
         try:
             # Save current model name and thread count
@@ -485,11 +490,11 @@ class PywhispercppBackend(TranscriptionBackend):
             self.ready = True
             # Update last use time to mark successful reinitialization
             self._last_use_time = time.monotonic()
-            print("[MODEL] Model reinitialized successfully", flush=True)
+            log("[MODEL] Model reinitialized successfully")
             return True
             
         except Exception as e:
-            print(f"[MODEL] ERROR: Failed to reinitialize model: {e}", flush=True)
+            log(f"[MODEL] ERROR: Failed to reinitialize model: {e}")
             import traceback
             traceback.print_exc()
             self.ready = False
@@ -522,7 +527,7 @@ class PywhispercppBackend(TranscriptionBackend):
             return True
 
         except Exception as e:
-            print(f"ERROR: Failed to set threads: {e}")
+            log(f"ERROR: Failed to set threads: {e}")
             self.ready = False
             return False
 
@@ -531,8 +536,8 @@ class PywhispercppBackend(TranscriptionBackend):
         try:
             # Validate model file exists before attempting to load
             if not self._validate_model_file(model_name):
-                print(f"ERROR: Model file not found or corrupted: {model_name}")
-                print(f"Please download the model to {PYWHISPERCPP_MODELS_DIR}/")
+                log(f"ERROR: Model file not found or corrupted: {model_name}")
+                log(f"Please download the model to {PYWHISPERCPP_MODELS_DIR}/")
                 return False
 
             # Clean up existing model (GPU-safe)
@@ -550,7 +555,7 @@ class PywhispercppBackend(TranscriptionBackend):
             return True
 
         except Exception as e:
-            print(f"ERROR: Failed to set model {model_name}: {e}")
+            log(f"ERROR: Failed to set model {model_name}: {e}")
             self.ready = False
             return False
 

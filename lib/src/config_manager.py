@@ -104,6 +104,7 @@ def build_default_config():
         'post_transcription_hook': None,
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
+        'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut
         # Values: "super" | "ctrl_shift" | "ctrl" | null (auto-detect)
         # null = auto-detect: terminals get Ctrl+Shift+V, other apps get Ctrl+V
         'paste_mode': None,
@@ -133,6 +134,7 @@ def build_default_config():
         'prefer_clipboard_paste': False,  # Force clipboard paste instead of direct typing on GNOME/Mutter
         # Transcription backend settings
         'transcription_backend': 'pywhispercpp',  # "pywhispercpp" (or "cpu"/"nvidia"/"vulkan"/"amd") or "rest-api"
+        'parakeet_cpp_device': 'auto',  # auto | cpu | vulkan
         'qwen3_asr_model': '1.7b-q8_0',       # Quality-first Q8 decoder/projector pair
         'qwen3_asr_device': 'auto',           # 'auto' | 'cpu' | 'vulkan' (no Linux CUDA build upstream)
         'qwen3_asr_timeout': 180,              # Sidecar request timeout (1-600 seconds)
@@ -155,7 +157,7 @@ def build_default_config():
         # whisper.cpp (pywhispercpp) backend settings
         'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
         # ONNX-ASR backend settings (CPU-optimized)
-        'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Best balance of speed and quality for CPU (includes punctuation)
+        'onnx_asr_model': 'nemo-parakeet-tdt-0.6b-v3',  # Parakeet default; orukeet is an optional INT8 fine-tune
         'onnx_asr_quantization': 'int8',             # INT8 quantization for CPU performance (or None for fp32)
         'onnx_asr_use_vad': True,                    # Use VAD for long recordings (>30s)
         'onnx_asr_vad_min_duration': 30,             # Only use ONNX VAD for recordings at least this many seconds long

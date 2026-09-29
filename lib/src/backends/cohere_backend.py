@@ -9,6 +9,11 @@ import time
 from typing import Optional
 
 try:
+    from ..service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     from ..dependencies import require_package
 except ImportError:
     from dependencies import require_package
@@ -32,6 +37,7 @@ class CohereBackend(TranscriptionBackend):
     """Transformers backend; CUDA context needs a refresh after long idle."""
 
     name = 'cohere-transcribe'
+    loads_in_background = True
     reinit_on_idle = True
 
     def __init__(self, manager):
@@ -49,7 +55,7 @@ class CohereBackend(TranscriptionBackend):
             import torch
             from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
         except ImportError:
-            print('ERROR: cohere-transcribe dependencies not installed. Run: hyprwhspr setup and select cohere-transcribe', flush=True)
+            log('ERROR: cohere-transcribe dependencies not installed. Run: hyprwhspr setup and select cohere-transcribe')
             return False
 
         model_id = 'CohereLabs/cohere-transcribe-03-2026'
@@ -79,7 +85,7 @@ class CohereBackend(TranscriptionBackend):
 
         try:
             import contextlib, os as _os
-            print(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})', flush=True)
+            log(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})')
             # Cohere's trust_remote_code path prints large ANSI-laden blobs that
             # journald records as "[NNK blob data]". Redirect during from_pretrained.
             with open(_os.devnull, 'w') as _devnull, \
@@ -96,9 +102,9 @@ class CohereBackend(TranscriptionBackend):
                     local_files_only=True,
                 ).to(device)
             self._cohere_model.eval()
-            print(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})', flush=True)
+            log(f'[BACKEND] Cohere Transcribe ready (device={device}, dtype={torch_dtype})')
         except Exception as e:
-            print(f'ERROR: Failed to load Cohere Transcribe model: {e}', flush=True)
+            log(f'ERROR: Failed to load Cohere Transcribe model: {e}')
             import traceback
             traceback.print_exc()
             return False
@@ -127,8 +133,8 @@ class CohereBackend(TranscriptionBackend):
     def _reject_language(self, language: str, setting: str) -> None:
         """Report an unsupported language; the model would only raise on it."""
         supported = ' '.join(sorted(self._supported_languages()))
-        print(f"[ERROR] cohere-transcribe does not support {setting} '{language}'", flush=True)
-        print(f"        supported: {supported}", flush=True)
+        log(f"[ERROR] cohere-transcribe does not support {setting} '{language}'")
+        log(f"        supported: {supported}")
 
         if language in self._rejected_languages:
             return
@@ -145,7 +151,7 @@ class CohereBackend(TranscriptionBackend):
                    language_override: Optional[str] = None) -> str:
         """Transcribe using Cohere Transcribe (transformers)."""
         if self._cohere_model is None or self._cohere_processor is None:
-            print('[ERROR] Cohere Transcribe model not initialized', flush=True)
+            log('[ERROR] Cohere Transcribe model not initialized')
             return ''
 
         language = language_override if language_override is not None else self.config.get_setting('language', None)
@@ -155,8 +161,8 @@ class CohereBackend(TranscriptionBackend):
             language = 'en'
             if not self._autodetect_notice_shown:
                 self._autodetect_notice_shown = True
-                print('[LANG] cohere-transcribe cannot auto-detect; using en '
-                      '(set "language" for other languages)', flush=True)
+                log('[LANG] cohere-transcribe cannot auto-detect; using en '
+                      '(set "language" for other languages)')
 
         if language not in self._supported_languages():
             self._reject_language(language, 'language')
@@ -204,7 +210,7 @@ class CohereBackend(TranscriptionBackend):
             self._last_use_time = time.monotonic()
             return result
         except Exception as e:
-            print(f'[ERROR] Cohere Transcribe transcription failed: {e}', flush=True)
+            log(f'[ERROR] Cohere Transcribe transcription failed: {e}')
             import traceback
             traceback.print_exc()
             return ''
@@ -228,7 +234,7 @@ class CohereBackend(TranscriptionBackend):
             except Exception:
                 pass
 
-            print(f'[MODEL] Reinitializing Cohere Transcribe (device={device})', flush=True)
+            log(f'[MODEL] Reinitializing Cohere Transcribe (device={device})')
             import contextlib, os as _os
             with open(_os.devnull, 'w') as _devnull, \
                     contextlib.redirect_stdout(_devnull), \
@@ -247,7 +253,7 @@ class CohereBackend(TranscriptionBackend):
             self._last_use_time = time.monotonic()
             return True
         except Exception as e:
-            print(f'[ERROR] Cohere Transcribe reinitialization failed: {e}', flush=True)
+            log(f'[ERROR] Cohere Transcribe reinitialization failed: {e}')
             return False
 
     def unload(self) -> None:

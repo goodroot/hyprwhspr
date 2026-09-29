@@ -143,6 +143,16 @@ class CohereAndModelCommandTests(unittest.TestCase):
             self.assertTrue(models.model_command('status'))
         report.assert_called_once_with(config)
 
+    def test_whisper_download_is_not_shadowed_by_parakeet_import(self):
+        config = mock.Mock()
+        config.get_setting.side_effect = lambda key, default=None: 'cpu' if key == 'transcription_backend' else default
+        with (
+            mock.patch.object(models, 'ConfigManager', return_value=config),
+            mock.patch.object(models, 'download_model', return_value=True) as download,
+        ):
+            self.assertTrue(models.model_command('download', 'base'))
+        download.assert_called_once_with('base')
+
     def test_invalid_backend_action_fails(self):
         config = mock.Mock()
         config.get_setting.return_value = 'cohere-transcribe'

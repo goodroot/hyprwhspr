@@ -222,6 +222,12 @@
       "default": false,
       "description": "True = clear clipboard after delay, false = keep clipboard contents"
     },
+    "clipboard_settle_delay": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0.15,
+      "description": "Seconds between successful clipboard copy and paste; lower values may reduce compatibility."
+    },
     "clipboard_clear_delay": {
       "type": "number",
       "minimum": 0,
@@ -301,9 +307,15 @@
     },
     "transcription_backend": {
       "type": "string",
-      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "faster-whisper", "cohere-transcribe", "qwen3-asr"],
+      "enum": ["pywhispercpp", "cpu", "nvidia", "vulkan", "amd", "rest-api", "realtime-ws", "onnx-asr", "parakeet-cpp", "faster-whisper", "cohere-transcribe", "qwen3-asr"],
       "default": "pywhispercpp",
       "description": "Transcription backend to use"
+    },
+    "parakeet_cpp_device": {
+      "type": "string",
+      "enum": ["auto", "cpu", "vulkan"],
+      "default": "auto",
+      "description": "Experimental Parakeet.cpp runtime; auto preserves a compatible installed runtime."
     },
     "qwen3_asr_model": {
       "type": "string",
@@ -416,13 +428,13 @@
     "onnx_asr_model": {
       "type": "string",
       "default": "nemo-parakeet-tdt-0.6b-v3",
-      "description": "ONNX ASR model name (CPU-optimized)"
+      "description": "ONNX ASR model name: Parakeet v3 (default), orukeet (optional INT8 fine-tune), or a custom model"
     },
     "onnx_asr_quantization": {
       "type": ["string", "null"],
       "enum": ["int8", null],
       "default": "int8",
-      "description": "Quantization mode for ONNX ASR. 'int8' for CPU performance, null for fp32."
+      "description": "Quantization mode for ONNX ASR. 'int8' (default) or null for FP32. Orukeet ignores this."
     },
     "onnx_asr_use_vad": {
       "type": "boolean",

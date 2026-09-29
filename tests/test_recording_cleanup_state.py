@@ -19,6 +19,10 @@ class RecordingCleanupStateTests(unittest.TestCase):
     def _app(self, status_path):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
         app.playback_suppressor = types.SimpleNamespace(is_active=False)
+        app._playback_lock = threading.Lock()
+        app._playback_session = app._recording_session = None
+        app._recording_starting = app._playback_shutdown = False
+        app._start_settled = threading.Event(); app._start_settled.set(); app._start_owner = None
         app._autostop_stop_silence_monitor = mock.Mock()
         app._clear_mic_osd_preview_text = mock.Mock()
         app._stop_audio_level_monitoring = mock.Mock()

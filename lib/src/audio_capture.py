@@ -15,6 +15,11 @@ from typing import Optional, Callable
 from io import BytesIO
 
 try:
+    from .service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     from .dependencies import require_package
 except ImportError:
     from dependencies import require_package
@@ -68,6 +73,7 @@ class AudioCapture:
         
         # Recording state
         self.is_recording = False
+        self._record_stop_event = threading.Event()
         self.is_monitoring = False
         self.audio_data = []
         self._buffered_samples = 0
@@ -170,13 +176,13 @@ class AudioCapture:
                     if device_info['max_input_channels'] > 0:
                         self._set_sd_default_input(resolved_device_id)
                         self._input_selection_error = None
-                        print(f"Using configured audio device: {device_info['name']} (ID: {resolved_device_id})")
+                        log(f"Using configured audio device: {device_info['name']} (ID: {resolved_device_id})")
                         self._warn_if_raw_alsa(device_info['name'])
                         device_found = True
                     else:
-                        print(f"⚠ Configured device {self.preferred_device_id} has no input channels")
+                        log(f"⚠ Configured device {self.preferred_device_id} has no input channels")
                 except Exception as e:
-                    print(f"⚠ Configured audio device ID {self.preferred_device_id} not available: {e}")
+                    log(f"⚠ Configured audio device ID {self.preferred_device_id} not available: {e}")
                     self._clear_pulse_source_env()
                     # Try fallback to system default
                     pulse_default_id = self._get_pulse_default_source_device_id()
@@ -185,7 +191,7 @@ class AudioCapture:
                             device_info = sd.query_devices(device=pulse_default_id, kind='input')
                             self._set_sd_default_input(pulse_default_id)
                             device_found = True
-                            print(f"[FALLBACK] Using system default: {device_info['name']} (ID: {pulse_default_id})")
+                            log(f"[FALLBACK] Using system default: {device_info['name']} (ID: {pulse_default_id})")
                             self._notify_device_fallback(device_info['name'])
                         except Exception:
                             pass
@@ -194,7 +200,7 @@ class AudioCapture:
             if not device_found and self.config:
                 configured_name = self.config.get_setting('audio_device_name')
                 if configured_name:
-                    print(f"Searching for device by name: {configured_name}")
+                    log(f"Searching for device by name: {configured_name}")
 
                     # Prefer the sound server over raw hardware (#234).
                     routed = self._resolve_via_sound_server(configured_name)
@@ -224,7 +230,7 @@ class AudioCapture:
                                 device_info = sd.query_devices(device=pulse_default_id, kind='input')
                                 self._set_sd_default_input(pulse_default_id)
                                 device_found = True
-                                print(f"[FALLBACK] Using system default: {device_info['name']} (ID: {pulse_default_id})")
+                                log(f"[FALLBACK] Using system default: {device_info['name']} (ID: {pulse_default_id})")
                                 self._notify_device_fallback(device_info['name'])
                             except Exception:
                                 pass
@@ -232,7 +238,7 @@ class AudioCapture:
             # If no specific device was configured or it failed, use system default
             if not device_found:
                 if self.preferred_device_id is None:
-                    print("Using system default audio device")
+                    log("Using system default audio device")
                 # Query PipeWire for its current default so mid-session changes
                 # (e.g. via mic-select picker) are actually picked up.
                 pulse_default_id = self._get_pulse_default_source_device_id()
@@ -275,12 +281,12 @@ class AudioCapture:
                     self.device_id = None
                 
             except Exception as e:
-                print(f"⚠ Could not query device details: {e}")
+                log(f"⚠ Could not query device details: {e}")
                 self.device_info = None
                 self.device_id = None
             
         except Exception as e:
-            print(f"ERROR: Failed to initialize sounddevice: {e}")
+            log(f"ERROR: Failed to initialize sounddevice: {e}")
             self.device_info = None
             self.device_id = None
 
@@ -360,7 +366,7 @@ class AudioCapture:
         try:
             self.streaming_callback.set_input_sample_rate(self.sample_rate)
         except Exception as e:
-            print(f"[WARN] Failed to set streaming sample rate: {e}", flush=True)
+            log(f"[WARN] Failed to set streaming sample rate: {e}")
 
     def _refresh_default_input_unlocked(self, reason: str) -> bool:
         """Refresh runtime device binding from the current Pulse/PipeWire default.
@@ -401,15 +407,15 @@ class AudioCapture:
                 if old_device_id != pulse_default_id or source_changed:
                     self._stop_keepalive()
                     source_note = f", source={new_pulse_source}" if source_changed else ""
-                    print(f"[PULSE] Default input refreshed ({reason}): {device_info['name']} (ID: {pulse_default_id}{source_note})", flush=True)
+                    log(f"[PULSE] Default input refreshed ({reason}): {device_info['name']} (ID: {pulse_default_id}{source_note})")
                     self._start_keepalive()
                 return True
             except Exception as e:
-                print(f"[PULSE] Failed to bind default input ({reason}): {e}", flush=True)
+                log(f"[PULSE] Failed to bind default input ({reason}): {e}")
         elif old_device_id is not None:
             self._stop_keepalive()
             self._clear_sd_default_input()
-            print(f"[PULSE] No concrete PortAudio match for default input ({reason}); using PortAudio default", flush=True)
+            log(f"[PULSE] No concrete PortAudio match for default input ({reason}); using PortAudio default")
             return True
 
         try:
@@ -418,21 +424,21 @@ class AudioCapture:
                 if old_device_id is not None:
                     self._stop_keepalive()
                 self._clear_sd_default_input()
-                print(f"[PULSE] No concrete PortAudio match for default input ({reason}); using PortAudio default", flush=True)
+                log(f"[PULSE] No concrete PortAudio match for default input ({reason}); using PortAudio default")
                 return False
             if old_device_id != self.device_id:
                 self._stop_keepalive()
                 self._start_keepalive()
             return True
         except Exception as e:
-            print(f"[PULSE] Failed to refresh system default input ({reason}): {e}", flush=True)
+            log(f"[PULSE] Failed to refresh system default input ({reason}): {e}")
             return False
 
     def refresh_default_input(self, reason: str) -> bool:
         """Re-query and bind the current system default input when using default mode."""
         with self.recovery_lock:
             if self.recovery_in_progress:
-                print(f"[PULSE] Default input refresh skipped during recovery ({reason})", flush=True)
+                log(f"[PULSE] Default input refresh skipped during recovery ({reason})")
                 return False
             return self._refresh_default_input_unlocked(reason)
 
@@ -545,7 +551,7 @@ class AudioCapture:
                     self._start_keepalive(_attempt + 1)
                 threading.Thread(target=_retry, daemon=True).start()
             else:
-                print(f"[WARN] Keepalive stream failed to start: {e}", flush=True)
+                log(f"[WARN] Keepalive stream failed to start: {e}")
 
     def _stop_keepalive(self):
         """Close the keepalive stream before opening a real recording stream."""
@@ -572,7 +578,7 @@ class AudioCapture:
                         self._set_sd_default_input(i)
                         break
         except Exception as e:
-            print(f"⚠ Could not set system default device: {e}")
+            log(f"⚠ Could not set system default device: {e}")
     
     @staticmethod
     def get_available_input_devices():
@@ -596,7 +602,7 @@ class AudioCapture:
             return input_devices
             
         except Exception as e:
-            print(f"Error getting input devices: {e}")
+            log(f"Error getting input devices: {e}")
             return []
     
     def get_current_device_info(self):
@@ -631,14 +637,14 @@ class AudioCapture:
                     self._set_sd_default_input(device_id)
                     self.device_info = device_info
                     self.device_id = device_id
-                    print(f"Audio device changed to: {device_info['name']} (ID: {device_id})")
+                    log(f"Audio device changed to: {device_info['name']} (ID: {device_id})")
                     return True
                 else:
-                    print(f"Device {device_id} has no input channels")
+                    log(f"Device {device_id} has no input channels")
                     return False
                     
         except Exception as e:
-            print(f"Error setting audio device: {e}")
+            log(f"Error setting audio device: {e}")
             return False
     
     # Generic routing words common to many source/device names — useless for
@@ -687,7 +693,7 @@ class AudioCapture:
             if result.returncode != 0:
                 return []
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
-            print(f"[PULSE] Could not list sources: {e}")
+            log(f"[PULSE] Could not list sources: {e}")
             return []
 
         sources = []
@@ -744,7 +750,7 @@ class AudioCapture:
             default_source = cls._get_pulse_default_source_name()
             if default_source in hits:
                 return default_source
-            print(f"[PULSE] Ambiguous source match for '{configured}': "
+            log(f"[PULSE] Ambiguous source match for '{configured}': "
                   f"{len(hits)} sources match; not guessing")
             return None
 
@@ -759,7 +765,7 @@ class AudioCapture:
             return None
         winners = [source for source, score in scores if score == best_score]
         if len(winners) > 1:
-            print(f"[PULSE] Ambiguous source token match for '{configured}': "
+            log(f"[PULSE] Ambiguous source token match for '{configured}': "
                   f"{len(winners)} sources tie at score {best_score}; not guessing")
             return None
         return winners[0]
@@ -788,7 +794,7 @@ class AudioCapture:
             return False
         self._set_sd_default_input(index)
         self._input_selection_error = None
-        print(f"{label}: {device_info['name']} (ID: {index})")
+        log(f"{label}: {device_info['name']} (ID: {index})")
         self._warn_if_raw_alsa(device_info['name'])
         return True
 
@@ -807,12 +813,10 @@ class AudioCapture:
         # Without a sound server there is nothing to bypass.
         if not AudioCapture._sound_server_running():
             return
-        print(
-            f"⚠ Configured microphone resolved to raw ALSA hardware: {device_name}\n"
+        log(f"⚠ Configured microphone resolved to raw ALSA hardware: {device_name}\n"
             "  Capture bypasses PipeWire/PulseAudio — EasyEffects, noise suppression,\n"
             "  echo cancellation and virtual sources will NOT be applied.\n"
-            "  Name a source from `pactl list short sources` to route through the sound server."
-        )
+            "  Name a source from `pactl list short sources` to route through the sound server.")
 
     def _resolve_via_sound_server(self, configured) -> Optional[int]:
         """Bind a configured microphone through PipeWire/PulseAudio (#234).
@@ -848,7 +852,7 @@ class AudioCapture:
             if remembered is None:
                 return None
             os.environ['PULSE_SOURCE'] = remembered
-            print(f"[PULSE] Sound server unreachable; keeping pinned source: {remembered}")
+            log(f"[PULSE] Sound server unreachable; keeping pinned source: {remembered}")
             return pulse_index
 
         source_name = self._match_config_to_pulse_source(configured, sources)
@@ -857,7 +861,7 @@ class AudioCapture:
 
         os.environ['PULSE_SOURCE'] = source_name
         self._pinned_pulse_source = source_name
-        print(f"[PULSE] Routing '{configured}' through {devices[pulse_index]['name']} "
+        log(f"[PULSE] Routing '{configured}' through {devices[pulse_index]['name']} "
               f"(ID: {pulse_index}), source: {source_name}")
         return pulse_index
 
@@ -904,10 +908,10 @@ class AudioCapture:
                 continue
             device_name = device['name'].lower()
             if source_name in device_name:
-                print(f"[PULSE] Matched device {idx}: {device['name']}")
+                log(f"[PULSE] Matched device {idx}: {device['name']}")
                 return idx
             if model_part and model_part in device_name:
-                print(f"[PULSE] Matched device {idx} via model: {device['name']}")
+                log(f"[PULSE] Matched device {idx} via model: {device['name']}")
                 return idx
 
         if not fuzzy:
@@ -930,10 +934,10 @@ class AudioCapture:
         if best_score < 2:
             return None
         if len(winners) > 1:
-            print(f"[PULSE] Ambiguous token match for '{pulse_source_name}': "
+            log(f"[PULSE] Ambiguous token match for '{pulse_source_name}': "
                   f"{len(winners)} devices tie at score {best_score}; not guessing")
             return None
-        print(f"[PULSE] Matched device {winners[0]} via model tokens: {devices[winners[0]]['name']}")
+        log(f"[PULSE] Matched device {winners[0]} via model tokens: {devices[winners[0]]['name']}")
         return winners[0]
 
     def _get_pulse_default_source_device_id(self) -> Optional[int]:
@@ -956,7 +960,7 @@ class AudioCapture:
             source_changed = pulse_source_name != self._last_pulse_default_source_name
             self._last_pulse_default_source_name = pulse_source_name
             if source_changed:
-                print(f"[PULSE] System default source: {pulse_source_name}")
+                log(f"[PULSE] System default source: {pulse_source_name}")
 
             if self._is_monitor_source_name(pulse_source_name):
                 self._input_selection_error = (
@@ -966,7 +970,7 @@ class AudioCapture:
                 )
                 self._clear_pulse_source_env()
                 if source_changed:
-                    print(f"[PULSE] Refusing output monitor as microphone: {pulse_source_name}")
+                    log(f"[PULSE] Refusing output monitor as microphone: {pulse_source_name}")
                 return None
 
             try:
@@ -986,12 +990,12 @@ class AudioCapture:
             for idx, device in enumerate(devices or []):
                 if device['max_input_channels'] > 0 and 'pulse' in device['name'].lower():
                     if source_changed:
-                        print(f"[PULSE] Fallback to first PulseAudio device {idx}: {device['name']}")
+                        log(f"[PULSE] Fallback to first PulseAudio device {idx}: {device['name']}")
                     return idx
 
             return None
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
-            print(f"[PULSE] Could not query default source: {e}")
+            log(f"[PULSE] Could not query default source: {e}")
             return None
 
     def _notify_device_fallback(self, device_name: str):
@@ -1036,7 +1040,7 @@ class AudioCapture:
             else:
                 self.refresh_default_input("input_selection_retry")
         except Exception as e:
-            print(f"[WARN] Input re-selection failed: {e}", flush=True)
+            log(f"[WARN] Input re-selection failed: {e}")
     
     def start_recording(self, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
@@ -1059,7 +1063,7 @@ class AudioCapture:
             if not recovery_waited:
                 # Ask the recovery owner to stop, then give its finally block a
                 # bounded chance to release stream ownership.
-                print("[RECOVERY] Recording requested while recovery running - aborting recovery", flush=True)
+                log("[RECOVERY] Recording requested while recovery running - aborting recovery")
                 self.abort_recovery()
                 recovery_waited = self._cleanup_complete.wait(timeout=3.0)
         elif not self._cleanup_complete.is_set():
@@ -1067,7 +1071,7 @@ class AudioCapture:
             recovery_waited = self._cleanup_complete.wait(timeout=3.0)
         
         if not self._cleanup_complete.is_set():
-            print("[RECOVERY] Cleanup still owns the audio stream; recording refused", flush=True)
+            log("[RECOVERY] Cleanup still owns the audio stream; recording refused")
             return False
         
         # Re-test a recorded input rejection before refusing: the stored reason can
@@ -1093,7 +1097,7 @@ class AudioCapture:
             try:
                 sd.query_devices(device=self.device_id, kind='input')
             except Exception:
-                print(f"[INFO] Device ID {self.device_id} no longer available, re-initializing")
+                log(f"[INFO] Device ID {self.device_id} no longer available, re-initializing")
                 self.device_id = None
                 self.device_info = None
                 if self._has_configured_audio_device():
@@ -1102,7 +1106,7 @@ class AudioCapture:
                     self.refresh_default_input("missing_device_before_record")
                 # Verify re-initialization succeeded
                 if self.device_id is None:
-                    print("[WARN] Re-initialization failed - no device available")
+                    log("[WARN] Re-initialization failed - no device available")
         
         # Safety: Clean up any leftover stream before starting
         if self.stream is not None:
@@ -1116,6 +1120,8 @@ class AudioCapture:
             with self.lock:
                 self._reset_audio_buffer_locked()
                 self.is_recording = True
+                stop_event = threading.Event()
+                self._record_stop_event = stop_event
                 self.streaming_callback = streaming_callback
                 self._viz_chunk = None
                 self._viz_chunk_time = 0.0
@@ -1131,13 +1137,13 @@ class AudioCapture:
             self._abort_cleanup = False
             
             # Start recording thread
-            self.record_thread = threading.Thread(target=self._record_audio, daemon=True)
+            self.record_thread = threading.Thread(target=self._record_audio, args=(stop_event,), daemon=True)
             self.record_thread.start()
             
             return True
             
         except Exception as e:
-            print(f"[ERROR] Failed to start recording: {e}")
+            log(f"[ERROR] Failed to start recording: {e}")
             # Ensure cleanup on failure
             try:
                 self._cleanup_stream()
@@ -1145,6 +1151,8 @@ class AudioCapture:
                 pass
             with self.lock:
                 self.is_recording = False
+                self._record_stop_event.set()
+            self._cleanup_complete.set()
             return False
     
     def stop_recording(self) -> Optional[np.ndarray]:
@@ -1155,6 +1163,7 @@ class AudioCapture:
         # Signal to stop recording
         with self.lock:
             self.is_recording = False
+            self._record_stop_event.set()
         
         # Wait for recording thread to finish (it handles cleanup in finally block)
         if self.record_thread and self.record_thread.is_alive():
@@ -1165,14 +1174,14 @@ class AudioCapture:
                 # Only warn if this is a normal stop (not during recovery)
                 # During recovery, it's expected that the thread may not exit cleanly when device is dead
                 if not (hasattr(self, 'recovery_in_progress') and self.recovery_in_progress):
-                    print("[WARN] Recording thread did not exit cleanly after 3 seconds", flush=True)
+                    log("[WARN] Recording thread did not exit cleanly after 3 seconds")
 
         # Thread's finally block handles cleanup - verify it completed
         with self.lock:
             leftover = self.stream
             self.stream = None
         if leftover is not None:
-            print("[WARN] Stream still exists after thread exit - this should not happen", flush=True)
+            log("[WARN] Stream still exists after thread exit - this should not happen")
             # Tear down off-thread: closing inline could deadlock with a
             # callback blocked on self.lock (#209).
             self._teardown_stream_async(leftover, "post-thread cleanup")
@@ -1183,7 +1192,7 @@ class AudioCapture:
             if audio_array is not None:
                 duration = len(audio_array) / self.sample_rate
                 if duration < 0.5:
-                    print(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio", flush=True)
+                    log(f"[WARN] Recording very short ({duration:.2f}s), may not have captured audio")
             return audio_array
 
     def _reset_audio_buffer_locked(self):
@@ -1205,11 +1214,11 @@ class AudioCapture:
             if not audio_array.flags['C_CONTIGUOUS']:
                 audio_array = np.ascontiguousarray(audio_array, dtype=np.float32)
             if np.any(np.isnan(audio_array)) or np.any(np.isinf(audio_array)):
-                print("[ERROR] Audio data contains invalid values (NaN/inf) - dropping", flush=True)
+                log("[ERROR] Audio data contains invalid values (NaN/inf) - dropping")
                 return None
             return audio_array
         except Exception as e:
-            print(f"[ERROR] Failed to collect audio data: {e}", flush=True)
+            log(f"[ERROR] Failed to collect audio data: {e}")
             return None
 
     def get_current_audio_copy(self) -> Optional[np.ndarray]:
@@ -1227,7 +1236,7 @@ class AudioCapture:
         """Clear the audio buffer without stopping recording."""
         with self.lock:
             self._reset_audio_buffer_locked()
-            print("[AUDIO] Buffer cleared")
+            log("[AUDIO] Buffer cleared")
 
     def flush_buffer(self) -> Optional[np.ndarray]:
         """Atomically copy and clear the audio buffer. Returns audio data or None."""
@@ -1251,6 +1260,7 @@ class AudioCapture:
         # Signal to stop recording
         with self.lock:
             self.is_recording = False
+            self._record_stop_event.set()
 
         # Wait for recording thread to finish
         if self.record_thread and self.record_thread.is_alive():
@@ -1262,7 +1272,7 @@ class AudioCapture:
             # Clear buffer after extracting
             self._reset_audio_buffer_locked()
 
-        print("[AUDIO] Recording paused")
+        log("[AUDIO] Recording paused")
         return audio_array
 
     def resume_recording(self, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
@@ -1312,13 +1322,13 @@ class AudioCapture:
         halt_thread.start()
         halt_thread.join(timeout=1.0)
         if halt_thread.is_alive():
-            print(f"[RECOVERY] Warning: stream.{halt_name}() timed out in {context}", flush=True)
+            log(f"[RECOVERY] Warning: stream.{halt_name}() timed out in {context}")
 
         close_thread = threading.Thread(target=close_stream, daemon=True)
         close_thread.start()
         close_thread.join(timeout=1.0)
         if close_thread.is_alive():
-            print(f"[RECOVERY] Warning: stream.close() timed out in {context}", flush=True)
+            log(f"[RECOVERY] Warning: stream.close() timed out in {context}")
             return close_thread
         return None
 
@@ -1334,23 +1344,24 @@ class AudioCapture:
             daemon=True,
         ).start()
 
-    def _record_audio(self):
+    def _record_audio(self, stop_event):
         """Internal method to record audio in a separate thread"""
+        stream_box = [None]
+        published = False
         try:
             chunk_count = 0
             # Holds the stream this thread opens; the callback only trusts
             # chunks while its stream is still the active one, so a torn-down
             # or replaced stream can't keep writing into shared state (#209).
-            stream_box = [None]
 
             # Callback function for sounddevice
             def audio_callback(indata, frames, time_info, status):
                 nonlocal chunk_count
                 with self.lock:
-                    if stream_box[0] is None or self.stream is not stream_box[0]:
+                    if stop_event.is_set() or stream_box[0] is None or self.stream is not stream_box[0]:
                         return  # stale stream
                     if status:
-                        print(f"[WARN] Audio callback status: {status}")
+                        log(f"[WARN] Audio callback status: {status}")
 
                     # Update callback health tracking (for recovery success criteria)
                     self.last_callback_monotonic = time.monotonic()
@@ -1371,7 +1382,7 @@ class AudioCapture:
                             self._buffered_samples += len(chunk_copy)
                         elif not self._buffer_capped:
                             self._buffer_capped = True
-                            print(f"[WARN] Recording buffer full ({_MAX_BUFFER_SECONDS}s) - discarding further audio", flush=True)
+                            log(f"[WARN] Recording buffer full ({_MAX_BUFFER_SECONDS}s) - discarding further audio")
                         self._viz_chunk = chunk_copy
                         self._viz_chunk_time = time.monotonic()
 
@@ -1380,7 +1391,7 @@ class AudioCapture:
                             try:
                                 self.streaming_callback(audio_chunk.copy())
                             except Exception as e:
-                                print(f"[WARN] Streaming callback error: {e}")
+                                log(f"[WARN] Streaming callback error: {e}")
 
                         chunk_count += 1
             
@@ -1414,10 +1425,12 @@ class AudioCapture:
             _max_start_attempts = 3
             refreshed_after_failure = False
             for _attempt in range(_max_start_attempts):
+                if stop_event.is_set():
+                    return
                 try:
                     device_to_use = self.device_id
                     with _quiet_alsa_stderr():
-                        self.stream = sd.InputStream(
+                        stream_box[0] = sd.InputStream(
                             device=device_to_use,
                             samplerate=self.sample_rate,
                             channels=self.channels,
@@ -1425,9 +1438,16 @@ class AudioCapture:
                             blocksize=self.chunk_size,
                             callback=audio_callback
                         )
-                        stream_box[0] = self.stream
-                        self.stream.start()
-                    self.stream_opened = True
+                        with self.lock:
+                            if stop_event.is_set() or self._record_stop_event is not stop_event:
+                                return
+                            self.stream = stream_box[0]
+                            published = True
+                        stream_box[0].start()
+                    with self.lock:
+                        if stop_event.is_set() or self._record_stop_event is not stop_event:
+                            return
+                        self.stream_opened = True
                     self._stop_keepalive()  # Node is warm; safe to release keepalive now
                     break  # success
                 except Exception as _start_err:
@@ -1437,13 +1457,17 @@ class AudioCapture:
                         "unanticipated host error" in err_str
                     )
                     if _attempt < _max_start_attempts - 1 and is_retriable:
-                        print(f"[WARN] Stream open failed (attempt {_attempt + 1}): {_start_err}", flush=True)
-                        if self.stream is not None:
-                            try:
-                                self.stream.close()
-                            except Exception:
-                                pass
-                            self.stream = None
+                        log(f"[WARN] Stream open failed (attempt {_attempt + 1}): {_start_err}")
+                        with self.lock:
+                            stream = stream_box[0] if not published or self.stream is stream_box[0] else None
+                            if self.stream is stream_box[0]:
+                                self.stream = None
+                        if stream is not None:
+                            self._teardown_stream_with_timeout(stream, 'start retry')
+                        stream_box[0] = None
+                        published = False
+                        if stop_event.is_set():
+                            return
                         if not refreshed_after_failure and not self._has_configured_audio_device():
                             refreshed_after_failure = True
                             self.refresh_default_input("record_start_retry")
@@ -1455,47 +1479,21 @@ class AudioCapture:
                                 raise RuntimeError(self._input_selection_error)
                             self._notify_streaming_sample_rate()
                         retry_delay = self.config.get_setting('stream_start_retry_delay', 1.5) if self.config is not None else 1.5
-                        time.sleep(retry_delay)
+                        if stop_event.wait(retry_delay):
+                            return
                     else:
                         raise
 
-            # Keep recording while is_recording is True
-            try:
-                while self.is_recording:
-                    time.sleep(0.1)
-            finally:
-                # Clean up stream on exit (recording thread owns this cleanup)
-                # Check abort flag - if set, exit early to avoid blocking
-                if self._abort_cleanup:
-                    print("[RECOVERY] Thread cleanup aborted by recovery", flush=True)
-                    # Leave self.stream in place: recovery pops and tears it
-                    # down, escalating to a PortAudio reset if it's wedged.
-                    # Dropping the reference here orphaned the live C stream (#209).
-                    self._cleanup_complete.set()  # Signal cleanup attempt finished (even if aborted)
-                else:
-                    stream = None
-                    with self.lock:
-                        stream = self.stream
-                        if stream is not None:
-                            self.stream = None  # Clear reference immediately
-                    
-                    # Clean up outside lock with timeout protection
-                    if stream is not None:
-                        self._teardown_stream_with_timeout(stream, "thread cleanup")
-                    
-                    # Signal cleanup is complete
-                    self._cleanup_complete.set()
-
-                    # Keep the device awake for the next recording
-                    self._start_keepalive()
+            # This event belongs only to this worker; rapid restarts cannot reuse it.
+            stop_event.wait()
 
         except Exception as e:
             # Always log the error message
-            print(f"[ERROR] Error in recording thread: {e}", flush=True)
+            log(f"[ERROR] Error in recording thread: {e}")
 
             # Record the open failure so the app layer can distinguish
             # "device missing" from "device wedged" when choosing user advice
-            if not self.stream_opened:
+            if self._record_stop_event is stop_event and not self.stream_opened:
                 self.stream_open_error = str(e)
 
             # Only print traceback for unexpected errors (not common device/stream errors)
@@ -1506,21 +1504,21 @@ class AudioCapture:
                 import traceback
                 traceback.print_exc()
         finally:
-            # Ensure stream is cleaned up even on exception during stream
-            # creation (recovery owns the teardown when it aborted us)
-            stream = None
-            if not self._abort_cleanup:
-                with self.lock:
+            # Pop only our own stream. Recovery/stop may already own teardown;
+            # an abandoned worker must never close a later recording's stream.
+            with self.lock:
+                stream = stream_box[0] if not published else None
+                if published and self.stream is stream_box[0] and not self._abort_cleanup:
                     stream = self.stream
                     self.stream = None
             if stream is not None:
-                self._teardown_stream_with_timeout(stream, "final cleanup")
-            # Signal cleanup is complete (even if exception occurred)
-            self._cleanup_complete.set()
-
-            # Cycle the keepalive so it's always on the current device state
-            self._stop_keepalive()
-            self._start_keepalive()
+                self._teardown_stream_with_timeout(stream, "thread cleanup")
+            stop_event.set()
+            if self._record_stop_event is stop_event and not self.recovery_in_progress:
+                # Publish completion only after all worker-owned cleanup finishes.
+                self._stop_keepalive()
+                self._start_keepalive()
+                self._cleanup_complete.set()
 
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
         """Start monitoring audio levels without recording"""
@@ -1528,7 +1526,7 @@ class AudioCapture:
             return
             
         if not self.is_available():
-            print("Audio capture not available for monitoring")
+            log("Audio capture not available for monitoring")
             return
             
         self.level_callback = level_callback
@@ -1540,7 +1538,7 @@ class AudioCapture:
             self.monitor_thread.start()
             
         except Exception as e:
-            print(f"Failed to start audio monitoring: {e}")
+            log(f"Failed to start audio monitoring: {e}")
             self.is_monitoring = False
     
     def stop_monitoring(self):
@@ -1556,7 +1554,7 @@ class AudioCapture:
             # Callback function for monitoring
             def monitor_callback(indata, frames, time_info, status):
                 if status:
-                    print(f"Monitor callback status: {status}")
+                    log(f"Monitor callback status: {status}")
                 
                 if self.is_monitoring and not self.is_recording:
                     # Calculate RMS level
@@ -1586,9 +1584,9 @@ class AudioCapture:
                     time.sleep(0.05)  # ~20Hz update rate
                 
         except Exception as e:
-            print(f"Error in monitoring thread: {e}")
+            log(f"Error in monitoring thread: {e}")
         finally:
-            print("Audio monitoring thread finished")
+            log("Audio monitoring thread finished")
     
     def get_audio_level(self) -> float:
         """Get the current audio level (0.0 to 1.0)"""
@@ -1685,15 +1683,15 @@ class AudioCapture:
         This should only be called when a thread is truly stuck and cannot be recovered.
         """
         try:
-            print("[RECOVERY] Resetting PortAudio state...", flush=True)
+            log("[RECOVERY] Resetting PortAudio state...")
             # Terminate and reinitialize PortAudio to clear stuck state
             # This is a last resort - it will affect all PortAudio operations
             sd._terminate()
             time.sleep(0.1)  # Brief pause
             sd._initialize()
-            print("[RECOVERY] PortAudio state reset complete", flush=True)
+            log("[RECOVERY] PortAudio state reset complete")
         except Exception as e:
-            print(f"[RECOVERY] ERROR: Failed to reset PortAudio state: {e}", flush=True)
+            log(f"[RECOVERY] ERROR: Failed to reset PortAudio state: {e}")
             # Continue anyway - recovery will attempt to proceed
     
     def recover_audio_capture(self, reason: str, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
@@ -1715,14 +1713,14 @@ class AudioCapture:
         # Check if recovery is already in progress (serialization)
         with self.recovery_lock:
             if self.recovery_in_progress:
-                print(f"[RECOVERY] Recovery already in progress, skipping")
+                log(f"[RECOVERY] Recovery already in progress, skipping")
                 return False
 
             # Check cooldown period - prevent rapid recovery attempts
             current_time = time.monotonic()
             cooldown = 0.5 if "hotplug" in reason else 2.0
             if current_time - self._last_recovery_attempt_time < cooldown:
-                print(f"[RECOVERY] Recovery attempted too recently (cooldown: {cooldown - (current_time - self._last_recovery_attempt_time):.1f}s remaining), skipping")
+                log(f"[RECOVERY] Recovery attempted too recently (cooldown: {cooldown - (current_time - self._last_recovery_attempt_time):.1f}s remaining), skipping")
                 return False
 
             # Set recovery in progress and update attempt time
@@ -1731,7 +1729,7 @@ class AudioCapture:
             self._abort_recovery.clear()
         
         try:
-            print(f"[RECOVERY] Starting recovery ({reason})", flush=True)
+            log(f"[RECOVERY] Starting recovery ({reason})")
 
             # Reset cleanup tracking flags
             self._cleanup_complete.clear()
@@ -1739,11 +1737,13 @@ class AudioCapture:
 
             with self.lock:
                 was_recording = self.is_recording
+                self._abort_cleanup = True
                 self.is_recording = False
+                self._record_stop_event.set()
 
             # Check for abort request before proceeding
             if self._abort_recovery.is_set():
-                print("[RECOVERY] Aborted before teardown", flush=True)
+                log("[RECOVERY] Aborted before teardown")
                 return False
 
             # Signal thread to abort cleanup if it's stuck
@@ -1765,7 +1765,7 @@ class AudioCapture:
                     if wedged_close.is_alive():
                         # Even Pa_Terminate couldn't reclaim it; the native
                         # thread burns a core until the process exits (#209)
-                        print("[RECOVERY] ERROR: stream unrecoverable after PortAudio reset", flush=True)
+                        log("[RECOVERY] ERROR: stream unrecoverable after PortAudio reset")
                         if self.on_unrecoverable_stream is not None:
                             self.on_unrecoverable_stream()
 
@@ -1777,12 +1777,13 @@ class AudioCapture:
                     self.record_thread.join(timeout=3.0)
 
                     if self.record_thread.is_alive():
-                        # Still stuck after 5s - wait for cleanup flag
-                        cleanup_waited = self._cleanup_complete.wait(timeout=5.0)
+                        # Still stuck after 5s. The worker leaves _cleanup_complete
+                        # to recovery, so wait on the thread itself.
+                        self.record_thread.join(timeout=5.0)
 
-                        if not cleanup_waited or self.record_thread.is_alive():
+                        if self.record_thread.is_alive():
                             # Still stuck after 10s - reset PortAudio and abandon thread
-                            print("[RECOVERY] Thread stuck after 10s - abandoning and resetting PortAudio", flush=True)
+                            log("[RECOVERY] Thread stuck after 10s - abandoning and resetting PortAudio")
                             self._reset_portaudio_state()
                             self.record_thread.join(timeout=1.0)
                             if self.record_thread.is_alive():
@@ -1790,7 +1791,7 @@ class AudioCapture:
 
             # Abort check after teardown
             if self._abort_recovery.is_set():
-                print("[RECOVERY] Aborted during teardown", flush=True)
+                log("[RECOVERY] Aborted during teardown")
                 return False
 
             # Reset abort flag for next recovery
@@ -1809,19 +1810,19 @@ class AudioCapture:
                     self._stop_keepalive()  # Close before re-init; _initialize_sounddevice restarts it on the new device
                     self._initialize_sounddevice()
             except Exception as e:
-                print(f"[RECOVERY] Failed to re-enumerate devices: {e}", flush=True)
+                log(f"[RECOVERY] Failed to re-enumerate devices: {e}")
                 return False
 
             if self._abort_recovery.is_set():
-                print("[RECOVERY] Aborted after device re-enumeration", flush=True)
+                log("[RECOVERY] Aborted after device re-enumeration")
                 return False
 
             # Recovery complete - device re-initialized successfully
-            print("[RECOVERY] Complete - device ready", flush=True)
+            log("[RECOVERY] Complete - device ready")
             return True
 
         except Exception as e:
-            print(f"[RECOVERY] ERROR: Exception during recovery: {e}")
+            log(f"[RECOVERY] ERROR: Exception during recovery: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -1844,19 +1845,19 @@ class AudioCapture:
     def list_devices(self):
         """List available audio input devices"""
         if not self.is_available():
-            print("sounddevice not available")
+            log("sounddevice not available")
             return
             
-        print("Available audio input devices:")
+        log("Available audio input devices:")
         try:
             devices = sd.query_devices()
             for i, device in enumerate(devices):
                 if device['max_input_channels'] > 0:  # Input device
-                    print(f"  Device {i}: {device['name']} "
+                    log(f"  Device {i}: {device['name']} "
                           f"(Channels: {device['max_input_channels']}, "
                           f"Sample Rate: {device['default_samplerate']})")
         except Exception as e:
-            print(f"Error querying devices: {e}")
+            log(f"Error querying devices: {e}")
     
     def save_audio_to_wav(self, audio_data: np.ndarray, filename: str):
         """Save audio data to a WAV file"""
@@ -1873,10 +1874,10 @@ class AudioCapture:
                 wav_file.setframerate(self.sample_rate)
                 wav_file.writeframes(audio_int16.tobytes())
                 
-            print(f"Audio saved to {filename}")
+            log(f"Audio saved to {filename}")
             
         except Exception as e:
-            print(f"ERROR: Failed to save audio: {e}")
+            log(f"ERROR: Failed to save audio: {e}")
     
     def __del__(self):
         """Cleanup when object is destroyed"""

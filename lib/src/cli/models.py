@@ -6,6 +6,8 @@ ONNX-ASR, faster-whisper and Cohere transcribe model families
 import os
 from pathlib import Path
 
+from .onnx import resolve_model, prepare_model, orukeet_needs_onnx
+
 try:
     from ..config_manager import ConfigManager
 except ImportError:
@@ -112,10 +114,16 @@ def _send_model_control(command: str) -> bool:
         return False
 
 
-def model_command(action: str, model_name: str = 'base') -> bool:
+def model_command(action: str, model_name: str = None) -> bool:
     """Handle model subcommands"""
     config = ConfigManager()
     backend = normalize_backend(config.get_setting('transcription_backend', 'pywhispercpp'))
+
+    explicit_model = model_name
+    model_name = model_name or 'base'
+
+    if action == 'download' and orukeet_needs_onnx(explicit_model, backend):
+        return False
 
     # unload / reload are valid for any local-model backend
     if action == 'unload':
@@ -147,9 +155,29 @@ def model_command(action: str, model_name: str = 'base') -> bool:
             log_success("Model reload requested — service will load model back into memory.")
         return success
 
+    if backend == 'parakeet-cpp':
+        try:
+            from ..parakeet_cpp_runtime import MODEL_ID
+            from ..parakeet_cpp_installer import download_model as download_parakeet_model
+        except ImportError:
+            from parakeet_cpp_runtime import MODEL_ID
+            from parakeet_cpp_installer import download_model as download_parakeet_model
+        if explicit_model and explicit_model != MODEL_ID:
+            log_error(f'Parakeet.cpp supports only {MODEL_ID}')
+            return False
+        if action == 'download':
+            return download_parakeet_model(explicit_model or MODEL_ID)
+        if action == 'list':
+            print(f'Parakeet.cpp (experimental): {MODEL_ID}')
+            return True
+        if action == 'status':
+            parakeet_cpp_model_status(config)
+            return True
+        log_error(f'Unknown model action: {action}')
+        return False
+
     if backend == 'qwen3-asr':
-        selected = (model_name if model_name != 'base'
-                    else config.get_setting('qwen3_asr_model', '1.7b-q8_0'))
+        selected = explicit_model or config.get_setting('qwen3_asr_model', '1.7b-q8_0')
         if action == 'download':
             return _download_qwen(selected)
         if action == 'list':
@@ -181,11 +209,15 @@ def model_command(action: str, model_name: str = 'base') -> bool:
             list_onnx_asr_models()
             return True
         elif action == 'status':
-            onnx_asr_model_status()
+            onnx_asr_model_status(config)
             return True
         elif action == 'download':
-            log_info("Parakeet model is downloaded during setup.")
-            log_info("If the model is missing, re-run: hyprwhspr setup")
+            settings = config.get_all_settings()
+            selection = resolve_model(settings, explicit_model)
+            if not prepare_model(selection):
+                return False
+            if selection[0] != resolve_model(settings)[0]:
+                log_info(f"{selection[0]} is ready but not selected; switch with 'hyprwhspr setup'.")
             return True
         else:
             log_error(f"Unknown model action: {action}")
@@ -296,43 +328,44 @@ def qwen3_asr_model_status(config=None):
         log_info(f"Also present: {', '.join(others)}")
 
 
-def onnx_asr_model_status():
-    """Check Parakeet/onnx-asr model in Hugging Face cache (~/.cache/huggingface/hub/)"""
-    hf_hub_dir = Path.home() / '.cache' / 'huggingface' / 'hub'
-    if not hf_hub_dir.exists():
-        log_warning("Hugging Face cache directory does not exist (~/.cache/huggingface/hub/)")
-        log_info("Parakeet model is downloaded on first use when the backend starts.")
-        return
-
-    # Parakeet TDT 0.6B v3: HF repo is nvidia/parakeet-tdt-0.6b-v3 -> cache: models--nvidia--parakeet-tdt-0.6b-v3
-    parakeet_patterns = ['models--nvidia--parakeet-tdt-0.6b-v3', 'models--*parakeet*']
-    found = []
-    seen = set()
-    for pattern in parakeet_patterns:
-        for model_dir in sorted(hf_hub_dir.glob(pattern)):
-            if model_dir.is_dir() and model_dir.resolve() not in seen:
-                seen.add(model_dir.resolve())
-                found.append(model_dir)
-    if not found:
-        log_warning("No Parakeet model found in ~/.cache/huggingface/hub/")
-        log_info("Model not found. Re-run: hyprwhspr setup to download it.")
-        return
-
-    print("Parakeet (onnx-asr) model cache:")
-    for model_dir in found:
-        total_bytes = sum(f.stat().st_size for f in model_dir.rglob('*') if f.is_file())
-        size_mb = total_bytes / (1024 * 1024)
-        if size_mb >= 1024:
-            size_str = f"{size_mb / 1024:.1f} GB"
+def onnx_asr_model_status(config=None):
+    """Check the configured ONNX model's local cache without downloading."""
+    config = config or ConfigManager()
+    selected = config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
+    log_info(f'Configured ONNX model: {selected}')
+    try:
+        from ..orukeet import hub_cache_dir, cache_state
+    except ImportError:
+        from orukeet import hub_cache_dir, cache_state
+    # Status only reads the cache; hashing and repair belong to model download.
+    if selected == 'orukeet':
+        state = cache_state()
+        if state == 'verified':
+            log_success("Orukeet model present and verified")
+        elif state == 'unverified':
+            log_info("Orukeet present, not yet verified: hyprwhspr model download")
         else:
-            size_str = f"{size_mb:.0f} MB"
-        log_success(f"  {model_dir.name} ({size_str})")
+            log_warning("Orukeet not downloaded: hyprwhspr model download")
+        return
+    root = hub_cache_dir()
+    # onnx-asr aliases mostly resolve to istupakov/<name without nemo->-onnx.
+    repo = selected if '/' in selected else f"istupakov/{selected.removeprefix('nemo-')}-onnx"
+    cache = root / ('models--' + repo.replace('/', '--'))
+    if (cache / 'snapshots').is_dir():
+        log_info(f'Cache files present (initialization not checked): {cache}')
+    elif '/' in selected or selected == 'nemo-parakeet-tdt-0.6b-v3':
+        log_warning(f'No matching cache found for {selected} in {root}')
+    else:
+        # A few aliases share or rename their repo, so a miss is not proof of absence.
+        log_info(f'No cache folder found for {selected} (looked for {cache.name})')
+    log_info("Verify readiness with: hyprwhspr model download")
 
 
 def list_onnx_asr_models():
-    """List Parakeet/onnx-asr model option (single supported model for now)."""
+    """List supported onnx-asr model choices."""
     print("Parakeet (onnx-asr) model:\n")
     print("  - nemo-parakeet-tdt-0.6b-v3  (~1 GB, downloaded during setup)")
+    print("  - orukeet  (~672 MB INT8, optional; select under Parakeet in setup)")
     print()
     print("Storage: ~/.cache/huggingface/hub/")
     print("To check if the model is cached: hyprwhspr model status")
@@ -491,3 +524,21 @@ def faster_whisper_model_status():
         else:
             size_str = f"{size_mb:.0f} MB"
         print(f"  - {model_name} ({size_str})")
+
+
+def parakeet_cpp_model_status(config=None):
+    try:
+        from .. import parakeet_cpp_runtime as runtime
+    except ImportError:
+        import parakeet_cpp_runtime as runtime
+    config = config or ConfigManager()
+    print(f'Parakeet.cpp {runtime.RELEASE} (experimental), ABI {runtime.ABI_VERSION}')
+    print(f'Model: {runtime.MODEL_ID} — {"present" if runtime.model_installed() else "missing"}')
+    try:
+        device = runtime.resolve_device(config, probe=False)
+        path = runtime.library_path(device)
+        ok, detail = runtime.probe_library(path) if path.is_file() else (False, 'missing')
+        print(f'Runtime: {device} — {"ready" if ok else detail}')
+    except (RuntimeError, ValueError, OSError) as exc:
+        print(f'Runtime unavailable: {exc}')
+    print('Repair with hyprwhspr setup → Parakeet → Parakeet.cpp → reinstall.')

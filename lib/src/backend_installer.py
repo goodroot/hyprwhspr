@@ -658,11 +658,9 @@ def get_install_state() -> Tuple[str, Optional[str]]:
 def compute_file_hash(file_path: Path) -> str:
     """Compute SHA256 hash of a file"""
     if file_path.exists():
-        sha256_hash = hashlib.sha256()
+        # file_digest streams in large chunks; the old 4 KB loop crawled on GB models.
         with open(file_path, 'rb') as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
+            return hashlib.file_digest(f, 'sha256').hexdigest()
     return ''
 
 
@@ -1509,6 +1507,32 @@ def _format_dependency_diagnostic(plan: DependencyPlan,
     return '\n'.join(lines)
 
 
+def _summarize_dependency_failure(verification: DependencyVerification) -> str:
+    """One line for the console; the full diagnostic goes to state and --debug."""
+    def last_line(text: str) -> str:
+        lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+        return lines[-1] if lines else ''
+
+    if verification.timed_out:
+        summary = 'import check timed out'
+    elif not verification.failures:
+        summary = 'combined import failed; isolated imports succeeded'
+    else:
+        probe = verification.failures[0]
+        summary = f'{probe.import_name}: {last_line(probe.evidence()) or "import failed"}'
+    if verification.repair_error:
+        summary += f'; repair failed: {last_line(verification.repair_error)}'
+    return summary
+
+
+class DependencyVerificationError(RuntimeError):
+    """Terse message for the console; ``diagnostic`` carries the full evidence."""
+
+    def __init__(self, summary: str, diagnostic: str):
+        super().__init__(f'Dependency verification failed: {summary}')
+        self.diagnostic = diagnostic
+
+
 def _is_system_origin(origin: Optional[str]) -> bool:
     """Return whether an import is inherited from anywhere outside the venv."""
     if not origin:
@@ -1662,7 +1686,7 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
     if os.environ.get('HYPRWHSPR_GENERATION'):
         backend = {'rest': 'rest-api', 'realtime': 'realtime-ws', 'elevenlabs': 'realtime-ws',
                    'cohere': 'cohere-transcribe', 'onnx': 'onnx-asr', 'faster-whisper': 'faster-whisper',
-                   'qwen3-asr': 'qwen3-asr', 'pywhispercpp': 'pywhispercpp'}[plan.family]
+                   'parakeet-cpp': 'parakeet-cpp', 'qwen3-asr': 'qwen3-asr', 'pywhispercpp': 'pywhispercpp'}[plan.family]
         _managed_select(backend, custom_python, force_rebuild,
                         provider='elevenlabs' if plan.family == 'elevenlabs' else None,
                         variant=plan.accelerated_variant)
@@ -1689,10 +1713,13 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
         run_command([str(pip_bin), 'install', '-r', str(plan.manifest)], check=True)
         verification = _verify_and_repair_dependency_plan(plan, pip_bin)
         if not verification.ok:
+            # Callers log the exception; keep the console to one line and leave
+            # the full evidence to `hyprwhspr state show` and --debug.
             diagnostic = _format_dependency_diagnostic(plan, verification, snapshot)
-            log_error(diagnostic)
+            log_debug(diagnostic)
             set_install_state('failed', diagnostic)
-            raise RuntimeError(diagnostic)
+            raise DependencyVerificationError(
+                _summarize_dependency_failure(verification), diagnostic)
     except BaseException:
         transaction.rollback()
         raise
@@ -2017,6 +2044,16 @@ def install_qwen3_asr_runtime(device: str, force: bool = False) -> bool:
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+
+
+def _install_parakeet_cpp_payload(force_rebuild=False):
+    try:
+        from .parakeet_cpp_installer import install_payload
+        from .config_manager import ConfigManager
+    except ImportError:
+        from parakeet_cpp_installer import install_payload
+        from config_manager import ConfigManager
+    return install_payload(ConfigManager(), force=force_rebuild)
 
 
 def _install_qwen3_asr_payload(force_rebuild: bool = False) -> bool:
@@ -2689,6 +2726,8 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         try:
             selected, variant = _managed_backend_variant(backend_type)
             _managed_select(selected, custom_python, force_rebuild, variant=variant)
+            if backend_type == 'parakeet-cpp':
+                return _install_parakeet_cpp_payload(force_rebuild)
             if backend_type == 'qwen3-asr':
                 # Unlike cohere/onnx/faster-whisper, this backend has no lazy
                 # first-use download — the sidecar and GGUF pair must be placed
@@ -2802,6 +2841,21 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             log_success("Cohere Transcribe backend installation completed!")
             return True
 
+        elif backend_type == 'parakeet-cpp':
+            try:
+                execute_dependency_plan(initial_plan, custom_python=custom_python,
+                                        force_rebuild=force_rebuild)
+            except Exception as exc:
+                error_msg = f"Failed to install Parakeet.cpp dependencies: {exc}"
+                log_error(error_msg)
+                set_install_state('failed', error_msg)
+                return False
+            if not _install_parakeet_cpp_payload(force_rebuild):
+                set_install_state('failed', 'Parakeet.cpp runtime or model installation failed')
+                return False
+            set_install_state('completed')
+            return True
+
         elif backend_type == 'qwen3-asr':
             # Inference runs in a pinned llama.cpp sidecar, so the only Python
             # dependencies are the core audio ones every backend shares.
@@ -2858,27 +2912,6 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
                     log_error(error_msg)
                     set_install_state('failed', error_msg)
                     return False
-
-            # Pre-download models so they're ready on first use
-            log_info("Downloading ONNX-ASR model and VAD (this may take a moment)...")
-            venv_python = VENV_DIR / 'bin' / 'python'
-            try:
-                # Download and cache the ASR model + Silero VAD
-                # This mirrors what happens at runtime but ensures everything is ready
-                download_script = '''
-import onnx_asr
-print("Downloading Parakeet TDT V3 model...", flush=True)
-model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", quantization="int8")
-print("Downloading Silero VAD...", flush=True)
-vad = onnx_asr.load_vad("silero")
-print("Models cached successfully", flush=True)
-'''
-                run_command([str(venv_python), '-c', download_script], check=True)
-                log_success("Models downloaded and cached")
-            except Exception as e:
-                log_warning(f"Model download failed: {e}")
-                log_warning("Models will be downloaded on first use instead")
-                # Don't fail installation - models can still be downloaded on first use
 
             # Installation successful for ONNX-ASR
             set_install_state('completed')
@@ -3084,7 +3117,9 @@ print("Models cached successfully", flush=True)
             verification = _verify_dependency_plan_detailed(plan)
         if not verification.ok:
             diagnostic = _format_dependency_diagnostic(plan, verification, snapshot)
-            log_error(diagnostic)
+            log_error('Dependency verification failed: '
+                      + _summarize_dependency_failure(verification))
+            log_debug(diagnostic)
             set_install_state('failed', diagnostic)
             _cleanup_partial_installation(created_items, pip_bin)
             return False

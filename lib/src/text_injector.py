@@ -12,9 +12,15 @@ import time
 import threading
 import json
 import ast
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Dict, Any, List, Tuple
+
+try:
+    from .service_log import log
+except ImportError:
+    from service_log import log
 
 try:
     from .ydotoold_session import YdotooldSession
@@ -347,9 +353,9 @@ class TextInjector:
             and not self.xdotool_available
             and not self._is_hyprland_session()
         ):
-            print("⚠️  No injection backend found. Install wtype or ydotool on Wayland, or xdotool on X11.")
+            log("⚠️  No injection backend found. Install wtype or ydotool on Wayland, or xdotool on X11.")
         elif not self._is_x11_session() and not self.wtype_available and self.ydotool_available:
-            print("ℹ️  wtype not found. Falling back to ydotool for paste hotkey injection.")
+            log("ℹ️  wtype not found. Falling back to ydotool for paste hotkey injection.")
 
     def _check_ydotool(self) -> bool:
         """Check if ydotool is usable (both the client and the ydotoold daemon)."""
@@ -385,7 +391,7 @@ class TextInjector:
         could not be started (callers degrade gracefully).
         """
         if not self._ydotoold.ensure_running():
-            print("ydotoold failed to become ready; check /dev/uinput permissions and the hyprwhspr journal.")
+            log("ydotoold failed to become ready; check /dev/uinput permissions and the hyprwhspr journal.")
             return None
         return subprocess.run(
             ['ydotool', *args],
@@ -828,9 +834,9 @@ except Exception:
             if isinstance(auto_paste, str) and auto_paste.strip():
                 chord = auto_paste.strip()
                 if not self._chord_is_usable(chord):
-                    print(f"⚠️  Ignoring unusable auto_paste chord {chord!r} for app "
+                    log(f"⚠️  Ignoring unusable auto_paste chord {chord!r} for app "
                           f"'{matched_identifier}'. Use a form like 'ctrl+v' or 'ctrl+y'; "
-                          f"text will be left on the clipboard.", flush=True)
+                          f"text will be left on the clipboard.")
                 return chord, matched_identifier
 
         paste_mode = None
@@ -846,8 +852,8 @@ except Exception:
         # Auto-detected modes ('ctrl'/'ctrl_shift') always resolve; only an
         # explicitly-configured paste_mode can be unusable here.
         if not self._chord_is_usable(chord):
-            print(f"⚠️  Configured paste_mode {paste_mode!r} is not a usable chord; "
-                  f"text will be left on the clipboard.", flush=True)
+            log(f"⚠️  Configured paste_mode {paste_mode!r} is not a usable chord; "
+                  f"text will be left on the clipboard.")
         return chord, matched_identifier
 
     def _clear_stuck_modifiers(self):
@@ -875,7 +881,7 @@ except Exception:
             modifiers_to_clear = [f'{code}:0' for code in dict.fromkeys(modifier_codes)]
             self._run_ydotool(['key'] + modifiers_to_clear, timeout=1)
         except Exception as e:
-            print(f"Warning: Could not clear stuck modifiers: {e}")
+            log(f"Warning: Could not clear stuck modifiers: {e}")
 
     def _parse_key_chord(self, chord: str) -> Optional[Tuple[List[str], str]]:
         """Parse a single-key chord such as ctrl+shift+v.
@@ -931,11 +937,11 @@ except Exception:
             result = subprocess.run(['wtype'] + args, capture_output=True, timeout=5)
             if result.returncode != 0:
                 stderr = (result.stderr or b'').decode('utf-8', 'ignore')
-                print(f"  wtype paste failed: {stderr}")
+                log(f"  wtype paste failed: {stderr}")
                 return False
             return True
         except Exception as e:
-            print(f"wtype paste failed: {e}")
+            log(f"wtype paste failed: {e}")
             return False
 
     def _send_shortcut_hyprland(self, shortcut: str) -> bool:
@@ -1000,9 +1006,9 @@ except Exception:
             if result.returncode == 0:
                 return True
             stderr = (result.stderr or b'').decode('utf-8', 'ignore')
-            print(f"  xdotool paste failed: {stderr}")
+            log(f"  xdotool paste failed: {stderr}")
         except Exception as e:
-            print(f"xdotool paste failed: {e}")
+            log(f"xdotool paste failed: {e}")
         return False
 
     @staticmethod
@@ -1031,11 +1037,8 @@ except Exception:
             return
         warned.add(warning_key)
         self._warned_invalid_ydotool_modifier_overrides = warned
-        print(
-            f"⚠️  Ignoring invalid ydotool_modifier_overrides entry "
-            f"{identifier!r}: {value!r}; using the default modifier key.",
-            flush=True,
-        )
+        log(f"⚠️  Ignoring invalid ydotool_modifier_overrides entry "
+            f"{identifier!r}: {value!r}; using the default modifier key.")
 
     @staticmethod
     def _ydotool_named_keycode(value: str) -> Optional[int]:
@@ -1132,14 +1135,14 @@ except Exception:
 
         except Exception as e:
             self._last_ydotool_failure_explicit = True
-            print(f"Slow paste key injection failed: {e}")
+            log(f"Slow paste key injection failed: {e}")
             return False
         finally:
             if modifiers_pressed and release_args:
                 try:
                     _key(*release_args)
                 except Exception as e:
-                    print(f"Warning: Could not release ydotool paste modifiers: {e}")
+                    log(f"Warning: Could not release ydotool paste modifiers: {e}")
 
     def _is_gnome_wayland_session(self) -> bool:
         """Return True for Mutter/GNOME Wayland sessions where uinput chords are unreliable."""
@@ -1176,11 +1179,11 @@ except Exception:
             )
             if result is None or result.returncode != 0:
                 stderr = (result.stderr or b'').decode('utf-8', 'ignore') if result else 'ydotoold unavailable'
-                print(f"  ydotool type failed: {stderr}")
+                log(f"  ydotool type failed: {stderr}")
                 return False
             return True
         except Exception as e:
-            print(f"ydotool type injection failed: {e}")
+            log(f"ydotool type injection failed: {e}")
             return False
 
     def _gnome_force_latin_layout(self):
@@ -1226,7 +1229,7 @@ except Exception:
             time.sleep(0.12)  # let gnome-shell apply the layout before the chord
             return cur_idx
         except Exception as e:
-            print(f"  paste layout switch skipped: {e}")
+            log(f"  paste layout switch skipped: {e}")
             return None
 
     def _gnome_restore_layout(self, prev_idx):
@@ -1284,7 +1287,7 @@ except Exception:
                 return True
             except Exception as e:
                 detail = f" after {wayland_error}" if wayland_error else ""
-                print(f"ERROR: Clipboard copy failed{detail}: {e}")
+                log(f"ERROR: Clipboard copy failed{detail}: {e}")
                 return False
 
     def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 5.0):
@@ -1322,13 +1325,13 @@ except Exception:
                             pyperclip.copy(saved.decode("utf-8"))
                         except UnicodeDecodeError:
                             if wayland_error:
-                                print(f"Warning: Could not restore binary clipboard: {wayland_error}")
+                                log(f"Warning: Could not restore binary clipboard: {wayland_error}")
                             # Binary data cannot safely pass through the text fallback.
                         except Exception as exc:
                             detail = f" after {wayland_error}" if wayland_error else ""
                             raise RuntimeError(f"clipboard fallback failed{detail}: {exc}") from exc
                 except Exception as e:
-                    print(f"Warning: Could not restore clipboard: {e}")
+                    log(f"Warning: Could not restore clipboard: {e}")
 
         threading.Thread(target=_restore, daemon=True).start()
 
@@ -1344,14 +1347,14 @@ except Exception:
                 )
                 if enter_result.returncode != 0:
                     stderr = (enter_result.stderr or b'').decode('utf-8', 'ignore')
-                    print(f"  xdotool Enter key failed: {stderr}")
+                    log(f"  xdotool Enter key failed: {stderr}")
             elif self._is_hyprland_session() and self._send_shortcut_hyprland('enter'):
                 return
             elif self.ydotool_available:
                 enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1)  # 28 = Enter
                 if enter_result is None or enter_result.returncode != 0:
                     stderr = (enter_result.stderr or b"").decode("utf-8", "ignore") if enter_result else "ydotoold unavailable"
-                    print(f"  ydotool Enter key failed: {stderr}")
+                    log(f"  ydotool Enter key failed: {stderr}")
             elif self.wtype_available:
                 enter_result = subprocess.run(
                     ['wtype', '-k', 'Return'],
@@ -1359,11 +1362,11 @@ except Exception:
                 )
                 if enter_result.returncode != 0:
                     stderr = (enter_result.stderr or b"").decode("utf-8", "ignore")
-                    print(f"  wtype Enter key failed: {stderr}")
+                    log(f"  wtype Enter key failed: {stderr}")
             else:
-                print("  auto_submit enabled but no key-injection tool available")
+                log("  auto_submit enabled but no key-injection tool available")
         except Exception as e:
-            print(f"  auto_submit Enter key failed: {e}")
+            log(f"  auto_submit Enter key failed: {e}")
 
     # ------------------------ Public API ------------------------
 
@@ -1409,7 +1412,7 @@ except Exception:
             hook consumed the transcription, FAILED otherwise
         """
         if not text or text.strip() == "":
-            print("No text to inject (empty or whitespace)")
+            log("No text to inject (empty or whitespace)")
             return InjectionOutcome.INJECTED
 
         # Preprocess; also trim trailing newlines (avoid unwanted Enter)
@@ -1418,7 +1421,7 @@ except Exception:
         # nothing but filler words. Pasting the trailing space alone is worse
         # than pasting nothing.
         if not processed_text.strip():
-            print("No text to inject (empty after preprocessing)")
+            log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.INJECTED
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
@@ -1433,14 +1436,14 @@ except Exception:
                 inject_mode = self.config_manager.get_setting('inject_mode', None)
 
             if inject_mode in ('wtype', 'ydotool_type'):
-                print(f"⚠️  inject_mode='{inject_mode}' is deprecated: direct typing drops characters at speed. "
+                log(f"⚠️  inject_mode='{inject_mode}' is deprecated: direct typing drops characters at speed. "
                       f"Using clipboard+paste instead.")
 
             injected = self._inject_via_clipboard_and_hotkey(processed_text, retain=True)
             return InjectionOutcome.INJECTED if injected else InjectionOutcome.FAILED
 
         except Exception as e:
-            print(f"Primary injection method failed: {e}")
+            log(f"Primary injection method failed: {e}")
             return InjectionOutcome.FAILED
 
     # ------------------------ Helpers ------------------------
@@ -1492,13 +1495,13 @@ except Exception:
                 text=True, timeout=5.0, env=env,
             )
         except Exception as e:
-            print(f"post_transcription_hook failed: {e}", flush=True)
+            log(f"post_transcription_hook failed: {e}")
             return preserve
         if result.returncode == POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE:
             return _PostTranscriptionHookResult(_PostTranscriptionHookOutcome.CONSUME, "")
         if result.returncode != 0:
             stderr = (result.stderr or '').strip()
-            print(f"post_transcription_hook exited {result.returncode}: {stderr}", flush=True)
+            log(f"post_transcription_hook exited {result.returncode}: {stderr}")
             return preserve
         out = result.stdout.rstrip("\r\n")
         if not out:
@@ -1523,14 +1526,14 @@ except Exception:
                 and window_lookup_needed
                 and not getattr(self, '_warned_focused_window_unavailable', False)
             ):
-                print(f"⚠️  Focused-window detection failed; using resolved paste chord {paste_chord!r}.")
+                log(f"⚠️  Focused-window detection failed; using resolved paste chord {paste_chord!r}.")
                 self._warned_focused_window_unavailable = True
             if paste_chord is False:
                 # Injection is explicitly disabled for this app. Do nothing at all —
                 # no paste, no clipboard write. "Disabled" means hands off, which also
                 # avoids leaking dictated text (e.g. into a password field) onto the
                 # clipboard where other apps could read it.
-                print(f"Injection disabled for focused app ({app_match}); leaving it untouched.")
+                log(f"Injection disabled for focused app ({app_match}); leaving it untouched.")
                 return True
 
             # Only ordinary, permitted delivery can replace recovery text.
@@ -1568,7 +1571,7 @@ except Exception:
                 return self._paste_via_clipboard(text, paste_chord, gnome_wayland_session, auto_submit)
 
         except Exception as e:
-            print(f"Clipboard+hotkey injection failed: {e}")
+            log(f"Clipboard+hotkey injection failed: {e}")
             return False
 
     def _paste_via_clipboard(self, text, paste_chord, gnome_wayland_session, auto_submit):
@@ -1579,7 +1582,12 @@ except Exception:
             # Copy text to clipboard
             if not self._copy_text_to_clipboard(text):
                 return False
-            time.sleep(0.15)
+            delay = self.config_manager.get_setting('clipboard_settle_delay', 0.15) if self.config_manager else 0.15
+            if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not math.isfinite(delay) or delay < 0:
+                log(f"Invalid clipboard_settle_delay {delay!r}; using 0.15 seconds")
+                delay = 0.15
+            if delay:
+                time.sleep(delay)
 
             # Send paste hotkey through the session-native path first: xdotool on
             # X11, Hyprland's dispatcher there, or wtype on other Wayland sessions.
@@ -1606,9 +1614,9 @@ except Exception:
 
             if not pasted and self.ydotool_available:
                 if self.wtype_available:
-                    print(f"⚠️  wtype rejected paste chord {paste_chord!r}; falling back to ydotool.")
+                    log(f"⚠️  wtype rejected paste chord {paste_chord!r}; falling back to ydotool.")
                 else:
-                    print(f"ℹ️  Dispatching paste chord {paste_chord!r} with ydotool.")
+                    log(f"ℹ️  Dispatching paste chord {paste_chord!r} with ydotool.")
                 self._clear_stuck_modifiers()
                 time.sleep(0.02)
                 # Non-Latin layouts (Thai, Russian, …) remap KEY_V, so the raw-keycode
@@ -1627,7 +1635,7 @@ except Exception:
                 and not self.ydotool_available
                 and not getattr(self, 'xdotool_available', False)
             ):
-                print("No key-injection tool available; text is on the clipboard.")
+                log("No key-injection tool available; text is on the clipboard.")
                 # Text is clipboard-only: don't restore old clipboard (would erase it)
                 # and don't auto-submit (nothing was pasted into the field).
                 return True
@@ -1653,12 +1661,12 @@ except Exception:
             return pasted
 
         except Exception as e:
-            print(f"Clipboard+hotkey injection failed: {e}")
+            log(f"Clipboard+hotkey injection failed: {e}")
             return False
 
     def _inject_via_clipboard(self, text: str) -> bool:
         """Fallback: copy text to clipboard when no paste tool is available."""
         if self._copy_text_to_clipboard(text):
-            print("Text copied to clipboard (no paste tool available)")
+            log("Text copied to clipboard (no paste tool available)")
             return True
         return False

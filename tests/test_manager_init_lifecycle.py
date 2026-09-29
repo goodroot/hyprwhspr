@@ -27,6 +27,7 @@ def make_fake_backend_cls(events, name='pywhispercpp', init_result=True,
         def __init__(self, manager):
             self._manager = manager
             self.name = name
+            self.streams_audio = name == 'realtime-ws'
             self.is_loaded = False
             events.append(('create', id(self)))
 

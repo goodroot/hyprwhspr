@@ -10,6 +10,11 @@ import time
 from typing import Callable, Optional
 
 try:
+    from ..service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     from ..dependencies import require_package
 except ImportError:
     from dependencies import require_package
@@ -44,6 +49,7 @@ class RealtimeWsBackend(TranscriptionBackend):
     name = 'realtime-ws'
     is_local = False
     reinit_on_resume = True
+    streams_audio = True
 
     # Don't rebuild a torn-down client on every keypress while an endpoint is down.
     REBUILD_COOLDOWN_SECS = 5.0
@@ -91,17 +97,17 @@ class RealtimeWsBackend(TranscriptionBackend):
         model_id = self.config.get_setting('websocket_model')
 
         if not provider_id:
-            print('ERROR: Realtime WebSocket backend selected but websocket_provider not configured')
+            log('ERROR: Realtime WebSocket backend selected but websocket_provider not configured')
             return False
 
         if not model_id:
-            print('ERROR: Realtime WebSocket backend selected but websocket_model not configured')
+            log('ERROR: Realtime WebSocket backend selected but websocket_model not configured')
             return False
 
         # Get API key from credential manager
         api_key = get_credential(provider_id)
         if not api_key:
-            print(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
+            log(f'ERROR: Provider {provider_id} configured but API key not found in credential store')
             return False
 
         # Select appropriate client based on provider
@@ -151,7 +157,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 'instructions': instructions,
             }
             if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                print('ERROR: Failed to connect to Gemini Live API')
+                log('ERROR: Failed to connect to Gemini Live API')
                 try:
                     self._realtime_client.close()
                 except Exception:
@@ -164,7 +170,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 try:
                     self._realtime_client.append_audio(audio_chunk)
                 except Exception as e:
-                    print(f'[GEMINI] Streaming error: {e}', flush=True)
+                    log(f'[GEMINI] Streaming error: {e}')
 
             _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
             self._realtime_streaming_callback = _send_direct
@@ -203,7 +209,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 'instructions': None,
             }
             if not self._realtime_client.connect(websocket_url, api_key, model_id, None):
-                print('ERROR: Failed to connect to ElevenLabs Realtime WebSocket')
+                log('ERROR: Failed to connect to ElevenLabs Realtime WebSocket')
                 try:
                     self._realtime_client.close()
                 except Exception:
@@ -216,7 +222,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 try:
                     self._realtime_client.append_audio(audio_chunk)
                 except Exception as e:
-                    print(f'[ELEVENLABS] Streaming error: {e}', flush=True)
+                    log(f'[ELEVENLABS] Streaming error: {e}')
 
             _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
             self._realtime_streaming_callback = _send_direct
@@ -235,10 +241,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 and is_transcription_only(model_id)
                 and realtime_mode != 'transcribe'
             ):
-                print(
-                    f'ERROR: {model_id} is supported only with realtime_mode="transcribe"',
-                    flush=True,
-                )
+                log(f'ERROR: {model_id} is supported only with realtime_mode="transcribe"')
                 return False
             self._realtime_client = RealtimeClient(mode=realtime_mode)
 
@@ -247,14 +250,14 @@ class RealtimeWsBackend(TranscriptionBackend):
             if not websocket_url:
                 # For custom providers, websocket_url must be explicitly set
                 if provider_id == 'custom':
-                    print('ERROR: Custom realtime backend requires websocket_url to be configured')
+                    log('ERROR: Custom realtime backend requires websocket_url to be configured')
                     return False
 
                 # For known providers, derive from provider registry
                 try:
                     websocket_url = self._get_websocket_url(provider_id, model_id, realtime_mode)
                 except Exception as e:
-                    print(f'ERROR: Failed to derive WebSocket URL: {e}')
+                    log(f'ERROR: Failed to derive WebSocket URL: {e}')
                     return False
 
             # Build instructions from whisper_prompt and language
@@ -295,7 +298,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 'instructions': instructions,
             }
             if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                print('ERROR: Failed to connect to Realtime WebSocket')
+                log('ERROR: Failed to connect to Realtime WebSocket')
                 # Clean up failed client
                 try:
                     self._realtime_client.close()
@@ -309,13 +312,13 @@ class RealtimeWsBackend(TranscriptionBackend):
                 try:
                     self._realtime_client.append_audio(audio_chunk)
                 except Exception as e:
-                    print(f'[REALTIME] Streaming error: {e}', flush=True)
+                    log(f'[REALTIME] Streaming error: {e}')
 
             _send_direct.set_input_sample_rate = self._realtime_client.set_input_sample_rate
             self._realtime_streaming_callback = _send_direct
 
-        print(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
-        print(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
+        log(f'[BACKEND] Using Realtime WebSocket: {websocket_url}')
+        log(f'[REALTIME] Model: {model_id}, Provider: {provider_id}')
 
         # Explicitly set to None to avoid confusion with top-level model setting
         self.current_model = None
@@ -378,11 +381,11 @@ class RealtimeWsBackend(TranscriptionBackend):
             Transcribed text string
         """
         if not self._realtime_client:
-            print('[REALTIME] Client not initialized')
+            log('[REALTIME] Client not initialized')
             return ""
         
         if not self._realtime_client.connected:
-            print('[REALTIME] Client not connected')
+            log('[REALTIME] Client not connected')
             return ""
         
         try:
@@ -394,11 +397,8 @@ class RealtimeWsBackend(TranscriptionBackend):
                 if getattr(self._realtime_client, 'supports_mid_session_language_update', True):
                     self.update_language(language_override)
                 else:
-                    print(
-                        f'[REALTIME] Provider does not support mid-session language override '
-                        f'(requested: {language_override}); change will take effect on next session',
-                        flush=True,
-                    )
+                    log(f'[REALTIME] Provider does not support mid-session language override '
+                        f'(requested: {language_override}); change will take effect on next session')
             
             # Get timeout from config
             timeout = self.config.get_setting('realtime_timeout', 30)
@@ -409,7 +409,7 @@ class RealtimeWsBackend(TranscriptionBackend):
             return transcription.strip()
             
         except Exception as e:
-            print(f'[REALTIME] Transcription failed: {e}')
+            log(f'[REALTIME] Transcription failed: {e}')
             return ""
 
     def get_streaming_callback(self) -> Optional[Callable]:
@@ -490,7 +490,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         try:
             self._realtime_partial_callback("")
         except Exception as e:
-            print(f'[REALTIME] Failed to clear partial transcript preview: {e}', flush=True)
+            log(f'[REALTIME] Failed to clear partial transcript preview: {e}')
 
     @property
     def last_connect_failure(self) -> Optional[str]:
@@ -514,18 +514,18 @@ class RealtimeWsBackend(TranscriptionBackend):
         now = time.monotonic()
         last = self._last_rebuild_attempt
         if last is not None and (now - last) < self.REBUILD_COOLDOWN_SECS:
-            print('[REALTIME] Rebuild failed recently; waiting before retry', flush=True)
+            log('[REALTIME] Rebuild failed recently; waiting before retry')
             self._last_connect_failure = 'cooldown'
             return False
 
         # initialize() can block on the connect timeout, so don't retry it on
         # every keypress while the endpoint is down.
         self._last_rebuild_attempt = now
-        print('[REALTIME] Rebuilding client after teardown', flush=True)
+        log('[REALTIME] Rebuilding client after teardown')
         try:
             rebuilt = self.initialize()
         except Exception as e:
-            print(f'[REALTIME] Rebuild failed: {e}', flush=True)
+            log(f'[REALTIME] Rebuild failed: {e}')
             self._last_connect_failure = 'failed'
             return False
 
@@ -555,11 +555,11 @@ class RealtimeWsBackend(TranscriptionBackend):
                     break
                 time.sleep(0.1)
             if self._realtime_client.connected:
-                print('[REALTIME] In-flight connection landed; proceeding', flush=True)
+                log('[REALTIME] In-flight connection landed; proceeding')
                 self._last_connect_failure = None
                 return True
             if getattr(self._realtime_client, 'connecting', False):
-                print('[REALTIME] Still connecting; try again in a moment', flush=True)
+                log('[REALTIME] Still connecting; try again in a moment')
                 self._last_connect_failure = 'connecting'
                 return False
             # Attempt finished without connecting; fall through to reconnect.
@@ -571,7 +571,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         instructions = params.get('instructions')
 
         if not (websocket_url and api_key and model_id):
-            print('[REALTIME] Missing connection parameters; cannot reconnect', flush=True)
+            log('[REALTIME] Missing connection parameters; cannot reconnect')
             self._last_connect_failure = 'failed'
             return False
 
@@ -589,15 +589,15 @@ class RealtimeWsBackend(TranscriptionBackend):
                 pass
 
             if not self._realtime_client.connect(websocket_url, api_key, model_id, instructions):
-                print('[REALTIME] Reconnect failed', flush=True)
+                log('[REALTIME] Reconnect failed')
                 self._last_connect_failure = 'failed'
                 return False
 
-            print('[REALTIME] Reconnected on-demand', flush=True)
+            log('[REALTIME] Reconnected on-demand')
             self._last_connect_failure = None
             return True
         except Exception as e:
-            print(f'[REALTIME] Reconnect failed: {e}', flush=True)
+            log(f'[REALTIME] Reconnect failed: {e}')
             self._last_connect_failure = 'failed'
             return False
 
@@ -608,7 +608,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 self._realtime_client.clear_audio_buffer()
                 self._clear_realtime_partial_preview()
             except Exception as e:
-                print(f'[REALTIME] Failed to discard audio: {e}', flush=True)
+                log(f'[REALTIME] Failed to discard audio: {e}')
 
     def close(self) -> None:
         """Cleanup Realtime WebSocket client"""
@@ -619,7 +619,7 @@ class RealtimeWsBackend(TranscriptionBackend):
                 self._realtime_streaming_callback = None
                 self._clear_realtime_partial_preview()
             except Exception as e:
-                print(f"[WARN] Failed to cleanup realtime client: {e}")
+                log(f"[WARN] Failed to cleanup realtime client: {e}")
 
     def update_language(self, language: Optional[str]) -> None:
         """Apply a language override to a connected client (no-op otherwise)."""

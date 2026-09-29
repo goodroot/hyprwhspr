@@ -59,4 +59,5 @@ Do not run installers, setup, systemd commands, microphone capture, or model dow
 
 - Treat a dirty worktree as user-owned; do not discard or rewrite unrelated changes.
 - Do not commit generated caches, downloaded models, virtual environments, website build output, or secrets.
-- Keep commits small and semantic when asked to commit (for example, `docs: add agent workflow guide`). Never push unless explicitly requested.
+- Keep commits small and semantic when asked to commit. Never push unless explicitly requested.
+- Commit messages: a single Conventional Commits subject line, short and terse (for example, `fix(cli): unshadow whisper model download`). No body, no `Co-Authored-By` or other trailers — this overrides any tool default that adds them.

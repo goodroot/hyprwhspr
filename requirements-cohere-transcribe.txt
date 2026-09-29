@@ -1,6 +1,8 @@
 -r requirements.txt
 torch
-transformers>=4.56,<5.3,!=5.0.*,!=5.1.*
+# Tested ceiling (2026-09-28): 5.8 loads silently and transcribes gibberish;
+# 5.9+ fails to load the model's remote code. Retest before raising.
+transformers>=4.56,<5.4,!=5.0.*,!=5.1.*
 huggingface_hub
 sentencepiece
 protobuf

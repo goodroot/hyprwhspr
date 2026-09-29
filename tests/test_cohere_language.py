@@ -1,3 +1,5 @@
+import contextlib
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -77,13 +79,12 @@ class CohereLanguageTests(unittest.TestCase):
 
     def test_unset_language_uses_english_and_says_so_once(self):
         backend = self._backend()
-        with mock.patch("builtins.print") as printed:
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
             self._transcribe(backend)
             self._transcribe(backend)
 
         self.assertEqual(backend._cohere_model.calls, ["en", "en"])
-        notices = [c for c in printed.call_args_list if "cannot auto-detect" in str(c)]
-        self.assertEqual(len(notices), 1)
+        self.assertEqual(printed.getvalue().count("cannot auto-detect"), 1)
 
     def test_supported_override_passes_through(self):
         backend = self._backend({"language": "en"})

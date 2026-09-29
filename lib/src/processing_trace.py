@@ -33,6 +33,12 @@ def _onnx_duration_gate(config):
 
 
 def _backend_model(config, backend):
+    if backend == 'parakeet-cpp':
+        try:
+            from .parakeet_cpp_runtime import MODEL_ID
+        except ImportError:
+            from parakeet_cpp_runtime import MODEL_ID
+        return MODEL_ID
     if backend == 'onnx-asr':
         return _setting(config, 'onnx_asr_model', None)
     if backend == 'faster-whisper':

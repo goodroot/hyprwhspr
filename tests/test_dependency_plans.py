@@ -34,6 +34,7 @@ class DependencyPlanTests(unittest.TestCase):
             ('faster-whisper', None, None): 'requirements-faster-whisper.txt',
             ('faster-whisper', None, 'cuda'): 'requirements-faster-whisper-cuda.txt',
             ('qwen3-asr', None, None): 'requirements-qwen3-asr.txt',
+            ('parakeet-cpp', None, None): 'requirements-parakeet-cpp.txt',
         }
         for args, filename in cases.items():
             with self.subTest(args=args):
@@ -47,6 +48,13 @@ class DependencyPlanTests(unittest.TestCase):
         self.assertIn('websocket', plans[0].required_imports)
         eleven = self.plan('realtime-ws', 'elevenlabs')
         self.assertNotIn('websocket', eleven.required_imports)
+
+    def test_onnx_gpu_manifest_uses_gpu_extra(self):
+        # onnx-asr has no `cuda` extra; pip ignores unknown extras and
+        # installs onnx-asr without any onnxruntime.
+        text = (ROOT / 'requirements-onnx-asr-gpu.txt').read_text()
+        self.assertRegex(text, r'onnx-asr\[[^\]]*\bgpu\b')
+        self.assertNotIn('cuda', text)
 
     def test_cohere_probes_scientific_audio_imports(self):
         plan = self.plan('cohere-transcribe')
@@ -516,9 +524,13 @@ class DependencyPlanTests(unittest.TestCase):
                 mock.patch.object(backend_installer, 'set_install_state',
                                   side_effect=lambda state, diagnostic: events.append((state, diagnostic))),
             ):
-                with self.assertRaisesRegex(RuntimeError, 'Dependency verification failed'):
+                with self.assertRaises(backend_installer.DependencyVerificationError) as raised:
                     backend_installer.execute_dependency_plan(plan)
             self.assertTrue((venv / 'old-marker').exists())
+        # Callers log str(exc); the full diagnostic stays out of the console.
+        self.assertEqual(str(raised.exception),
+                         'Dependency verification failed: soxr: _ARRAY_API not found')
+        self.assertIn('Import: soxr', raised.exception.diagnostic)
         self.assertEqual(events[0][0], 'failed')
         self.assertIn('Import: soxr', events[0][1])
 
