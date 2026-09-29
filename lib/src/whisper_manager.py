@@ -5,6 +5,7 @@ state (config, ready flag, model lock, last-use time) and dispatches to the
 configured backend instance.
 """
 
+import sys
 import threading
 import time
 from typing import Optional, Callable
@@ -405,14 +406,12 @@ class WhisperManager:
                 import gc
                 gc.collect()
 
-                # Free cached CUDA allocations if torch is present
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        log("[MODEL] CUDA cache cleared")
-                except ImportError:
-                    pass
+                # Free cached CUDA allocations only if a backend already loaded
+                # torch; importing it here would add ~0.5 GB to an unload.
+                torch = sys.modules.get('torch')
+                if torch is not None and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    log("[MODEL] CUDA cache cleared")
 
                 self.ready = False
                 self._model_manually_unloaded = True
