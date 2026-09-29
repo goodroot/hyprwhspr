@@ -320,6 +320,8 @@ Speed on each model's best hardware. Accuracy from the [Open ASR Leaderboard](ht
 
 Cloud: [REST API](#rest-api) and [Realtime WebSocket](#realtime-websocket). Speed and accuracy follow the provider.
 
+`hyprwhspr setup auto` picks Whisper for your hardware: faster-whisper on NVIDIA or CPU, whisper.cpp on AMD/Intel.
+
 ### Model commands
 
 `hyprwhspr model` commands route automatically to the configured local backend.
@@ -354,7 +356,7 @@ Cohere Transcribe is a **gated model** on HuggingFace — you must accept the li
 
 1. Accept the license agreement at: [huggingface.co/CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026)
 2. Generate a read token at: [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-3. Run `hyprwhspr setup` and select **[6] Cohere Transcribe** — you will be prompted for your token
+3. Run `hyprwhspr setup` and select **Cohere** — you will be prompted for your token
 
 The model (~4 GB) is downloaded during setup. Your token is securely stored locally in `~/.config/hyprwhspr/credentials.json` and never shared.
 
@@ -379,7 +381,7 @@ Parakeet TDT V3 via [onnx-asr](https://github.com/istupakov/onnx-asr).
 
 #### Setup
 
-Run `hyprwhspr setup` and select **[1] Parakeet**. The model (~1 GB) is downloaded during setup.
+Run `hyprwhspr setup` and select **Parakeet → Parakeet v3**. The model (~1 GB) is downloaded during setup.
 
 #### Configuration
 
@@ -412,7 +414,7 @@ error, `hyprwhspr model download` repairs the file.
 
 Local Whisper via [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
 
-Run `hyprwhspr setup` and select **[2] faster-whisper** to install.
+Run `hyprwhspr setup` and select **Whisper**. On NVIDIA or CPU, setup uses faster-whisper.
 
 **Best for:** CPU users wanting faster inference than whisper.cpp, or NVIDIA GPU users where VRAM is constrained — INT8 quantization runs `large-v3-turbo` in ~3.1 GB vs ~6 GB for float16. AMD/Intel GPU users should use Parakeet or whisper.cpp instead (CTranslate2 does not support Vulkan or ROCm).
 
@@ -446,7 +448,9 @@ Models stored in: `~/.cache/huggingface/hub/`
 
 Local Whisper via [pywhispercpp](https://github.com/abdeladim-s/pywhispercpp).
 
-Run `hyprwhspr setup` and select **[3] Whisper CPU**, **[4] Whisper NVIDIA**, or **[5] Whisper AMD/Intel (Vulkan)**.
+Run `hyprwhspr setup` and select **Whisper**. On AMD/Intel, setup uses whisper.cpp with Vulkan.
+
+For whisper.cpp on CPU or NVIDIA: `hyprwhspr setup auto --backend cpu` or `--backend nvidia`.
 
 **Best for:** modern NVIDIA cards or discrete AMD/Intel (via Vulkan) — extremely fast on GPU with `large-v3` or `large-v3-turbo`.
 
@@ -594,7 +598,7 @@ Controls how Whisper searches for the best transcription. Applies to `pywhisperc
 
 A second engine for Parakeet TDT v3: [Parakeet.cpp](https://github.com/mudler/parakeet.cpp) v0.5.0, native, CPU or Vulkan. ONNX remains the default.
 
-Run `hyprwhspr setup`; choose **[1] Parakeet**, then **Parakeet.cpp**. Or: `hyprwhspr setup auto --backend parakeet-cpp`. Switching engines keeps ONNX settings and models.
+Run `hyprwhspr setup`; choose **Parakeet → Parakeet.cpp**. Or: `hyprwhspr setup auto --backend parakeet-cpp`. Switching engines keeps ONNX settings and models.
 
 ```jsonc
 {
@@ -617,7 +621,7 @@ Model stored in: `~/.local/share/hyprwhspr/parakeet-cpp/models/`
 
 [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR), local through a pinned llama.cpp sidecar. Best for Chinese, Japanese and Korean. Thirty languages; 22 Chinese dialects.
 
-Run `hyprwhspr setup`; choose **[7] Qwen3-ASR**. It adds no Python packages—only the runtime (17–34 MB) and model pair.
+Run `hyprwhspr setup`; choose **Qwen3-ASR**. It adds no Python packages—only the runtime (17–34 MB) and model pair.
 
 ```jsonc
 {
