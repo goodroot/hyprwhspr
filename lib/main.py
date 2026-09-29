@@ -224,8 +224,7 @@ class hyprwhsprApp:
 
         # Push-to-talk hold-to-lock state (push_to_talk mode)
         self._ptt_press_time = None        # time.monotonic() of the press the current hold is measured from
-        self._ptt_locked = False
-        self._ptt_lock = threading.Lock()
+        self._ptt_locked = False           # guarded by _recording_lock, like the press time
 
         # Continuous mode state (auto-paste on speech pause)
         self._continuous_silence_thread = None
@@ -839,14 +838,13 @@ class hyprwhsprApp:
         return value if math.isfinite(value) else default
 
     def _ptt_reset(self):
-        """Drop push-to-talk hold state. Safe from any thread and repeatable."""
-        with self._ptt_lock:
-            self._ptt_press_time = None
-            self._ptt_locked = False
+        """Drop push-to-talk hold state. Caller holds _recording_lock."""
+        self._ptt_press_time = None
+        self._ptt_locked = False
 
     def _ptt_mark_press(self):
         """Measure the hold from this press, for a recording already running."""
-        with self._ptt_lock:
+        with self._recording_lock:
             self._ptt_press_time = time.monotonic()
 
     def _ptt_release_latches(self):
@@ -860,7 +858,7 @@ class hyprwhsprApp:
         if lock_seconds <= 0:
             return False
         now = time.monotonic()
-        with self._ptt_lock:
+        with self._recording_lock:
             if self._ptt_locked:
                 return True
             press_time = self._ptt_press_time
@@ -1199,9 +1197,8 @@ class hyprwhsprApp:
                 # Store language override for this recording session
                 self._current_language_override = language_override
                 # Push-to-talk hold is measured from this accepted press
-                with self._ptt_lock:
-                    self._ptt_press_time = time.monotonic()
-                    self._ptt_locked = False
+                self._ptt_press_time = time.monotonic()
+                self._ptt_locked = False
 
         # A capture client self-triggered this start over the FIFO and is now
         # blocking on completion. Release it here or it waits forever and keeps

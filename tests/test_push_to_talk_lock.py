@@ -105,7 +105,6 @@ class PushToTalkLockTests(unittest.TestCase):
         app._recording_starting = app._playback_shutdown = False
         app._start_settled = threading.Event(); app._start_settled.set(); app._start_owner = None
         app._current_language_override = None
-        app._ptt_lock = threading.Lock()
         app._ptt_press_time = None
         app._ptt_locked = False
         if mock_start:
@@ -289,6 +288,17 @@ class PushToTalkLockTests(unittest.TestCase):
         app._handle_control_command('start')
         self.assertFalse(app.is_recording)
         self.assertFalse(app._ptt_locked)
+
+    def test_ptt_state_is_reset_under_the_recording_lock(self):
+        for path in ('_stop_recording', '_cancel_recording'):
+            with self.subTest(path=path):
+                app = self._app(lock_seconds=3.0, recording=True,
+                                mock_stop=False, mock_cancel=False)
+                held = []
+                reset = type(app)._ptt_reset
+                app._ptt_reset = lambda: (held.append(app._recording_lock.locked()), reset(app))
+                getattr(app, path)()
+                self.assertEqual(held, [True])
 
     def test_cancel_clears_lock_state(self):
         app = self._app(lock_seconds=3.0, recording=True, mock_cancel=False)

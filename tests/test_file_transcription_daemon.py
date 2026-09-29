@@ -30,7 +30,6 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         app.config = FakeConfig(backend)
         app.text_injector = mock.Mock()
         app._recording_lock = threading.Lock()
-        app._ptt_lock = threading.Lock()
         app._ptt_press_time = None
         app._ptt_locked = False
         app._continuous_delivery_failure_notified = False
