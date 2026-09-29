@@ -209,7 +209,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
 
         # Push-to-talk hold-to-lock state (push_to_talk mode)
         self._ptt_press_time = None        # time.monotonic() of the press the current hold is measured from
-        self._ptt_locked = False           # guarded by _recording_lock, like the press time
+        self._ptt_locked = False           # written under _recording_lock, like the press time
 
         # Continuous mode state (auto-paste on speech pause)
         self._continuous_silence_thread = None
