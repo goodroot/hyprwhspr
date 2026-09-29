@@ -1162,6 +1162,7 @@ class hyprwhsprApp:
             self._notify_when_ready = True
 
         if blocked == 'starting':
+            self._notify_user("hyprwhspr", "Still stopping — try again", urgency="normal")
             log("[CONTROL] Recording blocked: previous start still settling")
             return
 

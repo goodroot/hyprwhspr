@@ -34,7 +34,7 @@ class EarlyPlaybackTests(unittest.TestCase):
         app.audio_manager = mock.Mock()
         app.playback_suppressor = mock.Mock(is_active=True)
         app._background_recovery_needed = threading.Event()
-        for method in ('_clear_mic_osd_preview_text', '_clear_zero_volume_signal', '_write_recording_status', '_show_mic_osd', '_hide_mic_osd', '_stop_audio_level_monitoring', '_start_audio_level_monitoring', '_release_blocked_capture', '_notify_zero_volume'):
+        for method in ('_clear_mic_osd_preview_text', '_clear_zero_volume_signal', '_write_recording_status', '_show_mic_osd', '_hide_mic_osd', '_stop_audio_level_monitoring', '_start_audio_level_monitoring', '_release_blocked_capture', '_notify_zero_volume', '_notify_user'):
             setattr(app, method, mock.Mock())
         app._mic_failure_message = lambda message: message
         return app
@@ -117,6 +117,7 @@ class EarlyPlaybackTests(unittest.TestCase):
         app._notify_zero_volume.assert_not_called()
         # The refused restart's capture client must not wait forever.
         app._release_blocked_capture.assert_called_once()
+        app._notify_user.assert_called_once()
         self.assertFalse(app._recording_starting)
 
     def test_stop_in_stability_window_is_not_an_unstable_stream(self):
