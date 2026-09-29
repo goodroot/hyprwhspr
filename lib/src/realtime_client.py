@@ -39,6 +39,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             mode: 'transcribe' for speech-to-text, 'converse' for voice-to-AI
         """
         super().__init__(mode=mode)
+        self.transcription_session_type = 'transcription'
         self.transcription_delay = 'low'
         self.transcription_prompt = None
         self.conversation_history = 'turn'
@@ -274,7 +275,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             return
 
         if self.mode == 'transcribe':
-            # Transcription-only session
+            # Dictation session, including proxies requiring a realtime envelope
             # Build transcription config - omit language for auto-detect
             model = self.model or 'gpt-4o-mini-transcribe'
             transcription_config = {'model': model}
@@ -293,7 +294,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                 transcription_config['delay'] = self._validated_transcription_delay()
 
             session_data = {
-                'type': 'transcription',
+                'type': self.transcription_session_type,
                 'audio': {
                     'input': {
                         'format': {

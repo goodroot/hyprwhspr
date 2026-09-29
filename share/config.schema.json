@@ -407,6 +407,12 @@
       "default": "transcribe",
       "description": "'transcribe' for speech-to-text, 'converse' for voice-to-AI"
     },
+    "realtime_transcription_session_type": {
+      "type": "string",
+      "enum": ["transcription", "realtime"],
+      "default": "transcription",
+      "description": "Session type for transcribe mode; use realtime for proxies requiring a full Realtime session"
+    },
     "realtime_transcription_delay": {
       "type": "string",
       "enum": ["minimal", "low", "medium", "high", "xhigh"],

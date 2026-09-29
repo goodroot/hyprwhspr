@@ -754,6 +754,27 @@ All three disable server-side VAD and commit the turn when recording stops. `rea
 }
 ```
 
+Some OpenAI-compatible proxies, including CLIProxyAPI with ChatGPT/Codex OAuth,
+require a full Realtime session even for dictation. Keep `realtime_mode: "transcribe"`
+and set `realtime_transcription_session_type: "realtime"`. Use `websocket_url` to
+select the session model separately from `websocket_model`, which selects the
+transcription model:
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "openai",
+    "websocket_url": "wss://your-proxy.example.com/v1/realtime?model=gpt-realtime",
+    "websocket_model": "gpt-live-transcribe",
+    "realtime_mode": "transcribe",
+    "realtime_transcription_session_type": "realtime"
+}
+```
+
+The default session type is `"transcription"`. The override changes the session
+envelope; dictation still streams audio and waits for transcription events.
+It does not request an assistant response.
+
 In `converse` mode, `realtime_conversation_history` controls what the provider retains between turns:
 
 - `"turn"` (default) - deletes each completed turn while reusing the WebSocket, so every turn starts with empty

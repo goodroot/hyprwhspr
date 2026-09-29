@@ -36,6 +36,25 @@ class FakeWebSocket:
 
 
 class RealtimePreviewIntegrationTests(unittest.TestCase):
+    def test_backend_forwards_transcription_session_type(self):
+        config = FakeConfig({
+            "websocket_provider": "openai",
+            "websocket_model": "gpt-live-transcribe",
+            "websocket_url": "wss://example.test/realtime?model=gpt-realtime",
+            "realtime_mode": "transcribe",
+            "realtime_transcription_session_type": "realtime",
+        })
+        manager = types.SimpleNamespace(
+            config=config, temp_dir="/tmp", ready=False, current_model=None,
+            _last_use_time=0, _realtime_partial_callback=None,
+        )
+        backend = RealtimeWsBackend(manager)
+        with mock.patch.object(realtime_ws_backend, "get_credential", return_value="test-key"), \
+             mock.patch.object(RealtimeClient, "connect", return_value=True):
+            self.assertTrue(backend.initialize())
+        self.assertEqual(backend._realtime_client.transcription_session_type, "realtime")
+        self.assertEqual(backend._realtime_client.mode, "transcribe")
+
     def test_backend_forwards_conversation_history_to_openai_client(self):
         config = FakeConfig(
             {

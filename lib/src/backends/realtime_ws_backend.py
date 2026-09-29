@@ -244,6 +244,9 @@ class RealtimeWsBackend(TranscriptionBackend):
                 log(f'ERROR: {model_id} is supported only with realtime_mode="transcribe"')
                 return False
             self._realtime_client = RealtimeClient(mode=realtime_mode)
+            self._realtime_client.transcription_session_type = self.config.get_setting(
+                'realtime_transcription_session_type', 'transcription'
+            )
 
             # Get WebSocket URL
             websocket_url = self.config.get_setting('websocket_url')

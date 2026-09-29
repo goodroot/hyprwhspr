@@ -42,6 +42,18 @@ class RealtimeClientTests(unittest.TestCase):
             },
         }
 
+    def test_proxy_realtime_session_keeps_transcription_flow(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+        client.transcription_session_type = "realtime"
+        client._send_session_update()
+
+        session = client.ws.sent[-1]["session"]
+        self.assertEqual(session["type"], "realtime")
+        self.assertEqual(session["audio"]["input"]["transcription"]["model"], "gpt-live-transcribe")
+        self.assertIsNone(session["audio"]["input"]["turn_detection"])
+        self.assertNotIn("instructions", session)
+        self.assertEqual(client.mode, "transcribe")
+
     def test_gpt_realtime_whisper_session_payload(self):
         client = self._client_with_ws()
         client.language = "en"
