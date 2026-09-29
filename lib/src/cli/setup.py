@@ -236,8 +236,8 @@ def _prompt_parakeet_selection(existing_cfg, current_backend):
     current_model = resolve_model(existing_cfg or {})[0]
     options = [
         ('onnx-asr', DEFAULT_ONNX_MODEL, 'Parakeet v3      ONNX · default'),
-        ('onnx-asr', 'orukeet', 'Orukeet          ONNX · experimental'),
-        ('parakeet-cpp', None, 'Parakeet.cpp     CPU/Vulkan · experimental'),
+        ('onnx-asr', 'orukeet', 'Orukeet          ONNX · faster, most accurate'),
+        ('parakeet-cpp', None, 'Parakeet.cpp     CPU/Vulkan · fastest'),
     ]
     choices = ['1', '2', '3']
     if current_backend == 'parakeet-cpp':
