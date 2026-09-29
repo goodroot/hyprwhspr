@@ -273,13 +273,29 @@ class InstallerTests(unittest.TestCase):
         remember = mock.Mock()
         with mock.patch.object(runtime, 'MODEL', metadata):
             for content, success in [(b'bad', False), (b'new', True)]:
-                fetch = lambda url, path, content=content: path.write_bytes(content)
+                fetch = lambda url, path, size, content=content: path.write_bytes(content)
                 with mock.patch.object(installer, '_model_primitives', return_value=(matches, fetch, matches, remember)):
                     self.assertEqual(installer.download_model(), success)
                 self.assertEqual(target.read_bytes(), b'new' if success else b'old')
             self.record.assert_called_once_with(target, 'model')
             remember.assert_called_once_with(target, metadata['sha256'])
             self.assertFalse(list(target.parent.glob('.parakeet-*')))
+
+    def test_model_fetch_is_bounded_with_progress(self):
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+        _, fetch, _, _ = installer._model_primitives()
+        path = self.root / 'model.gguf'
+        with mock.patch.object(installer.urllib.request, 'urlopen', return_value=Response(b'abcd')) as urlopen:
+            fetch('https://example.invalid/model', path, 4)
+        self.assertEqual(urlopen.call_args.kwargs['timeout'], 60)
+        self.assertEqual(path.read_bytes(), b'abcd')
+        with mock.patch.object(installer.urllib.request, 'urlopen', return_value=Response(b'abcde')):
+            with self.assertRaisesRegex(RuntimeError, 'safety limit'):
+                fetch('https://example.invalid/model', path, 4)
 
     def test_present_model_skips_download_and_rehash(self):
         fetch, matches = mock.Mock(), mock.Mock()

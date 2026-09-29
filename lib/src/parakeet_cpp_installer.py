@@ -33,8 +33,17 @@ def _model_primitives():
         from backend_installer import (_qwen3_model_present, _qwen3_progress,
                                        _file_matches, set_state)
 
-    def fetch(url, path):
-        urllib.request.urlretrieve(url, path, reporthook=_qwen3_progress('Parakeet.cpp model'))
+    def fetch(url, path, size):
+        # Stall timeout and byte cap as in _download_bounded_file; urlretrieve has neither.
+        report = _qwen3_progress('Parakeet.cpp model')
+        total = 0
+        with urllib.request.urlopen(url, timeout=60) as response, path.open('wb') as output:
+            while block := response.read(1024 * 1024):
+                total += len(block)
+                if total > size:
+                    raise RuntimeError(f'download exceeded the {size}-byte safety limit')
+                output.write(block)
+                report(total, 1, size)
 
     def remember(path, digest):
         set_state(f'model_hash_{path.name}', digest)
@@ -121,7 +130,7 @@ def download_model(model=runtime.MODEL_ID):
                 url = (f"https://huggingface.co/{metadata['repo']}/resolve/"
                        f"{metadata['revision']}/{metadata['filename']}")
                 log_info(f'Downloading Parakeet.cpp {model} (~941 MB)')
-                fetch(url, partial)
+                fetch(url, partial, metadata['size'])
                 if not matches(partial, metadata['size'], metadata['sha256']):
                     raise RuntimeError('Model failed pinned size/SHA-256 validation')
                 partial.replace(target)
