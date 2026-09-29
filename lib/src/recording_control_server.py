@@ -12,7 +12,7 @@ class RecordingControlServer:
     """Own the recording-control FIFO and single-subscriber capture socket."""
 
     _VALID_COMMANDS = {
-        "start", "stop", "cancel", "submit", "model_unload", "model_reload",
+        "start", "stop", "release", "cancel", "submit", "model_unload", "model_reload",
     }
 
     def __init__(self, fifo_path, socket_path, on_command, is_recording,

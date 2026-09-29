@@ -83,14 +83,13 @@ Hold to record, release to stop:
 ```jsonc
 {
     "recording_mode": "push_to_talk",
-    "push_to_talk_lock_seconds": 3.0  // Hold this long and recording latches on (hands-free). 0 (default) = disabled.
+    "push_to_talk_lock_seconds": 3.0  // Optional: hold this long to latch hands-free. 0 (default) = off.
 }
 ```
 
-- Hold the shortcut for `push_to_talk_lock_seconds` or longer and the recording **latches on** when you release it. You can let go of the key and keep dictating; the release that reached the threshold does not stop the recording.
-- A latched recording ends on the **next press** of the shortcut. If your bindings shell out to the `hyprwhspr record` CLI, that press never reaches the daemon while it is recording, so the release of the next tap (`record stop`) ends the session instead. One tap either way.
-- Default is `0` (disabled) - classic push-to-talk: hold to record, release to stop. Holds shorter than the threshold always stop on release, and a release with no hold pending is ignored.
-- The key is only read in **push-to-talk** mode, so **auto** mode's tap/hold detection and every other mode behave exactly as before.
+- Hold past `push_to_talk_lock_seconds`, let go: recording **latches on**. Press again to end it.
+- Shorter holds stop on release, as always.
+- External bindings latch only on key-up `release`, never on `stop` — `stop` always stops.
 
 ### Auto mode
 
@@ -269,10 +268,10 @@ Hold the key to record, release to stop:
 
 ```bash
 bind = SUPER ALT, D, exec, echo "start" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
-bindr = SUPER ALT, D, exec, echo "stop" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
+bindr = SUPER ALT, D, exec, echo "release" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
-With `push_to_talk_lock_seconds` set, this bind pair still works: the release that latches the recording is ignored, and the next press or release ends it.
+`release` stops, or latches a long hold (`push_to_talk_lock_seconds`). A `stop` binding still works; it just never latches.
 
 #### Long-form mode
 
@@ -1481,6 +1480,9 @@ hyprwhspr record start --lang es    # Spanish
 
 # Stop recording (transcribes and pastes)
 hyprwhspr record stop
+
+# Push-to-talk key-up: stop, or latch a long hold
+hyprwhspr record release
 
 # Cancel recording (discards audio, no transcription)
 hyprwhspr record cancel

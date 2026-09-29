@@ -37,6 +37,15 @@ class RecordCommandTests(unittest.TestCase):
                 success.assert_not_called()
                 info.assert_called_once_with(f"{action.capitalize()} sent")
 
+    def test_release_sends_release_and_claims_no_outcome(self):
+        # A release may latch or stop; the CLI can't know which.
+        for status in ("true", "false"):
+            with self.subTest(status=status):
+                sent, success, info = self.run_action("release", status)
+                self.assertEqual(sent, "release\n")
+                success.assert_not_called()
+                info.assert_called_once_with("Release sent")
+
     def test_matching_status_reports_result(self):
         for action, status in (("cancel", "true"), ("stop", "true"), ("start", "false")):
             with self.subTest(action=action):

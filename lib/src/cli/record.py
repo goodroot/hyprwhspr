@@ -31,7 +31,7 @@ def record_command(action: str, language: str = None):
     - Multiple keyboard tools that conflict with grab_keys
 
     Args:
-        action: The action to perform (start, stop, cancel, toggle, status)
+        action: The action to perform (start, stop, release, cancel, toggle, status)
         language: Optional language code for transcription (e.g., 'en', 'it', 'de')
     """
     import stat
@@ -118,6 +118,11 @@ def record_command(action: str, language: str = None):
             else:
                 log_info("Stop sent")
 
+    elif action == 'release':
+        # A long push-to-talk hold may latch rather than stop, so don't claim either
+        if send_control('release'):
+            log_info("Release sent")
+
     elif action == 'cancel':
         expected = is_recording()
         if send_control('cancel'):
@@ -143,7 +148,7 @@ def record_command(action: str, language: str = None):
 
     else:
         log_error(f"Unknown action: {action}")
-        log_info("Available actions: start, stop, cancel, toggle, status")
+        log_info("Available actions: start, stop, release, cancel, toggle, status")
 
 
 def record_recovery_command(action: str):

@@ -2248,19 +2248,22 @@ class hyprwhsprApp:
                     self._stop_recording()
                 else:
                     log("[CONTROL] Recording already in progress, ignoring start request")
-        elif action == "stop":
+        elif action in ("stop", "release"):
+            # "release" is a key-up from an external binding and may latch a
+            # long push-to-talk hold; an explicit "stop" always stops. Outside
+            # push-to-talk the two are identical.
             if recording_mode == "long_form":
                 self._longform.request_pause()
             elif self.is_recording:
-                # A latched session keeps recording, so this release does not stop it.
-                if recording_mode == "push_to_talk" and self._ptt_release_latches():
+                if (action == "release" and recording_mode == "push_to_talk"
+                        and self._ptt_release_latches()):
                     return
-                log("[CONTROL] Recording stop requested (immediate)")
+                log(f"[CONTROL] Recording {action} requested (immediate)")
                 if recording_mode == "continuous":
                     self._continuous_stop_and_wait()
                 self._stop_recording()
             else:
-                log("[CONTROL] Not currently recording, ignoring stop request")
+                log(f"[CONTROL] Not currently recording, ignoring {action} request")
         elif action == "cancel":
             if recording_mode == "long_form":
                 self._longform.request_cancel()

@@ -640,7 +640,7 @@
       "minimum": 0,
       "maximum": 30,
       "default": 0.0,
-      "description": "Push-to-talk hold-to-lock: hold the key this many seconds and the recording latches on (hands-free). The next press ends it. 0 (default) = disabled, classic push-to-talk."
+      "description": "Push-to-talk hold-to-lock: hold the key this many seconds and the recording latches on (hands-free). The next press ends it. External bindings must send `release` on key-up (`stop` never latches). 0 (default) = disabled, classic push-to-talk."
     }
   }
 }

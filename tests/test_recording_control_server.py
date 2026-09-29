@@ -57,6 +57,10 @@ class RecordingControlServerTests(unittest.TestCase):
             ("start", "pt-BR"),
         )
         self.assertIsNone(RecordingControlServer.parse_commands("\ninvalid\nstartling\n"))
+        self.assertEqual(
+            RecordingControlServer.parse_commands("start\nrelease\n"),
+            ("release", None),
+        )
 
     def test_prepare_fifo_reuses_fifo_and_replaces_regular_file(self):
         self.fifo.write_text("legacy")

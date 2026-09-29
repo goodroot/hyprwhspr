@@ -208,15 +208,42 @@ class PushToTalkLockTests(unittest.TestCase):
                 self.assertEqual(app._notify_user.call_count, 0)
                 self.assertFalse(app._ptt_locked)
 
-    def test_control_stop_latches_then_next_stop_ends_session(self):
+    def test_control_stop_never_latches(self):
+        # An explicit stop (record stop, the tray) is not a key release.
         app = self._app(lock_seconds=3.0, recording=True)
         self._pending_press(app, held_seconds=4.0)
         app._handle_control_command('stop')
-        self.assertEqual(app._stop_recording.call_count, 0)
+        self.assertEqual(app._stop_recording.call_count, 1)
+        self.assertFalse(app._ptt_locked)
+        self.assertEqual(app._notify_user.call_count, 0)
+
+    def test_control_release_latches_then_next_start_ends_session(self):
+        app = self._app(lock_seconds=3.0, recording=True, mock_stop=False)
+        self._pending_press(app, held_seconds=4.0)
+        app._handle_control_command('release')
+        self.assertTrue(app.is_recording)
+        self.assertTrue(app._ptt_locked)
+
+        app._handle_control_command('start')
+        self.assertFalse(app.is_recording)
+        self.assertFalse(app._ptt_locked)
+
+    def test_control_release_below_threshold_stops(self):
+        app = self._app(lock_seconds=3.0, recording=True)
+        self._pending_press(app, held_seconds=1.0)
+        app._handle_control_command('release')
+        self.assertEqual(app._stop_recording.call_count, 1)
+        self.assertFalse(app._ptt_locked)
+
+    def test_control_stop_ends_latched_session(self):
+        app = self._app(lock_seconds=3.0, recording=True, mock_stop=False)
+        self._pending_press(app, held_seconds=4.0)
+        app._handle_control_command('release')
         self.assertTrue(app._ptt_locked)
 
         app._handle_control_command('stop')
-        self.assertEqual(app._stop_recording.call_count, 1)
+        self.assertFalse(app.is_recording)
+        self.assertFalse(app._ptt_locked)
 
     def test_control_start_ends_latched_session(self):
         app = self._app(lock_seconds=3.0, recording=True, mock_stop=False)
@@ -265,17 +292,22 @@ class PushToTalkLockTests(unittest.TestCase):
                     release = (release_app._stop_recording.call_count,
                                release_app._notify_user.call_count)
 
-                    stop_app = self._app(recording_mode=mode, lock_seconds=lock_seconds,
-                                         recording=True)
-                    self._pending_press(stop_app, held_seconds=5.0)
-                    stop_app._handle_control_command('stop')
-                    control = (stop_app._stop_recording.call_count,
-                               stop_app._longform.request_pause.call_count,
-                               stop_app._continuous_stop_and_wait.call_count,
-                               stop_app._notify_user.call_count)
+                    # Outside push-to-talk, a control release is just a stop.
+                    control = []
+                    for action in ('stop', 'release'):
+                        stop_app = self._app(recording_mode=mode, lock_seconds=lock_seconds,
+                                             recording=True)
+                        self._pending_press(stop_app, held_seconds=5.0)
+                        stop_app._handle_control_command(action)
+                        control.append((stop_app._stop_recording.call_count,
+                                        stop_app._longform.request_pause.call_count,
+                                        stop_app._continuous_stop_and_wait.call_count,
+                                        stop_app._notify_user.call_count))
+                        self.assertFalse(stop_app._ptt_locked)
+                    self.assertEqual(control[0], control[1], 'release differs from stop')
+                    control = control[0]
 
                     self.assertFalse(release_app._ptt_locked)
-                    self.assertFalse(stop_app._ptt_locked)
                     outcomes.append((release, control))
 
                 self.assertEqual(outcomes[0], outcomes[1], 'lock value changed behavior')
