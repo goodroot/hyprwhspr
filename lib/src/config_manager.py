@@ -153,6 +153,7 @@ def build_default_config():
         'realtime_timeout': 30,            # Completion timeout (seconds)
         'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
         'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
+        'realtime_transcription_session_type': 'transcription',  # 'realtime' for proxies requiring a full session
         'realtime_transcription_delay': 'low',  # OpenAI continuous transcription delay: minimal|low|medium|high|xhigh
         'realtime_conversation_history': 'turn',  # OpenAI converse mode: session|turn
         # whisper.cpp (pywhispercpp) backend settings

@@ -30,6 +30,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
     LOG_TAG = '[REALTIME]'
     VALID_TRANSCRIPTION_DELAYS = {'minimal', 'low', 'medium', 'high', 'xhigh'}
     VALID_CONVERSATION_HISTORY = {'session', 'turn'}
+    VALID_TRANSCRIPTION_SESSION_TYPES = {'transcription', 'realtime'}
 
     def __init__(self, mode: str = 'transcribe'):
         """
@@ -39,6 +40,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             mode: 'transcribe' for speech-to-text, 'converse' for voice-to-AI
         """
         super().__init__(mode=mode)
+        self.transcription_session_type = 'transcription'
         self.transcription_delay = 'low'
         self.transcription_prompt = None
         self.conversation_history = 'turn'
@@ -274,7 +276,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             return
 
         if self.mode == 'transcribe':
-            # Transcription-only session
+            # Dictation; strict proxies need the 'realtime' envelope
             # Build transcription config - omit language for auto-detect
             model = self.model or 'gpt-4o-mini-transcribe'
             transcription_config = {'model': model}
@@ -292,8 +294,21 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             if is_continuous(model):
                 transcription_config['delay'] = self._validated_transcription_delay()
 
+            turn_detection = None
+            if not uses_manual_commit(model):
+                turn_detection = {
+                    'type': 'server_vad',
+                    'threshold': 0.5,
+                    'prefix_padding_ms': 300,
+                    'silence_duration_ms': 500
+                }
+                if self.transcription_session_type == 'realtime':
+                    # Realtime sessions reply to every VAD turn by default
+                    turn_detection['create_response'] = False
+                    turn_detection['interrupt_response'] = False
+
             session_data = {
-                'type': 'transcription',
+                'type': self.transcription_session_type,
                 'audio': {
                     'input': {
                         'format': {
@@ -301,12 +316,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                             'rate': 24000
                         },
                         'transcription': transcription_config,
-                        'turn_detection': None if uses_manual_commit(model) else {
-                            'type': 'server_vad',
-                            'threshold': 0.5,
-                            'prefix_padding_ms': 300,
-                            'silence_duration_ms': 500
-                        }
+                        'turn_detection': turn_detection
                     }
                 }
             }
@@ -366,22 +376,35 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
     def set_conversation_history(self, history: str):
         """Set whether conversational turns retain server-side history."""
-        history = (history or 'turn').strip().lower()
-        if history not in self.VALID_CONVERSATION_HISTORY:
-            self._log(f"Invalid realtime_conversation_history '{history}', using 'turn'")
-            history = 'turn'
-        self.conversation_history = history
+        self.conversation_history = self._normalize_choice(
+            history, self.VALID_CONVERSATION_HISTORY, 'turn', 'realtime_conversation_history'
+        )
+
+    def set_transcription_session_type(self, session_type: str):
+        """Set the transcribe-mode session envelope ('realtime' for strict proxies)."""
+        self.transcription_session_type = self._normalize_choice(
+            session_type, self.VALID_TRANSCRIPTION_SESSION_TYPES, 'transcription',
+            'realtime_transcription_session_type'
+        )
+        if self.connected:
+            self._send_session_update()
 
     def set_partial_transcript_callback(self, callback):
         """Register a callback for live transcription deltas."""
         self.partial_transcript_callback = callback
 
+    def _normalize_choice(self, value, valid: set, default: str, key: str) -> str:
+        """Normalize a config enum; unset falls back quietly, anything invalid (non-strings too) with a log."""
+        if value is None or value == '':
+            return default
+        normalized = value.strip().lower() if isinstance(value, str) else None
+        if normalized not in valid:
+            self._log(f"Invalid {key} {value!r}, using {default!r}")
+            return default
+        return normalized
+
     def _normalize_transcription_delay(self, delay: str) -> str:
-        delay = (delay or 'low').strip().lower()
-        if delay not in self.VALID_TRANSCRIPTION_DELAYS:
-            self._log(f"Invalid realtime_transcription_delay '{delay}', using 'low'")
-            return 'low'
-        return delay
+        return self._normalize_choice(delay, self.VALID_TRANSCRIPTION_DELAYS, 'low', 'realtime_transcription_delay')
 
     def _validated_transcription_delay(self) -> str:
         self.transcription_delay = self._normalize_transcription_delay(self.transcription_delay)

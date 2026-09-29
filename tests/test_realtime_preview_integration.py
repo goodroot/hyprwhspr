@@ -36,6 +36,42 @@ class FakeWebSocket:
 
 
 class RealtimePreviewIntegrationTests(unittest.TestCase):
+    def test_backend_forwards_transcription_session_type(self):
+        config = FakeConfig({
+            "websocket_provider": "openai",
+            "websocket_model": "gpt-live-transcribe",
+            "websocket_url": "wss://example.test/realtime?model=gpt-realtime",
+            "realtime_mode": "transcribe",
+            "realtime_transcription_session_type": "realtime",
+        })
+        manager = types.SimpleNamespace(
+            config=config, temp_dir="/tmp", ready=False, current_model=None,
+            _last_use_time=0, _realtime_partial_callback=None,
+        )
+        backend = RealtimeWsBackend(manager)
+        with mock.patch.object(realtime_ws_backend, "get_credential", return_value="test-key"), \
+             mock.patch.object(RealtimeClient, "connect", return_value=True):
+            self.assertTrue(backend.initialize())
+        self.assertEqual(backend._realtime_client.transcription_session_type, "realtime")
+        self.assertEqual(backend._realtime_client.mode, "transcribe")
+
+    def test_realtime_session_type_without_url_fails_fast(self):
+        config = FakeConfig({
+            "websocket_provider": "openai",
+            "websocket_model": "gpt-live-transcribe",
+            "realtime_mode": "transcribe",
+            "realtime_transcription_session_type": "realtime",
+        })
+        manager = types.SimpleNamespace(
+            config=config, temp_dir="/tmp", ready=False, current_model=None,
+            _last_use_time=0, _realtime_partial_callback=None,
+        )
+        backend = RealtimeWsBackend(manager)
+        with mock.patch.object(realtime_ws_backend, "get_credential", return_value="test-key"), \
+             mock.patch.object(RealtimeClient, "connect", return_value=True) as connect:
+            self.assertFalse(backend.initialize())
+        connect.assert_not_called()
+
     def test_backend_forwards_conversation_history_to_openai_client(self):
         config = FakeConfig(
             {
@@ -44,6 +80,27 @@ class RealtimePreviewIntegrationTests(unittest.TestCase):
                 "websocket_url": "wss://example.test/realtime",
                 "realtime_mode": "converse",
                 "realtime_conversation_history": "turn",
+            }
+        )
+        manager = types.SimpleNamespace(
+            config=config, temp_dir="/tmp", ready=False, current_model=None,
+            _last_use_time=0, _realtime_partial_callback=None,
+        )
+        backend = RealtimeWsBackend(manager)
+
+        with mock.patch.object(realtime_ws_backend, "get_credential", return_value="test-key"), \
+             mock.patch.object(RealtimeClient, "connect", return_value=True):
+            self.assertTrue(backend.initialize())
+
+        self.assertEqual(backend._realtime_client.conversation_history, "turn")
+
+    def test_backend_defaults_missing_conversation_history_to_turn(self):
+        config = FakeConfig(
+            {
+                "websocket_provider": "custom",
+                "websocket_model": "compatible-realtime",
+                "websocket_url": "wss://example.test/realtime",
+                "realtime_mode": "converse",
             }
         )
         manager = types.SimpleNamespace(

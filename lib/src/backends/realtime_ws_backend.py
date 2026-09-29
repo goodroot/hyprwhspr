@@ -244,6 +244,8 @@ class RealtimeWsBackend(TranscriptionBackend):
                 log(f'ERROR: {model_id} is supported only with realtime_mode="transcribe"')
                 return False
             self._realtime_client = RealtimeClient(mode=realtime_mode)
+            session_type = self.config.get_setting('realtime_transcription_session_type', 'transcription')
+            self._realtime_client.set_transcription_session_type(session_type)
 
             # Get WebSocket URL
             websocket_url = self.config.get_setting('websocket_url')
@@ -251,6 +253,10 @@ class RealtimeWsBackend(TranscriptionBackend):
                 # For custom providers, websocket_url must be explicitly set
                 if provider_id == 'custom':
                     log('ERROR: Custom realtime backend requires websocket_url to be configured')
+                    return False
+                # Derived transcribe URLs carry ?intent=transcription, which a realtime session contradicts
+                if realtime_mode == 'transcribe' and self._realtime_client.transcription_session_type == 'realtime':
+                    log('ERROR: realtime_transcription_session_type "realtime" requires websocket_url')
                     return False
 
                 # For known providers, derive from provider registry
@@ -278,7 +284,7 @@ class RealtimeWsBackend(TranscriptionBackend):
             delay = self.config.get_setting('realtime_transcription_delay', 'low')
             self._realtime_client.set_transcription_delay(delay)
             if hasattr(self._realtime_client, 'set_conversation_history'):
-                history = self.config.get_setting('realtime_conversation_history', 'session')
+                history = self.config.get_setting('realtime_conversation_history', 'turn')
                 self._realtime_client.set_conversation_history(history)
             if self._is_partial_preview_enabled(provider_id, model_id, realtime_mode):
                 self._realtime_client.set_partial_transcript_callback(self._realtime_partial_callback)
