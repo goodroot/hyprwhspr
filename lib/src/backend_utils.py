@@ -98,6 +98,19 @@ def language_name(language):
         return language
     return LANGUAGE_NAMES.get(language.strip().lower().replace('_', '-'), language)
 
+# One line per local backend, shown before setup installs it. Keep the facts
+# in step with the model table in docs/CONFIGURATION.md.
+BACKEND_SUMMARIES = {
+    'onnx-asr': 'Parakeet via ONNX · CPU or NVIDIA · ~1 GB',
+    'parakeet-cpp': 'Parakeet.cpp · CPU or Vulkan · ~0.9 GB · experimental',
+    'faster-whisper': 'Whisper via faster-whisper · CPU or NVIDIA',
+    'cpu': 'Whisper via whisper.cpp · CPU',
+    'nvidia': 'Whisper via whisper.cpp · NVIDIA (CUDA) · may compile from source',
+    'vulkan': 'Whisper via whisper.cpp · Vulkan (AMD/Intel) · may compile from source',
+    'cohere-transcribe': 'Cohere Transcribe · 4 GB VRAM, or 8 GB RAM on CPU · Hugging Face token required',
+    'qwen3-asr': 'Qwen3-ASR via llama.cpp · CPU or Vulkan · ~2.4 GB · experimental',
+}
+
 # Backend display names for CLI output
 # Single source of truth for user-facing backend names
 BACKEND_DISPLAY_NAMES = {

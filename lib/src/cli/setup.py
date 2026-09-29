@@ -16,6 +16,11 @@ from rich.prompt import Prompt, Confirm
 from .onnx import resolve_model, prepare_selection, save_selection
 
 try:
+    from ..onnx_model import DEFAULT_MODEL as DEFAULT_ONNX_MODEL
+except ImportError:
+    from onnx_model import DEFAULT_MODEL as DEFAULT_ONNX_MODEL
+
+try:
     from ..config_manager import ConfigManager
 except ImportError:
     from config_manager import ConfigManager
@@ -26,11 +31,11 @@ except ImportError:
     from paths import CONFIG_FILE
 
 try:
-    from ..backend_utils import (BACKEND_DISPLAY_NAMES, LOCAL_INSTALL_BACKENDS,
-                                 normalize_backend)
+    from ..backend_utils import (BACKEND_DISPLAY_NAMES, BACKEND_SUMMARIES,
+                                 LOCAL_INSTALL_BACKENDS, normalize_backend)
 except ImportError:
-    from backend_utils import (BACKEND_DISPLAY_NAMES, LOCAL_INSTALL_BACKENDS,
-                               normalize_backend)
+    from backend_utils import (BACKEND_DISPLAY_NAMES, BACKEND_SUMMARIES,
+                               LOCAL_INSTALL_BACKENDS, normalize_backend)
 
 try:
     from ..backend_installer import install_backend, VENV_DIR
@@ -215,16 +220,59 @@ def _choice_default(value, ordered_values, fallback: str) -> str:
         return fallback
 
 
-# Reverse of the backend_map inside _prompt_backend_selection: name -> choice.
+# Reverse of the menu inside _prompt_backend_selection: name -> choice.
+# Every Whisper engine, including the hidden whisper.cpp CPU/CUDA ones, lands on Whisper.
 _BACKEND_CHOICE = {
-    'parakeet-cpp': '1', 'onnx-asr': '1', 'faster-whisper': '2', 'pywhispercpp': '3', 'cpu': '3',
-    'nvidia': '4', 'vulkan': '5', 'cohere-transcribe': '6', 'qwen3-asr': '7',
-    'rest-api': '8', 'realtime-ws': '9',
+    'onnx-asr': '1', 'parakeet-cpp': '1',
+    'faster-whisper': '2', 'pywhispercpp': '2', 'cpu': '2', 'nvidia': '2', 'vulkan': '2',
+    'cohere-transcribe': '3', 'qwen3-asr': '4', 'rest-api': '5', 'realtime-ws': '6',
 }
+_WHISPER_BACKENDS = ('faster-whisper', 'pywhispercpp', 'cpu', 'nvidia', 'vulkan')
+_CLOUD_BACKENDS = ('rest-api', 'remote', 'realtime-ws')
+
+
+def _prompt_parakeet_selection(existing_cfg, current_backend):
+    """One Parakeet menu: model and engine together. Returns (backend, onnx_model)."""
+    current_model = resolve_model(existing_cfg or {})[0]
+    options = [
+        ('onnx-asr', DEFAULT_ONNX_MODEL, 'Parakeet v3      ONNX · default'),
+        ('onnx-asr', 'orukeet', 'Orukeet          ONNX · experimental'),
+        ('parakeet-cpp', None, 'Parakeet.cpp     CPU/Vulkan · experimental'),
+    ]
+    choices = ['1', '2', '3']
+    if current_backend == 'parakeet-cpp':
+        default = '3'
+    elif current_backend == 'onnx-asr' and current_model == 'orukeet':
+        default = '2'
+    elif current_backend == 'onnx-asr' and current_model != DEFAULT_ONNX_MODEL:
+        # A hand-set onnx_asr_model survives Enter.
+        print(f"  Enter keeps: {current_model}")
+        choices, default = [''] + choices, ''
+    else:
+        default = '1'
+    for i, (_, _, label) in enumerate(options, 1):
+        print(f"  [{i}] {label}")
+    choice = Prompt.ask("Select Parakeet", choices=choices, default=default)
+    if not choice:
+        return 'onnx-asr', current_model
+    backend, model, _ = options[int(choice) - 1]
+    return backend, model
+
+
+def _resolve_whisper_engine(current_backend):
+    """Keep an installed Whisper engine; else faster-whisper, or whisper.cpp for AMD/Intel."""
+    if current_backend in _WHISPER_BACKENDS:
+        return 'cpu' if current_backend == 'pywhispercpp' else current_backend
+    # Lazy: detection may install vulkan-tools, so it runs only when Whisper is picked.
+    try:
+        from ..backend_installer import detect_gpu_type
+    except ImportError:
+        from backend_installer import detect_gpu_type
+    return 'vulkan' if detect_gpu_type() == 'vulkan' else 'faster-whisper'
 
 
 def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
-    """Prompt user for backend selection with current state detection"""
+    """Prompt for a backend. Returns (backend, cleanup_venv, wants_reinstall, onnx_model)."""
     current_backend = _detect_current_backend(existing_cfg)
 
     print("\n" + "="*60)
@@ -232,32 +280,22 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
     print("="*60)
 
     if current_backend:
-        backend_names = BACKEND_DISPLAY_NAMES
-        print(f"\nCurrent backend: {backend_names.get(current_backend, current_backend)}")
+        print(f"\nCurrent backend: {BACKEND_DISPLAY_NAMES.get(current_backend, current_backend)}")
     else:
         print("\nNo backend currently configured.")
 
-    print("\nChoose your transcription backend:")
-    print()
-    # Not "In-Memory": Qwen3-ASR runs a sidecar process, not an in-process model.
-    print("Local Backends:")
-    print("  [1] Parakeet              - Optimized for light hardware (autodetects CPU/GPU)")
-    print("  [2] faster-whisper        - CTranslate2 + INT8 quantization, CPU or NVIDIA GPU")
-    print("  [3] Whisper (CPU)         - whisper.cpp, works everywhere")
-    print("  [4] Whisper (NVIDIA)      - whisper.cpp + CUDA, premium local transcription for NVIDIA GPUs")
-    print("  [5] Whisper (Vulkan)      - whisper.cpp + Vulkan, ideal for AMD/Intel GPUs")
-    print("  [6] Cohere Transcribe     - #1 Open ASR leaderboard, 14 languages, ~4-5 GB VRAM (fp16)")
-    print("  [7] Qwen3-ASR             - Strongest Chinese/Japanese/Korean, 30 languages (experimental)")
-    print()
-    print("Cloud/REST Backends:")
-    print("  [8] REST API              - OpenAI, Groq, or custom endpoint")
-    print("  [9] Realtime WS           - Low-latency streaming")
+    print("\nLocal:")
+    print("  [1] Parakeet     fast · CPU/GPU · 25 European languages")
+    print("  [2] Whisper      99 languages · translation")
+    print("  [3] Cohere       most accurate · NVIDIA")
+    print("  [4] Qwen3-ASR    Chinese · Japanese · Korean · experimental")
+    print("Cloud:")
+    print("  [5] REST API     OpenAI · Groq · Cohere · custom")
+    print("  [6] Realtime WS  low-latency streaming")
     print()
 
-    # Seed the prompt default with the currently configured/installed backend so
-    # a re-run keeps it (Enter = keep). Prefer the verified install; fall back to
-    # the raw config value so a configured backend still preselects even if the
-    # venv check returned None.
+    # Seed the default with the installed backend, else the configured one, so
+    # a re-run keeps it on Enter.
     default_src = current_backend
     if not default_src:
         try:
@@ -270,109 +308,56 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
             default_src = None
     default_backend_choice = (_BACKEND_CHOICE.get(normalize_backend(default_src), '1')
                               if default_src else '1')
+    if current_backend:
+        current_backend = normalize_backend(current_backend)
 
     while True:
         try:
-            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6', '7', '8', '9'], default=default_backend_choice)
-            backend_map = {
-                '1': 'onnx-asr',
-                '2': 'faster-whisper',
-                '3': 'cpu',
-                '4': 'nvidia',
-                '5': 'vulkan',
-                '6': 'cohere-transcribe',
-                '7': 'qwen3-asr',
-                '8': 'rest-api',
-                '9': 'realtime-ws',
-            }
-            selected = backend_map[choice]
+            choice = Prompt.ask("Select backend", choices=['1', '2', '3', '4', '5', '6'],
+                                default=default_backend_choice)
+            onnx_model = None
             if choice == '1':
-                print("  [1] ONNX — existing default")
-                print("  [2] Parakeet.cpp — experimental, CPU/Vulkan")
-                engine = Prompt.ask("Select Parakeet engine", choices=['1', '2'],
-                                    default='2' if default_src == 'parakeet-cpp' else '1')
-                selected = 'parakeet-cpp' if engine == '2' else 'onnx-asr'
+                selected, onnx_model = _prompt_parakeet_selection(existing_cfg, current_backend)
+            elif choice == '2':
+                selected = _resolve_whisper_engine(current_backend)
+                print(f"  Engine: {BACKEND_DISPLAY_NAMES.get(selected, selected)}")
+            else:
+                selected = {'3': 'cohere-transcribe', '4': 'qwen3-asr',
+                            '5': 'rest-api', '6': 'realtime-ws'}[choice]
 
-
-            # Backend display names for warnings/messages
-            backend_names = {
-                'onnx-asr': 'Parakeet TDT V3 (onnx-asr)',
-                'parakeet-cpp': 'Parakeet.cpp (experimental)',
-                'cpu': 'Whisper CPU',
-                'nvidia': 'Whisper NVIDIA (CUDA)',
-                'faster-whisper': 'faster-whisper (CTranslate2)',
-                'cohere-transcribe': 'Cohere Transcribe 2B',
-                'qwen3-asr': 'Qwen3-ASR (llama.cpp)',
-                'amd': 'Whisper AMD/Intel (Vulkan)',
-                'vulkan': 'Whisper AMD/Intel (Vulkan)',
-                'rest-api': 'REST API',
-                'realtime-ws': 'Realtime WebSocket',
-                'pywhispercpp': 'pywhispercpp'
-            }
-
-            # Warn if switching to different backend
             switching_local_backends = False
             if current_backend and current_backend != selected:
-                print(f"\n⚠️  Switching from {backend_names.get(current_backend, current_backend)} to {backend_names.get(selected, selected)}")
-
-                if current_backend not in ['rest-api', 'remote', 'realtime-ws'] and selected not in ['rest-api', 'remote', 'realtime-ws']:
-                    print("This will recreate the venv and install the new backend cleanly.")
-                    if not Confirm.ask("Continue?", default=True):
-                        continue
+                print(f"\nSwitching from {BACKEND_DISPLAY_NAMES.get(current_backend, current_backend)}"
+                      f" to {BACKEND_DISPLAY_NAMES.get(selected, selected)}.")
+                if current_backend not in _CLOUD_BACKENDS and selected not in _CLOUD_BACKENDS:
                     switching_local_backends = True
-                elif selected in ['rest-api', 'realtime-ws']:
-                    backend_type_name = 'REST API' if selected == 'rest-api' else 'Realtime WebSocket'
-                    print(f"Switching to {backend_type_name} backend.")
-                    print("The local backend venv will no longer be needed.")
-                    cleanup_venv = Confirm.ask("Remove the venv to free up space?", default=False)
-                    print(f"\n✓ Selected: {BACKEND_DISPLAY_NAMES.get(selected, selected)}")
-                    return (selected, cleanup_venv, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
+                elif selected in _CLOUD_BACKENDS:
+                    cleanup_venv = Confirm.ask("Remove the local venv to free space?", default=False)
+                    return (selected, cleanup_venv, False, None)
 
-            # If re-selecting same backend, offer reinstall option
             if current_backend == selected and selected in LOCAL_INSTALL_BACKENDS:
-                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already installed.")
-                reinstall = Confirm.ask("Reinstall backend?", default=False)
-                if not reinstall:
-                    print("Keeping existing installation.")
-                    return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
-                # If yes to reinstall, continue to return with wants_reinstall=True
-            elif current_backend == selected and selected == 'realtime-ws':
-                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already configured.")
-                reconfigure = Confirm.ask("Reconfigure backend?", default=False)
-                if not reconfigure:
-                    print("Keeping existing configuration.")
-                    return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
-                # If yes to reconfigure, continue to return with wants_reinstall=True for correct state tracking
-            elif current_backend == selected and selected in ['rest-api', 'remote']:
-                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} backend is already configured.")
-                reconfigure = Confirm.ask("Reconfigure backend?", default=False)
-                if not reconfigure:
-                    print("Keeping existing configuration.")
-                    return (selected, False, False)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
-                # If yes to reconfigure, continue to return with wants_reinstall=True for correct state tracking
+                # Picking another ONNX model is a model change, not a reinstall.
+                if (selected == 'onnx-asr'
+                        and onnx_model != resolve_model(existing_cfg or {})[0]):
+                    return (selected, False, False, onnx_model)
+                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} is already installed.")
+                if not Confirm.ask("Reinstall backend?", default=False):
+                    return (selected, False, False, onnx_model)
+            elif current_backend == selected and selected in _CLOUD_BACKENDS:
+                print(f"\n{BACKEND_DISPLAY_NAMES.get(selected, selected)} is already configured.")
+                if not Confirm.ask("Reconfigure backend?", default=False):
+                    return (selected, False, False, None)
 
-            print(f"\n✓ Selected: {backend_names.get(selected, selected)}")
-            # Force rebuild when: reinstalling same backend OR switching between local backends
-            # This ensures a clean venv without stale packages from the previous backend
+            print(f"\n✓ Selected: {BACKEND_DISPLAY_NAMES.get(selected, selected)}")
+            # Reinstalling or switching local backends rebuilds a clean venv.
             wants_reinstall = (current_backend == selected) or switching_local_backends
-            return (selected, False, wants_reinstall)  # Return tuple: (backend, cleanup_venv, wants_reinstall)
+            return (selected, False, wants_reinstall, onnx_model)
         except KeyboardInterrupt:
             print("\n\nCancelled by user.")
             raise
         except (ValueError, IndexError):
             print("\nInvalid selection. Please try again.")
             continue
-
-
-def _prompt_onnx_model_selection(existing):
-    current = existing.get('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
-    print("  [1] Parakeet TDT v3 — default")
-    print("  [2] Orukeet — potential improvement in accuracy (experimental)")
-    print("      Results vary by language and hardware; Parakeet v3 remains the default.")
-    print(f"  Enter keeps: {current}")
-    choice = Prompt.ask("Select Parakeet model", choices=['', '1', '2'], default='')
-    explicit = {'1': 'nemo-parakeet-tdt-0.6b-v3', '2': 'orukeet'}.get(choice)
-    return resolve_model(existing, explicit)
 
 
 def _prompt_model_selection(current_model: Optional[str] = None):
@@ -913,8 +898,11 @@ def setup_command(python_path: Optional[str] = None):
         return False
     
     # Handle tuple or string return (backward compatibility)
+    onnx_model = None
     if isinstance(backend_result, tuple):
-        if len(backend_result) == 3:
+        if len(backend_result) == 4:
+            backend, cleanup_venv, wants_reinstall, onnx_model = backend_result
+        elif len(backend_result) == 3:
             backend, cleanup_venv, wants_reinstall = backend_result
         elif len(backend_result) == 2:
             backend, cleanup_venv = backend_result
@@ -937,7 +925,7 @@ def setup_command(python_path: Optional[str] = None):
     
     onnx_selection = None
     if backend_normalized == 'onnx-asr':
-        onnx_selection = _prompt_onnx_model_selection(existing_cfg)
+        onnx_selection = resolve_model(existing_cfg, onnx_model)
 
     # Handle backend switching
     if current_backend and current_backend != backend_normalized and not os.environ.get("HYPRWHSPR_GENERATION"):
@@ -966,39 +954,11 @@ def setup_command(python_path: Optional[str] = None):
             print("\n" + "="*60)
             print("Backend Installation")
             print("="*60)
-            if backend_normalized == 'onnx-asr':
-                print("\nThis will install the ONNX-ASR backend for hyprwhspr.")
-                print("This backend automatically detects and uses GPU acceleration when available,")
-                print("or falls back to CPU-optimized mode. Uses ONNX runtime for fast transcription.")
-                print("This may take several minutes as it downloads models and dependencies.")
-            elif backend_normalized == 'parakeet-cpp':
-                print("\nThis will install Parakeet.cpp (experimental, CPU/Vulkan).")
-                print("Downloads a pinned shared library and Parakeet TDT v3 Q8_0 (~941 MB).")
-                print("Language is detected automatically; prompts and translation are unsupported.")
-            elif backend_normalized == 'faster-whisper':
-                print("\nThis will install the faster-whisper backend (CTranslate2).")
-                print("Works on CPU and NVIDIA GPUs. INT8 quantization is fast and memory-efficient.")
-                print("On NVIDIA: large-v3-turbo runs in ~3.1 GB VRAM. On CPU: INT8 is faster than pywhispercpp.")
-                print("Built-in Silero VAD reduces hallucination loops on longer recordings.")
-                print("Models are downloaded automatically on first use.")
-            elif backend_normalized == 'cohere-transcribe':
-                print("\nThis will install the Cohere Transcribe backend (transformers).")
-                print("2B parameter Conformer model — #1 on the Open ASR Leaderboard (English), 14 languages.")
-                print("Requires ~4-5 GB VRAM with fp16 (default) or ~8-9 GB with fp32.")
-                print("Falls back to CPU if no GPU is available (slow — not recommended for live dictation).")
-                print("Model weights (~4 GB) will be downloaded from HuggingFace during setup.")
-                print("This may take several minutes depending on your connection speed.")
-            elif backend_normalized == 'qwen3-asr':
-                print("\nThis will install the Qwen3-ASR backend (experimental).")
-                print("Strongest open model for Chinese, Japanese and Korean; 30 languages and 22 Chinese dialects.")
-                print("Transcription runs in a private llama.cpp sidecar, so no new Python packages are added.")
-                print("Downloads a pinned llama.cpp runtime (~17-34 MB) and the model pair (~2.4 GB for 1.7B).")
-                print("Uses a Vulkan GPU when one is present (NVIDIA, AMD or Intel), otherwise CPU.")
-                print("This may take several minutes depending on your connection speed.")
-            else:
-                print(f"\nThis will install the {backend_normalized.upper()} backend for pywhispercpp.")
-                print("This may take several minutes as it compiles from source.")
-            if not Confirm.ask("Proceed with backend installation?", default=True):
+            print(f"\n{BACKEND_SUMMARIES.get(backend_normalized, backend_normalized)}")
+            print("Downloads can take several minutes.")
+            # A yes to "Reinstall backend?" already confirmed this.
+            reinstalling = current_backend == backend_normalized
+            if not reinstalling and not Confirm.ask("Proceed with backend installation?", default=True):
                 log_warning("Skipping backend installation. You can install it later.")
                 log_warning("Backend installation is required for local transcription to work.")
                 backend_install_skipped = True

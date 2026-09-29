@@ -25,12 +25,38 @@ class SelectionTests(unittest.TestCase):
     def test_resolution_keeps_the_users_quantization_for_every_model(self):
         for model in (DEFAULT_MODEL, 'orukeet', 'custom/repo'):
             settings = {'onnx_asr_model': model, 'onnx_asr_quantization': None}
-            with patch.object(setup, 'Prompt', types.SimpleNamespace(ask=lambda *a, **k: '')):
-                self.assertEqual(setup._prompt_onnx_model_selection(settings), (model, None, True))
+            self.assertEqual(resolve_model(settings), (model, None, True))
         self.assertEqual(resolve_model({}), (DEFAULT_MODEL, 'int8', True))
-        with patch.object(setup, 'Prompt', types.SimpleNamespace(ask=lambda *a, **k: '2')):
-            self.assertEqual(setup._prompt_onnx_model_selection({'onnx_asr_quantization': None}),
-                             ('orukeet', None, True))
+        self.assertEqual(resolve_model({'onnx_asr_quantization': None}, 'orukeet'),
+                         ('orukeet', None, True))
+
+    def _parakeet(self, settings, current, answer):
+        asked = {}
+
+        def ask(prompt, choices, default):
+            asked.update(choices=choices, default=default)
+            return default if answer is None else answer
+        with patch.object(setup, 'Prompt', types.SimpleNamespace(ask=ask)), \
+             contextlib.redirect_stdout(io.StringIO()):
+            return setup._prompt_parakeet_selection(settings, current), asked
+
+    def test_parakeet_menu_defaults_to_the_current_choice(self):
+        cases = (
+            ({}, None, ('onnx-asr', DEFAULT_MODEL)),
+            ({'onnx_asr_model': 'orukeet'}, 'onnx-asr', ('onnx-asr', 'orukeet')),
+            ({}, 'parakeet-cpp', ('parakeet-cpp', None)),
+            # A hand-set model survives Enter.
+            ({'onnx_asr_model': 'custom/repo'}, 'onnx-asr', ('onnx-asr', 'custom/repo')),
+        )
+        for settings, current, expected in cases:
+            with self.subTest(current=current, settings=settings):
+                self.assertEqual(self._parakeet(settings, current, None)[0], expected)
+
+    def test_parakeet_menu_picks_engine_and_model_together(self):
+        for answer, expected in (('1', ('onnx-asr', DEFAULT_MODEL)),
+                                 ('2', ('onnx-asr', 'orukeet')),
+                                 ('3', ('parakeet-cpp', None))):
+            self.assertEqual(self._parakeet({}, 'faster-whisper', answer)[0], expected)
 
     def test_save_writes_only_backend_and_model(self):
         config = Mock()
@@ -148,22 +174,25 @@ class SwitchRuleTests(unittest.TestCase):
 
 
 class InteractiveSetupTests(unittest.TestCase):
-    def _run(self, current_backend, prepared=False, decline_install=False, installed=True, choice=''):
+    def _run(self, current_backend, prepared=False, decline_install=False, installed=True, model=None,
+             reinstall=False, confirms=None):
         """Run interactive setup; save_selection raises to stop before any host mutation.
 
         Returns (setup_result, prepare_mock, save_mock); setup_result is 'saved' when
         setup reached save_selection.
         """
         existing = {'transcription_backend': current_backend} if current_backend else {}
-        confirm = lambda prompt, *a, **k: not (decline_install and 'backend installation' in prompt)
+        confirms = [] if confirms is None else confirms
+        confirm = lambda prompt, *a, **k: confirms.append(prompt) or not (
+            decline_install and 'backend installation' in prompt)
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(setup, '_check_mise_active', return_value=(False, '')))
             stack.enter_context(patch.object(setup, '_setup_command_symlink'))
             stack.enter_context(patch.object(setup, '_run_keyboard_selection', return_value=[]))
             stack.enter_context(patch.object(setup, '_load_existing_setup_config', return_value=existing))
-            stack.enter_context(patch.object(setup, '_prompt_backend_selection', return_value=('onnx-asr', False, False)))
+            stack.enter_context(patch.object(setup, '_prompt_backend_selection', return_value=('onnx-asr', False, reinstall, model)))
             stack.enter_context(patch.object(setup, '_detect_current_backend', return_value=current_backend))
-            stack.enter_context(patch.object(setup, 'Prompt', types.SimpleNamespace(ask=lambda *a, **k: choice)))
+            stack.enter_context(patch.object(setup, 'Prompt', types.SimpleNamespace(ask=lambda *a, **k: '')))
             stack.enter_context(patch.object(setup, 'Confirm', types.SimpleNamespace(ask=confirm)))
             stack.enter_context(patch.object(setup, '_cleanup_backend', return_value=True))
             stack.enter_context(patch.object(setup, 'install_backend', return_value=installed))
@@ -189,11 +218,24 @@ class InteractiveSetupTests(unittest.TestCase):
 
     def test_failed_preparation_on_same_backend_keeps_current_model_and_continues(self):
         # Rerunning setup (e.g. offline, for bar changes) must not abort over the model.
-        for choice, attempted in (('', DEFAULT_MODEL), ('2', 'orukeet')):
-            outcome, prepare, save = self._run('onnx-asr', choice=choice)
-            self.assertEqual(outcome, 'saved', choice)
+        for model, attempted in ((None, DEFAULT_MODEL), ('orukeet', 'orukeet')):
+            outcome, prepare, save = self._run('onnx-asr', model=model)
+            self.assertEqual(outcome, 'saved', model)
             prepare.assert_called_once_with((attempted, 'int8', True))
             save.assert_called_once_with(ANY, (DEFAULT_MODEL, 'int8', True))
+
+    def test_reinstall_is_confirmed_once(self):
+        # "Reinstall backend?" already asked; the install step must not ask again.
+        confirms = []
+        outcome, prepare, _ = self._run('onnx-asr', prepared=True, reinstall=True, confirms=confirms)
+        self.assertEqual(outcome, 'saved')
+        self.assertFalse([c for c in confirms if 'backend installation' in c])
+        prepare.assert_called_once()
+
+    def test_new_backend_install_is_confirmed(self):
+        confirms = []
+        self._run('faster-whisper', confirms=confirms)
+        self.assertTrue([c for c in confirms if 'backend installation' in c])
 
     def test_declined_install_skips_preparation_and_saves(self):
         outcome, prepare, save = self._run(None, decline_install=True)
