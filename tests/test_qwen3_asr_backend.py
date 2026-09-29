@@ -156,9 +156,9 @@ class QwenBackendTests(unittest.TestCase):
         # A failed chunk reaches the desktop through desktop_notify as a critical
         # notification, so every test in this class runs with the notifier patched
         # rather than only the tests that assert on it.
-        self.notify_incomplete = mock.patch.object(
-            self.backend, "_notify_incomplete").start()
-        self.addCleanup(mock.patch.stopall)
+        patcher = mock.patch.object(self.backend, "_notify_incomplete")
+        self.notify_incomplete = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _touch(self, name):
         path = Path(self._tmp.name) / name
@@ -264,10 +264,7 @@ class QwenBackendTests(unittest.TestCase):
     def test_a_failed_chunk_does_not_discard_the_rest(self):
         audio = np.ones(300 * 16000, dtype=np.float32)
         responses = [(200, b'{"text":"one"}'), (500, b''), (200, b'{"text":"three"}')]
-        # The partial failure here also notifies; keep that off the real
-        # desktop, where a critical notification would linger until dismissed.
-        with mock.patch.object(self.backend, "_notify_incomplete"), \
-                mock.patch.object(self.backend, "_request", side_effect=responses):
+        with mock.patch.object(self.backend, "_request", side_effect=responses):
             self.assertEqual(self.backend.transcribe(audio, sample_rate=16000), "one three")
 
     def test_language_is_sent_as_a_name_and_no_prompt_is_sent(self):
