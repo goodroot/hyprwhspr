@@ -23,8 +23,8 @@ jobs:
         # managed-launcher.sh). Test the floor and the ceiling.
         python-version: ['3.11', '3.14']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -r requirements-test.txt

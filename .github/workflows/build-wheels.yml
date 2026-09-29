@@ -34,7 +34,7 @@ jobs:
       build: ${{ steps.gate.outputs.build }}
     steps:
       - name: Checkout hyprwhspr
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Skip if installer's wheels already published
         id: gate
@@ -67,10 +67,10 @@ jobs:
 
     steps:
       - name: Checkout hyprwhspr
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: true
@@ -95,7 +95,7 @@ jobs:
           fi
 
       - name: Install CUDA Toolkit ${{ env.CUDA_BUILD_VERSION }}
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@v0.2.36
         id: cuda-toolkit
         with:
           cuda: ${{ env.CUDA_BUILD_VERSION }}.0
@@ -147,7 +147,7 @@ jobs:
           ls -la
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheel-cuda12-py${{ matrix.python-version }}
           path: dist/*.whl
@@ -164,10 +164,10 @@ jobs:
 
     steps:
       - name: Checkout hyprwhspr
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: true
@@ -183,7 +183,7 @@ jobs:
           echo "installer wants: $dl"
 
       - name: Download wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wheel-cuda12-py${{ matrix.python-version }}
           path: dist
@@ -227,7 +227,7 @@ jobs:
 
     steps:
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: wheels
           pattern: wheel-*
@@ -253,7 +253,7 @@ jobs:
           cp SHA256SUMS.txt wheels/
 
       - name: Upload wheels as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: all-wheels
           path: wheels/
