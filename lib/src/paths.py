@@ -52,5 +52,5 @@ LONGFORM_SEGMENTS_DIR = TEMP_DIR / 'longform_segments'
 # Model lifecycle signal file (presence = model is manually unloaded from memory)
 MODEL_UNLOADED_FILE = RUNTIME_DIR / 'model_unloaded'
 
-# Recent raw recordings, kept when 'debug_recordings' > 0
+# Recent raw recordings, kept when 'debug_recordings' is on
 DEBUG_RECORDINGS_DIR = RUNTIME_DIR / 'recordings'

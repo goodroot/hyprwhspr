@@ -983,15 +983,15 @@ This holds a silent input stream open in the background so the device stays warm
 
 ### Debug recordings
 
-To reproduce a bad transcription, keep the last N raw recordings as `.wav` files in `$XDG_RUNTIME_DIR/hyprwhspr/recordings` (cleared at logout):
+Hear what the model heard. Keep the last 3 recordings as `.wav` in `$XDG_RUNTIME_DIR/hyprwhspr/recordings` (tmpfs; gone at logout):
 
 ```jsonc
 {
-  "debug_recordings": 20
+  "debug_recordings": true
 }
 ```
 
-`0` (default) disables it. Long-form mode is not covered; it already keeps its segments on disk.
+Audio only, no transcripts. In continuous mode, each pasted chunk counts as one. Long-form keeps its own segments.
 
 ### Audio ducking
 
