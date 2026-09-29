@@ -179,18 +179,6 @@ class InteractiveSetupTests(unittest.TestCase):
         service.assert_not_called()
         return outcome, prepare, save
 
-    def test_parakeet_engine_switch_keeps_venv(self):
-        for current, engine, expected in (('onnx-asr', '2', 'parakeet-cpp'), ('parakeet-cpp', '1', 'onnx-asr')):
-            answers = iter(['1', engine])
-            confirm = Mock()
-            with (patch.object(setup, '_detect_current_backend', return_value=current),
-                  patch.object(setup, 'Prompt', types.SimpleNamespace(ask=lambda *a, **k: next(answers))),
-                  patch.object(setup, 'Confirm', types.SimpleNamespace(ask=confirm)),
-                  contextlib.redirect_stdout(io.StringIO()) as out):
-                self.assertEqual(setup._prompt_backend_selection({}), (expected, False, False))
-            confirm.assert_not_called()
-            self.assertNotIn('recreate the venv', out.getvalue())
-
     def test_failed_preparation_saves_whenever_the_backend_changed(self):
         # Fresh installs, local switches and cloud switches all replace the environment.
         for current in (None, 'faster-whisper', 'rest-api', 'realtime-ws'):

@@ -252,10 +252,23 @@ class InstallerTests(unittest.TestCase):
         target = runtime.model_path()
         target.parent.mkdir(parents=True)
         target.write_bytes(b'old')
+        remember = mock.Mock()
         with mock.patch.object(runtime, 'MODEL', metadata):
             for content, success in [(b'bad', False), (b'new', True)]:
-                with mock.patch.object(installer, '_primitives', return_value=(lambda url, path, size: path.write_bytes(content), matches)):
+                fetch = lambda url, path, content=content: path.write_bytes(content)
+                with mock.patch.object(installer, '_model_primitives', return_value=(matches, fetch, matches, remember)):
                     self.assertEqual(installer.download_model(), success)
                 self.assertEqual(target.read_bytes(), b'new' if success else b'old')
             self.record.assert_called_once_with(target, 'model')
+            remember.assert_called_once_with(target, metadata['sha256'])
             self.assertFalse(list(target.parent.glob('.parakeet-*')))
+
+    def test_present_model_skips_download_and_rehash(self):
+        fetch, matches = mock.Mock(), mock.Mock()
+        present = mock.Mock(return_value=True)
+        with mock.patch.object(installer, '_model_primitives', return_value=(present, fetch, matches, mock.Mock())):
+            self.assertTrue(installer.download_model())
+        present.assert_called_once()
+        fetch.assert_not_called()
+        matches.assert_not_called()
+        self.record.assert_called_once_with(runtime.model_path(), 'model')

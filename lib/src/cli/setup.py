@@ -315,10 +315,7 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
             if current_backend and current_backend != selected:
                 print(f"\n⚠️  Switching from {backend_names.get(current_backend, current_backend)} to {backend_names.get(selected, selected)}")
 
-                if {current_backend, selected} <= {'onnx-asr', 'parakeet-cpp'}:
-                    # Engines share one venv; setup keeps ONNX settings and models.
-                    pass
-                elif current_backend not in ['rest-api', 'remote', 'realtime-ws'] and selected not in ['rest-api', 'remote', 'realtime-ws']:
+                if current_backend not in ['rest-api', 'remote', 'realtime-ws'] and selected not in ['rest-api', 'remote', 'realtime-ws']:
                     print("This will recreate the venv and install the new backend cleanly.")
                     if not Confirm.ask("Continue?", default=True):
                         continue

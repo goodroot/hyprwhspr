@@ -33,6 +33,17 @@ class MonitorAudioCapture:
         )
 
 
+class WorkingAudioCapture(MonitorAudioCapture):
+    def get_input_selection_error(self):
+        return None
+
+    def is_available(self):
+        return True
+
+    def get_current_device_info(self):
+        return {"name": "mic"}
+
+
 class TestCommandAudioDiagnosticsTests(unittest.TestCase):
     def test_mic_only_reports_monitor_selection_error(self):
         audio_module = types.SimpleNamespace(AudioCapture=MonitorAudioCapture)
@@ -48,6 +59,25 @@ class TestCommandAudioDiagnosticsTests(unittest.TestCase):
         message = " ".join(str(call.args[0]) for call in log_error.call_args_list)
         self.assertIn("output monitor", message)
         self.assertIn("hyprwhspr test --live", message)
+
+    def test_missing_parakeet_cpp_fails_and_skips_transcription(self):
+        # A working mic, so the backend result alone decides the outcome.
+        audio_module = types.SimpleNamespace(AudioCapture=WorkingAudioCapture)
+        config = mock.Mock()
+        config.get_setting.side_effect = lambda key, default=None: (
+            "parakeet-cpp" if key == "transcription_backend" else default)
+        with (
+            mock.patch.object(test_cmd, "ConfigManager", return_value=config),
+            mock.patch.dict(sys.modules, {"audio_capture": audio_module}),
+            mock.patch("parakeet_cpp_runtime.is_installed", return_value=False),
+            mock.patch.object(test_cmd, "log_error") as log_error,
+            mock.patch.object(test_cmd, "log_warning") as log_warning,
+        ):
+            self.assertFalse(test_cmd.test_command())
+        self.assertIn("Parakeet.cpp unavailable",
+                      " ".join(str(c.args[0]) for c in log_error.call_args_list))
+        self.assertIn("Skipping transcription test",
+                      " ".join(str(c.args[0]) for c in log_warning.call_args_list))
 
 
 if __name__ == "__main__":

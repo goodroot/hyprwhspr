@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import tarfile
 import tempfile
+import urllib.request
 
 try:
     from . import parakeet_cpp_runtime as runtime
@@ -21,6 +22,24 @@ def _primitives():
     except ImportError:
         from backend_installer import _download_bounded_file, _file_matches
     return _download_bounded_file, _file_matches
+
+
+def _model_primitives():
+    """Reuse Qwen's model path: recorded-digest fast check, progress, digest state."""
+    try:
+        from .backend_installer import (_qwen3_model_present, _qwen3_progress,
+                                        _file_matches, set_state)
+    except ImportError:
+        from backend_installer import (_qwen3_model_present, _qwen3_progress,
+                                       _file_matches, set_state)
+
+    def fetch(url, path):
+        urllib.request.urlretrieve(url, path, reporthook=_qwen3_progress('Parakeet.cpp model'))
+
+    def remember(path, digest):
+        set_state(f'model_hash_{path.name}', digest)
+
+    return _qwen3_model_present, fetch, _file_matches, remember
 
 
 def _record(path, kind):
@@ -91,21 +110,22 @@ def download_model(model=runtime.MODEL_ID):
     if model != runtime.MODEL_ID:
         log_error(f'Unsupported Parakeet.cpp model: {model}; use {runtime.MODEL_ID}')
         return False
-    download, matches = _primitives()
+    present, fetch, matches, remember = _model_primitives()
     metadata = runtime.MODEL
     target = runtime.model_path()
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not matches(target, metadata['size'], metadata['sha256']):
+        if not present(target, metadata['size'], metadata['sha256']):
             with tempfile.TemporaryDirectory(prefix='.parakeet-', dir=target.parent) as temporary:
                 partial = Path(temporary) / metadata['filename']
                 url = (f"https://huggingface.co/{metadata['repo']}/resolve/"
                        f"{metadata['revision']}/{metadata['filename']}")
                 log_info(f'Downloading Parakeet.cpp {model} (~941 MB)')
-                download(url, partial, metadata['size'])
+                fetch(url, partial)
                 if not matches(partial, metadata['size'], metadata['sha256']):
                     raise RuntimeError('Model failed pinned size/SHA-256 validation')
                 partial.replace(target)
+                remember(target, metadata['sha256'])
         _record(target, 'model')
         return True
     except Exception as exc:
