@@ -80,9 +80,9 @@ def main():
     # Only backends omarchy_command can actually configure belong here; a value
     # it does not handle installs one backend and writes another into config.
     auto_parser.add_argument('--backend',
-                             choices=['nvidia', 'vulkan', 'cpu', 'onnx-asr', 'parakeet-cpp', 'qwen3-asr'],
+                             choices=['faster-whisper', 'nvidia', 'vulkan', 'cpu', 'onnx-asr', 'parakeet-cpp', 'qwen3-asr'],
                              help='Backend to install (default: auto-detect GPU)')
-    auto_parser.add_argument('--model', help='Model to download (default: base for whisper, auto for onnx-asr)')
+    auto_parser.add_argument('--model', help='Model to download (default: large-v3-turbo on NVIDIA, base otherwise; auto for onnx-asr)')
     auto_parser.add_argument('--no-waybar', action='store_true', help='Skip bar integration (Waybar/Noctalia)')
     auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization (otherwise the current setting is kept)')
     auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')

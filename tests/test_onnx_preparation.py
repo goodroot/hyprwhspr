@@ -251,7 +251,8 @@ class InteractiveSetupTests(unittest.TestCase):
 
 
 class AutoSetupTests(unittest.TestCase):
-    def _run(self, previous, prepared, model=None, settings=None, backend='onnx-asr', saved=True):
+    def _run(self, previous, prepared, model=None, settings=None, backend='onnx-asr', saved=True,
+             gpu='cpu'):
         import backend_installer
         import config_manager
         settings = dict(settings or {}, transcription_backend=previous)
@@ -265,6 +266,10 @@ class AutoSetupTests(unittest.TestCase):
         args = types.SimpleNamespace(backend=backend, model=model, no_waybar=True, no_systemd=True)
         with patch.object(install, '_check_mise_active', return_value=(False, '')), \
              patch.object(backend_installer, 'install_backend', return_value=True) as installer, \
+             patch.object(backend_installer, 'detect_gpu_type', return_value=gpu), \
+             patch.object(backend_installer, 'download_pywhispercpp_model', return_value=True), \
+             patch.object(install, '_verify_model_downloaded', return_value=True), \
+             patch.object(models, 'download_faster_whisper_model', return_value=True) as fw_download, \
              patch.object(config_manager, 'ConfigManager', return_value=config), \
              patch.object(install, '_verify_installation_step', return_value=True), \
              patch.object(onnx, 'prepare_model', side_effect=lambda s: events.append(s) or prepared), \
@@ -274,6 +279,7 @@ class AutoSetupTests(unittest.TestCase):
              contextlib.redirect_stdout(io.StringIO()):
             outcome = install.omarchy_command(args)
         service.assert_not_called()
+        self.fw_download = fw_download
         return outcome, events, settings, installer
 
     def test_success_prepares_then_saves_and_keeps_user_settings(self):
@@ -298,6 +304,33 @@ class AutoSetupTests(unittest.TestCase):
             self.assertEqual(events[-1], 'save')
             self.assertEqual(settings['transcription_backend'], 'onnx-asr')
             self.assertEqual(settings['onnx_asr_model'], kept)
+
+    def test_detected_hardware_matches_the_whisper_menu_entry(self):
+        # NVIDIA and CPU get faster-whisper; AMD/Intel keep whisper.cpp on Vulkan.
+        for gpu, backend, key, model in (
+                ('nvidia', 'faster-whisper', 'faster_whisper_model', 'large-v3-turbo'),
+                ('cpu', 'faster-whisper', 'faster_whisper_model', 'base'),
+                ('vulkan', 'pywhispercpp', 'model', 'base')):
+            with self.subTest(gpu=gpu):
+                outcome, _, settings, installer = self._run(None, True, backend=None, gpu=gpu)
+                self.assertTrue(outcome)
+                installer.assert_called_once()
+                self.assertEqual(installer.call_args.args[0],
+                                 'vulkan' if gpu == 'vulkan' else 'faster-whisper')
+                self.assertEqual(settings['transcription_backend'], backend)
+                self.assertEqual(settings[key], model)
+                self.assertEqual(self.fw_download.called, backend == 'faster-whisper')
+
+    def test_explicit_whisper_cpp_backends_still_install(self):
+        for explicit in ('cpu', 'nvidia'):
+            outcome, _, settings, installer = self._run(None, True, backend=explicit, gpu='nvidia')
+            self.assertTrue(outcome)
+            self.assertEqual(installer.call_args.args[0], explicit)
+            self.assertEqual(settings['transcription_backend'], 'pywhispercpp')
+
+    def test_explicit_faster_whisper_model_wins(self):
+        _, _, settings, _ = self._run(None, True, 'small', backend='faster-whisper', gpu='nvidia')
+        self.assertEqual(settings['faster_whisper_model'], 'small')
 
     def test_config_save_failure_prevents_service_start(self):
         outcome, _, _, _ = self._run('pywhispercpp', True, 'orukeet', saved=False)

@@ -320,7 +320,8 @@ def omarchy_command(args=None):
 
     This command:
     1. Auto-detects GPU hardware (NVIDIA/AMD/Intel/CPU) or uses specified backend
-    2. Installs appropriate backend (CUDA for NVIDIA, Vulkan for others, CPU fallback)
+    2. Installs Whisper to match: faster-whisper on NVIDIA or CPU, whisper.cpp
+       with Vulkan on AMD/Intel
     3. Configures defaults (auto recording mode unless you chose another,
        bar integration for detected shells); other existing settings are kept
     4. Sets up and starts systemd service
@@ -330,8 +331,10 @@ def omarchy_command(args=None):
 
     Args:
         args: Optional argparse namespace with:
-            - backend: 'nvidia', 'vulkan', 'cpu', or 'onnx-asr' (default: auto-detect)
-            - model: Model name to download (default: 'base' for whisper, auto for onnx-asr)
+            - backend: 'faster-whisper', 'nvidia', 'vulkan', 'cpu', 'onnx-asr',
+              'parakeet-cpp' or 'qwen3-asr' (default: auto-detect)
+            - model: Model name to download (default: 'large-v3-turbo' for
+              faster-whisper on NVIDIA, else 'base' for whisper, auto for onnx-asr)
             - no_waybar: Skip bar integration (Waybar/Noctalia)
             - no_mic_osd: Disable mic-osd visualization
             - no_systemd: Skip systemd service setup
@@ -369,14 +372,17 @@ def omarchy_command(args=None):
         mise_free_env = _create_mise_free_environment()
         # Note: install_backend() already handles MISE warnings
 
-    # 3. Determine backend (explicit or auto-detect)
+    # 3. Determine backend (explicit or auto-detect). Matches the interactive
+    # Whisper entry: faster-whisper covers NVIDIA and CPU; whisper.cpp only
+    # earns its place on AMD/Intel through Vulkan.
+    gpu_type = None
     if explicit_backend:
         backend = explicit_backend
         log_info(f"Using specified backend: {backend.upper()}")
     else:
         log_info("Detecting hardware...")
         gpu_type = detect_gpu_type()  # Returns 'nvidia', 'vulkan', or 'cpu'
-        backend = gpu_type
+        backend = 'vulkan' if gpu_type == 'vulkan' else 'faster-whisper'
 
         gpu_descriptions = {
             'nvidia': 'NVIDIA GPU with CUDA acceleration',
@@ -444,6 +450,17 @@ def omarchy_command(args=None):
         log_info(f"Configured onnx-asr with model: {onnx_selection[0]}")
     elif backend == 'parakeet-cpp':
         config.set_setting('transcription_backend', 'parakeet-cpp')
+    elif backend == 'faster-whisper':
+        if explicit_model:
+            fw_model = explicit_model
+        else:
+            # Explicit --backend faster-whisper did not detect; ask the installer.
+            if gpu_type is None:
+                gpu_type = detect_gpu_type()
+            fw_model = 'large-v3-turbo' if gpu_type == 'nvidia' else 'base'
+        config.set_setting('transcription_backend', 'faster-whisper')
+        config.set_setting('faster_whisper_model', fw_model)
+        log_info(f"Configured faster-whisper with model: {fw_model}")
     elif backend == 'qwen3-asr':
         try:
             from ..qwen3_asr_runtime import DEFAULT_MODEL
@@ -489,6 +506,10 @@ def omarchy_command(args=None):
         if not _verify_installation_step("Model download", lambda: _verify_model_downloaded(model_to_download)):
             log_warning("Model download verification failed - model may not be available")
             log_warning(f"You can download it later with: hyprwhspr model download {model_to_download}")
+    elif backend == 'faster-whisper':
+        from .models import download_faster_whisper_model
+        if not download_faster_whisper_model(fw_model):
+            log_warning(f"You can download it later with: hyprwhspr model download {fw_model}")
     elif backend == 'onnx-asr':
         log_info("onnx-asr model downloaded during setup")
     elif backend == 'qwen3-asr':
