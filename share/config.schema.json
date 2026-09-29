@@ -411,7 +411,7 @@
       "type": "string",
       "enum": ["transcription", "realtime"],
       "default": "transcription",
-      "description": "Session type for transcribe mode; use realtime for proxies requiring a full Realtime session"
+      "description": "Transcribe-mode session type; 'realtime' for proxies that demand it"
     },
     "realtime_transcription_delay": {
       "type": "string",

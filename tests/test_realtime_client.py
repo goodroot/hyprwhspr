@@ -44,8 +44,7 @@ class RealtimeClientTests(unittest.TestCase):
 
     def test_proxy_realtime_session_keeps_transcription_flow(self):
         client = self._client_with_ws("gpt-live-transcribe")
-        client.transcription_session_type = "realtime"
-        client._send_session_update()
+        client.set_transcription_session_type("realtime")
 
         session = client.ws.sent[-1]["session"]
         self.assertEqual(session["type"], "realtime")
@@ -204,6 +203,24 @@ class RealtimeClientTests(unittest.TestCase):
         self.assertEqual(audio_input["turn_detection"]["type"], "server_vad")
         self.assertNotIn("delay", audio_input["transcription"])
 
+    def test_proxy_realtime_session_with_vad_never_creates_responses(self):
+        client = self._client_with_ws("gpt-4o-mini-transcribe")
+        client.set_transcription_session_type("realtime")
+
+        turn_detection = client.ws.sent[-1]["session"]["audio"]["input"]["turn_detection"]
+        self.assertEqual(turn_detection["type"], "server_vad")
+        self.assertIs(turn_detection["create_response"], False)
+        self.assertIs(turn_detection["interrupt_response"], False)
+
+    def test_transcription_session_vad_omits_response_flags(self):
+        client = self._client_with_ws("gpt-4o-mini-transcribe")
+
+        client._send_session_update()
+
+        turn_detection = client.ws.sent[-1]["session"]["audio"]["input"]["turn_detection"]
+        self.assertNotIn("create_response", turn_detection)
+        self.assertNotIn("interrupt_response", turn_detection)
+
     def test_invalid_delay_falls_back_to_low(self):
         client = self._client_with_ws()
         client.set_transcription_delay("fastest")
@@ -213,6 +230,26 @@ class RealtimeClientTests(unittest.TestCase):
 
         transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
         self.assertEqual(transcription["delay"], "low")
+
+    def test_invalid_session_type_falls_back_to_transcription(self):
+        client = self._client_with_ws()
+        client.set_transcription_session_type("full")
+        client.ws.sent.clear()
+
+        client._send_session_update()
+
+        self.assertEqual(client.ws.sent[-1]["session"]["type"], "transcription")
+
+    def test_non_string_enum_settings_fall_back_instead_of_crashing(self):
+        client = self._client_with_ws()
+
+        client.set_transcription_session_type(True)
+        client.set_transcription_delay(3)
+        client.set_conversation_history(["session"])
+
+        self.assertEqual(client.transcription_session_type, "transcription")
+        self.assertEqual(client.transcription_delay, "low")
+        self.assertEqual(client.conversation_history, "turn")
 
     def test_converse_session_history_keeps_completed_items(self):
         client = RealtimeClient(mode="converse")
@@ -485,6 +522,13 @@ class RealtimeClientTests(unittest.TestCase):
 
         self.assertEqual(history_schema["default"], "turn")
         self.assertEqual(history_schema["enum"], ["session", "turn"])
+
+    def test_schema_declares_realtime_transcription_session_type_values(self):
+        schema = json.loads((ROOT / "share" / "config.schema.json").read_text())
+        session_type_schema = schema["properties"]["realtime_transcription_session_type"]
+
+        self.assertEqual(session_type_schema["default"], "transcription")
+        self.assertEqual(session_type_schema["enum"], ["transcription", "realtime"])
 
     def test_append_audio_uses_configured_input_sample_rate_for_duration(self):
         client = self._client_with_ws()
