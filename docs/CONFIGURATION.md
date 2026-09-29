@@ -82,9 +82,15 @@ Hold to record, release to stop:
 
 ```jsonc
 {
-    "recording_mode": "push_to_talk"
+    "recording_mode": "push_to_talk",
+    "push_to_talk_lock_seconds": 3.0  // Hold this long and recording latches on (hands-free). 0 (default) = disabled.
 }
 ```
+
+- Hold the shortcut for `push_to_talk_lock_seconds` or longer and the recording **latches on** when you release it. You can let go of the key and keep dictating; the release that reached the threshold does not stop the recording.
+- A latched recording ends on the **next press** of the shortcut. If your bindings shell out to the `hyprwhspr record` CLI, that press never reaches the daemon while it is recording, so the release of the next tap (`record stop`) ends the session instead. One tap either way.
+- Default is `0` (disabled) - classic push-to-talk: hold to record, release to stop. Holds shorter than the threshold always stop on release, and a release with no hold pending is ignored.
+- The key is only read in **push-to-talk** mode, so **auto** mode's tap/hold detection and every other mode behave exactly as before.
 
 ### Auto mode
 
@@ -265,6 +271,8 @@ Hold the key to record, release to stop:
 bind = SUPER ALT, D, exec, echo "start" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 bindr = SUPER ALT, D, exec, echo "stop" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
+
+With `push_to_talk_lock_seconds` set, this bind pair still works: the release that latches the recording is ignored, and the next press or release ends it.
 
 #### Long-form mode
 

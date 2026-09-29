@@ -58,6 +58,7 @@ def build_default_config():
         'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
         'continuous_silence_threshold': 0,  # RMS silence threshold; 0 = auto-calibrate from noise floor at session start
         'silence_timeout': 0,   # Auto-stop after N seconds of silence in toggle/auto modes; 0 = disabled (arms only after speech)
+        'push_to_talk_lock_seconds': 0.0,  # Push-to-talk hold-to-lock: seconds of hold before the recording latches on (hands-free); 0 = disabled
         'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
         'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
         'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')

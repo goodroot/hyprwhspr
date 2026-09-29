@@ -222,6 +222,11 @@ class hyprwhsprApp:
             self._recording_started_this_press = None
             self._tap_threshold = None
 
+        # Push-to-talk hold-to-lock state (push_to_talk mode)
+        self._ptt_press_time = None        # time.time() of the accepted press that started the session
+        self._ptt_locked = False
+        self._ptt_lock = threading.Lock()
+
         # Continuous mode state (auto-paste on speech pause)
         self._continuous_silence_thread = None
         self._continuous_silence_stop = threading.Event()
@@ -728,9 +733,13 @@ class hyprwhsprApp:
                 elif recording_mode == 'toggle':
                     self._autostop_start_silence_monitor()
         elif recording_mode == 'push_to_talk':
-            # Push-to-talk mode: only start recording on key press
+            # A latched session ends on the next press; an unlocked live recording
+            # keeps today's no-op press.
             if not self.is_recording:
                 self._start_recording(language_override=language_override)
+            elif self._ptt_locked:
+                log("[CONTROL] Locked push-to-talk session ended by key press")
+                self._stop_recording()
         elif recording_mode == 'auto':
             # Auto mode (hybrid tap/hold): record timestamp and start if not recording
             # Synchronize access to state variables to prevent race conditions
@@ -772,8 +781,7 @@ class hyprwhsprApp:
         recording_mode = self.config.get_setting("recording_mode", "toggle")
         
         if recording_mode == 'push_to_talk':
-            # Push-to-talk mode: stop recording on key release
-            if self.is_recording:
+            if self.is_recording and not self._ptt_release_latches():
                 self._stop_recording()
         elif recording_mode == 'auto':
             # Auto mode (hybrid tap/hold): determine behavior based on hold duration
@@ -827,6 +835,36 @@ class hyprwhsprApp:
         except (TypeError, ValueError, OverflowError):
             return default
         return value if math.isfinite(value) else default
+
+    def _ptt_reset(self):
+        """Drop push-to-talk hold state. Safe from any thread and repeatable."""
+        with self._ptt_lock:
+            self._ptt_press_time = None
+            self._ptt_locked = False
+
+    def _ptt_release_latches(self):
+        """True when this release latches the session instead of stopping it.
+
+        Consumes the pending press, so the release that latches does not also end the
+        session: the next press (raw FIFO bindings) or the next release (CLI bindings,
+        whose press never reaches the daemon while recording) stops the recording.
+        """
+        lock_seconds = self._get_float_setting('push_to_talk_lock_seconds', 0.0)
+        if lock_seconds <= 0:
+            return False
+        now = time.time()
+        with self._ptt_lock:
+            press_time = self._ptt_press_time
+            if press_time is None:
+                return False
+            self._ptt_press_time = None
+            held = now - press_time
+            if held < lock_seconds:
+                return False
+            self._ptt_locked = True
+        log(f"[CONTROL] Push-to-talk held {held:.1f}s (>= {lock_seconds:.1f}s) - recording locked")
+        self._notify_user("hyprwhspr", "Push-to-talk locked - press again to stop the recording", urgency="low")
+        return True
 
     def _calibrate_noise_floor(self, stop_event):
         """Sample the mic's noise floor over ~0.6s. Returns None if stopped/recording ended early."""
@@ -1151,6 +1189,10 @@ class hyprwhsprApp:
                 self._recording_session = session
                 # Store language override for this recording session
                 self._current_language_override = language_override
+                # Push-to-talk hold is measured from this accepted press
+                with self._ptt_lock:
+                    self._ptt_press_time = time.time()
+                    self._ptt_locked = False
 
         # A capture client self-triggered this start over the FIFO and is now
         # blocking on completion. Release it here or it waits forever and keeps
@@ -1458,6 +1500,7 @@ class hyprwhsprApp:
             session = self._recording_session
             self.is_recording = False
             self._current_language_override = None  # Clear language override on error
+            self._ptt_reset()
 
         log("[MUTE] Recording cancelled - microphone returned silence for 1 second")
 
@@ -1478,6 +1521,7 @@ class hyprwhsprApp:
             session = self._recording_session
             self.is_recording = False
             self._current_language_override = None
+            self._ptt_reset()
 
         log("Recording cancelled (discarded)")
 
@@ -1523,6 +1567,7 @@ class hyprwhsprApp:
             self.is_recording = False
             self._recording_finalizing.set()
             session = self._recording_session
+            self._ptt_reset()
 
         try:
             log("Recording stopped")
@@ -2198,11 +2243,18 @@ class hyprwhsprApp:
                 elif recording_mode in ("toggle", "auto"):
                     self._autostop_start_silence_monitor()
             else:
-                log("[CONTROL] Recording already in progress, ignoring start request")
+                if recording_mode == "push_to_talk" and self._ptt_locked:
+                    log("[CONTROL] Locked push-to-talk session ended by start request")
+                    self._stop_recording()
+                else:
+                    log("[CONTROL] Recording already in progress, ignoring start request")
         elif action == "stop":
             if recording_mode == "long_form":
                 self._longform.request_pause()
             elif self.is_recording:
+                # A latched session keeps recording, so this release does not stop it.
+                if recording_mode == "push_to_talk" and self._ptt_release_latches():
+                    return
                 log("[CONTROL] Recording stop requested (immediate)")
                 if recording_mode == "continuous":
                     self._continuous_stop_and_wait()

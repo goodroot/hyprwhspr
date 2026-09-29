@@ -22,6 +22,7 @@ class EarlyPlaybackTests(unittest.TestCase):
         app._playback_shutdown = False
         app._recording_starting = False
         app._start_settled = threading.Event(); app._start_settled.set(); app._start_owner = None
+        app._ptt_lock = threading.Lock(); app._ptt_press_time = None; app._ptt_locked = False
         app._model_initializing = app._backend_init_failed = False
         app._file_transcription_active = app._model_operation_active = False
         app.is_recording = False
