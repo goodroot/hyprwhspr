@@ -1507,6 +1507,32 @@ def _format_dependency_diagnostic(plan: DependencyPlan,
     return '\n'.join(lines)
 
 
+def _summarize_dependency_failure(verification: DependencyVerification) -> str:
+    """One line for the console; the full diagnostic goes to state and --debug."""
+    def last_line(text: str) -> str:
+        lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+        return lines[-1] if lines else ''
+
+    if verification.timed_out:
+        summary = 'import check timed out'
+    elif not verification.failures:
+        summary = 'combined import failed; isolated imports succeeded'
+    else:
+        probe = verification.failures[0]
+        summary = f'{probe.import_name}: {last_line(probe.evidence()) or "import failed"}'
+    if verification.repair_error:
+        summary += f'; repair failed: {last_line(verification.repair_error)}'
+    return summary
+
+
+class DependencyVerificationError(RuntimeError):
+    """Terse message for the console; ``diagnostic`` carries the full evidence."""
+
+    def __init__(self, summary: str, diagnostic: str):
+        super().__init__(f'Dependency verification failed: {summary}')
+        self.diagnostic = diagnostic
+
+
 def _is_system_origin(origin: Optional[str]) -> bool:
     """Return whether an import is inherited from anywhere outside the venv."""
     if not origin:
@@ -1687,10 +1713,13 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
         run_command([str(pip_bin), 'install', '-r', str(plan.manifest)], check=True)
         verification = _verify_and_repair_dependency_plan(plan, pip_bin)
         if not verification.ok:
+            # Callers log the exception; keep the console to one line and leave
+            # the full evidence to `hyprwhspr state show` and --debug.
             diagnostic = _format_dependency_diagnostic(plan, verification, snapshot)
-            log_error(diagnostic)
+            log_debug(diagnostic)
             set_install_state('failed', diagnostic)
-            raise RuntimeError(diagnostic)
+            raise DependencyVerificationError(
+                _summarize_dependency_failure(verification), diagnostic)
     except BaseException:
         transaction.rollback()
         raise
@@ -3088,7 +3117,9 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
             verification = _verify_dependency_plan_detailed(plan)
         if not verification.ok:
             diagnostic = _format_dependency_diagnostic(plan, verification, snapshot)
-            log_error(diagnostic)
+            log_error('Dependency verification failed: '
+                      + _summarize_dependency_failure(verification))
+            log_debug(diagnostic)
             set_install_state('failed', diagnostic)
             _cleanup_partial_installation(created_items, pip_bin)
             return False
