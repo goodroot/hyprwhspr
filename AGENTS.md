@@ -7,7 +7,8 @@ This repository is a Linux desktop speech-to-text application supporting Wayland
 ## Repository map
 
 - `bin/hyprwhspr`: launcher; chooses system versus project-venv Python and routes CLI subcommands.
-- `lib/main.py`: long-running dictation service and recording state machine.
+- `lib/main.py`: service entry point and `hyprwhsprApp` core (init, run, shutdown).
+- `lib/src/app/`: `hyprwhsprApp` mixins by concern: recording lifecycle, shortcuts, silence monitors, feedback/OSD, control commands, recovery.
 - `lib/cli.py`: CLI parser and lazy command dispatch.
 - `lib/src/`: audio, backends, configuration, desktop integration, and CLI command modules.
 - `lib/mic_osd/`: optional GTK4/layer-shell visualizer.
@@ -51,7 +52,7 @@ Do not run installers, setup, systemd commands, microphone capture, or model dow
 
 - Match the existing stdlib `unittest` plus `unittest.mock` style; add a regression test for behavior changes. Pytest is optional and is not declared as a project dependency.
 - Tests add `lib/` or `lib/src/` to `sys.path`; follow the local import pattern instead of introducing packaging assumptions.
-- Patch names where the code under test reads them. When CLI helpers move between modules, update patch targets; `tests/test_patch_target_hygiene.py` enforces this for `lib/src/cli/`.
+- Patch names where the code under test reads them. When CLI helpers move between modules, update patch targets; `tests/test_patch_target_hygiene.py` enforces this for `lib/src/cli/`. For app methods use `patch_app_global` (tests/test_suspend_resume_recovery.py); `tests/test_app_split_integrity.py` checks every global an app method reads resolves where it lives.
 - Use temporary directories and patch path constants. Never let tests touch the user's config, runtime files, clipboard, input devices, systemd units, or network.
 - There is no configured formatter or linter. Preserve surrounding style and avoid unrelated formatting churn.
 
