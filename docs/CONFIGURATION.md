@@ -300,23 +300,25 @@ With `grab_keys: false` (default), hyprwhspr can start even if you are not in th
 
 **Quick pick by hardware:**
 
-- **NVIDIA GPU** → Cohere Transcribe is the leading edge · whisper.cpp (`large-v3-turbo`) for speed
-- **AMD / Intel GPU** → whisper.cpp (Vulkan)
+- **NVIDIA GPU** → Cohere Transcribe
+- **AMD / Intel GPU** → Parakeet.cpp · whisper.cpp (Vulkan) for 99 languages
 - **CPU only** → Parakeet or faster-whisper
+- **ARM64** → Parakeet
 - **Chinese, Japanese or Korean** → Qwen3-ASR
 - **No local setup** → REST API
 
-For up-to-date accuracy rankings across open-source models, see the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard).
+| Model | Engine | Runs on | Arch | Speed | Accuracy | Memory | Languages |
+|-------|--------|---------|------|:-----:|:--------:|-------:|-----------|
+| Parakeet v3 | ONNX | CPU · NVIDIA | x64 · ARM64 | ●●● | ●●○ | 1 GB | 25 European |
+| Orukeet † | ONNX | CPU · NVIDIA | x64 · ARM64 | ●●● | ●●○ | 1 GB | 25 European |
+| Parakeet v3 † | Parakeet.cpp | CPU · Vulkan | x64 · ARM64 | ●●● | ●●○ | 0.9 GB | 25 European |
+| Whisper turbo | whisper.cpp · faster-whisper | CPU · NVIDIA · Vulkan | x64 · ARM64 | ●●○ | ●●○ | 1.6 GB | 99 |
+| Cohere Transcribe | PyTorch | CPU · NVIDIA | x64 · ARM64 | ●●● | ●●● | 4 GB | 14 |
+| Qwen3-ASR 1.7B † | llama.cpp | CPU · Vulkan | x64 | ●●○ | ●●○ · ●●● CJK | 2.4 GB | 30 |
 
-| Backend | Privacy | GPU | Speed | Languages | Accuracy | Notes |
-|---------|---------|-----|-------|-----------|----------|-------|
-| Cohere Transcribe | Local | NVIDIA or CPU | Fast | 14 | Best | Gated model, HF token required |
-| Parakeet | Local | NVIDIA or CPU | Fast | Multi | Very good | — |
-| faster-whisper | Local | NVIDIA or CPU | Very fast | 99 | Very good | — |
-| whisper.cpp | Local | NVIDIA, AMD/Intel, CPU | Fast | 99 | Very good | — |
-| Qwen3-ASR | Local | Vulkan or CPU | Fast | 30 (+22 zh dialects) | Best for CJK | Experimental · sidecar process |
-| REST API | Cloud | — | Varies | Varies | Varies | Cohere, OpenAI, Groq, Regolo |
-| Realtime WebSocket | Cloud | — | Real-time | Varies | Varies | Google Gemini, OpenAI, ElevenLabs |
+Speed on each model's best hardware. Accuracy from the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard). Memory is RAM or VRAM, roughly. ARM64 runs on CPU. Whisper ships smaller models; see its tables. † Experimental.
+
+Cloud: [REST API](#rest-api) and [Realtime WebSocket](#realtime-websocket). Speed and accuracy follow the provider.
 
 ### Model commands
 
@@ -344,7 +346,7 @@ This model has no language detection, so `language` must be set: `null` transcri
 any code outside the list above is refused rather than transcribed. `hyprwhspr status` shows which
 language is in effect.
 
-**Requirements:** ~4 GB VRAM (bfloat16), or CPU with ~8 GB RAM (float32) — slower on CPU
+**Memory:** 4 GB VRAM (bfloat16), or 8 GB RAM on CPU (float32).
 
 #### Setup
 
@@ -374,10 +376,6 @@ Model stored in: `~/.cache/huggingface/hub/models--CohereLabs--cohere-transcribe
 ### Parakeet
 
 Parakeet TDT V3 via [onnx-asr](https://github.com/istupakov/onnx-asr).
-
-Typically this model requires a large GPU — onnx-asr makes it run well on CPU with a very small accuracy trade-off.
-
-**Requirements:** ~1 GB RAM (CPU) or VRAM (GPU)
 
 #### Setup
 
