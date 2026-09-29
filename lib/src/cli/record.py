@@ -15,9 +15,9 @@ except ImportError:
                        SOCKET_FILE)
 
 try:
-    from ..output_control import log_info, log_success, log_warning, log_error
+    from ..output_control import log_info, log_success, log_error
 except ImportError:
-    from output_control import log_info, log_success, log_warning, log_error
+    from output_control import log_info, log_success, log_error
 
 
 def record_command(action: str, language: str = None):
@@ -99,27 +99,32 @@ def record_command(action: str, language: str = None):
     # Build start command with optional language
     start_cmd = f'start:{language}' if language else 'start'
 
+    # The status file lags the daemon, so it never gates these; the daemon
+    # ignores a start while recording and a stop/cancel while idle.
     if action == 'start':
-        if is_recording():
-            log_warning("Already recording")
-            return
+        expected = not is_recording()
         if send_control(start_cmd):
-            msg = f"Recording started (language: {language})" if language else "Recording started"
-            log_success(msg)
+            if expected:
+                msg = f"Recording started (language: {language})" if language else "Recording started"
+                log_success(msg)
+            else:
+                log_info("Start sent")
 
     elif action == 'stop':
-        if not is_recording():
-            log_warning("Not currently recording")
-            return
+        expected = is_recording()
         if send_control('stop'):
-            log_success("Recording stopped")
+            if expected:
+                log_success("Recording stopped")
+            else:
+                log_info("Stop sent")
 
     elif action == 'cancel':
-        if not is_recording():
-            log_warning("Not currently recording")
-            return
+        expected = is_recording()
         if send_control('cancel'):
-            log_success("Recording cancelled (audio discarded)")
+            if expected:
+                log_success("Recording cancelled (audio discarded)")
+            else:
+                log_info("Cancel sent")
 
     elif action == 'toggle':
         if is_recording():
