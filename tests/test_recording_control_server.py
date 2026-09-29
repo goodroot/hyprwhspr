@@ -80,6 +80,29 @@ class RecordingControlServerTests(unittest.TestCase):
         self.fifo.unlink()
         self.assertTrue(self._wait_for(self.fifo.is_fifo))
 
+    def test_command_written_during_slow_dispatch_is_not_dropped(self):
+        entered, release = threading.Event(), threading.Event()
+
+        def on_command(action, language):
+            self.commands.append((action, language))
+            if action == "start":
+                entered.set()
+                release.wait(2)
+
+        self.server._on_command = on_command
+        self.assertTrue(self.server.prepare_fifo())
+        self.assertTrue(self.server.start())
+        fd = os.open(self.fifo, os.O_WRONLY)
+        os.write(fd, b"start\n")
+        os.close(fd)
+        self.assertTrue(entered.wait(2))
+        # Like the CLI: a non-blocking writer while start is still running.
+        fd = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK)
+        os.write(fd, b"cancel\n")
+        os.close(fd)
+        release.set()
+        self.assertTrue(self._wait_for(lambda: self.commands == [("start", None), ("cancel", None)]))
+
     def test_empty_fifo_writer_reopens_reader_after_eof(self):
         self.assertTrue(self.server.prepare_fifo())
         real_open = os.open

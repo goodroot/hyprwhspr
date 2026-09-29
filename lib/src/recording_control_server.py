@@ -215,6 +215,16 @@ class RecordingControlServer:
                     self._capture_subscriber_mode = None
                     self._capture_payload_sent = False
 
+    def _dispatch_fifo(self, raw_data, stop_event):
+        command = self.parse_commands(raw_data)
+        if command is None:
+            lines = [line.strip() for line in raw_data.splitlines() if line.strip()]
+            if lines:
+                print(f"[CONTROL] No valid commands in: {lines}", flush=True)
+            return
+        if not stop_event.is_set() and stop_event is self._stop_event:
+            self._on_command(*command)
+
     def _fifo_listener(self, stop_event):
         while not stop_event.is_set():
             fd = None
@@ -227,7 +237,6 @@ class RecordingControlServer:
                     os.mkfifo(str(self.fifo_path))
                     print("[CONTROL] Recreated recording control FIFO", flush=True)
                 fd = os.open(str(self.fifo_path), os.O_RDONLY | os.O_NONBLOCK)
-                raw_data = None
                 while not stop_event.is_set():
                     if not self.fifo_path.exists() or not self.fifo_path.is_fifo():
                         raise FileNotFoundError(self.fifo_path)
@@ -243,24 +252,14 @@ class RecordingControlServer:
                         if not chunk:
                             break
                         chunks.append(chunk)
-                    if chunks:
-                        raw_data = b"".join(chunks).decode("utf-8", errors="replace")
+                    if not chunks:
+                        # EOF remains readable until this descriptor is replaced.
+                        # Reopen it so an empty writer cannot leave the daemon spinning.
                         break
-                    # EOF remains readable until this descriptor is replaced.
-                    # Reopen it so an empty writer cannot leave the daemon spinning.
-                    break
-                else:
-                    break
-                if raw_data is None:
-                    continue
-                command = self.parse_commands(raw_data)
-                if command is None:
-                    lines = [line.strip() for line in raw_data.splitlines() if line.strip()]
-                    if lines:
-                        print(f"[CONTROL] No valid commands in: {lines}", flush=True)
-                    continue
-                if not stop_event.is_set() and stop_event is self._stop_event:
-                    self._on_command(*command)
+                    # Dispatch with the read end still open. A command written while
+                    # this one runs (a start takes up to ~2s) stays buffered; closing
+                    # the last reader would silently discard it.
+                    self._dispatch_fifo(b"".join(chunks).decode("utf-8", errors="replace"), stop_event)
             except FileNotFoundError:
                 if not stop_event.is_set():
                     print("[CONTROL] FIFO deleted, will recreate on next iteration", flush=True)
