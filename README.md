@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Built for Linux** - Native AUR package for Arch, or use Debian/Ubuntu/Fedora/openSUSE
 - **Very fast defaults** - Nearly instant and accurate performance via in-memory models
 - **Offline and private** - Transcription never leaves your machine. Cloud APIs are fully optional. 
-- **Latest models** - Cohere Transcribe? Turbo-v3? Parakeet TDT V3? Qwen3-ASR? Latest and greatest
+- **Latest models** - Cohere Transcribe? Orukeet? Parakeet TDT V3? Qwen3-ASR? Latest and greatest
 - **GPU memory efficient** - Limit or zero memory usage easily, more for other local models
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **Strong CJK** - Qwen3-ASR for Chinese, Japanese and Korean
@@ -40,7 +40,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
-**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for the highest-end machines: a recent Nvidia card gets the **best possible accuracy and speed**, and everything else runs as well as the hardware you bring. Actively maintained, fully featured, strictly offline unless you use an API, and works on both Wayland and X11.
+**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for performance and stability: your hardware will auto-optimize to the **best possible accuracy and speed**. Actively maintained, at the leading edge, fully featured, strictly offline unless you use an API, and works on both Wayland and X11.
 
 ---
 
