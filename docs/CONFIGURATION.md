@@ -991,7 +991,7 @@ Hear what the model heard. Keep the last 3 recordings as `.wav` in `$XDG_RUNTIME
 }
 ```
 
-Audio only, no transcripts. Long-form keeps its own segments.
+Audio only, no transcripts. In continuous mode, each pasted chunk counts as one. Long-form keeps its own segments.
 
 ### Audio ducking
 

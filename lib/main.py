@@ -1033,6 +1033,7 @@ class hyprwhsprApp:
                 self._continuous_flush_lock.release()
                 self._continuous_transcription_done.set()
 
+        self._save_debug_recording(audio_data)
         threading.Thread(target=process, daemon=True).start()
 
     def _on_cancel_shortcut_triggered(self):
@@ -1497,15 +1498,20 @@ class hyprwhsprApp:
     _DEBUG_RECORDINGS_KEEP = 3
 
     def _save_debug_recording(self, audio_data):
-        """Keep the last few raw recordings in DEBUG_RECORDINGS_DIR (debug_recordings)."""
+        """Keep the last few raw recordings in DEBUG_RECORDINGS_DIR (debug_recordings).
+
+        Called from both the stop path and continuous-mode flushes, which can
+        land in the same second and race on pruning.
+        """
         if audio_data is None or not self.config.get_setting('debug_recordings', False):
             return
         try:
             DEBUG_RECORDINGS_DIR.mkdir(mode=0o700, exist_ok=True)
-            path = DEBUG_RECORDINGS_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}.wav"
+            millis = time.time_ns() // 1_000_000 % 1000
+            path = DEBUG_RECORDINGS_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{millis:03d}.wav"
             self.audio_capture.save_audio_to_wav(audio_data, str(path))
             for old in sorted(DEBUG_RECORDINGS_DIR.glob('*.wav'))[:-self._DEBUG_RECORDINGS_KEEP]:
-                old.unlink()
+                old.unlink(missing_ok=True)
         except Exception as e:
             log(f"[WARN] Failed to save debug recording: {e}")
 
