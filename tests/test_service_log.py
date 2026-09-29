@@ -28,6 +28,8 @@ CONVERTED = [
     'lib/src/backends/realtime_ws_backend.py',
     'lib/src/backends/rest_api_backend.py',
     'lib/main.py',
+    # hyprwhsprApp's mixins, split out of main.py
+    *sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'lib' / 'src' / 'app').glob('*.py')),
 ]
 
 

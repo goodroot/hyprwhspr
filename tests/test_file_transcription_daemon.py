@@ -7,7 +7,7 @@ from unittest import mock
 
 import numpy as np
 
-from tests.test_suspend_resume_recovery import _import_main_isolated
+from tests.test_suspend_resume_recovery import _import_main_isolated, app_global, patch_app_global
 
 
 class FakeConfig:
@@ -24,6 +24,10 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.main = _import_main_isolated()
+        app = cls.main.hyprwhsprApp
+        cls.transcribe = app._handle_file_transcribe
+        cls.model_op = app._handle_model_operation
+        cls.outcome = app_global(app._inject_text, 'InjectionOutcome')
 
     def _app(self, backend='pywhispercpp'):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
@@ -68,9 +72,9 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         app._notify_capture.assert_called_once_with('capture only', final=True)
 
         app._recording_control_server.has_capture_subscriber.return_value = False
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.FAILED
+        app.text_injector.inject_text.return_value = self.outcome.FAILED
         app._notify_user = mock.Mock()
-        self.assertEqual(app._inject_text('failed'), self.main.InjectionOutcome.FAILED)
+        self.assertEqual(app._inject_text('failed'), self.outcome.FAILED)
         self.assertIn('copy-last', app._notify_user.call_args.args[1])
 
     def test_continuous_delivery_failure_notifies_once_per_session(self):
@@ -80,10 +84,10 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
             'continuous' if key == 'recording_mode' else default)
         app._recording_control_server = mock.Mock()
         app._recording_control_server.has_capture_subscriber.return_value = False
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.FAILED
+        app.text_injector.inject_text.return_value = self.outcome.FAILED
         app._notify_user = mock.Mock()
         for text in ('first flush', 'second flush', 'third flush'):
-            self.assertEqual(app._inject_text(text), self.main.InjectionOutcome.FAILED)
+            self.assertEqual(app._inject_text(text), self.outcome.FAILED)
         app._notify_user.assert_called_once()
 
         app._continuous_silence_stop = threading.Event()
@@ -97,7 +101,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         app = self._app()
         app._recording_control_server = mock.Mock()
         app._recording_control_server.has_capture_subscriber.return_value = False
-        app.text_injector.inject_text.return_value = self.main.InjectionOutcome.FAILED
+        app.text_injector.inject_text.return_value = self.outcome.FAILED
         app._notify_user = mock.Mock()
         app._inject_text('first recording')
         app._inject_text('second recording')
@@ -105,13 +109,14 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
 
     def test_idle_daemon_transcribes_and_optionally_cleans(self):
         app = self._app()
+        preprocess = mock.Mock(return_value='clean transcript')
         with tempfile.TemporaryDirectory() as tempdir, \
-                mock.patch.object(self.main, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'), \
-                mock.patch.object(self.main, 'decode_audio_file', return_value=(
+                patch_app_global(self.transcribe, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'), \
+                patch_app_global(self.transcribe, 'decode_audio_file', mock.Mock(return_value=(
                     np.array([0.1, 0.2], dtype=np.float32), 44100
-                )), mock.patch.object(
-                    self.main, 'preprocess_text', return_value='clean transcript'
-                ) as preprocess:
+                ))), patch_app_global(
+                    self.transcribe, 'preprocess_text', preprocess
+                ):
             self.assertEqual(
                 app._handle_file_transcribe('/tmp/audio.wav', 'fr', True),
                 (True, 'clean transcript'),
@@ -132,10 +137,10 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
             setattr(app, 'is_processing', True) or 'transcript'
         )
         with tempfile.TemporaryDirectory() as tempdir, \
-                mock.patch.object(self.main, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'), \
-                mock.patch.object(self.main, 'decode_audio_file', return_value=(
+                patch_app_global(self.transcribe, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'), \
+                patch_app_global(self.transcribe, 'decode_audio_file', mock.Mock(return_value=(
                     np.array([0.1], dtype=np.float32), 16000
-                )):
+                ))):
             self.assertEqual(
                 app._handle_file_transcribe('/tmp/audio.wav'),
                 (True, 'transcript'),
@@ -146,12 +151,12 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
     def test_decoder_dependency_error_returns_a_response_and_releases_owner(self):
         app = self._app()
         with tempfile.TemporaryDirectory() as tempdir, \
-                mock.patch.object(self.main, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'), \
-                mock.patch.object(
-                    self.main, 'decode_audio_file',
-                    side_effect=self.main.AudioFileError(
+                patch_app_global(self.transcribe, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'), \
+                patch_app_global(
+                    self.transcribe, 'decode_audio_file',
+                    mock.Mock(side_effect=app_global(self.transcribe, 'AudioFileError')(
                         'Audio file decoding requires soundfile; run: hyprwhspr setup'
-                    ),
+                    )),
                 ):
             ok, error = app._handle_file_transcribe('/tmp/audio.wav')
         self.assertFalse(ok)
@@ -185,7 +190,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
 
     def test_longform_and_model_operations_block_file_requests(self):
         with tempfile.TemporaryDirectory() as tempdir:
-            with mock.patch.object(self.main, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'):
+            with patch_app_global(self.transcribe, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'):
                 app = self._app()
                 app._longform_active = True
                 self.assertIn('long-form', app._handle_file_transcribe('x.wav')[1])
@@ -195,7 +200,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
 
     def test_a_second_concurrent_file_request_is_rejected(self):
         with tempfile.TemporaryDirectory() as tempdir:
-            with mock.patch.object(self.main, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'):
+            with patch_app_global(self.transcribe, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'):
                 app = self._app()
                 started = threading.Event()
                 release = threading.Event()
@@ -207,8 +212,8 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
                     return 'first transcript'
 
                 app.whisper_manager.transcribe_audio = slow_transcribe
-                with mock.patch.object(self.main, 'decode_audio_file', return_value=(
-                        np.array([0.1], dtype=np.float32), 16000)):
+                with patch_app_global(self.transcribe, 'decode_audio_file', mock.Mock(return_value=(
+                        np.array([0.1], dtype=np.float32), 16000))):
                     worker = threading.Thread(
                         target=lambda: second.setdefault(
                             'first', app._handle_file_transcribe('/tmp/a.wav')
@@ -252,7 +257,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
 
     def test_model_operation_frees_the_recording_lock_while_loading(self):
         with tempfile.TemporaryDirectory() as tempdir:
-            with mock.patch.object(self.main, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'):
+            with patch_app_global(self.model_op, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'):
                 app = self._app()
                 app._notify_user = mock.Mock()
                 observed = {}
@@ -303,7 +308,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             unloaded = Path(tempdir) / 'unloaded'
             app = self._app()
-            with mock.patch.object(self.main, 'MODEL_UNLOADED_FILE', unloaded):
+            with patch_app_global(self.transcribe, 'MODEL_UNLOADED_FILE', unloaded):
                 app.is_recording = True
                 self.assertIn('while recording', app._handle_file_transcribe('x.wav')[1])
                 app.is_recording = False

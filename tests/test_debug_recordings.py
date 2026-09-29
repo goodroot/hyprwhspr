@@ -10,7 +10,7 @@ from unittest import mock
 
 import numpy as np
 
-from tests.test_suspend_resume_recovery import FakeConfig, _import_main_isolated
+from tests.test_suspend_resume_recovery import FakeConfig, _import_main_isolated, patch_app_global
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib' / 'src'))
 
@@ -24,7 +24,8 @@ class DebugRecordingsTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name) / 'recordings'
-        patcher = mock.patch.object(self.main, 'DEBUG_RECORDINGS_DIR', self.dir)
+        patcher = patch_app_global(
+            self.main.hyprwhsprApp._save_debug_recording, 'DEBUG_RECORDINGS_DIR', self.dir)
         patcher.start()
         self.addCleanup(patcher.stop)
 

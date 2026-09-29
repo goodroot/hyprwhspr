@@ -6,12 +6,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _app_trees():
+    """main.py plus the lib/src/app/ mixins that make up hyprwhsprApp."""
+    paths = [ROOT / "lib" / "main.py", *sorted((ROOT / "lib" / "src" / "app").glob("*.py"))]
+    return [ast.parse(path.read_text(encoding="utf-8")) for path in paths]
+
+
 class MainStartupSafetyTests(unittest.TestCase):
     def _find_function(self, tree, name):
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == name:
                 return node
         return None
+
+    def _find_app_function(self, name):
+        """The one definition of an app method, wherever it lives."""
+        found = [
+            node for tree in _app_trees() for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        ]
+        self.assertEqual(len(found), 1, f"expected one definition of {name}")
+        return found[0]
 
     def test_realtime_partial_callback_registration_is_guarded(self):
         tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
@@ -40,9 +55,7 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertTrue(guarded)
 
     def test_show_mic_osd_clears_preview_before_showing(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
-
-        show_func = self._find_function(tree, "_show_mic_osd")
+        show_func = self._find_app_function("_show_mic_osd")
         self.assertIsNotNone(show_func)
 
         clear_line = None
@@ -60,9 +73,7 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertLess(clear_line, show_line)
 
     def test_stop_recording_clears_preview_before_processing_state(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
-
-        stop_func = self._find_function(tree, "_stop_recording")
+        stop_func = self._find_app_function("_stop_recording")
         self.assertIsNotNone(stop_func)
 
         clear_line = None
@@ -86,9 +97,7 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertLess(clear_line, processing_line)
 
     def test_reset_stale_state_scrubs_transcript_preview(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
-
-        reset_func = self._find_function(tree, "_reset_stale_state")
+        reset_func = self._find_app_function("_reset_stale_state")
         self.assertIsNotNone(reset_func)
 
         references_preview_file = any(
@@ -100,7 +109,7 @@ class MainStartupSafetyTests(unittest.TestCase):
     def test_migrate_legacy_state_files_creates_compat_symlinks(self):
         tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
 
-        migrate_func = self._find_function(tree, "_migrate_legacy_state_files")
+        migrate_func = self._find_app_function("_migrate_legacy_state_files")
         self.assertIsNotNone(migrate_func)
 
         calls_symlink = any(
@@ -134,9 +143,7 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertTrue(called_from_init)
 
     def test_cancel_cleanup_clears_transcript_preview(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
-
-        cleanup_func = self._find_function(tree, "_cleanup_recording_state")
+        cleanup_func = self._find_app_function("_cleanup_recording_state")
         self.assertIsNotNone(cleanup_func)
 
         clears_preview = any(
@@ -148,9 +155,7 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertTrue(clears_preview)
 
     def test_process_audio_finally_clears_transcript_preview(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
-
-        process_func = self._find_function(tree, "_process_audio")
+        process_func = self._find_app_function("_process_audio")
         self.assertIsNotNone(process_func)
 
         clears_in_finally = False
@@ -169,9 +174,7 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertTrue(clears_in_finally)
 
     def test_inject_text_checks_injector_result_before_success_log(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
-
-        inject_func = self._find_function(tree, "_inject_text")
+        inject_func = self._find_app_function("_inject_text")
         self.assertIsNotNone(inject_func)
 
         result_checked_line = None
@@ -202,9 +205,7 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertLess(result_checked_line, success_log_line)
 
     def test_process_audio_success_reflects_injection_outcome(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
-
-        process_func = self._find_function(tree, "_process_audio")
+        process_func = self._find_app_function("_process_audio")
         self.assertIsNotNone(process_func)
 
         hardcoded_success_after_injection = False
@@ -233,10 +234,11 @@ class MainStartupSafetyTests(unittest.TestCase):
         )
 
     def test_capture_completion_is_centralized_for_trace_json(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
+        trees = _app_trees()
         direct_calls = []
         for function in (
-            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+            node for tree in trees for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
         ):
             for node in ast.walk(function):
                 if (
@@ -250,15 +252,13 @@ class MainStartupSafetyTests(unittest.TestCase):
         self.assertEqual(direct_calls, ["_notify_capture"])
 
         attributes = {
-            node.attr for node in ast.walk(tree)
+            node.attr for tree in trees for node in ast.walk(tree)
             if isinstance(node, ast.Attribute)
         }
         self.assertNotIn("current_transcription", attributes)
 
     def test_continuous_flush_distinguishes_consumed_from_injected(self):
-        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
-
-        flush_func = self._find_function(tree, "_continuous_flush_audio")
+        flush_func = self._find_app_function("_continuous_flush_audio")
         self.assertIsNotNone(flush_func)
 
         references_consumed = any(

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.test_suspend_resume_recovery import _import_main_isolated
+from tests.test_suspend_resume_recovery import _import_main_isolated, patch_app_global
 
 
 class RecordingCleanupStateTests(unittest.TestCase):
@@ -26,7 +26,8 @@ class RecordingCleanupStateTests(unittest.TestCase):
         app._autostop_stop_silence_monitor = mock.Mock()
         app._clear_mic_osd_preview_text = mock.Mock()
         app._stop_audio_level_monitoring = mock.Mock()
-        patcher = mock.patch.object(self.main, 'RECORDING_STATUS_FILE', status_path)
+        patcher = patch_app_global(
+            self.main.hyprwhsprApp._write_recording_status, 'RECORDING_STATUS_FILE', status_path)
         patcher.start()
         self.addCleanup(patcher.stop)
         return app

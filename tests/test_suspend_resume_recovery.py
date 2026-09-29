@@ -81,6 +81,32 @@ def _import_main_isolated():
         sys.modules.update(saved)
 
 
+def _code_names(code):
+    names = set(code.co_names)
+    for const in code.co_consts:
+        if isinstance(const, types.CodeType):
+            names |= _code_names(const)
+    return names
+
+
+def patch_app_global(method, name, value):
+    """Patch a global in the module a hyprwhsprApp method actually reads.
+
+    App methods live in main.py and the lib/src/app/ mixins, so patching
+    ``main`` by name stops reaching a method once it moves. Patch the
+    method's own namespace instead, and fail loudly unless it reads ``name``.
+    """
+    app_global(method, name)  # fails loudly if the method doesn't read it
+    return mock.patch.dict(method.__globals__, {name: value})
+
+
+def app_global(method, name):
+    """The object a hyprwhsprApp method sees as global ``name``."""
+    if name not in _code_names(method.__code__) or name not in method.__globals__:
+        raise AssertionError(f"{method.__qualname__} does not read global {name!r}")
+    return method.__globals__[name]
+
+
 class FakeConfig:
     def __init__(self, values=None):
         self.values = values or {}

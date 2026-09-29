@@ -11,7 +11,7 @@ import types
 import unittest
 from unittest import mock
 
-from tests.test_suspend_resume_recovery import _import_main_isolated
+from tests.test_suspend_resume_recovery import _import_main_isolated, patch_app_global
 
 LOCK_KEY = 'push_to_talk_lock_seconds'
 
@@ -79,9 +79,13 @@ class PushToTalkLockTests(unittest.TestCase):
 
     def setUp(self):
         self.clock = _FrozenClock()
-        patcher = mock.patch.object(self.main, 'time', self.clock)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # The press is stamped when recording starts and read by the latch
+        # check; patch the clock wherever each of them reads it.
+        app = self.main.hyprwhsprApp
+        for method in (app._start_recording, app._ptt_mark_press, app._ptt_release_latches):
+            patcher = patch_app_global(method, 'time', self.clock)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _app(self, recording_mode='push_to_talk', lock_seconds=0.0, lock_absent=False,
              recording=False, mock_stop=True, mock_start=True, mock_cancel=True):

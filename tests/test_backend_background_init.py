@@ -6,7 +6,7 @@ import types
 import unittest
 from unittest import mock
 
-from tests.test_suspend_resume_recovery import _import_main_isolated
+from tests.test_suspend_resume_recovery import _import_main_isolated, app_global
 
 
 class BackgroundInitTests(unittest.TestCase):
@@ -43,7 +43,8 @@ class BackgroundInitTests(unittest.TestCase):
 
     def test_ready_notification_only_after_a_noticeable_load(self):
         self.assertFalse(self._init(1)._notify_user.called)
-        self.assertTrue(self._init(self.main.READY_NOTIFY_AFTER_S)._notify_user.called)
+        self.assertTrue(self._init(app_global(
+            self.main.hyprwhsprApp._start_backend_init_background, 'READY_NOTIFY_AFTER_S'))._notify_user.called)
 
     def test_ready_is_announced_to_anyone_told_to_wait_even_when_quick(self):
         app = self._init(1, waiting=True)
