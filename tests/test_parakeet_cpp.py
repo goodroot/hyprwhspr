@@ -102,6 +102,24 @@ class NativeTests(unittest.TestCase):
             self.assertTrue(self.backend.reinitialize())
             self.library.parakeet_capi_free.assert_called_once_with(456)
 
+    def test_reinit_only_for_vulkan(self):
+        for device, expected in (('cpu', False), ('vulkan', True)):
+            self.backend.device = device
+            self.assertEqual((self.backend.reinit_on_idle, self.backend.reinit_on_resume), (expected, expected))
+
+    def test_cpu_long_idle_transcribes_without_reload(self):
+        manager = WhisperManager(config_manager=ConfigStub({'transcription_backend': 'parakeet-cpp'}))
+        backend = ParakeetCppBackend(manager)
+        backend._context, backend._library, backend.device = 123, self.library, 'cpu'
+        manager._backend = backend
+        manager.ready = True
+        manager._last_use_time = 1.0  # far beyond the 30-minute idle threshold
+        self.library.parakeet_capi_transcribe_pcm.return_value = None
+        self.library.parakeet_capi_last_error.return_value = b'x'
+        manager.transcribe_audio(np.full(3200, 0.1, dtype=np.float32))
+        self.library.parakeet_capi_transcribe_pcm.assert_called_once()
+        self.library.parakeet_capi_free.assert_not_called()
+
     def test_cleanup_waits_for_manager_model_lock(self):
         manager = WhisperManager(config_manager=ConfigStub({'transcription_backend': 'parakeet-cpp'}))
         backend = ParakeetCppBackend(manager)
@@ -123,7 +141,7 @@ class NativeTests(unittest.TestCase):
     def test_resume_reinitialize_waits_for_inference(self):
         manager = WhisperManager(config_manager=ConfigStub({'transcription_backend': 'parakeet-cpp'}))
         backend = ParakeetCppBackend(manager)
-        backend._context, backend._library = 123, self.library
+        backend._context, backend._library, backend.device = 123, self.library, 'vulkan'
         manager._backend = backend
         with mock.patch.object(backend, 'initialize', return_value=True):
             with manager._model_lock:

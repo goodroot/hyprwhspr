@@ -15,8 +15,6 @@ except ImportError:
 class ParakeetCppBackend(TranscriptionBackend):
     name = 'parakeet-cpp'
     loads_in_background = True
-    reinit_on_idle = True
-    reinit_on_resume = True
 
     def __init__(self, manager):
         super().__init__(manager)
@@ -98,6 +96,16 @@ class ParakeetCppBackend(TranscriptionBackend):
 
     def cleanup(self):
         self.unload()
+
+    # Only a GPU context can go stale across suspend or a long idle; reloading
+    # the CPU model would just add seconds to the next dictation.
+    @property
+    def reinit_on_idle(self):
+        return self.device == 'vulkan'
+
+    @property
+    def reinit_on_resume(self):
+        return self.device == 'vulkan'
 
     @property
     def is_loaded(self):

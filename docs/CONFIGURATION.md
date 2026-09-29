@@ -605,7 +605,7 @@ Run `hyprwhspr setup`; choose **[1] Parakeet**, then **Parakeet.cpp**. Or: `hypr
 }
 ```
 
-`auto` keeps an installed runtime. Otherwise: Vulkan when found, CPU when not. If Vulkan fails to load, `auto` falls back to CPU; explicit `vulkan` reports why.
+`auto` keeps an installed runtime. Otherwise: Vulkan when found, CPU when not. If Vulkan fails to load during setup, `auto` falls back to CPU; explicit `vulkan` reports why.
 
 One model, pinned: `tdt-0.6b-v3-q8_0` (~941 MB). Language is detected; prompts, translation and forced language do nothing here.
 
