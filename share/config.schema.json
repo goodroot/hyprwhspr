@@ -105,6 +105,11 @@
       "default": null,
       "description": "USB vendor ID for audio device (most stable identifier, from udev)"
     },
+    "debug_recordings": {
+      "type": "boolean",
+      "default": false,
+      "description": "Keep the last 3 raw recordings in $XDG_RUNTIME_DIR/hyprwhspr/recordings for debugging bad transcriptions."
+    },
     "keepalive_stream": {
       "type": "boolean",
       "default": false,
