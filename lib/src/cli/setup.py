@@ -683,8 +683,16 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
                 model_name = Prompt.ask("Model name", default="") or None
 
                 # Optional API key
-                has_api_key = Confirm.ask("Do you have an API key?", default=False)
                 api_key = None
+                existing_key = get_credential('custom')
+                if existing_key:
+                    print(f"\nFound existing API key: {mask_api_key(existing_key)}")
+                    if Confirm.ask("Use existing API key?", default=True):
+                        api_key = existing_key
+                if api_key:
+                    has_api_key = False
+                else:
+                    has_api_key = Confirm.ask("Do you have an API key?", default=False)
                 if has_api_key:
                     # Use getpass for secure password input (masks input, doesn't echo to terminal)
                     api_key = getpass.getpass("Enter API key: ")
@@ -763,9 +771,12 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         return config
     
     config = {
-        'transcription_backend': 'rest-api'
+        'transcription_backend': 'rest-api',
+        # Deprecated plaintext key: the backend falls back to it when
+        # rest_api_provider is None, so clear it or it reaches this endpoint.
+        'rest_api_key': None,
     }
-    
+
     if custom_config:
         # Custom backend
         config['rest_endpoint_url'] = custom_config['endpoint']

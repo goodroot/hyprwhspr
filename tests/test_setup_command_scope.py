@@ -413,6 +413,41 @@ class RemoteConfigSwitchTests(unittest.TestCase):
         config = self._switch(stale, 'custom', None, None, {'endpoint': 'http://localhost:9000/asr'})
         self.assertIsNone(config['rest_api_provider'])
 
+    def test_rest_switch_clears_the_legacy_plaintext_key(self):
+        # With no provider, the backend falls back to rest_api_key.
+        stale = {'rest_api_key': 'sk-openai-legacy'}
+        for args in (('custom', None, None, {'endpoint': 'http://localhost:9000/asr'}),
+                     ('openai', 'whisper-1', 'sk')):
+            with self.subTest(provider=args[0]):
+                self.assertIsNone(self._switch(stale, *args)['rest_api_key'])
+
+    def test_rest_custom_rerun_keeps_the_saved_key_on_enter(self):
+        class Answers:
+            @staticmethod
+            def ask(prompt, choices=None, default=None, **_kwargs):
+                if choices:
+                    return choices[-1]  # "Customize your own backend"
+                return 'http://localhost:9000/asr' if prompt == 'Endpoint URL' else ''
+
+        class AcceptDefaults:
+            @staticmethod
+            def ask(_prompt, default=None, **_kwargs):
+                return default
+
+        with (
+            mock.patch.object(setup, "Prompt", Answers),
+            mock.patch.object(setup, "Confirm", AcceptDefaults),
+            mock.patch.object(setup, "get_credential", return_value="sk-custom-saved"),
+            mock.patch.object(setup, "save_credential") as save,
+            mock.patch.object(setup.getpass, "getpass") as getpass,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            provider_id, model_id, api_key, custom_config = setup._prompt_remote_provider_selection()
+        getpass.assert_not_called()
+        save.assert_not_called()
+        config = setup._generate_remote_config(provider_id, model_id, api_key, custom_config)
+        self.assertEqual(config['rest_api_provider'], 'custom')
+
     def test_rest_known_provider_drops_custom_headers(self):
         stale = {'rest_headers': {'Authorization': 'Bearer custom-secret'}}
         config = self._switch(stale, 'openai', 'whisper-1', 'sk')
