@@ -221,6 +221,16 @@ class CohereBackend(TranscriptionBackend):
             import torch
             from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 
+            # Transformers can retain CUDA allocations through model references
+            # and Python cycles. Release the previous instance before loading
+            # another copy, otherwise the temporary double allocation can OOM.
+            self.unload()
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            self._cohere_compile_done = False
+
             model_id = 'CohereLabs/cohere-transcribe-03-2026'
             device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
             dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
@@ -253,6 +263,7 @@ class CohereBackend(TranscriptionBackend):
             self._last_use_time = time.monotonic()
             return True
         except Exception as e:
+            self.unload()
             log(f'[ERROR] Cohere Transcribe reinitialization failed: {e}')
             return False
 
