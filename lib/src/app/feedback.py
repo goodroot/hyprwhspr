@@ -4,6 +4,8 @@ import shutil
 import threading
 import time
 
+from backend_utils import normalize_backend
+from dependency_plan import missing_imports
 from paths import (
     AUDIO_LEVEL_FILE, CONFIG_DIR, LONGFORM_STATE_FILE, MIC_ZERO_VOLUME_FILE, MODEL_UNLOADED_FILE,
     RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, RECOVERY_REQUESTED_FILE, RECOVERY_RESULT_FILE,
@@ -28,6 +30,24 @@ class FeedbackMixin:
             notify(title, message, urgency=urgency, timeout_ms=timeout)
         except Exception:
             pass  # Silently fail if notify-send not available
+
+    def _report_missing_dependencies(self):
+        """Log and notify about Python modules the configured backend cannot import.
+
+        Returns the missing module names.
+        """
+        backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+        provider = self.config.get_setting('websocket_provider', None) if backend == 'realtime-ws' else None
+        missing = missing_imports(backend, provider)
+        if missing:
+            names = ', '.join(missing)
+            log(f"[ERROR] Missing Python modules: {names}")
+            log("[ERROR] Dictation may fail until they are installed - run: hyprwhspr setup (Reinstall backend: yes)")
+            self._notify_user(
+                "hyprwhspr", f"Missing Python modules: {names}\n"
+                "Run: hyprwhspr setup and reinstall the backend",
+                urgency="critical")
+        return missing
 
     def _mic_failure_message(self, fallback: str) -> str:
         """Pick user advice for a failed recording start based on what actually failed.

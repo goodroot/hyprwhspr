@@ -45,6 +45,7 @@ Do not run installers, setup, systemd commands, microphone capture, or model dow
 - New or changed configuration keys must stay aligned across `ConfigManager.default_config`, `share/config.schema.json`, relevant CLI/setup behavior, and `docs/CONFIGURATION.md`. `tests/test_config_schema_sync.py` checks the two machine-readable surfaces.
 - CLI subcommands are routed in both `bin/hyprwhspr` and `lib/main.py`; keep both lists synchronized with `lib/cli.py`.
 - Backend wheel names, versions, and variants are defined in `lib/src/backend_installer.py` and consumed by `.github/workflows/build-wheels.yml`; avoid duplicating that contract.
+- Required imports per backend live in `PLAN_SPECS` (`lib/src/dependency_plan.py`). The service start check (`missing_imports`, reported by `_report_missing_dependencies`) reads them; add new runtime imports there.
 - `scripts/install.sh` is the canonical installer. The website build copies it to `website/public/install.sh`; do not hand-edit copied/generated output.
 - GUI dependencies are optional. Keep core modules importable and testable without GTK, layer-shell, audio hardware, GPU libraries, or a desktop session.
 

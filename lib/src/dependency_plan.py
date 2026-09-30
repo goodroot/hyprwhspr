@@ -1,5 +1,7 @@
 """Authoritative dependency plan specifications and resolution."""
 
+import importlib.util
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -57,6 +59,27 @@ def plan_key(backend: str, provider: Optional[str], variant: Optional[str], erro
     if backend in ('qwen3-asr', 'parakeet-cpp'):
         return backend
     raise error(f"No dependency manifest is defined for backend {backend!r}")
+
+
+def _importable(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        # Fall back to the loaded-module table when find_spec raises.
+        return name in sys.modules
+
+
+def missing_imports(backend: str, provider: Optional[str] = None):
+    """Required imports of a backend's plan that this interpreter cannot find.
+
+    Modules are located without importing them. A backend without a plan
+    yields an empty tuple.
+    """
+    try:
+        imports = PLAN_SPECS[plan_key(backend, provider, None, ValueError)][1]
+    except ValueError:
+        return ()
+    return tuple(name for name in imports if not _importable(name))
 
 
 def resolve(root: Path, backend: str, provider: Optional[str], variant: Optional[str], error: Callable):

@@ -1623,6 +1623,21 @@ On resume/restart, the microphone often "loses connection" and requires reseatin
 If the default source ends in `.monitor`, select a real input or set
 `audio_device_name`. Test it with `hyprwhspr test --live`.
 
+#### "Missing Python modules" at startup
+
+At start the service checks that every Python module the configured backend
+needs can be found. When one is missing it logs
+`[ERROR] Missing Python modules: <names>` and shows a persistent notification;
+the service keeps running.
+
+This typically follows a `git pull` in a source checkout that added a
+dependency. Re-run setup, keep the backend and answer **Reinstall backend?**
+with yes:
+
+```bash
+hyprwhspr setup   # source checkout: ./bin/hyprwhspr setup
+```
+
 #### Hotkey not working
 
 ```bash
