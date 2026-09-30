@@ -59,7 +59,7 @@ class PywhispercppBackend(TranscriptionBackend):
 
         try:
             # Validate model file exists before attempting to load
-            if self._model_file(self.current_model) is None:
+            if not self._model_files(self.current_model):
                 model_file = PYWHISPERCPP_MODELS_DIR / f"ggml-{self.current_model}.bin"
                 log(f"[ERROR] Model file not found: {model_file}")
                 log(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
@@ -100,11 +100,8 @@ class PywhispercppBackend(TranscriptionBackend):
             from pywhispercpp import Model
 
         strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
-        # A path, never a bare name: pywhispercpp downloads any name it can't
-        # find, so a .en-only install would silently fetch the multilingual model.
-        model_file = self._model_file(model_name)
         kwargs = {
-            'model': str(model_file) if model_file else model_name,
+            'model': self._model_arg(model_name),
             'n_threads': n_threads,
             'params_sampling_strategy': strategy_int,
             'redirect_whispercpp_logs_to': None,
@@ -419,19 +416,33 @@ class PywhispercppBackend(TranscriptionBackend):
             return ""
 
     @staticmethod
-    def _model_file(model_name: str):
-        """Installed model file for model_name, multilingual first, else None."""
-        for name in (f"ggml-{model_name}.bin", f"ggml-{model_name}.en.bin"):
-            model_file = PYWHISPERCPP_MODELS_DIR / name
-            if model_file.is_file():
-                return model_file
-        return None
+    def _model_files(model_name: str):
+        """Installed files for model_name: multilingual first, then English-only."""
+        names = (f"ggml-{model_name}.bin", f"ggml-{model_name}.en.bin")
+        return [PYWHISPERCPP_MODELS_DIR / n for n in names if (PYWHISPERCPP_MODELS_DIR / n).is_file()]
+
+    def _model_arg(self, model_name: str) -> str:
+        """What to hand pywhispercpp's Model(): a file path whenever one fits.
+
+        pywhispercpp downloads any bare name it can't find. With only the .en
+        file installed that meant fetching the multilingual model at every
+        service start. English dictation can use the .en file; any other
+        language still needs the multilingual download.
+        """
+        exact = PYWHISPERCPP_MODELS_DIR / f"ggml-{model_name}.bin"
+        if exact.is_file():
+            return str(exact)
+        english = PYWHISPERCPP_MODELS_DIR / f"ggml-{model_name}.en.bin"
+        language = (self.config.get_setting('language', None) or '').lower()
+        if english.is_file() and language.startswith('en'):
+            log(f"[BACKEND] Using English-only {english.name} for model '{model_name}'")
+            return str(english)
+        return model_name
 
     def _validate_model_file(self, model_name: str) -> bool:
         """Validate that model file exists and is not corrupted"""
-        model_file = self._model_file(model_name)
         # Basic size check (>10MB for any valid model)
-        return model_file is not None and model_file.stat().st_size > 10000000
+        return any(f.stat().st_size > 10000000 for f in self._model_files(model_name))
 
     def _cleanup_model(self) -> None:
         """Safely cleanup existing model instance - GPU-safe approach"""
