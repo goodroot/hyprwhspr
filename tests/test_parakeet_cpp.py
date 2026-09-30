@@ -76,6 +76,31 @@ class NativeTests(unittest.TestCase):
         self.library.parakeet_capi_free_string.assert_not_called()
         self.library.parakeet_capi_last_error.assert_called_once_with(123)
 
+    def _sent_audio(self, audio):
+        sent = []
+        def transcribe(ctx, pcm, count, rate, decoder):
+            sent.append(np.ctypeslib.as_array(pcm, shape=(count,)).copy())
+        self.library.parakeet_capi_transcribe_pcm.side_effect = transcribe
+        self.library.parakeet_capi_last_error.return_value = b'mock'
+        self.backend.transcribe(audio)
+        return sent[0]
+
+    def test_long_pauses_are_shortened_to_one_second(self):
+        # Parakeet dropped whole sentences spoken after 1.5-2.6 s pauses (#268)
+        speech = (0.1 * np.sin(np.arange(8000) * 0.3)).astype(np.float32)
+        def pause(seconds):
+            return np.random.default_rng(0).normal(0, 1e-3, int(seconds * 16000)).astype(np.float32)
+        np.testing.assert_array_equal(
+            self._sent_audio(np.concatenate([speech, pause(5), speech, pause(0.8), speech])),
+            np.concatenate([speech, pause(5)[:8000], pause(5)[-8000:], speech, pause(0.8), speech]))
+
+    def test_digital_silence_floor_leaves_pauses_intact(self):
+        # Gated or muted input: exact zeros set the floor, so room noise isn't a pause
+        speech = (0.1 * np.sin(np.arange(8000) * 0.3)).astype(np.float32)
+        noise = np.random.default_rng(0).normal(0, 1e-3, 48000).astype(np.float32)
+        audio = np.concatenate([np.zeros(16000, np.float32), speech, noise, speech, np.zeros(16000, np.float32)])
+        np.testing.assert_array_equal(self._sent_audio(audio), audio)
+
     def test_empty_invalid_audio_and_unload(self):
         for audio in (np.array([]), np.ones((2, 3)), np.array([float('nan')])):
             self.assertEqual(self.backend.transcribe(audio), '')
