@@ -467,7 +467,7 @@
       "type": "string",
       "enum": ["auto", "int8", "float16", "int8_float16", "float32"],
       "default": "auto",
-      "description": "'auto' uses int8 on CUDA, float32 on CPU. Set to 'int8' explicitly on CPU for faster inference at some accuracy cost."
+      "description": "'auto' uses int8 on CUDA and CPU. float16 (CUDA) or float32 trade memory for precision."
     },
     "faster_whisper_vad_filter": {
       "type": "boolean",

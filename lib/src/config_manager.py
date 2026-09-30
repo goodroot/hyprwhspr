@@ -166,7 +166,7 @@ def build_default_config():
         # faster-whisper backend settings (CTranslate2, NVIDIA CUDA)
         'faster_whisper_model': 'base',          # Model name (e.g., 'base', 'small', 'large-v3-turbo')
         'faster_whisper_device': 'auto',         # 'auto' | 'cuda' | 'cpu'
-        'faster_whisper_compute_type': 'auto',   # 'auto' → int8 on cuda, float32 on cpu
+        'faster_whisper_compute_type': 'auto',   # 'auto' → int8 (CUDA and CPU)
         'faster_whisper_vad_filter': True,       # Enable Silero VAD (strips silence, reduces hallucinations)
         # Cohere Transcribe backend settings (transformers, CUDA/CPU)
         'cohere_transcribe_device': 'auto',      # 'auto' | 'cuda' | 'cpu'
