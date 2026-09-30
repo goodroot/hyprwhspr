@@ -59,15 +59,8 @@ class PywhispercppBackend(TranscriptionBackend):
 
         try:
             # Validate model file exists before attempting to load
-            models_dir = PYWHISPERCPP_MODELS_DIR
-            model_file = models_dir / f"ggml-{self.current_model}.bin"
-
-            if not model_file.exists():
-                # Try English-only variant
-                if not self.current_model.endswith('.en'):
-                    model_file = models_dir / f"ggml-{self.current_model}.en.bin"
-
-            if not model_file.exists():
+            if self._model_file(self.current_model) is None:
+                model_file = PYWHISPERCPP_MODELS_DIR / f"ggml-{self.current_model}.bin"
                 log(f"[ERROR] Model file not found: {model_file}")
                 log(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
                 return False
@@ -107,8 +100,11 @@ class PywhispercppBackend(TranscriptionBackend):
             from pywhispercpp import Model
 
         strategy_int = 1 if self.config.get_setting('sampling_strategy', 'beam_search') == 'beam_search' else 0
+        # A path, never a bare name: pywhispercpp downloads any name it can't
+        # find, so a .en-only install would silently fetch the multilingual model.
+        model_file = self._model_file(model_name)
         kwargs = {
-            'model': model_name,
+            'model': str(model_file) if model_file else model_name,
             'n_threads': n_threads,
             'params_sampling_strategy': strategy_int,
             'redirect_whispercpp_logs_to': None,
@@ -422,23 +418,20 @@ class PywhispercppBackend(TranscriptionBackend):
             traceback.print_exc()
             return ""
 
+    @staticmethod
+    def _model_file(model_name: str):
+        """Installed model file for model_name, multilingual first, else None."""
+        for name in (f"ggml-{model_name}.bin", f"ggml-{model_name}.en.bin"):
+            model_file = PYWHISPERCPP_MODELS_DIR / name
+            if model_file.is_file():
+                return model_file
+        return None
+
     def _validate_model_file(self, model_name: str) -> bool:
         """Validate that model file exists and is not corrupted"""
-        models_dir = PYWHISPERCPP_MODELS_DIR
-
-        # Check for both multilingual and English-only versions
-        model_files = [
-            models_dir / f"ggml-{model_name}.bin",
-            models_dir / f"ggml-{model_name}.en.bin"
-        ]
-
-        for model_file in model_files:
-            if model_file.exists():
-                # Basic size check (>10MB for any valid model)
-                if model_file.stat().st_size > 10000000:
-                    return True
-
-        return False
+        model_file = self._model_file(model_name)
+        # Basic size check (>10MB for any valid model)
+        return model_file is not None and model_file.stat().st_size > 10000000
 
     def _cleanup_model(self) -> None:
         """Safely cleanup existing model instance - GPU-safe approach"""
