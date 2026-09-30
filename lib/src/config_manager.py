@@ -139,6 +139,7 @@ def build_default_config():
         'qwen3_asr_model': '1.7b-q8_0',       # Quality-first Q8 decoder/projector pair
         'qwen3_asr_device': 'auto',           # 'auto' | 'cpu' | 'vulkan' (no Linux CUDA build upstream)
         'qwen3_asr_timeout': 180,              # Sidecar request timeout (1-600 seconds)
+        'qwen3_asr_ctx_size': 8192,            # llama-server --ctx-size (512-65536); null = llama.cpp default (32000)
         'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
         'rest_api_provider': None,          # Provider identifier for credential lookup (e.g., 'openai', 'groq', 'custom')
         'rest_api_key': None,              # DEPRECATED: Optional API key for authentication (kept for backward compatibility)

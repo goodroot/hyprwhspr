@@ -335,6 +335,13 @@
       "default": 180,
       "description": "Qwen3-ASR sidecar request timeout in seconds"
     },
+    "qwen3_asr_ctx_size": {
+      "type": ["integer", "null"],
+      "minimum": 512,
+      "maximum": 65536,
+      "default": 8192,
+      "description": "Qwen3-ASR llama-server context size in tokens; null keeps llama.cpp's default (32000). The KV cache (~112 KiB/token for the 1.7B model) scales with this"
+    },
     "rest_endpoint_url": {
       "type": ["string", "null"],
       "default": null,

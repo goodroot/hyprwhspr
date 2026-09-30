@@ -220,7 +220,13 @@ class Qwen3AsrBackend(TranscriptionBackend):
         # to resolve the value as a hostname.
         args = [str(server), "-m", str(decoder), "--mmproj", str(projector),
                 "--host", str(self._socket_path), "--threads",
-                str(self.config.get_setting("threads", 4)), "--parallel", "1"]
+                str(self.config.get_setting("threads", 4)), "--parallel", "1",
+                # Every request is fresh audio: the host-RAM prompt cache (8 GiB
+                # by default) would only ever hold states nothing reuses.
+                "--cache-ram", "0"]
+        ctx_size = self._ctx_size()
+        if ctx_size is not None:
+            args += ["--ctx-size", str(ctx_size)]
         env = os.environ.copy()
         lib_dir = library_dir(device)
         env["LD_LIBRARY_PATH"] = str(lib_dir) + (
@@ -263,6 +269,16 @@ class Qwen3AsrBackend(TranscriptionBackend):
     def _timeout(self) -> int:
         value = int(self.config.get_setting("qwen3_asr_timeout", 180))
         return max(1, min(600, value))
+
+    def _ctx_size(self) -> Optional[int]:
+        # llama.cpp's own default is n_ctx 32000 for this model, an f16 KV
+        # cache of ~112 KiB/token (~3.5 GiB on the 1.7B). 8192 (~0.9 GiB)
+        # covers ~5 minutes of audio, well past the per-request chunk cap.
+        # null opts back into llama.cpp's default.
+        value = self.config.get_setting("qwen3_asr_ctx_size", 8192)
+        if value is None:
+            return None
+        return max(512, min(65536, int(value)))
 
     def initialize(self) -> bool:
         self.cleanup()
