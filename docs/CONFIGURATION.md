@@ -432,7 +432,7 @@ Built-in Silero VAD strips silence before inference — the most effective mitig
     "transcription_backend": "faster-whisper",
     "faster_whisper_model": "large-v3-turbo",   // CUDA; use "base" or "small" for CPU
     "faster_whisper_device": "auto",             // auto | cuda | cpu
-    "faster_whisper_compute_type": "auto",       // auto → int8 on cuda, float32 on cpu; set "int8" on cpu for speed
+    "faster_whisper_compute_type": "auto",       // auto → int8; float16/float32 trade memory for precision
     "faster_whisper_vad_filter": true            // Silero VAD (default: true)
 }
 ```

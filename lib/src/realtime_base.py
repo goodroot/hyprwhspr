@@ -17,7 +17,7 @@ import base64
 import threading
 import time
 from typing import Optional
-from queue import Queue, Empty
+from queue import Queue
 from collections import deque
 
 try:
@@ -456,9 +456,10 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             if not self.receiver_running:
                 self.receiver_running = True
                 start_receiver = True
+                events = self.event_queue
 
         if start_receiver:
-            self.receiver_thread = threading.Thread(target=self._receiver_loop, daemon=True)
+            self.receiver_thread = threading.Thread(target=self._receiver_loop, args=(events,), daemon=True)
             self.receiver_thread.start()
 
         self._after_open(ws)
@@ -526,15 +527,20 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                     self._reconnect_threads.add(reconnect_thread)
                 reconnect_thread.start()
 
-    def _receiver_loop(self):
-        """Background thread to process incoming events"""
-        while self.receiver_running:
+    def _receiver_loop(self, events):
+        """Background thread to process incoming events.
+
+        Blocks rather than polls: an idle connection can stay open for hours.
+        Teardown hands the next session a fresh queue and wakes this one with None.
+        Ownership is the queue, not receiver_running: a quick reopen sets that
+        flag again while this thread may still be draining the old session.
+        """
+        while True:
+            event = events.get()
+            if event is None or events is not self.event_queue:
+                return
             try:
-                # Get event with timeout
-                event = self.event_queue.get(timeout=0.1)
                 self._handle_event(event)
-            except Empty:
-                continue
             except Exception as e:
                 self._log(f'Error in receiver loop: {e}')
 
@@ -600,6 +606,8 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             self._fail_pending_attempt_locked()
             self._sender_running = False
             self.receiver_running = False
+            events, self.event_queue = self.event_queue, Queue()
+            events.put(None)
             self._audio_queue.clear()
             self.audio_buffer_seconds = 0.0
             self._queue_cond.notify_all()

@@ -183,6 +183,8 @@ class MicOSD:
         elif self.daemon:
             # Start hidden, wait for SIGUSR1
             self.window.set_visible(False)
+            if self.theme_watcher:
+                self.theme_watcher.stop()
         else:
             # Show immediately
             self._show()
@@ -202,6 +204,8 @@ class MicOSD:
             return
 
         self.visible = True
+        if self.theme_watcher:
+            self.theme_watcher.resume()
         self.window.set_visible(True)
 
         # Prefer the main process's level feed (tracks the recorded device, no
@@ -253,6 +257,10 @@ class MicOSD:
         if not self.window:
             self.visible = False
             return
+
+        # Before the GTK calls below, so a failing one can't leave it polling
+        if self.theme_watcher:
+            self.theme_watcher.stop()
         
         try:
             self.visible = False

@@ -1,5 +1,7 @@
 import json
 import sys
+import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -553,6 +555,85 @@ class RealtimeClientTests(unittest.TestCase):
 
         self.assertEqual(len(resampled), 2400)
         self.assertEqual(resampled.dtype, np.float32)
+
+
+class CountingQueue(realtime_base.Queue):
+    def __init__(self):
+        super().__init__()
+        self.gets = 0
+
+    def get(self, *args, **kwargs):
+        self.gets += 1
+        return super().get(*args, **kwargs)
+
+
+class ReceiverLifecycleTests(unittest.TestCase):
+    def _open(self, client):
+        ws = FakeWebSocket()
+        client.ws = ws
+        client._on_open(ws)
+        return ws, client.receiver_thread
+
+    def test_idle_receiver_blocks_instead_of_polling(self):
+        # A 0.1 s poll woke 10x/s for as long as the connection stayed open.
+        client = RealtimeClient(mode="transcribe")
+        client.event_queue = events = CountingQueue()
+        handled = threading.Event()
+        client._handle_event = lambda event: handled.set()
+        ws, thread = self._open(client)
+        time.sleep(0.35)
+        self.assertEqual(events.gets, 1)
+        client._on_message(ws, json.dumps({"type": "ping"}))
+        self.assertTrue(handled.wait(1))
+        client.reset()
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+
+    def test_reopen_runs_exactly_one_receiver_on_a_fresh_queue(self):
+        client = RealtimeClient(mode="transcribe")
+        seen = []
+        client._handle_event = lambda event: seen.append((threading.current_thread(), event))
+        _, first = self._open(client)
+        first_queue = client.event_queue
+        client.reset()
+        ws, second = self._open(client)
+        first.join(1)
+        self.assertFalse(first.is_alive())
+        self.assertIsNot(client.event_queue, first_queue)
+        client._on_message(ws, json.dumps({"type": "ping"}))
+        deadline = time.monotonic() + 1
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(seen, [(second, {"type": "ping"})])
+        client.close()
+        second.join(1)
+        self.assertFalse(second.is_alive())
+
+    def test_draining_receiver_stops_once_its_session_is_replaced(self):
+        # reset() + reopen while the old receiver is mid-event: it must not go on
+        # to handle old-session events next to the new receiver.
+        client = RealtimeClient(mode="transcribe")
+        busy, release, seen = threading.Event(), threading.Event(), []
+
+        def handle(event):
+            seen.append(event["n"])
+            if event["n"] == 1:
+                busy.set()
+                release.wait(2)
+        client._handle_event = handle
+        ws, first = self._open(client)
+        client._on_message(ws, json.dumps({"n": 1}))
+        client._on_message(ws, json.dumps({"n": 2}))
+        self.assertTrue(busy.wait(1))
+        with mock.patch.object(first, "join"):
+            client.reset()
+        _, second = self._open(client)
+        release.set()
+        first.join(1)
+        self.assertFalse(first.is_alive())
+        self.assertEqual(seen, [1])
+        client.close()
+        second.join(1)
 
 
 if __name__ == "__main__":
