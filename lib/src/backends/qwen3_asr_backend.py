@@ -221,6 +221,9 @@ class Qwen3AsrBackend(TranscriptionBackend):
         args = [str(server), "-m", str(decoder), "--mmproj", str(projector),
                 "--host", str(self._socket_path), "--threads",
                 str(self.config.get_setting("threads", 4)), "--parallel", "1"]
+        ctx_size = self._ctx_size()
+        if ctx_size is not None:
+            args += ["--ctx-size", str(ctx_size)]
         env = os.environ.copy()
         lib_dir = library_dir(device)
         env["LD_LIBRARY_PATH"] = str(lib_dir) + (
@@ -263,6 +266,16 @@ class Qwen3AsrBackend(TranscriptionBackend):
     def _timeout(self) -> int:
         value = int(self.config.get_setting("qwen3_asr_timeout", 180))
         return max(1, min(600, value))
+
+    def _ctx_size(self) -> Optional[int]:
+        # Unset means no --ctx-size flag: llama.cpp then defaults to n_ctx
+        # 32000 for this model, an f16 KV cache of ~112 KiB/token (~3.5 GiB
+        # on the 1.7B) that single-utterance ASR requests never approach.
+        # 8192 covers ~5 minutes of continuous audio at ~0.9 GiB.
+        value = self.config.get_setting("qwen3_asr_ctx_size", None)
+        if value is None:
+            return None
+        return max(512, min(65536, int(value)))
 
     def initialize(self) -> bool:
         self.cleanup()

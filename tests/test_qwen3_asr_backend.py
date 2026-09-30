@@ -407,6 +407,39 @@ class QwenBackendTests(unittest.TestCase):
             len(str(qwen3_asr_backend.QWEN3_ASR_SOCKET).encode()),
             qwen3_asr_backend._MAX_UNIX_SOCKET_BYTES)
 
+    def _capture_launch_args(self):
+        captured = {}
+
+        def fake_popen(args, **kwargs):
+            captured["args"] = args
+            raise RuntimeError("stop here")
+
+        with mock.patch.object(qwen3_asr_backend.subprocess, "Popen", fake_popen), \
+                mock.patch.object(qwen3_asr_backend, "server_path",
+                                  return_value=self._touch("llama-server")), \
+                mock.patch.object(qwen3_asr_backend, "model_paths",
+                                  return_value=(self._touch("d.gguf"), self._touch("p.gguf"))), \
+                mock.patch.object(qwen3_asr_backend, "QWEN3_ASR_LOG", self._log_path):
+            self.assertFalse(self.backend._start())
+        return captured["args"]
+
+    def test_ctx_size_flag_is_unset_by_default(self):
+        # Unconfigured means no --ctx-size: llama.cpp keeps its own default.
+        args = self._capture_launch_args()
+        self.assertNotIn("--ctx-size", args)
+
+    def test_ctx_size_flag_follows_config(self):
+        # llama.cpp's 32000 default is a ~3.5 GiB f16 KV cache that
+        # single-utterance ASR never fills (~112 KiB/token on the 1.7B).
+        self.backend.config.values["qwen3_asr_ctx_size"] = 4096
+        args = self._capture_launch_args()
+        self.assertEqual(args[args.index("--ctx-size") + 1], "4096")
+
+    def test_ctx_size_is_clamped_to_the_supported_range(self):
+        self.backend.config.values["qwen3_asr_ctx_size"] = 999999
+        args = self._capture_launch_args()
+        self.assertEqual(args[args.index("--ctx-size") + 1], "65536")
+
     def test_stderr_is_never_an_unread_pipe(self):
         # An unread PIPE deadlocks llama-server once its 64 KiB buffer fills.
         import subprocess as sp
