@@ -64,6 +64,40 @@ class NotificationCompatibilityTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0][0], "gdbus")
 
 
+class NotificationPresenterStateTests(unittest.TestCase):
+    def _sent(self, *states):
+        """Show the bubble, apply states; returns the kwargs of every send."""
+        presenter = NotificationPresenter(active_timeout_ms=5000)
+        with (
+            mock.patch.object(NotificationPresenter, "is_available", return_value=True),
+            mock.patch("mic_osd.notification_presenter.send_notification_with_id",
+                       return_value=7) as send,
+        ):
+            presenter.show()
+            for state in states:
+                presenter.set_state(state)
+        return [call.kwargs for call in send.call_args_list]
+
+    def test_processing_stays_until_replaced(self):
+        processing = self._sent("processing")[-1]
+        self.assertEqual(processing["urgency"], "critical")
+        self.assertEqual(processing["timeout_ms"], 0)
+        self.assertEqual(processing["replaces_id"], 7)
+
+    def test_result_replaces_processing_at_normal_urgency(self):
+        for result in ("success", "error"):
+            with self.subTest(result=result):
+                sent = self._sent("processing", result)[-1]
+                self.assertEqual(sent["urgency"], "normal")
+                self.assertEqual(sent["replaces_id"], 7)
+                self.assertEqual(sent["timeout_ms"], NotificationPresenter._TRANSIENT_TIMEOUT_MS)
+
+    def test_recording_keeps_normal_urgency_and_configured_timeout(self):
+        recording = self._sent()[0]
+        self.assertEqual(recording["urgency"], "normal")
+        self.assertEqual(recording["timeout_ms"], 5000)
+
+
 class BackendInstallerStateTests(unittest.TestCase):
     def test_dependency_manifests_are_backend_and_provider_specific(self):
         with mock.patch.object(backend_installer, "HYPRWHSPR_ROOT", str(ROOT)):
