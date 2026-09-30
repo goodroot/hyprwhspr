@@ -257,6 +257,10 @@ class MicOSD:
         if not self.window:
             self.visible = False
             return
+
+        # Before the GTK calls below, so a failing one can't leave it polling
+        if self.theme_watcher:
+            self.theme_watcher.stop()
         
         try:
             self.visible = False
@@ -264,8 +268,6 @@ class MicOSD:
                 self.window.set_preview_text("")
             self._last_preview_text = None
             self.window.set_visible(False)
-            if self.theme_watcher:
-                self.theme_watcher.stop()
             
             # Stop update timer
             if self.update_timer_id:

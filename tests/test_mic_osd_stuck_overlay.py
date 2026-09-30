@@ -120,7 +120,9 @@ class MicOSDStuckOverlayTests(unittest.TestCase):
         app.visible = False
         app._show()
         watcher.resume.assert_called_once()
-        app._hide()
+        app.window.set_preview_text.side_effect = RuntimeError("gtk teardown")
+        with mock.patch("builtins.print"):
+            app._hide()
         watcher.stop.assert_called_once()
 
 
