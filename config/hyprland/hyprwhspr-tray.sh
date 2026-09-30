@@ -617,28 +617,6 @@ control_recording() {
     fi
 }
 
-# Function to check service health and recover from stuck states
-check_service_health() {
-    if is_hyprwhspr_running; then
-        # Check if service has been in "activating" state too long
-        local service_status=$(systemctl --user show hyprwhspr.service --property=ActiveState --value)
-        
-        if [ "$service_status" = "activating" ]; then
-            # Service is stuck starting, restart it
-            echo "Service stuck in activating state, restarting..." >&2
-            systemctl --user restart hyprwhspr.service
-            return 1
-        fi
-        
-        # Check if recording state is stuck (running but no actual audio)
-        if is_hyprwhspr_running && ! is_hyprwhspr_recording; then
-            # Service is running but not recording - this is normal
-            return 0
-        fi
-    fi
-    return 0
-}
-
 # Function to emit JSON output for waybar with granular error classes
 emit_json() {
     local state="$1" reason="${2:-}" custom_tooltip="${3:-}"
@@ -864,12 +842,9 @@ case "${1:-status}" in
         fi
         ;;
     "health")
-        check_service_health
-        if [ $? -eq 0 ]; then
-            echo "Service health check passed" >&2
-        else
-            echo "Service health check failed, attempting recovery" >&2
-        fi
+        # Kept for scripts. It never recovered anything: a Type=simple unit
+        # can't sit in "activating". Stuck recording: hyprwhspr record cancel
+        probe_once
         IFS=: read -r s r <<<"$(get_current_state)"
         # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
         if [ ! -t 1 ]; then
@@ -885,6 +860,6 @@ case "${1:-status}" in
         echo "  start     - Start hyprwhspr"
         echo "  stop      - Stop hyprwhspr"
         echo "  restart   - Restart hyprwhspr"
-        echo "  health    - Check service health and recover if needed"
+        echo "  health    - Same as status (kept for scripts)"
         ;;
 esac

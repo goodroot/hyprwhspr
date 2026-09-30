@@ -1816,10 +1816,10 @@ depends on the failing compiled package and platform.
 #### Stuck recording state
 
 ```bash
-# Check service health and auto-recover
-/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh health
+# Cancel the stuck recording, audio discarded
+hyprwhspr record cancel
 
-# Manual restart if needed
+# Still stuck: restart
 systemctl --user restart hyprwhspr.service
 
 # Check service status
