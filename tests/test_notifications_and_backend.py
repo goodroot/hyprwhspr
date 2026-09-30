@@ -195,6 +195,45 @@ class BackendInstallerStateTests(unittest.TestCase):
         self.assertEqual(verify.call_args.args[0].family, 'pywhispercpp')
         self.assertEqual(verify.call_args.args[1], pip_bin)
 
+    def test_failed_vulkan_build_reports_the_cpu_fallback(self):
+        state = {"dependency_manifest_hash": "same-hash"}
+        with tempfile.TemporaryDirectory() as tmp:
+            venv_dir = Path(tmp) / "venv"
+            (venv_dir / "bin").mkdir(parents=True)
+            pip_bin = venv_dir / "bin" / "pip"
+            pip_bin.touch()
+            completed = types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            with (
+                mock.patch.object(backend_installer, "VENV_DIR", venv_dir),
+                mock.patch.object(backend_installer, "HYPRWHSPR_ROOT", str(ROOT)),
+                mock.patch.object(backend_installer, "init_state"),
+                mock.patch.object(backend_installer, "_check_mise_active", return_value=False),
+                mock.patch.object(backend_installer, "get_state",
+                                  side_effect=lambda key: state.get(key, "")),
+                mock.patch.object(backend_installer, "setup_vulkan_support", return_value=True),
+                mock.patch.object(backend_installer, "setup_python_venv", return_value=pip_bin),
+                mock.patch.object(backend_installer, "run_command", return_value=completed),
+                mock.patch.object(backend_installer, "_verify_dependency_plan_detailed",
+                                  return_value=backend_installer.DependencyVerification(ok=False)),
+                mock.patch.object(backend_installer, "_verify_and_repair_dependency_plan",
+                                  return_value=backend_installer.DependencyVerification(ok=True)),
+                mock.patch.object(backend_installer, "VenvTransaction",
+                                  return_value=mock.Mock(had_old=False)),
+                mock.patch.object(backend_installer, "install_pywhispercpp_vulkan", return_value=False),
+                mock.patch.object(backend_installer, "install_pywhispercpp_cpu", return_value=True),
+                mock.patch.object(backend_installer, "commit_dependency_state") as commit_state,
+                mock.patch.object(backend_installer, "download_pywhispercpp_model", return_value=True),
+                mock.patch.object(backend_installer, "set_install_state"),
+                mock.patch.object(backend_installer, "log_success") as success,
+                mock.patch.object(backend_installer, "log_warning") as warning,
+            ):
+                self.assertTrue(backend_installer.install_backend("vulkan"))
+        self.assertEqual(commit_state.call_args.args[0].accelerated_variant, "cpu")
+        successes = [call.args[0] for call in success.call_args_list]
+        self.assertFalse([m for m in successes if "backend installation completed" in m])
+        warnings = [call.args[0] for call in warning.call_args_list]
+        self.assertTrue([m for m in warnings if "CPU-only" in m and "VULKAN" in m], warnings)
+
     def test_pywhispercpp_verification_failure_persists_diagnostic_before_cleanup(self):
         state = {"dependency_manifest_hash": "same-hash"}
         failed = backend_installer.DependencyVerification(

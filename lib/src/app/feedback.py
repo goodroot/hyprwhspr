@@ -4,6 +4,7 @@ import shutil
 import threading
 import time
 
+from backend_installer import get_state
 from backend_utils import normalize_backend
 from dependency_plan import missing_imports
 from paths import (
@@ -48,6 +49,23 @@ class FeedbackMixin:
                 "Run: hyprwhspr setup and reinstall the backend",
                 urgency="critical")
         return missing
+
+    def _report_cpu_only_build(self) -> bool:
+        """Log and notify when a GPU backend is configured but the installer recorded a CPU-only build.
+
+        Returns True when the mismatch was reported.
+        """
+        backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+        if backend not in ('nvidia', 'vulkan') or get_state('installed_backend') != 'cpu':
+            return False
+        log(f"[WARN] {backend} is configured, but the installed whisper.cpp build is CPU-only")
+        log("[WARN] Transcription runs on the CPU - run: hyprwhspr setup (Reinstall backend: yes), "
+            "or choose CPU there")
+        self._notify_user(
+            "hyprwhspr", f"{backend} is configured, but whisper.cpp runs CPU-only\n"
+            "Run: hyprwhspr setup and reinstall the backend, or choose CPU",
+            urgency="critical")
+        return True
 
     def _mic_failure_message(self, fallback: str) -> str:
         """Pick user advice for a failed recording start based on what actually failed.

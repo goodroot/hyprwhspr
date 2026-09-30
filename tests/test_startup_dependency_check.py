@@ -53,6 +53,51 @@ class StartupDependencyCheckTests(unittest.TestCase):
             'transcription_backend': 'realtime-ws', 'websocket_provider': 'elevenlabs'})
         finder.assert_called_once_with('realtime-ws', 'elevenlabs')
 
+    def _cpu_report(self, backend, installed):
+        app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+        app.config = FakeConfig({'transcription_backend': backend})
+        app._notify_user = mock.Mock()
+        state = {'installed_backend': installed}
+        output = io.StringIO()
+        with patch_app_global(self.main.hyprwhsprApp, 'get_state', lambda key: state.get(key, '')), \
+                contextlib.redirect_stdout(output):
+            result = app._report_cpu_only_build()
+        return app, output.getvalue(), result
+
+    def test_gpu_backend_on_a_cpu_build_is_reported(self):
+        for backend, shown in (('vulkan', 'vulkan'), ('amd', 'vulkan'), ('nvidia', 'nvidia')):
+            with self.subTest(backend=backend):
+                app, logged, result = self._cpu_report(backend, 'cpu')
+                self.assertTrue(result)
+                self.assertIn(f'[WARN] {shown} is configured, but the installed whisper.cpp build is CPU-only', logged)
+                (_title, message), kwargs = app._notify_user.call_args
+                self.assertEqual(kwargs, {'urgency': 'critical'})
+                self.assertIn('hyprwhspr setup', message)
+                self.assertIn('reinstall the backend', message)
+                self.assertIn('choose CPU', message)
+                self.assertIn('or choose CPU', logged)
+
+    def test_matching_or_unknown_build_stays_silent(self):
+        for backend, installed in (('vulkan', 'vulkan'), ('nvidia', 'nvidia'), ('cpu', 'cpu'),
+                                   ('vulkan', ''), ('onnx-asr', 'cpu')):
+            with self.subTest(backend=backend, installed=installed):
+                app, logged, result = self._cpu_report(backend, installed)
+                self.assertFalse(result)
+                self.assertEqual(logged, '')
+                self.assertFalse(app._notify_user.called)
+
+    def test_run_reports_cpu_build_before_initializing_the_backend(self):
+        tree = ast.parse((ROOT / 'lib' / 'main.py').read_text(encoding='utf-8'))
+        run = next(node for node in ast.walk(tree)
+                   if isinstance(node, ast.FunctionDef) and node.name == 'run')
+        lines = {}
+        for node in ast.walk(run):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                lines.setdefault(node.func.attr, node.lineno)
+        self.assertIn('_report_cpu_only_build', lines)
+        for init in ('initialize', '_start_backend_init_background'):
+            self.assertLess(lines['_report_cpu_only_build'], lines[init])
+
     def test_run_reports_before_initializing_the_backend(self):
         tree = ast.parse((ROOT / 'lib' / 'main.py').read_text(encoding='utf-8'))
         run = next(node for node in ast.walk(tree)

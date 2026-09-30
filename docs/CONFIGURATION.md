@@ -457,6 +457,8 @@ Run `hyprwhspr setup` and select **Whisper**. On AMD/Intel, setup uses whisper.c
 
 For whisper.cpp on CPU or NVIDIA: `hyprwhspr setup auto --backend cpu` or `--backend nvidia`.
 
+On x86-64, setup installs a pre-built `pywhispercpp` wheel for NVIDIA (CUDA 12) and Vulkan from the `wheels-v2` release, after checking it against the release's `SHA256SUMS.txt`. The Vulkan wheel is built on Debian trixie and needs glibc 2.41 or newer (e.g. Fedora 42+, Debian 13, Arch); on older systems setup skips it. Without a matching wheel it builds from source, which for Vulkan needs `glslc`, the Vulkan headers and the SPIR-V headers (Fedora: `vulkan-headers vulkan-loader-devel glslc spirv-headers-devel`). If the GPU build fails, setup installs a CPU-only build and says so; the service then warns at every start (`[WARN] vulkan is configured, but the installed whisper.cpp build is CPU-only`) until setup is re-run with **Reinstall backend?** answered yes, or with CPU chosen instead.
+
 **Best for:** modern NVIDIA cards or discrete AMD/Intel (via Vulkan) — extremely fast on GPU with `large-v3` or `large-v3-turbo`.
 
 #### Available models
