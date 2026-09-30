@@ -12,6 +12,29 @@ except ImportError:
     import parakeet_cpp_runtime as runtime
 
 
+def _shorten_pauses(audio, sample_rate, keep_seconds=1.0):
+    """Shorten every pause longer than keep_seconds to keep_seconds.
+
+    Parakeet silently drops whole sentences spoken after a pause of ~1.5 s or
+    more, even in short recordings (#268). A 20 ms frame counts as silent when
+    it is within 12 dB of the audio's own quietest 10%.
+    """
+    hop = int(0.02 * sample_rate)
+    frames = audio.size // hop
+    if not frames:
+        return audio
+    power = np.square(audio[:frames * hop], dtype=np.float64).reshape(frames, hop).mean(1)
+    level = 10 * np.log10(power + 1e-12)
+    silent = np.concatenate(([0], level < np.percentile(level, 10) + 12, [0])).astype(np.int8)
+    edges = np.flatnonzero(np.diff(silent)) * hop
+    keep = np.ones(audio.size, dtype=bool)
+    half = int(keep_seconds / 2 * sample_rate)
+    for start, end in zip(edges[::2], edges[1::2]):
+        if end - start > keep_seconds * sample_rate:
+            keep[start + half:end - half] = False
+    return audio if keep.all() else audio[keep]
+
+
 class ParakeetCppBackend(TranscriptionBackend):
     name = 'parakeet-cpp'
     loads_in_background = True
@@ -63,6 +86,7 @@ class ParakeetCppBackend(TranscriptionBackend):
             audio = np.ascontiguousarray(audio, dtype=np.float32)
             if audio.size > 2147483647 or not np.isfinite(audio).all():
                 raise ValueError('Audio length or samples are invalid')
+            audio = _shorten_pauses(audio, 16000)
             output = self._library.parakeet_capi_transcribe_pcm(
                 self._context, audio.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                 audio.size, 16000, 0)  # architecture-default greedy decoder
