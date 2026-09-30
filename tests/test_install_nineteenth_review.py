@@ -85,18 +85,36 @@ class NineteenthReviewTests(ReviewHelpers, ManagedFixture):
         # Execute only the function definition, avoiding the tray's desktop actions.
         import subprocess
         source = (ROOT / 'config/hyprland/hyprwhspr-tray.sh').read_text(encoding='utf-8')
-        function = source[source.index('model_exists() {'):source.index('# Microphone detection functions')]
+        function = source[source.index('_epoch(){'):source.index('\n', source.index('_epoch(){'))] + '\n'
+        function += source[source.index('model_exists() {'):source.index('# Microphone detection functions')]
+        runtime = self.root / 'runtime'
+        runtime.mkdir()
         pinned = self.root / 'pinned config'
         for directory, backend in ((pinned, 'rest-api'), (self.root / '.config', 'pywhispercpp')):
             (directory / 'hyprwhspr').mkdir(parents=True)
             (directory / 'hyprwhspr/config.json').write_text(
                 json.dumps({'transcription_backend': backend, 'model': str(self.root / 'missing.bin')}),
                 encoding='utf-8')
+        # One runtime dir for both: the pinned config's cached pass must not
+        # answer for the other config.
         for config, expected in ((str(pinned), 0), ('', 1)):
-            env = dict(os.environ, XDG_CONFIG_HOME=config, SYSTEM_PYTHON=sys.executable)
+            env = dict(os.environ, XDG_CONFIG_HOME=config, SYSTEM_PYTHON=sys.executable,
+                       RUNTIME_DIR=str(runtime))
             result = subprocess.run(['bash', '-c', function + '\nmodel_exists'], env=env,
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, expected, result.stderr)
+            self.assertEqual(result.stderr, '')
+        # A cached pass skips the interpreter; a config edit drops it.
+        env = dict(os.environ, XDG_CONFIG_HOME=str(pinned), SYSTEM_PYTHON='false', RUNTIME_DIR=str(runtime))
+        cached = subprocess.run(['bash', '-c', function + '\nmodel_exists'], env=env)
+        self.assertEqual(cached.returncode, 0)
+        config = pinned / 'hyprwhspr/config.json'
+        config.write_text(json.dumps({'transcription_backend': 'pywhispercpp',
+                                      'model': str(self.root / 'missing.bin')}), encoding='utf-8')
+        os.utime(config, (os.stat(runtime / 'tray_model_ok').st_mtime + 5,) * 2)
+        env['SYSTEM_PYTHON'] = sys.executable
+        edited = subprocess.run(['bash', '-c', function + '\nmodel_exists'], env=env)
+        self.assertEqual(edited.returncode, 1)
 
     def test_untouched_created_file_is_still_removed(self):
         target = self.waybar_config()

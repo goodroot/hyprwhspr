@@ -88,11 +88,12 @@ pactl_default_source() {
     if [[ -n "${_PROBED:-}" ]]; then printf '%s' "$_DEFAULT_SRC"; else try 'pactl get-default-source'; fi
 }
 
-# True when the source list has a real input (not an output's .monitor)
+# True when `pactl list short sources` output has a real input, i.e. a
+# source whose name doesn't end in .monitor (an output's loopback)
 has_input_source() {
-    local line
-    while IFS= read -r line; do
-        [[ -n "$line" && "$line" != *monitor* ]] && return 0
+    local _id name _rest
+    while read -r _id name _rest; do
+        [[ -n "$name" && "$name" != *.monitor ]] && return 0
     done <<<"$1"
     return 1
 }
@@ -110,17 +111,11 @@ is_pipewire_ok() {
     local delay=0.1  # 100ms between retries
     
     # Retry loop to handle startup timing
-    for i in $(seq 1 $retries); do
-        # Check if pactl is accessible
-        if timeout 0.2s pactl info >/dev/null 2>&1; then
-            # Check if we have any input sources (not monitors)
-            # Note: pactl list short sources shows both inputs and output monitors
-            # We need actual input sources, which don't have ".monitor" in the name
-            local sources
-            sources=$(pactl list short sources 2>/dev/null | grep -v "\.monitor" | grep -v "^$")
-            if [[ -n "$sources" ]]; then
-                return 0  # Success
-            fi
+    for ((i = 1; i <= retries; i++)); do
+        # pactl answers and lists a real input (not an output's .monitor)
+        if timeout 0.2s pactl info >/dev/null 2>&1 \
+            && has_input_source "$(pactl list short sources 2>/dev/null)"; then
+            return 0
         fi
         
         # If not last retry, wait before trying again
@@ -133,17 +128,18 @@ is_pipewire_ok() {
     return 1
 }
 
-# Model check starts one or two Python interpreters. Cache a pass for 60 s,
-# dropped early whenever config.json changes; a failure is rechecked each tick.
+# Model check starts one or two Python interpreters. Cache a pass for 60 s per
+# config file, dropped early when it changes; a failure is rechecked each tick.
+# Deleting a model without touching the config shows up within that minute.
 model_exists() {
     local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/hyprwhspr/config.json"
-    local ok="$RUNTIME_DIR/tray_model_ok" at
-    if [[ -f "$ok" && ! "$cfg" -nt "$ok" ]] && read -r at 2>/dev/null < "$ok" \
-        && (( $(_epoch) - at < 60 )); then
+    local ok="$RUNTIME_DIR/tray_model_ok" at path
+    if [[ -f "$ok" && ! "$cfg" -nt "$ok" ]] && IFS=$'\t' read -r at path 2>/dev/null < "$ok" \
+        && [[ "$path" == "$cfg" ]] && (( $(_epoch) - at < 60 )); then
         return 0
     fi
     model_exists_uncached || return 1
-    _epoch > "$ok" 2>/dev/null
+    printf '%s\t%s\n' "$(_epoch)" "$cfg" > "$ok" 2>/dev/null
     return 0
 }
 
@@ -317,7 +313,8 @@ mic_fidelity_label() {
         printf '%s\n' "$label"; return
     fi
     label="$(mic_fidelity_label_uncached "$def")"
-    printf '%s\t%s\t%s\n' "$(_epoch)" "$def" "$label" > "$f" 2>/dev/null
+    # An empty label may be a timed-out pactl: retry next tick, don't pin it
+    [[ -n "$label" ]] && printf '%s\t%s\t%s\n' "$(_epoch)" "$def" "$label" > "$f" 2>/dev/null
     printf '%s\n' "$label"
 }
 

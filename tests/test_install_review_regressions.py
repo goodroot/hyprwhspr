@@ -260,7 +260,8 @@ class MetadataAndTrayReviewTests(ManagedFixture):
 
     def test_tray_backend_probes_do_not_require_legacy_venv(self):
         source = (ROOT / 'config/hyprland/hyprwhspr-tray.sh').read_text()
-        function = source[source.index('model_exists() {'):source.index('mic_present() {')]
+        function = source[source.index('_epoch(){'):source.index('\n', source.index('_epoch(){'))] + '\n'
+        function += source[source.index('model_exists() {'):source.index('mic_present() {')]
         interpreter = self.root / 'backend environment/bin/python'
         interpreter.parent.mkdir(parents=True)
         interpreter.write_text('#!/bin/sh\nexit 0\n')
@@ -271,9 +272,11 @@ class MetadataAndTrayReviewTests(ManagedFixture):
             config.write_text(json.dumps({'transcription_backend': backend}))
             env = os.environ.copy()
             env.update(HOME=str(self.root), SYSTEM_PYTHON=sys.executable,
-                       HYPRWHSPR_BACKEND_ENV=str(interpreter.parent.parent))
+                       HYPRWHSPR_BACKEND_ENV=str(interpreter.parent.parent),
+                       RUNTIME_DIR=tempfile.mkdtemp(dir=self.root))
             result = subprocess.run(['bash', '-c', function + '\nmodel_exists'], env=env, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, b'')
 
 
 if __name__ == '__main__':
