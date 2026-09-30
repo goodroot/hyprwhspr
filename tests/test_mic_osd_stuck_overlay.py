@@ -14,6 +14,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+# Import before patch.dict(sys.modules): numpy cannot be reloaded once evicted.
+import numpy  # noqa: F401,E402
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
@@ -110,6 +113,15 @@ class MicOSDStuckOverlayTests(unittest.TestCase):
                 self.assertFalse(app.visible)
                 app.window.set_visible.assert_called_once_with(False)
                 self.rearm.assert_not_called()
+
+    def test_theme_poll_runs_only_while_visible(self):
+        app = self._show_recording()
+        app.theme_watcher = watcher = mock.Mock()
+        app.visible = False
+        app._show()
+        watcher.resume.assert_called_once()
+        app._hide()
+        watcher.stop.assert_called_once()
 
 
 if __name__ == "__main__":

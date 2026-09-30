@@ -183,6 +183,8 @@ class MicOSD:
         elif self.daemon:
             # Start hidden, wait for SIGUSR1
             self.window.set_visible(False)
+            if self.theme_watcher:
+                self.theme_watcher.stop()
         else:
             # Show immediately
             self._show()
@@ -202,6 +204,8 @@ class MicOSD:
             return
 
         self.visible = True
+        if self.theme_watcher:
+            self.theme_watcher.resume()
         self.window.set_visible(True)
 
         # Prefer the main process's level feed (tracks the recorded device, no
@@ -260,6 +264,8 @@ class MicOSD:
                 self.window.set_preview_text("")
             self._last_preview_text = None
             self.window.set_visible(False)
+            if self.theme_watcher:
+                self.theme_watcher.stop()
             
             # Stop update timer
             if self.update_timer_id:
