@@ -41,9 +41,18 @@ class FasterWhisperBackend(TranscriptionBackend):
         self._faster_whisper_model = None
 
     @staticmethod
-    def _resolve_compute_type(compute_type):
+    def _resolve_compute_type(compute_type, device):
         # int8 on CPU too: float32 holds ~3-4x the weights in RAM and runs slower.
-        return 'int8' if compute_type == 'auto' else compute_type
+        # A device without int8 kernels would refuse the load, so ask first.
+        if compute_type != 'auto':
+            return compute_type
+        try:
+            import ctranslate2
+            if 'int8' not in ctranslate2.get_supported_compute_types(device):
+                return 'default'
+        except Exception:
+            pass
+        return 'int8'
 
     def _load_model(self, WhisperModel, model_name, device, compute_type):
         # CTranslate2 otherwise picks its own thread count and ignores `threads`.
@@ -142,7 +151,7 @@ class FasterWhisperBackend(TranscriptionBackend):
             except Exception:
                 pass
 
-        compute_type = self._resolve_compute_type(compute_type)
+        compute_type = self._resolve_compute_type(compute_type, device)
 
         try:
             log(f'[BACKEND] Loading faster-whisper model: {model_name} (device={device}, compute_type={compute_type})')
@@ -238,7 +247,7 @@ class FasterWhisperBackend(TranscriptionBackend):
             model_name = self.config.get_setting('faster_whisper_model', 'base')
             if force_cpu:
                 device = 'cpu'
-                compute_type = 'int8'
+                compute_type = self._resolve_compute_type('auto', 'cpu')
                 log('[MODEL] Reinitializing faster-whisper on CPU (CUDA libraries unavailable)')
             else:
                 device = self.config.get_setting('faster_whisper_device', 'auto')
@@ -300,7 +309,7 @@ class FasterWhisperBackend(TranscriptionBackend):
                                     pass
                     except Exception:
                         pass
-                compute_type = self._resolve_compute_type(compute_type)
+                compute_type = self._resolve_compute_type(compute_type, device)
             self._faster_whisper_model = self._load_model(WhisperModel, model_name, device, compute_type)
             self._last_use_time = time.monotonic()
             return True

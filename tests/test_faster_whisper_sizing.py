@@ -35,6 +35,12 @@ class FasterWhisperSizingTests(unittest.TestCase):
         kwargs = self._load({'faster_whisper_device': 'cpu', 'threads': 6})
         self.assertEqual((kwargs['compute_type'], kwargs['cpu_threads']), ('int8', 6))
 
+    def test_auto_falls_back_when_the_device_has_no_int8(self):
+        ctranslate2 = types.SimpleNamespace(get_supported_compute_types=lambda device: {'float32'})
+        with mock.patch.dict(sys.modules, {'ctranslate2': ctranslate2}):
+            kwargs = self._load({'faster_whisper_device': 'cpu'})
+        self.assertEqual(kwargs['compute_type'], 'default')
+
     def test_explicit_compute_type_is_respected(self):
         kwargs = self._load({'faster_whisper_device': 'cpu', 'faster_whisper_compute_type': 'float32'})
         self.assertEqual(kwargs['compute_type'], 'float32')
