@@ -609,6 +609,32 @@ class ReceiverLifecycleTests(unittest.TestCase):
         second.join(1)
         self.assertFalse(second.is_alive())
 
+    def test_draining_receiver_stops_once_its_session_is_replaced(self):
+        # reset() + reopen while the old receiver is mid-event: it must not go on
+        # to handle old-session events next to the new receiver.
+        client = RealtimeClient(mode="transcribe")
+        busy, release, seen = threading.Event(), threading.Event(), []
+
+        def handle(event):
+            seen.append(event["n"])
+            if event["n"] == 1:
+                busy.set()
+                release.wait(2)
+        client._handle_event = handle
+        ws, first = self._open(client)
+        client._on_message(ws, json.dumps({"n": 1}))
+        client._on_message(ws, json.dumps({"n": 2}))
+        self.assertTrue(busy.wait(1))
+        with mock.patch.object(first, "join"):
+            client.reset()
+        _, second = self._open(client)
+        release.set()
+        first.join(1)
+        self.assertFalse(first.is_alive())
+        self.assertEqual(seen, [1])
+        client.close()
+        second.join(1)
+
 
 if __name__ == "__main__":
     unittest.main()

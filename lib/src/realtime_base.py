@@ -532,10 +532,12 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
 
         Blocks rather than polls: an idle connection can stay open for hours.
         Teardown hands the next session a fresh queue and wakes this one with None.
+        Ownership is the queue, not receiver_running: a quick reopen sets that
+        flag again while this thread may still be draining the old session.
         """
         while True:
             event = events.get()
-            if event is None or not self.receiver_running:
+            if event is None or events is not self.event_queue:
                 return
             try:
                 self._handle_event(event)
