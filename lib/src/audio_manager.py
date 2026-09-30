@@ -4,10 +4,16 @@ Handles audio feedback for dictation start/stop events
 """
 
 import os
+import shutil
 import subprocess
 import threading
 from pathlib import Path
 from typing import Optional
+
+# pw-play/paplay read these through libsndfile and start far faster than ffplay
+# (no SDL/ffmpeg init), so the start cue lands closer to when capture begins.
+# Anything else, e.g. a custom .mp3, still goes to ffplay first.
+_SNDFILE_SUFFIXES = {'.ogg', '.oga', '.wav', '.wave', '.flac'}
 
 
 class AudioManager:
@@ -15,6 +21,7 @@ class AudioManager:
     
     def __init__(self, config_manager=None):
         self.config_manager = config_manager
+        self._tools = {}
         
         # Initialize settings from config if available
         if self.config_manager:
@@ -123,17 +130,23 @@ class AudioManager:
             volume = self.volume
         
         try:
-            # Try using ffplay (most reliable, supports volume control and all formats)
-            if self._is_tool_available('ffplay'):
+            sndfile = sound_file.suffix.lower() in _SNDFILE_SUFFIXES
+            if sndfile and self._is_tool_available('pw-play'):
+                return self._play_with_pwplay(sound_file, volume)
+
+            elif sndfile and self._is_tool_available('paplay'):
+                return self._play_with_paplay(sound_file, volume)
+
+            # ffplay: every format, but slow to start
+            elif self._is_tool_available('ffplay'):
                 return self._play_with_ffplay(sound_file, volume)
 
-            # Fallback to paplay (PulseAudio/PipeWire, supports OGG)
-            elif self._is_tool_available('paplay'):
-                return self._play_with_paplay(sound_file)
-
-            # Fallback to pw-play (native PipeWire, supports OGG)
+            # No ffplay: libsndfile may still read it (e.g. mp3 since 1.1)
             elif self._is_tool_available('pw-play'):
-                return self._play_with_pwplay(sound_file)
+                return self._play_with_pwplay(sound_file, volume)
+
+            elif self._is_tool_available('paplay'):
+                return self._play_with_paplay(sound_file, volume)
 
             # Fallback to aplay (ALSA) - only for WAV files, not OGG
             elif self._is_tool_available('aplay'):
@@ -152,12 +165,11 @@ class AudioManager:
             return False
     
     def _is_tool_available(self, tool_name: str) -> bool:
-        """Check if a command-line tool is available"""
-        try:
-            result = subprocess.run(['which', tool_name], capture_output=True, text=True, timeout=5)
-            return result.returncode == 0
-        except Exception:
-            return False
+        """Check if a command-line tool is available (looked up once; this runs
+        on the recording path, right before the start cue)"""
+        if tool_name not in self._tools:
+            self._tools[tool_name] = shutil.which(tool_name) is not None
+        return self._tools[tool_name]
 
     def _run_audio_command(self, cmd: list, tool_name: str) -> bool:
         """Run an audio command in a background thread"""
@@ -190,13 +202,15 @@ class AudioManager:
         """Play audio with aplay (ALSA, no volume control)"""
         return self._run_audio_command(['aplay', '-q', str(sound_file)], 'aplay')
 
-    def _play_with_paplay(self, sound_file: Path) -> bool:
-        """Play audio with paplay (PulseAudio/PipeWire, no volume control)"""
-        return self._run_audio_command(['paplay', str(sound_file)], 'paplay')
+    def _play_with_paplay(self, sound_file: Path, volume: float) -> bool:
+        """Play audio with paplay (PulseAudio/PipeWire; linear volume 0-65536)"""
+        return self._run_audio_command(
+            ['paplay', f'--volume={int(volume * 65536)}', str(sound_file)], 'paplay')
 
-    def _play_with_pwplay(self, sound_file: Path) -> bool:
-        """Play audio with pw-play (native PipeWire, no volume control)"""
-        return self._run_audio_command(['pw-play', str(sound_file)], 'pw-play')
+    def _play_with_pwplay(self, sound_file: Path, volume: float) -> bool:
+        """Play audio with pw-play (native PipeWire; linear volume 0-1.0)"""
+        return self._run_audio_command(
+            ['pw-play', f'--volume={volume:.2f}', str(sound_file)], 'pw-play')
     
     def play_start_sound(self) -> bool:
         """Play the recording start sound"""
