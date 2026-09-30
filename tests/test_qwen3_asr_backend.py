@@ -423,10 +423,20 @@ class QwenBackendTests(unittest.TestCase):
             self.assertFalse(self.backend._start())
         return captured["args"]
 
-    def test_ctx_size_flag_is_unset_by_default(self):
-        # Unconfigured means no --ctx-size: llama.cpp keeps its own default.
+    def test_ctx_size_defaults_to_8192(self):
+        # Requests are capped at QWEN3_ASR_MAX_AUDIO_SECONDS; 8192 leaves headroom.
+        args = self._capture_launch_args()
+        self.assertEqual(args[args.index("--ctx-size") + 1], "8192")
+
+    def test_null_ctx_size_keeps_the_llama_cpp_default(self):
+        self.backend.config.values["qwen3_asr_ctx_size"] = None
         args = self._capture_launch_args()
         self.assertNotIn("--ctx-size", args)
+
+    def test_prompt_cache_is_disabled(self):
+        # Fresh audio every request: llama-server's 8 GiB RAM prompt cache is dead weight.
+        args = self._capture_launch_args()
+        self.assertEqual(args[args.index("--cache-ram") + 1], "0")
 
     def test_ctx_size_flag_follows_config(self):
         # llama.cpp's 32000 default is a ~3.5 GiB f16 KV cache that
