@@ -39,25 +39,12 @@ else
 fi
 mkdir -p -m 700 "$RUNTIME_DIR"
 
-# Performance optimization: command caching
-_now=$(date +%s%3N 2>/dev/null || date +%s)  # ms if available
-declare -A _cache
-
-
-# Cached command execution with timeout
-cmd_cached() {
-    local key="$1" ttl_ms="${2:-500}" cmd="${3}"; shift 3 || true
-    local now=$(_date_ms)
-    if [[ -n "${_cache[$key.time]:-}" && $((now - _cache[$key.time])) -lt $ttl_ms ]]; then
-        printf '%s' "${_cache[$key.val]}"; return 0
-    fi
-    local out
-    out=$(timeout 0.25s bash -c "$cmd" 2>/dev/null) || out=""
-    _cache[$key.val]="$out"; _cache[$key.time]=$now
-    printf '%s' "$out"
+# Builtin clock (bash 5): Waybar runs `status` every second, so no date forks
+_date_ms(){
+    if [[ -n "${EPOCHREALTIME:-}" ]]; then local t="${EPOCHREALTIME/[.,]/}"; echo "${t:0:13}"
+    else date +%s%3N 2>/dev/null || date +%s; fi
 }
-
-_date_ms(){ date +%s%3N 2>/dev/null || date +%s; }
+_epoch(){ echo "${EPOCHSECONDS:-$(date +%s)}"; }
 
 # Non-login shell: -l sourcing profiles can blow the timeout
 try() { timeout 0.5s bash -c "$*" 2>/dev/null; }
@@ -79,7 +66,35 @@ stabilize() {
 
 # Function to check if hyprwhspr is running
 is_hyprwhspr_running() {
+    [[ -n "${_SVC_ACTIVE:-}" ]] && { [[ "$_SVC_ACTIVE" == 1 ]]; return; }
     systemctl --user is-active --quiet hyprwhspr.service
+}
+
+# One probe per status tick. get_current_state and mic_tooltip_line run in
+# $(...) subshells that inherit these, so each check reuses one systemctl and
+# two pactl calls instead of repeating them (~60 processes a tick before).
+probe_once() {
+    if systemctl --user is-active --quiet hyprwhspr.service; then _SVC_ACTIVE=1; else _SVC_ACTIVE=0; fi
+    _SOURCES="$(try 'pactl list short sources')"
+    _DEFAULT_SRC="$(try 'pactl get-default-source')"
+    _PROBED=1
+}
+
+pactl_sources() {
+    if [[ -n "${_PROBED:-}" ]]; then printf '%s' "$_SOURCES"; else try 'pactl list short sources'; fi
+}
+
+pactl_default_source() {
+    if [[ -n "${_PROBED:-}" ]]; then printf '%s' "$_DEFAULT_SRC"; else try 'pactl get-default-source'; fi
+}
+
+# True when the source list has a real input (not an output's .monitor)
+has_input_source() {
+    local line
+    while IFS= read -r line; do
+        [[ -n "$line" && "$line" != *monitor* ]] && return 0
+    done <<<"$1"
+    return 1
 }
 
 # Note: hyprwhspr runs a *private* ydotoold child from the app itself (no shared
@@ -88,6 +103,9 @@ is_hyprwhspr_running() {
 # Function to check PipeWire health comprehensively
 # Uses retry logic to handle startup timing issues (PipeWire may take a moment to initialize)
 is_pipewire_ok() {
+    # A probe that already listed inputs proves pactl answers
+    [[ -n "${_PROBED:-}" ]] && has_input_source "$_SOURCES" && return 0
+
     local retries=3
     local delay=0.1  # 100ms between retries
     
@@ -115,12 +133,25 @@ is_pipewire_ok() {
     return 1
 }
 
-# Function to check if model file exists
+# Model check starts one or two Python interpreters. Cache a pass for 60 s,
+# dropped early whenever config.json changes; a failure is rechecked each tick.
 model_exists() {
+    local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/hyprwhspr/config.json"
+    local ok="$RUNTIME_DIR/tray_model_ok" at
+    if [[ -f "$ok" && ! "$cfg" -nt "$ok" ]] && read -r at 2>/dev/null < "$ok" \
+        && (( $(_epoch) - at < 60 )); then
+        return 0
+    fi
+    model_exists_uncached || return 1
+    _epoch > "$ok" 2>/dev/null
+    return 0
+}
+
+model_exists_uncached() {
     local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/hyprwhspr/config.json"
     [[ -f "$cfg" ]] || return 0
 
-    # One interpreter start reads both keys (this runs on every status poll)
+    # One interpreter start reads both keys
     local backend model_path
     IFS=$'\t' read -r backend model_path < <("$SYSTEM_PYTHON" - <<'PY' "$cfg" 2>/dev/null
 import json, sys
@@ -204,37 +235,32 @@ PY
 # Microphone detection functions (clean, fast, reliable)
 mic_present() {
     # prefer Pulse/PipeWire view; fall back to ALSA card list
-    [[ -n "$(try 'pactl list short sources | grep -v monitor')" ]] && return 0
+    has_input_source "$(pactl_sources)" && return 0
     [[ -n "$(try 'arecord -l | grep -E ^card')" ]] && return 0
     return 1
 }
 
 mic_accessible() {
     local default_source
-    default_source="$(try 'pactl get-default-source')"
+    default_source="$(pactl_default_source)"
     [[ -n "$default_source" ]] || return 1
 
     [[ -d /dev/snd ]] || return 1
 
-    # Default source must exist (stale default is a real failure)
-    if ! try 'pactl list short sources' | awk '{print $2}' | grep -qxF "$default_source"; then
-        return 1
-    fi
-
     # Don't treat monitor sources as a microphone
     [[ "$default_source" == *.monitor ]] && return 1
 
-    return 0
+    # Default source must exist (stale default is a real failure)
+    local _id name _rest
+    while read -r _id name _rest; do
+        [[ "$name" == "$default_source" ]] && return 0
+    done <<<"$(pactl_sources)"
+    return 1
 }
 
 mic_recording_now() {
     # Only consider it recording if hyprwhspr service is active AND actually recording
     if ! is_hyprwhspr_running; then
-        return 1
-    fi
-    
-    # Check if hyprwhspr process is actually running
-    if ! pgrep -f "hyprwhspr" > /dev/null 2>&1; then
         return 1
     fi
     
@@ -258,7 +284,7 @@ mic_recording_now() {
     if [[ -f "$level_file" ]]; then
         # Check file modification time (seconds since epoch)
         local file_age
-        file_age=$(($(date +%s) - $(stat -c %Y "$level_file" 2>/dev/null || echo 0)))
+        file_age=$(($(_epoch) - $(stat -c %Y "$level_file" 2>/dev/null || echo 0)))
         
         # If audio_level file is stale (>2 seconds), recording is not actually happening
         if [[ $file_age -gt 2 ]]; then
@@ -270,7 +296,7 @@ mic_recording_now() {
         # But give it a grace period (maybe recording just started)
         # Check if recording_status file is very recent (<1 second)
         local status_age
-        status_age=$(($(date +%s) - $(stat -c %Y "$status_file" 2>/dev/null || echo 0)))
+        status_age=$(($(_epoch) - $(stat -c %Y "$status_file" 2>/dev/null || echo 0)))
         if [[ $status_age -gt 1 ]]; then
             # Status file exists but no audio_level file and status is >1s old
             # This suggests recording never actually started or crashed immediately
@@ -282,9 +308,21 @@ mic_recording_now() {
     return 0
 }
 
+# Sample spec rarely changes: a full `pactl list sources` per tick is waste,
+# so the label is cached for 30 s per default source.
 mic_fidelity_label() {
-    local def spec rate ch fmt
-    def="$(try 'pactl get-default-source')"
+    local f="$RUNTIME_DIR/tray_fidelity" def="$(pactl_default_source)" at src label
+    if IFS=$'\t' read -r at src label 2>/dev/null < "$f" \
+        && [[ "$src" == "$def" ]] && (( $(_epoch) - at < 30 )); then
+        printf '%s\n' "$label"; return
+    fi
+    label="$(mic_fidelity_label_uncached "$def")"
+    printf '%s\t%s\t%s\n' "$(_epoch)" "$def" "$label" > "$f" 2>/dev/null
+    printf '%s\n' "$label"
+}
+
+mic_fidelity_label_uncached() {
+    local def="$1" spec rate ch fmt
     [[ -n "$def" ]] || def='@DEFAULT_SOURCE@'
     spec="$(try "pactl list sources | awk -v D=\"$def\" '
         /^[[:space:]]*Name:/{name=\$2}
@@ -676,9 +714,8 @@ emit_json() {
     local zws_count=$((ts % 10))
     local zws=""
     # Add 0-9 zero-width spaces based on timestamp (invisible but unique)
-    for ((i=0; i<zws_count; i++)); do
-        zws="${zws}$(printf '\u200B')"
-    done
+    printf -v zws '%*s' "$zws_count" ''
+    zws="${zws// /$'\u200b'}"
     text="${text}${zws}"
     
     # Output JSON for waybar
@@ -689,11 +726,8 @@ emit_json() {
 get_current_state() {
     local reason=""
     
-    # Check service health first
-    check_service_health
-    
     # Check if service is running
-    if ! systemctl --user is-active --quiet hyprwhspr.service; then
+    if ! is_hyprwhspr_running; then
         # Distinguish failed from inactive
         if systemctl --user is-failed --quiet hyprwhspr.service; then
             local result exec_code
@@ -729,7 +763,7 @@ get_current_state() {
         local rest="${result#*:}"
         local reason="${rest%%:*}"
         local timestamp="${rest#*:}"
-        local current_time=$(date +%s)
+        local current_time=$(_epoch)
         local result_age=$((current_time - timestamp))
 
         # If recovery succeeded within last 5 seconds, we're in grace period
@@ -750,7 +784,7 @@ get_current_state() {
     if [[ -f "$zero_volume_file" ]]; then
         # Check file age - if recent (<60s), show error
         local file_age
-        file_age=$(($(date +%s) - $(stat -c %Y "$zero_volume_file" 2>/dev/null || echo 0)))
+        file_age=$(($(_epoch) - $(stat -c %Y "$zero_volume_file" 2>/dev/null || echo 0)))
         if [[ $file_age -lt 60 ]]; then
             echo "error:mic_no_audio"; return
         else
@@ -777,6 +811,7 @@ case "${1:-status}" in
     "status")
         # Check for recovery results and show notifications
         check_recovery_result
+        probe_once
         IFS=: read -r s r <<<"$(stabilize "$(get_current_state)")"
         emit_json "$s" "$r" "$(mic_tooltip_line)"
         ;;
