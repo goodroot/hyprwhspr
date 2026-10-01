@@ -26,9 +26,9 @@ except ImportError:
     from credential_manager import get_credential
 
 try:
-    from ..backend_utils import COHERE_LANGUAGES
+    from ..backend_utils import COHERE_LANGUAGES, release_memory
 except ImportError:
-    from backend_utils import COHERE_LANGUAGES
+    from backend_utils import COHERE_LANGUAGES, release_memory
 
 from .base import TranscriptionBackend
 
@@ -221,15 +221,9 @@ class CohereBackend(TranscriptionBackend):
             import torch
             from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 
-            # Transformers can retain CUDA allocations through model references
-            # and Python cycles. Release the previous instance before loading
-            # another copy, otherwise the temporary double allocation can OOM.
+            # Drop the old copy first: holding both briefly doubles VRAM (OOM on 8 GB).
             self.unload()
-            import gc
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            self._cohere_compile_done = False
+            release_memory()
 
             model_id = 'CohereLabs/cohere-transcribe-03-2026'
             device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
@@ -270,6 +264,7 @@ class CohereBackend(TranscriptionBackend):
     def unload(self) -> None:
         self._cohere_model = None
         self._cohere_processor = None
+        self._cohere_compile_done = False  # a fresh model compiles (and leaks output) again
 
     @property
     def is_loaded(self) -> bool:

@@ -1,6 +1,23 @@
 """Backend utilities and constants for hyprwhspr"""
 
+import gc
 import re
+import sys
+
+
+def release_memory() -> bool:
+    """Free a just-dropped model now, before anything new is allocated.
+
+    Collects cycles so native destructors run, then returns torch's cached
+    CUDA blocks to the driver. Never imports torch: that alone costs ~0.5 GB.
+    Returns True if the CUDA cache was cleared.
+    """
+    gc.collect()
+    torch = sys.modules.get('torch')
+    if torch is not None and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        return True
+    return False
 
 
 _HARDWARE_DEVICE_TYPES = ('INTEGRATED_GPU', 'DISCRETE_GPU', 'VIRTUAL_GPU')

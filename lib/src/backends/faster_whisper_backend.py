@@ -17,9 +17,11 @@ except ImportError:
 try:
     from ..dependencies import require_package
     from ..text_script import join_segments
+    from ..backend_utils import release_memory
 except ImportError:
     from dependencies import require_package
     from text_script import join_segments
+    from backend_utils import release_memory
 
 np = require_package('numpy')
 
@@ -310,10 +312,14 @@ class FasterWhisperBackend(TranscriptionBackend):
                     except Exception:
                         pass
                 compute_type = self._resolve_compute_type(compute_type, device)
+            # Drop the old copy first: holding both briefly doubles VRAM.
+            self.unload()
+            release_memory()
             self._faster_whisper_model = self._load_model(WhisperModel, model_name, device, compute_type)
             self._last_use_time = time.monotonic()
             return True
         except Exception as e:
+            self.unload()
             log(f'[ERROR] faster-whisper reinitialization failed: {e}')
             return False
 

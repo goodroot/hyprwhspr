@@ -5,7 +5,6 @@ state (config, ready flag, model lock, last-use time) and dispatches to the
 configured backend instance.
 """
 
-import sys
 import threading
 import time
 from typing import Optional, Callable
@@ -28,9 +27,9 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
-    from .backend_utils import normalize_backend
+    from .backend_utils import normalize_backend, release_memory
 except ImportError:
-    from backend_utils import normalize_backend
+    from backend_utils import normalize_backend, release_memory
 
 try:
     from .backend_installer import PYWHISPERCPP_MODELS_DIR
@@ -402,15 +401,7 @@ class WhisperManager:
                 if self._backend is not None:
                     self._backend.unload()
 
-                # Trigger Python GC so C++ destructors and ONNX sessions release immediately
-                import gc
-                gc.collect()
-
-                # Free cached CUDA allocations only if a backend already loaded
-                # torch; importing it here would add ~0.5 GB to an unload.
-                torch = sys.modules.get('torch')
-                if torch is not None and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                if release_memory():
                     log("[MODEL] CUDA cache cleared")
 
                 self.ready = False

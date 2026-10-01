@@ -49,6 +49,21 @@ class FasterWhisperSizingTests(unittest.TestCase):
         kwargs = self._load({'threads': 3}, force_cpu=True)
         self.assertEqual((kwargs['device'], kwargs['compute_type'], kwargs['cpu_threads']), ('cpu', 'int8', 3))
 
+    def test_reinit_releases_old_model_before_loading(self):
+        # Holding the old model during the load briefly doubled VRAM (#271).
+        backend = FasterWhisperBackend(_manager({'faster_whisper_device': 'cpu'}))
+        backend._faster_whisper_model = old = object()
+        seen = []
+        whisper_model = mock.Mock(side_effect=lambda *a, **k: seen.append(backend._faster_whisper_model))
+        fake = types.SimpleNamespace(WhisperModel=whisper_model)
+        with mock.patch.dict(sys.modules, {'faster_whisper': fake}), \
+                mock.patch.object(faster_whisper_backend, 'log'), \
+                mock.patch.object(faster_whisper_backend, 'release_memory') as release:
+            self.assertTrue(backend.reinitialize())
+        self.assertEqual(seen, [None])
+        release.assert_called_once()
+        self.assertIsNot(backend._faster_whisper_model, old)
+
 
 if __name__ == '__main__':
     unittest.main()
