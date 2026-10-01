@@ -646,7 +646,7 @@
       "minimum": 0,
       "maximum": 30,
       "default": 0,
-      "description": "Auto-stop recording after this many seconds of silence in toggle/auto modes. 0 (default) = disabled. The timer only arms after speech is detected, so it won't fire while you compose your first sentence."
+      "description": "Auto-stop recording after this many seconds of silence in toggle/auto/continuous modes. 0 (default) = disabled. The timer only arms after speech is detected, so it won't fire while you compose your first sentence."
     },
     "push_to_talk_lock_seconds": {
       "type": "number",

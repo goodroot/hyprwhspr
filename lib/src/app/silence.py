@@ -1,4 +1,4 @@
-"""Continuous-mode paste on pause and toggle/auto auto-stop on silence."""
+"""Continuous-mode paste on pause and auto-stop on silence."""
 
 import threading
 
@@ -8,7 +8,7 @@ from service_log import log
 
 
 class SilenceMixin:
-    """Continuous-mode paste on pause and toggle/auto auto-stop on silence."""
+    """Continuous-mode paste on pause and auto-stop on silence."""
 
     # Continuous mode: auto-paste on speech pause
     _POLL_INTERVAL = 0.1  # seconds between silence checks
@@ -35,9 +35,16 @@ class SilenceMixin:
         silence_seconds = self._get_float_setting('continuous_silence_seconds', 2.0)
         configured_threshold = self._get_float_setting('continuous_silence_threshold', 0)
         samples_needed = max(1, int(silence_seconds / self._POLL_INTERVAL))
+        # Optional session end, same rules as toggle/auto auto-stop. Kept in this
+        # loop so both timers share one threshold and one level reading.
+        stop_timeout = self._get_float_setting('silence_timeout', 0)
+        stop_samples = max(1, int(stop_timeout / self._POLL_INTERVAL)) if stop_timeout > 0 else 0
+        session = self._recording_session
 
         def monitor():
             silent_count = 0
+            quiet_count = 0         # silence since last speech; pastes don't reset it
+            heard_speech = False    # don't count toward the stop until speech is heard
             try:
                 # Auto-calibrate threshold from noise floor if not manually configured
                 threshold = configured_threshold
@@ -51,11 +58,17 @@ class SilenceMixin:
                     raw_level = self.audio_capture.rolling_avg_level
                     if raw_level < threshold:
                         silent_count += 1
+                        quiet_count += 1
                         if silent_count >= samples_needed:
                             self._continuous_flush_audio()
                             silent_count = 0
+                        if stop_samples and heard_speech and quiet_count >= stop_samples:
+                            self._continuous_autostop(session, stop_timeout)
+                            return
                     else:
                         silent_count = 0
+                        quiet_count = 0
+                        heard_speech = True
                     self._continuous_silence_stop.wait(self._POLL_INTERVAL)
             except Exception as e:
                 log(f"[CONTINUOUS] Silence monitor error: {e}")
@@ -69,6 +82,16 @@ class SilenceMixin:
         if self._continuous_silence_thread and self._continuous_silence_thread.is_alive():
             self._continuous_silence_thread.join(timeout=0.5)
         self._continuous_silence_thread = None
+
+    def _continuous_autostop(self, session, silence_timeout):
+        """End a continuous session from its own monitor thread after `silence_timeout`."""
+        self._continuous_silence_stop.set()   # no join: this is the monitor thread
+        self._continuous_transcription_done.wait(timeout=30)   # let a chunk paste first
+        with self._recording_lock:
+            if self._recording_session is not session:
+                return   # stopped (and maybe restarted) meanwhile - not ours to stop
+        log(f"[AUTOSTOP] {silence_timeout:.1f}s of silence - stopping continuous recording")
+        self._stop_recording()   # stop beep; transcribes + pastes only the unflushed tail
 
     def _autostop_start_silence_monitor(self):
         """Auto-stop recording after `silence_timeout` seconds of silence (toggle/auto modes).

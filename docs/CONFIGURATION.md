@@ -106,7 +106,7 @@ Hybrid tap/hold - automatically detects your intent:
 
 ### Auto-stop on silence
 
-In **toggle** and **auto** modes, `silence_timeout` automatically stops recording (transcribe + paste) after a period of silence — press once, speak, and it finalizes itself when you go quiet:
+In **toggle**, **auto**, and **continuous** modes, `silence_timeout` automatically stops recording (transcribe + paste) after a period of silence — press once, speak, and it finalizes itself when you go quiet:
 
 ```jsonc
 {
@@ -134,6 +134,7 @@ Press to start, speak naturally, and when you pause for a couple seconds the tex
 
 - Recording continues after each auto-paste, so you can keep dictating
 - The final press stops recording and pastes any remaining audio
+- Or set `silence_timeout` (e.g. `15`) to end the session after a longer quiet; pauses still paste
 - Lower `continuous_silence_seconds` to trigger paste after shorter pauses
 - The silence threshold is auto-calibrated from your mic's noise floor at the start of each session; if detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value)
 
