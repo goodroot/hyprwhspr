@@ -79,8 +79,10 @@ class SilenceMixin:
     def _continuous_stop_silence_monitor(self):
         """Stop the continuous silence monitor"""
         self._continuous_silence_stop.set()
-        if self._continuous_silence_thread and self._continuous_silence_thread.is_alive():
-            self._continuous_silence_thread.join(timeout=0.5)
+        thread = self._continuous_silence_thread
+        # The monitor itself reaches here via silence_timeout's _stop_recording()
+        if thread and thread.is_alive() and threading.current_thread() is not thread:
+            thread.join(timeout=0.5)
         self._continuous_silence_thread = None
 
     def _continuous_autostop(self, session, silence_timeout):

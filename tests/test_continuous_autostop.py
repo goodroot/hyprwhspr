@@ -94,6 +94,23 @@ class ContinuousAutostopTests(unittest.TestCase):
             app._continuous_autostop(object(), 1)    # a session that already ended
         app._stop_recording.assert_called_once_with()
 
+    def test_monitor_can_tear_itself_down(self):
+        # _stop_recording()'s error cleanup runs on the monitor thread; a self-join
+        # raised and skipped the playback restore after it.
+        app = self._app([0.0], silence_timeout=0)
+        errors = []
+
+        def run():
+            try:
+                app._continuous_stop_silence_monitor()
+            except Exception as e:
+                errors.append(e)
+        app._continuous_silence_thread = thread = threading.Thread(target=run)
+        thread.start()
+        thread.join(timeout=2)
+        self.assertEqual(errors, [])
+        self.assertIsNone(app._continuous_silence_thread)
+
 
 if __name__ == '__main__':
     unittest.main()
