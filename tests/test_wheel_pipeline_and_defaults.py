@@ -152,6 +152,7 @@ class VulkanWheelInstallTests(unittest.TestCase):
                 mock.patch.object(backend_installer, "install_pywhispercpp_from_wheel",
                                   return_value=wheel_installs) as from_wheel, \
                 mock.patch.object(backend_installer, "install_system_dependencies"), \
+                mock.patch.object(backend_installer, "_missing_vulkan_build_tools", return_value=[]), \
                 mock.patch.object(backend_installer, "_prepare_pywhispercpp_sources",
                                   return_value=False) as prepare, \
                 mock.patch.object(backend_installer, "log_info"), \
