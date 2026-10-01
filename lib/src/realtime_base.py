@@ -37,6 +37,20 @@ except (ImportError, ModuleNotFoundError) as e:
     print(f"ImportError: {e}", file=sys.stderr)
     sys.exit(1)
 
+def running_text(committed: str, tail: str) -> str:
+    """Committed text plus the live tail, keeping the tail's trailing space.
+
+    The OSD renders partials as they grow; a trailing space marks a finished
+    word, so it survives here while segment joins stay CJK-aware.
+    """
+    head = (committed or '').strip()
+    if not head:
+        return tail or ''
+    if not (tail or '').strip():
+        return head
+    return join_segments([head, tail]) + tail[len(tail.rstrip()):]
+
+
 class RealtimeAudioClientBase:
     """Audio queueing, backpressure and format conversion shared by all realtime clients."""
 
@@ -54,6 +68,12 @@ class RealtimeAudioClientBase:
 
         # Connection state (transport managed by subclass)
         self.connected = False
+
+        # Live text: the OSD gets the whole running transcript as one string;
+        # the listener gets (committed, tail) with the tail unstripped, so it
+        # can tell whether the last word is finished.
+        self.partial_transcript_callback = None
+        self._live_text_listener = None
 
         # Audio streaming
         # IMPORTANT: append_audio() is called from the sounddevice callback thread.
@@ -106,6 +126,29 @@ class RealtimeAudioClientBase:
             return
         if sample_rate > 0:
             self.input_sample_rate = sample_rate
+
+    def set_partial_transcript_callback(self, callback):
+        """Register the OSD preview callback (whole running transcript)."""
+        self.partial_transcript_callback = callback
+
+    def set_live_text_listener(self, listener):
+        """Register listener(committed, tail) for structured live text."""
+        self._live_text_listener = listener
+
+    def _publish_live_text(self, committed: str, tail: str):
+        """Publish the running transcript to both consumers. Call without self.lock."""
+        callback = self.partial_transcript_callback
+        if callback:
+            try:
+                callback(running_text(committed, tail))
+            except Exception as e:
+                self._log(f'Partial transcript callback failed: {e}')
+        listener = self._live_text_listener
+        if listener:
+            try:
+                listener(committed, tail)
+            except Exception as e:
+                self._log(f'Live text listener failed: {e}')
 
     def configure(self, get_setting):
         """Read protocol-specific settings before connecting (get_setting(key, default))."""

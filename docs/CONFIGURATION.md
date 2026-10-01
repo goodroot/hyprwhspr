@@ -738,7 +738,8 @@ Persistent WebSocket streaming. `realtime_mode` selects `transcribe` (speech-to-
 | Custom | Yes | Yes |
 
 Custom endpoints set `websocket_provider: "custom"` and `websocket_url`. They speak OpenAI Realtime unless
-`websocket_protocol` says otherwise. The API key is optional.
+`websocket_protocol` says otherwise. The API key is optional. `websocket_live_text: "revisable"` turns on the waveform
+preview for servers that stream text mid-utterance.
 
 #### OpenAI Realtime
 

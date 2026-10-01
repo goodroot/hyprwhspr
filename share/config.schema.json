@@ -402,6 +402,12 @@
       "default": null,
       "description": "Wire protocol for websocket_provider 'custom' (null: openai-realtime). Built-in providers use their own."
     },
+    "websocket_live_text": {
+      "type": ["string", "null"],
+      "enum": ["none", "revisable", "append_only", null],
+      "default": null,
+      "description": "Custom endpoints: what live text promises. revisable enables the waveform preview; append_only also allows live typing."
+    },
     "realtime_timeout": {
       "type": "integer",
       "minimum": 1,

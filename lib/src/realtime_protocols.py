@@ -12,12 +12,18 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 try:
-    from .provider_registry import get_provider
+    from .provider_registry import get_provider, get_realtime_capabilities
 except ImportError:
-    from provider_registry import get_provider
+    from provider_registry import get_provider, get_realtime_capabilities
 
 
 DEFAULT_PROTOCOL = 'openai-realtime'
+
+# What a model's live text promises while audio is still arriving:
+#   none         nothing worth showing before the turn ends
+#   revisable    streamed text the model may still rewrite (OSD preview only)
+#   append_only  emitted words never change (safe to type while speaking)
+LIVE_TEXT_MODES = ('none', 'revisable', 'append_only')
 
 
 @dataclass(frozen=True)
@@ -74,6 +80,18 @@ def resolve_protocol(provider_id: Optional[str], configured: Optional[str] = Non
             raise ValueError(f'Unknown websocket_protocol: {configured!r}')
         return protocol
     return protocol_for_provider(provider_id)
+
+
+def live_text_mode(provider_id: Optional[str], model_id: Optional[str],
+                   configured: Optional[str] = None) -> str:
+    """Live-text promise: configured for custom endpoints, else from model caps."""
+    if provider_id == 'custom':
+        mode = str(configured or 'none').strip().lower()
+        return mode if mode in LIVE_TEXT_MODES else 'none'
+    caps = get_realtime_capabilities(provider_id, model_id)
+    if caps.get('live_text') in LIVE_TEXT_MODES:
+        return caps['live_text']
+    return 'revisable' if caps.get('continuous') else 'none'
 
 
 def load_client_class(protocol: RealtimeProtocol):

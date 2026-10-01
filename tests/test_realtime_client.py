@@ -420,7 +420,7 @@ class RealtimeClientTests(unittest.TestCase):
         client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": " wor"})
         client._handle_event({"type": "conversation.item.input_audio_transcription.completed", "transcript": "hello world"})
 
-        self.assertEqual(previews, ["hello", "hello wor", ""])
+        self.assertEqual(previews, ["hello", "hello wor", "hello world"])
         self.assertEqual(client.commit_and_get_text(timeout=0.1), "hello world")
 
     def test_gpt_transcribe_commit_accepts_detected_languages_metadata(self):
@@ -463,7 +463,7 @@ class RealtimeClientTests(unittest.TestCase):
         client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": " only"})
         client._handle_event({"type": "conversation.item.input_audio_transcription.completed"})
 
-        self.assertEqual(previews, ["delta", "delta only", ""])
+        self.assertEqual(previews, ["delta", "delta only", "delta only"])
         self.assertEqual(client.commit_and_get_text(timeout=0.1), "delta only")
 
     def test_unicode_delta_text_is_preserved(self):
@@ -475,7 +475,7 @@ class RealtimeClientTests(unittest.TestCase):
         client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "東京"})
         client._handle_event({"type": "conversation.item.input_audio_transcription.completed"})
 
-        self.assertEqual(previews, ["cafe ", "cafe 東京", ""])
+        self.assertEqual(previews, ["cafe ", "cafe 東京", "cafe 東京"])
         self.assertEqual(client.commit_and_get_text(timeout=0.1), "cafe 東京")
 
     def test_partial_preview_preserves_trailing_spaces(self):
@@ -498,6 +498,27 @@ class RealtimeClientTests(unittest.TestCase):
 
         self.assertEqual(client._partial_transcript, "next")
         self.assertEqual(previews, ["first segment", "", "next"])
+
+    def test_preview_keeps_completed_segments_while_next_streams(self):
+        previews = []
+        client = self._client_with_ws()
+        client.set_partial_transcript_callback(previews.append)
+
+        client._handle_event({"type": "conversation.item.input_audio_transcription.completed", "transcript": "First one."})
+        client._handle_event({"type": "input_audio_buffer.speech_started"})
+        client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": "then "})
+
+        self.assertEqual(previews, ["First one.", "First one.", "First one. then "])
+
+    def test_live_text_listener_gets_committed_and_raw_tail(self):
+        events = []
+        client = self._client_with_ws()
+        client.set_live_text_listener(lambda committed, tail: events.append((committed, tail)))
+
+        client._handle_event({"type": "conversation.item.input_audio_transcription.completed", "transcript": "One."})
+        client._handle_event({"type": "conversation.item.input_audio_transcription.delta", "delta": " two "})
+
+        self.assertEqual(events, [("One.", ""), ("One.", " two ")])
 
     def test_clear_audio_buffer_clears_stale_partial(self):
         previews = []

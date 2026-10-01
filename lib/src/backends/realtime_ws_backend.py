@@ -24,21 +24,15 @@ np = require_package('numpy')
 try:
     from ..backend_utils import normalize_backend
     from ..credential_manager import get_credential
-    from ..openai_realtime_models import (
-        is_continuous,
-        uses_language_context,
-    )
+    from ..openai_realtime_models import uses_language_context
     from ..provider_registry import get_provider, get_realtime_capabilities
-    from ..realtime_protocols import load_client_class, resolve_protocol
+    from ..realtime_protocols import live_text_mode, load_client_class, resolve_protocol
 except ImportError:
     from backend_utils import normalize_backend
     from credential_manager import get_credential
-    from openai_realtime_models import (
-        is_continuous,
-        uses_language_context,
-    )
+    from openai_realtime_models import uses_language_context
     from provider_registry import get_provider, get_realtime_capabilities
-    from realtime_protocols import load_client_class, resolve_protocol
+    from realtime_protocols import live_text_mode, load_client_class, resolve_protocol
 
 from .base import TranscriptionBackend
 
@@ -357,11 +351,10 @@ class RealtimeWsBackend(TranscriptionBackend):
                 and self.config.get_setting('mic_osd_pill_transcript_enabled', False)
             )
 
-        # Waveform: only continuously streaming OpenAI models emit live deltas.
-        if provider_id == 'openai':
-            return is_continuous(model_id)
-
-        return False
+        # Waveform: only models whose text streams mid-utterance.
+        return live_text_mode(
+            provider_id, model_id, self.config.get_setting('websocket_live_text'),
+        ) != 'none'
 
     def _clear_realtime_partial_preview(self) -> None:
         if not self._realtime_partial_callback:

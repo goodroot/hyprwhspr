@@ -15,7 +15,7 @@ import backends.realtime_ws_backend as realtime_ws_backend  # noqa: E402
 from dependency_plan import plan_key  # noqa: E402
 from processing_trace import classify_vad_mode  # noqa: E402
 from realtime_client import RealtimeClient  # noqa: E402
-from realtime_protocols import PROTOCOLS, load_client_class, resolve_protocol  # noqa: E402
+from realtime_protocols import PROTOCOLS, live_text_mode, load_client_class, resolve_protocol  # noqa: E402
 
 
 class FakeConfig:
@@ -158,6 +158,31 @@ class SingleInitPathTests(unittest.TestCase):
             self.assertTrue(backend.initialize())
             backend._realtime_streaming_callback("chunk")
         append.assert_called_once_with("chunk")
+
+
+
+class LiveTextModeTests(unittest.TestCase):
+    def test_openai_continuous_models_are_revisable(self):
+        self.assertEqual(live_text_mode("openai", "gpt-live-transcribe"), "revisable")
+        self.assertEqual(live_text_mode("openai", "gpt-transcribe"), "none")
+
+    def test_other_builtin_providers_show_nothing_mid_turn(self):
+        self.assertEqual(live_text_mode("elevenlabs", "scribe_v2_realtime"), "none")
+        self.assertEqual(live_text_mode("google", "gemini-3.1-flash-live-preview"), "none")
+
+    def test_custom_takes_the_configured_promise(self):
+        self.assertEqual(live_text_mode("custom", "m"), "none")
+        self.assertEqual(live_text_mode("custom", "m", "append_only"), "append_only")
+        self.assertEqual(live_text_mode("custom", "m", "bogus"), "none")
+        self.assertEqual(live_text_mode("openai", "gpt-transcribe", "append_only"), "none")
+
+    def test_waveform_preview_follows_live_text(self):
+        for live_text, expected in (("none", False), ("revisable", True), ("append_only", True)):
+            with self.subTest(live_text=live_text):
+                backend = _backend({**CUSTOM, "websocket_live_text": live_text, "mic_osd_style": "waveform"})
+                backend._manager._realtime_partial_callback = lambda _text: None
+                self.assertEqual(
+                    backend._is_partial_preview_enabled("custom", "local-model", "transcribe"), expected)
 
 
 if __name__ == "__main__":

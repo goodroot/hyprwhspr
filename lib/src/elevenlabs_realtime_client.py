@@ -50,7 +50,6 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         self._partial_transcript = ''
         self._transcript_generation = 0
         self._committed_segments = []
-        self._partial_transcript_callback: Optional[Callable[[str], None]] = None
 
         # Auto-commit helper:
         # ElevenLabs punctuation often improves on committed transcripts.
@@ -460,8 +459,7 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
         callback: Optional[Callable[[str], None]],
     ) -> None:
         """Set the live-preview callback retained across reconnects."""
-        with self.lock:
-            self._partial_transcript_callback = callback
+        super().set_partial_transcript_callback(callback)
         if callback is not None:
             self._emit_partial_transcript()
 
@@ -471,20 +469,9 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
 
     def _emit_partial_transcript(self) -> None:
         with self.lock:
-            callback = self._partial_transcript_callback
             committed = self._committed_text_locked()
-            partial = self._partial_transcript.strip()
-            preview = join_segments([committed, partial]) if partial else committed
-
-        if callback is None:
-            return
-        try:
-            callback(preview)
-        except Exception as exc:
-            print(
-                f'[ELEVENLABS] Failed to update partial transcript preview: {exc}',
-                flush=True,
-            )
+            partial = self._partial_transcript
+        self._publish_live_text(committed, partial)
 
     def clear_audio_buffer(self):
         """Clear state before starting a new recording"""

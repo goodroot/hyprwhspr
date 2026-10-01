@@ -44,7 +44,6 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self.transcription_delay = 'low'
         self.transcription_prompt = None
         self.conversation_history = 'turn'
-        self.partial_transcript_callback = None
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
 
         # Track if buffer was committed (by VAD or manual)
@@ -175,7 +174,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                 # Keep legacy fields coherent
                 self.current_response_text = transcript
                 self.response_complete = True
-            self._notify_partial_transcript("")
+            self._notify_live_text()
             self.response_event.set()
             self._log(f'Transcription completed ({len(transcript)} chars)')
 
@@ -186,8 +185,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             if delta:
                 with self.lock:
                     self._partial_transcript += delta
-                    partial = self._partial_transcript
-                self._notify_partial_transcript(partial)
+                self._notify_live_text()
 
         elif event_type == 'input_audio_buffer.committed':
             self._log('Audio buffer committed')
@@ -202,7 +200,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                 self._buffer_committed = False
                 self._partial_transcript = ""
                 self._track_item_locked(event)
-            self._notify_partial_transcript("")
+            self._notify_live_text()
 
         elif event_type == 'input_audio_buffer.speech_stopped':
             self._log('Speech ended')
@@ -213,7 +211,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             self._log(f'Server error: {error_message}')
             with self.lock:
                 self._partial_transcript = ""
-            self._notify_partial_transcript("")
+            self._notify_live_text()
             self.response_complete = True
             self.response_event.set()  # Unblock waiting thread
 
@@ -398,10 +396,6 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self.set_transcription_delay(get_setting('realtime_transcription_delay', 'low'))
         self.set_conversation_history(get_setting('realtime_conversation_history', 'turn'))
 
-    def set_partial_transcript_callback(self, callback):
-        """Register a callback for live transcription deltas."""
-        self.partial_transcript_callback = callback
-
     def _normalize_choice(self, value, valid: set, default: str, key: str) -> str:
         """Normalize a config enum; unset falls back quietly, anything invalid (non-strings too) with a log."""
         if value is None or value == '':
@@ -419,14 +413,12 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self.transcription_delay = self._normalize_transcription_delay(self.transcription_delay)
         return self.transcription_delay
 
-    def _notify_partial_transcript(self, text: str):
-        callback = self.partial_transcript_callback
-        if not callback:
-            return
-        try:
-            callback(text)
-        except Exception as e:
-            self._log(f'Partial transcript callback failed: {e}')
+    def _notify_live_text(self):
+        """Publish committed segments plus the in-flight delta text."""
+        with self.lock:
+            committed = self._full_committed_text_locked()
+            tail = self._partial_transcript
+        self._publish_live_text(committed, tail)
 
     def _clear_completed_turn_history(self, event: dict):
         """Delete this completed conversational turn without closing the socket."""
@@ -479,7 +471,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                 self._buffer_committed = False  # Reset commit tracking for new recording
                 self._partial_transcript = ""
             self.response_event.clear()
-            self._notify_partial_transcript("")
+            self._notify_live_text()
         except Exception as e:
             self._log(f'Failed to clear buffer: {e}')
 
