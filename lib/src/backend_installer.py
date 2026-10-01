@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import hashlib
 import shutil
+import glob
 import re
 import urllib.request
 import uuid
@@ -98,6 +99,8 @@ PYWHISPERCPP_PINNED_COMMIT = "f7bf62118c0a33a43cf8aabb58eef16cea5d16c4"
 WHEEL_BASE_URL = "https://github.com/goodroot/hyprwhspr/releases/download/wheels-v2"
 WHEEL_CACHE_DIR = USER_BASE / 'wheel-cache'
 PYWHISPERCPP_VERSION = "1.5.1"
+# Wheel build tag; bump to publish a rebuilt wheel of the same version
+PYWHISPERCPP_WHEEL_BUILD = 1
 
 
 class DependencyPlanError(RuntimeError):
@@ -396,7 +399,7 @@ def _detect_cuda_version() -> Optional[str]:
 def _get_wheel_variant(cuda_version: Optional[str]) -> Optional[str]:
     """CUDA wheel variant for the detected CUDA version, or None to source-build.
 
-    We self-host CUDA wheels only; CPU installs come from PyPI.
+    Vulkan wheels use VULKAN_WHEEL_VARIANT directly; CPU installs come from PyPI.
     """
     if not cuda_version:
         return None
@@ -410,23 +413,81 @@ def _get_wheel_variant(cuda_version: Optional[str]) -> Optional[str]:
     return None
 
 
+VULKAN_WHEEL_VARIANT = "vulkan"
+# glibc of the Debian trixie image the Vulkan wheels are built on
+VULKAN_WHEEL_MIN_GLIBC = (2, 41)
+# Runtime plus what ggml-vulkan's CMake needs for a source build:
+# find_package(Vulkan COMPONENTS glslc) and find_package(SPIRV-Headers CONFIG)
+VULKAN_PACMAN_PACKAGES = ['vulkan-headers', 'vulkan-icd-loader', 'shaderc', 'spirv-headers', 'vulkan-tools']
+VULKAN_BUILD_PACKAGE_HINTS = (
+    "Debian/Ubuntu: sudo apt install libvulkan-dev glslc spirv-headers",
+    "Fedora: sudo dnf install vulkan-headers vulkan-loader-devel glslc spirv-headers-devel",
+    "openSUSE: sudo zypper install vulkan-devel shaderc spirv-headers",
+    "Arch: sudo pacman -S vulkan-headers shaderc spirv-headers",
+)
+_VULKAN_HEADER_PATHS = ('/usr/include/vulkan/vulkan.h', '/usr/local/include/vulkan/vulkan.h')
+_SPIRV_HEADERS_CONFIG_GLOBS = tuple(
+    f"{prefix}/{libdir}/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake"
+    for prefix in ('/usr', '/usr/local')
+    for libdir in ('share', 'lib', 'lib64', 'lib/*'))
+
+
+def _missing_vulkan_build_tools() -> list:
+    """Names of the Vulkan source-build prerequisites that cannot be found."""
+    missing = []
+    if not any(Path(p).exists() for p in _VULKAN_HEADER_PATHS):
+        missing.append('Vulkan headers')
+    if not shutil.which('glslc'):
+        missing.append('glslc')
+    if not any(glob.glob(pattern) for pattern in _SPIRV_HEADERS_CONFIG_GLOBS):
+        missing.append('SPIRV-Headers')
+    return missing
+
+
+def _glibc_version() -> Optional[tuple]:
+    """(major, minor) of the running glibc, or None for another or unknown libc."""
+    libc, version = platform.libc_ver()
+    if libc != 'glibc':
+        return None
+    try:
+        major, minor = version.split('.')[:2]
+        return int(major), int(minor)
+    except ValueError:
+        return None
+
+
 def _get_wheel_filename(python_version: str, variant: str, for_download: bool = True) -> str:
     """Construct wheel filename for given Python version and variant
 
     Args:
         python_version: e.g., '3.11'
-        variant: 'cuda12' (CUDA wheels are the only variant we self-host)
+        variant: 'cuda12' or VULKAN_WHEEL_VARIANT (the self-hosted variants)
         for_download: If True, include variant suffix (for GitHub). If False, standard pip format.
     """
     # Python 3.11 -> cp311
     py_tag = f"cp{python_version.replace('.', '')}"
-    base = f"pywhispercpp-{PYWHISPERCPP_VERSION}-{py_tag}-{py_tag}-linux_x86_64"
+    base = f"pywhispercpp-{PYWHISPERCPP_VERSION}-{PYWHISPERCPP_WHEEL_BUILD}-{py_tag}-{py_tag}-linux_x86_64"
     if for_download:
-        # GitHub release filename: pywhispercpp-<version>-cp311-cp311-linux_x86_64+cuda12.whl
+        # GitHub release filename: pywhispercpp-<version>-<build>-cp311-cp311-linux_x86_64+cuda12.whl
         return f"{base}+{variant}.whl"
     else:
-        # Standard pip-compatible filename: pywhispercpp-<version>-cp311-cp311-linux_x86_64.whl
+        # Standard pip-compatible filename: pywhispercpp-<version>-<build>-cp311-cp311-linux_x86_64.whl
         return f"{base}.whl"
+
+
+def _published_wheel_sha256(download_filename: str) -> Optional[str]:
+    """SHA-256 the wheels-v2 SHA256SUMS.txt lists for a file, or None if unlisted or unreachable."""
+    try:
+        with urllib.request.urlopen(f"{WHEEL_BASE_URL}/SHA256SUMS.txt", timeout=30) as response:
+            sums = response.read().decode('utf-8', 'replace')
+    except Exception as e:
+        log_debug(f"Could not fetch wheel checksums: {e}")
+        return None
+    for line in sums.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lstrip('*') == download_filename:
+            return parts[0].lower()
+    return None
 
 
 def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]:
@@ -434,8 +495,8 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
     Download pre-built pywhispercpp wheel if available.
 
     Args:
-        variant: Optional variant override ('cuda12'). If None, auto-detects
-                 based on system CUDA. CPU installs come from PyPI, not here.
+        variant: Optional variant ('cuda12' or VULKAN_WHEEL_VARIANT). If None,
+                 auto-detects based on system CUDA. CPU installs come from PyPI, not here.
 
     Returns:
         Path to downloaded wheel file (with pip-compatible name), or None if unavailable/failed.
@@ -463,10 +524,20 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
     download_path = variant_cache_dir / download_filename
     install_path = variant_cache_dir / install_filename
 
-    # Check if already cached (check the pip-compatible filename in variant subdirectory)
-    if install_path.exists() and install_path.stat().st_size > 10 * 1024 * 1024:  # >10MB
-        log_info(f"Using cached wheel: {variant}/{install_filename}")
-        return install_path
+    expected_sha256 = _published_wheel_sha256(download_filename)
+
+    # A cached wheel (pip-compatible name in the variant subdirectory) only gets
+    # there after its checksum verified, and published wheels are never
+    # overwritten, so it stays usable offline. Re-check it when the list is reachable.
+    if install_path.exists():
+        if expected_sha256 is None or compute_file_hash(install_path) == expected_sha256:
+            log_info(f"Using cached wheel: {variant}/{install_filename}")
+            return install_path
+        install_path.unlink()
+
+    if expected_sha256 is None:
+        log_debug(f"Pre-built wheel not published or checksum list unavailable: {download_filename}")
+        return None
 
     log_info(f"Downloading pre-built wheel: {download_filename}")
 
@@ -489,17 +560,17 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
 
         urllib.request.urlretrieve(wheel_url, download_path, reporthook=show_progress)
 
-        # Verify download
-        if download_path.exists() and download_path.stat().st_size > 10 * 1024 * 1024:
+        # Verify download against the published checksum
+        if download_path.exists() and compute_file_hash(download_path) == expected_sha256:
             # Rename to pip-compatible filename (strip variant suffix)
             if download_path != install_path:
                 if install_path.exists():
                     install_path.unlink()
                 download_path.rename(install_path)
-            log_success(f"Pre-built wheel downloaded: {install_filename}")
+            log_success(f"Pre-built wheel downloaded and verified: {install_filename}")
             return install_path
         else:
-            log_warning("Downloaded wheel appears invalid (too small)")
+            log_warning("Downloaded wheel does not match its published checksum; discarding it")
             if download_path.exists():
                 download_path.unlink()
             return None
@@ -541,6 +612,25 @@ def install_pywhispercpp_from_wheel(pip_bin: Path, wheel_path: Path) -> bool:
     except subprocess.CalledProcessError as e:
         log_warning(f"Wheel installation failed: {e}")
         return False
+
+
+def _wheel_native_libs_load(pip_bin: Path) -> bool:
+    """True when the installed pywhispercpp extension and its bundled libraries load.
+
+    pip succeeds even when a library the wheel links against is missing; this
+    catches that while a source build can still take over.
+    """
+    try:
+        result = subprocess.run([str(Path(pip_bin).parent / 'python'), '-c', 'import _pywhispercpp'],
+                                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log_warning(f"Could not load the installed wheel: {e}")
+        return False
+    if result.returncode != 0:
+        detail = (result.stderr.strip().splitlines() or ['no output'])[-1]
+        log_warning(f"Installed wheel does not load: {detail}")
+        return False
+    return True
 
 
 # ==================== State Management ====================
@@ -1080,39 +1170,24 @@ def setup_vulkan_support() -> bool:
     """
     log_info("Setting up Vulkan support...")
 
-    # 1. Install Vulkan dependencies (both runtime and development headers)
+    # 1. Install Vulkan runtime and source-build dependencies (Arch only). Other
+    # distros may not need build tools at all when the pre-built wheel applies;
+    # install_pywhispercpp_vulkan checks them before a source build.
     if shutil.which('pacman'):
         log_info("Installing Vulkan dependencies...")
-        vulkan_pkgs = ['vulkan-headers', 'vulkan-icd-loader', 'shaderc', 'vulkan-tools']
         try:
             result = run_sudo_command(
-                ['pacman', '-S', '--needed', '--noconfirm'] + vulkan_pkgs,
+                ['pacman', '-S', '--needed', '--noconfirm'] + VULKAN_PACMAN_PACKAGES,
                 check=False
             )
             if not result or result.returncode != 0:
                 log_warning("Could not install Vulkan packages, checking for an existing Vulkan setup")
         except Exception as e:
             log_warning(f"Could not install Vulkan dependencies ({e}), checking for an existing Vulkan setup")
-    else:
-        # Check if Vulkan development files are available
-        log_info("Checking for Vulkan development files...")
-        # Look for vulkan headers in common locations
-        vulkan_header_paths = [
-            '/usr/include/vulkan/vulkan.h',
-            '/usr/local/include/vulkan/vulkan.h',
-        ]
-        has_vulkan_dev = any(Path(p).exists() for p in vulkan_header_paths)
-        if not has_vulkan_dev:
-            log_warning("Vulkan development headers not found")
-            log_info("Please install Vulkan development packages:")
-            log_info("  Debian/Ubuntu: sudo apt install libvulkan-dev vulkan-tools shaderc")
-            log_info("  Fedora: sudo dnf install vulkan-headers vulkan-loader-devel shaderc")
-            log_info("  openSUSE: sudo zypper install vulkan-devel shaderc")
-            return False
 
     # 2. Verify Vulkan is now available
     if not shutil.which('vulkaninfo'):
-        log_warning("vulkaninfo not available after installation")
+        log_warning("vulkaninfo not found - install vulkan-tools")
         return False
 
     try:
@@ -2372,7 +2447,9 @@ def install_pywhispercpp_rocm(pip_bin: Path) -> Tuple[bool, bool]:
 def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
     """Install pywhispercpp with Vulkan support.
 
-    Uses GGML_VULKAN=1 environment variable to enable Vulkan acceleration.
+    Installs the pre-built Vulkan wheel when one exists for this Python and
+    glibc is at least VULKAN_WHEEL_MIN_GLIBC, otherwise builds from source
+    with GGML_VULKAN=1.
     Works with AMD/Intel/ARM GPUs (discrete and integrated).
 
     Returns:
@@ -2380,6 +2457,25 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
         False if installation failed
     """
     log_info("Installing pywhispercpp with Vulkan support...")
+
+    glibc = _glibc_version()
+    if glibc is not None and glibc >= VULKAN_WHEEL_MIN_GLIBC:
+        wheel_path = download_pywhispercpp_wheel(VULKAN_WHEEL_VARIANT)
+        if wheel_path:
+            if install_pywhispercpp_from_wheel(pip_bin, wheel_path) and _wheel_native_libs_load(pip_bin):
+                return True
+            log_warning("Pre-built wheel failed, falling back to source build...")
+    else:
+        required = '.'.join(map(str, VULKAN_WHEEL_MIN_GLIBC))
+        log_info(f"Pre-built Vulkan wheel needs glibc {required} or newer; building from source")
+
+    missing = _missing_vulkan_build_tools()
+    if missing:
+        log_warning(f"Cannot build with Vulkan, missing: {', '.join(missing)}")
+        for hint in VULKAN_BUILD_PACKAGE_HINTS:
+            log_info(f"  {hint}")
+        return False
+
     install_system_dependencies()
 
     if not _prepare_pywhispercpp_sources():
@@ -3143,7 +3239,10 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         
         # Installation successful
         set_install_state('completed')
-        log_success(f"{backend_type.upper()} backend installation completed!")
+        if requested_variant == 'cpu' and (enable_cuda or enable_rocm or enable_vulkan):
+            log_warning(f"{backend_type.upper()} build failed; installed CPU-only instead.")
+        else:
+            log_success(f"{backend_type.upper()} backend installation completed!")
         return True
         
     except KeyboardInterrupt:

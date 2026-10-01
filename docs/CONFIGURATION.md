@@ -459,6 +459,15 @@ Run `hyprwhspr setup` and select **Whisper**. On AMD/Intel, setup uses whisper.c
 
 For whisper.cpp on CPU or NVIDIA: `hyprwhspr setup auto --backend cpu` or `--backend nvidia`.
 
+On x86-64, setup fetches a pre-built wheel: CUDA 12, or Vulkan on glibc 2.41+ (Arch, Fedora 42+, Debian 13). Otherwise it builds, and a Vulkan build needs:
+
+- Arch: setup installs it
+- Debian/Ubuntu: `libvulkan-dev glslc spirv-headers`
+- Fedora: `vulkan-headers vulkan-loader-devel glslc spirv-headers-devel`
+- openSUSE: `vulkan-devel shaderc spirv-headers`
+
+If the GPU build fails, you get CPU, and the service says so at every start. Install what's missing, re-run setup, reinstall the backend.
+
 **Best for:** modern NVIDIA cards or discrete AMD/Intel (via Vulkan) — extremely fast on GPU with `large-v3` or `large-v3-turbo`.
 
 #### Available models
@@ -859,7 +868,7 @@ The recording-status indicator — the **mic OSD** — gives visual feedback whi
 `mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup:
 
 - **Overlay mode** — compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland) get the animated always-on-top overlay. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
-- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Notifications require `notify-send` (libnotify).
+- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Notifications require `notify-send` (libnotify). "Transcribing…" stays until the text lands; GNOME keeps its own clock.
 
 Set `mic_osd_enabled: false` to turn off both. The service log records which mode was selected:
 
@@ -1624,6 +1633,15 @@ On resume/restart, the microphone often "loses connection" and requires reseatin
 
 If the default source ends in `.monitor`, select a real input or set
 `audio_device_name`. Test it with `hyprwhspr test --live`.
+
+#### "Missing Python modules" at startup
+
+An update brought a dependency your environment lacks. The service runs; dictation may not.
+`Python dependencies changed since setup` is the gentler cousin. Same fix:
+
+```bash
+hyprwhspr setup   # keep the backend, reinstall: yes
+```
 
 #### Hotkey not working
 

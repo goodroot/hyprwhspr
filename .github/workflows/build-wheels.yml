@@ -1,12 +1,14 @@
 name: Build PyWhisperCPP Wheels
 
-# CUDA wheels only; CPU comes from PyPI. Version, commit, and variant suffix are
-# derived from lib/src/backend_installer.py so the workflow never restates the
-# contract. Wheels publish to the rolling `wheels-v2` release the installer
-# downloads from (WHEEL_BASE_URL). Pushes to main are gated by a preflight that
-# skips the build when the pinned version's wheels are already published, so a
-# version bump ships wheels automatically and unrelated installer edits cost
-# one curl.
+# CUDA and Vulkan wheels; CPU comes from PyPI. Version, build tag, commit, and
+# variant suffixes are derived from lib/src/backend_installer.py so the workflow
+# never restates the contract. Wheels publish to the rolling `wheels-v2` release
+# the installer downloads from (WHEEL_BASE_URL); published wheels are never
+# overwritten, a rebuild bumps PYWHISPERCPP_WHEEL_BUILD instead. Pushes to main
+# are gated by a preflight that skips each variant whose wheels for the pinned
+# version and build are already published and checksummed for every Python, so
+# a version or build bump ships wheels automatically, a partly published variant
+# is completed by the next run, and unrelated installer edits cost two requests.
 
 on:
   workflow_dispatch:
@@ -25,40 +27,55 @@ concurrency:
 
 env:
   CUDA_BUILD_VERSION: '12.6'  # one 12.x build serves all CUDA 12
+  # Keep in sync with every build/verify matrix below (checked by the tests).
+  PYTHON_VERSIONS: '3.11 3.12 3.13 3.14'
 
 jobs:
   preflight:
     name: Check wheels-v2 for pinned version
     runs-on: ubuntu-latest
     outputs:
-      build: ${{ steps.gate.outputs.build }}
+      build_cuda: ${{ steps.gate.outputs.build_cuda }}
+      build_vulkan: ${{ steps.gate.outputs.build_vulkan }}
     steps:
       - name: Checkout hyprwhspr
         uses: actions/checkout@v7
 
-      - name: Skip if installer's wheels already published
+      - name: Skip variants whose wheels are already published
         id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            echo "manual run: building"
+            echo "build_cuda=true" >> "$GITHUB_OUTPUT"
+            echo "build_vulkan=true" >> "$GITHUB_OUTPUT"
+            echo "manual run: building all variants"
             exit 0
           fi
-          probe=$(PYTHONPATH=lib/src python3 -c "import backend_installer as b; print(b._get_wheel_filename('3.10', 'cuda12', True))")
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/wheels-v2/${probe}"
-          code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
-          if [ "$code" = "302" ]; then
-            echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "already on wheels-v2: $probe - nothing to do"
-          else
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            echo "missing on wheels-v2 (HTTP $code): $probe - building"
-          fi
+          # A wheel counts as published only with its checksum: the installer
+          # refuses wheels SHA256SUMS.txt does not list.
+          assets=$(gh release view wheels-v2 --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name') || true
+          sums=$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/wheels-v2/SHA256SUMS.txt" || true)
+          vulkan=$(PYTHONPATH=lib/src python3 -c "import backend_installer as b; print(b.VULKAN_WHEEL_VARIANT)")
+          for pair in "cuda:cuda12" "vulkan:${vulkan}"; do
+            key="${pair%%:*}"
+            variant="${pair#*:}"
+            build=false
+            for py in $PYTHON_VERSIONS; do
+              name=$(PYTHONPATH=lib/src python3 -c "import backend_installer as b; print(b._get_wheel_filename('${py}', '${variant}', True))")
+              if ! grep -qxF "$name" <<< "$assets" || ! awk '{print $2}' <<< "$sums" | grep -qxF "$name"; then
+                echo "not published with a checksum: $name"
+                build=true
+              fi
+            done
+            echo "build_${key}=${build}" >> "$GITHUB_OUTPUT"
+            [ "$build" = true ] || echo "${key}: all wheels already on wheels-v2 - nothing to do"
+          done
 
   build-cuda:
     name: Build CUDA wheel (Python ${{ matrix.python-version }})
     needs: preflight
-    if: needs.preflight.outputs.build == 'true'
+    if: needs.preflight.outputs.build_cuda == 'true'
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -81,6 +98,7 @@ jobs:
           pin=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b.PYWHISPERCPP_PINNED_COMMIT)")
           variant=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b._get_wheel_variant('${CUDA_BUILD_VERSION}'))")
           echo "EXPECTED_VERSION=$ver" >> "$GITHUB_ENV"
+          echo "WHEEL_BUILD=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b.PYWHISPERCPP_WHEEL_BUILD)")" >> "$GITHUB_ENV"
           echo "VARIANT=$variant" >> "$GITHUB_ENV"
           commit='${{ github.event.inputs.pywhispercpp_commit }}'
           [ -n "$commit" ] || commit="$pin"
@@ -111,7 +129,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake git
+          sudo apt-get install -y build-essential cmake git patchelf
           pip install --upgrade pip wheel setuptools build
 
       - name: Clone pywhispercpp
@@ -124,11 +142,20 @@ jobs:
       - name: Build wheel with CUDA support
         env:
           GGML_CUDA: 'ON'
+          GGML_NATIVE: 'OFF'  # generic x86-64 CPU flags instead of the runner's
+          GGML_OPENMP: 'OFF'  # ggml threadpool; no libgomp dependency
           CUDACXX: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}/bin/nvcc
           NO_REPAIR: '1'  # CUDA driver libs come from the user's system
         run: |
           cd pywhispercpp-src
           pip wheel . --no-deps --wheel-dir ../dist
+
+      - name: Point bundled libraries at each other ($ORIGIN)
+        run: |
+          python -m wheel unpack dist/pywhispercpp-*.whl -d "$RUNNER_TEMP/unpacked"
+          find "$RUNNER_TEMP/unpacked" -name '*.so*' -type f -exec patchelf --set-rpath '$ORIGIN' {} \;
+          rm dist/pywhispercpp-*.whl
+          python -m wheel pack "$RUNNER_TEMP"/unpacked/pywhispercpp-* -d dist --build-number "$WHEEL_BUILD"
 
       - name: Assert built version matches installer
         run: |
@@ -152,9 +179,179 @@ jobs:
           name: wheel-cuda12-py${{ matrix.python-version }}
           path: dist/*.whl
 
+  build-vulkan:
+    # Debian trixie ships glslc, the Vulkan headers and the SPIRV-Headers CMake
+    # package; its glibc is backend_installer.VULKAN_WHEEL_MIN_GLIBC.
+    name: Build Vulkan wheel (Python ${{ matrix.python-version }})
+    needs: preflight
+    if: needs.preflight.outputs.build_vulkan == 'true'
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13', '3.14']
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential cmake git curl ca-certificates binutils \
+            glslc libvulkan-dev spirv-headers patchelf
+
+      - name: Checkout hyprwhspr
+        uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }} (uv)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          "$HOME/.local/bin/uv" venv --seed --python ${{ matrix.python-version }} "$RUNNER_TEMP/py"
+          echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
+
+      - name: Derive installer contract (from backend_installer.py)
+        run: |
+          ver=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b.PYWHISPERCPP_VERSION)")
+          pin=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b.PYWHISPERCPP_PINNED_COMMIT)")
+          variant=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b.VULKAN_WHEEL_VARIANT)")
+          glibc=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print('.'.join(map(str, b.VULKAN_WHEEL_MIN_GLIBC)))")
+          echo "EXPECTED_VERSION=$ver" >> "$GITHUB_ENV"
+          echo "WHEEL_BUILD=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b.PYWHISPERCPP_WHEEL_BUILD)")" >> "$GITHUB_ENV"
+          echo "VARIANT=$variant" >> "$GITHUB_ENV"
+          echo "MIN_GLIBC=$glibc" >> "$GITHUB_ENV"
+          commit='${{ github.event.inputs.pywhispercpp_commit }}'
+          [ -n "$commit" ] || commit="$pin"
+          echo "PYWHISPERCPP_COMMIT=$commit" >> "$GITHUB_ENV"
+          echo "contract: version=$ver variant=$variant glibc>=$glibc commit=$commit"
+          if [ "$commit" != "$pin" ]; then
+            echo "::warning::Building $commit, installer pins $pin (v$ver)."
+          fi
+
+      - name: Install Python build tools
+        run: pip install --upgrade pip wheel setuptools build
+
+      - name: Clone pywhispercpp
+        run: |
+          git clone --recurse-submodules https://github.com/Absadiki/pywhispercpp.git pywhispercpp-src
+          cd pywhispercpp-src
+          git checkout ${{ env.PYWHISPERCPP_COMMIT }}
+          git submodule update --init --recursive
+
+      - name: Build wheel with Vulkan support
+        env:
+          GGML_VULKAN: '1'
+          GGML_NATIVE: 'OFF'  # generic x86-64 CPU flags instead of the runner's
+          GGML_OPENMP: 'OFF'  # ggml threadpool; no libgomp dependency
+        run: |
+          cd pywhispercpp-src
+          pip wheel . --no-deps --wheel-dir ../dist
+
+      - name: Point bundled libraries at each other ($ORIGIN)
+        run: |
+          python -m wheel unpack dist/pywhispercpp-*.whl -d "$RUNNER_TEMP/unpacked"
+          find "$RUNNER_TEMP/unpacked" -name '*.so*' -type f -exec patchelf --set-rpath '$ORIGIN' {} \;
+          rm dist/pywhispercpp-*.whl
+          python -m wheel pack "$RUNNER_TEMP"/unpacked/pywhispercpp-* -d dist --build-number "$WHEEL_BUILD"
+
+      - name: Assert built version matches installer
+        run: |
+          cd dist
+          built="$(ls pywhispercpp-*.whl | head -n1)"
+          version="$(echo "$built" | sed -E 's/^pywhispercpp-([^-]+)-.*/\1/')"
+          if [ "$version" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::Built $version != installer's ${EXPECTED_VERSION}."
+            exit 1
+          fi
+
+      - name: Assert glibc requirement matches installer
+        run: |
+          mkdir -p "$RUNNER_TEMP/whl"
+          python -m zipfile -e dist/pywhispercpp-*.whl "$RUNNER_TEMP/whl"
+          needed=$(find "$RUNNER_TEMP/whl" -name '*.so*' -type f -exec objdump -T {} + \
+            | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -n1)
+          echo "wheel needs glibc $needed; installer requires $MIN_GLIBC"
+          if [ "$(printf '%s\n%s\n' "$needed" "$MIN_GLIBC" | sort -V | tail -n1)" != "$MIN_GLIBC" ]; then
+            echo "::error::Wheel needs glibc $needed, above VULKAN_WHEEL_MIN_GLIBC $MIN_GLIBC."
+            exit 1
+          fi
+
+      - name: Rename wheel with Vulkan variant suffix
+        run: |
+          cd dist
+          for f in *.whl; do mv "$f" "${f%.whl}+${VARIANT}.whl"; done
+          ls -la
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel-vulkan-py${{ matrix.python-version }}
+          path: dist/*.whl
+
+  verify-vulkan:
+    # Installs the wheel the installer will request on the oldest supported
+    # glibc and transcribes a sample on Mesa's software Vulkan device (lavapipe).
+    name: Verify Vulkan wheel (Python ${{ matrix.python-version }})
+    needs: [build-vulkan]
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13', '3.14']
+
+    steps:
+      - name: Install Vulkan runtime (Mesa lavapipe)
+        run: |
+          apt-get update
+          apt-get install -y git curl ca-certificates libvulkan1 mesa-vulkan-drivers
+
+      - name: Checkout hyprwhspr
+        uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python-version }} (uv)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          "$HOME/.local/bin/uv" venv --seed --python ${{ matrix.python-version }} "$RUNNER_TEMP/py"
+          echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
+
+      - name: Derive expected filename from installer
+        run: |
+          py='${{ matrix.python-version }}'
+          variant=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b.VULKAN_WHEEL_VARIANT)")
+          dl=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b._get_wheel_filename('${py}', '${variant}', True))")
+          pip=$(PYTHONPATH=lib/src python -c "import backend_installer as b; print(b._get_wheel_filename('${py}', '${variant}', False))")
+          echo "EXPECTED_WHEEL=$dl" >> "$GITHUB_ENV"
+          echo "WHEEL_PIP_NAME=$pip" >> "$GITHUB_ENV"
+          echo "installer wants: $dl"
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: wheel-vulkan-py${{ matrix.python-version }}
+          path: dist
+
+      - name: Assert build produced the requested file
+        run: |
+          if [ ! -f "dist/${EXPECTED_WHEEL}" ]; then
+            echo "::error::Installer wants ${EXPECTED_WHEEL}; build did not produce it."
+            ls -la dist
+            exit 1
+          fi
+
+      - name: Install wheel with its dependencies
+        run: |
+          cp "dist/${EXPECTED_WHEEL}" "dist/${WHEEL_PIP_NAME}"
+          pip install "dist/${WHEEL_PIP_NAME}"
+
+      - name: Transcribe a sample through the Vulkan backend
+        env:
+          GGML_VK_VISIBLE_DEVICES: '0'
+        run: |
+          curl -fsSL -o jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.8.5/samples/jfk.wav
+          python .github/scripts/verify_vulkan_wheel.py jfk.wav "ask not what your country can do for you"
+
   verify-wheels:
     # Derive the filename the installer will request and assert the build made it.
-    name: Verify wheel (Python ${{ matrix.python-version }})
+    name: Verify CUDA wheel (Python ${{ matrix.python-version }})
     needs: [build-cuda]
     runs-on: ubuntu-22.04
     strategy:
@@ -207,10 +404,9 @@ jobs:
           site=$(python -c "import sysconfig; print(sysconfig.get_paths()['platlib'])")
           sos=$(find "$site" -maxdepth 2 \( -name '*.so' -o -name '*.so.*' \) | grep -iE 'pywhispercpp|whisper|ggml' || true)
           [ -n "$sos" ] || { echo "::error::no pywhispercpp native libs found in $site"; exit 1; }
-          # Point the loader at the bundle dirs so the wheel's own libs (libggml*, libwhisper)
-          # resolve each other; only genuinely-absent CUDA libs (no GPU on CI) should remain.
-          libdirs=$(printf '%s\n' $sos | xargs -n1 dirname | sort -u | paste -sd: -)
-          missing=$(LD_LIBRARY_PATH="$libdirs" ldd $sos 2>/dev/null | grep 'not found' | grep -viE 'libcu|libnv' | sort -u || true)
+          # The wheel's own libs (libggml*, libwhisper) resolve through their $ORIGIN
+          # runpath; only genuinely-absent CUDA libs (no GPU on CI) should remain.
+          missing=$(ldd $sos 2>/dev/null | grep 'not found' | grep -viE 'libcu|libnv' | sort -u || true)
           if [ -n "$missing" ]; then
             echo "::error::Non-CUDA shared libs unresolved (wheel likely unusable):"
             echo "$missing"
@@ -220,7 +416,14 @@ jobs:
 
   publish-wheels:
     name: Publish wheels to wheels-v2
-    needs: [build-cuda, verify-wheels]
+    needs: [preflight, build-cuda, verify-wheels, build-vulkan, verify-vulkan]
+    # Runs when at least one variant was built and nothing failed; a skipped
+    # variant (already published) does not block the other.
+    if: >-
+      always()
+      && !contains(needs.*.result, 'failure')
+      && !contains(needs.*.result, 'cancelled')
+      && (needs.preflight.outputs.build_cuda == 'true' || needs.preflight.outputs.build_vulkan == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -237,19 +440,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          shopt -s nullglob
+          # Published wheels are never overwritten: keep any already on the
+          # release (a manual run, or a run completing a partly published variant).
+          published=$(gh release view wheels-v2 --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          for whl in wheels/*.whl; do
+            if grep -qxF "$(basename "$whl")" <<< "$published"; then
+              echo "::notice::already published, keeping it: $(basename "$whl")"
+              rm "$whl"
+            fi
+          done
+          new=(wheels/*.whl)
+          if [ ${#new[@]} -eq 0 ]; then
+            echo "nothing new to publish"
+            exit 0
+          fi
           ls -la wheels/
           (cd wheels && sha256sum *.whl) > new-sums.txt
           # Merge with the release's existing checksums: replace entries for
-          # files being (re)uploaded, keep every other version's entries.
+          # files being uploaded, keep every other entry.
           gh release download wheels-v2 --repo "$GITHUB_REPOSITORY" \
             --pattern SHA256SUMS.txt --output existing-sums.txt || : > existing-sums.txt
           awk '{print $2}' new-sums.txt > new-files.txt
-          grep -vFf new-files.txt existing-sums.txt > SHA256SUMS.txt || true
+          awk 'NR == FNR { skip[$1]; next } !($2 in skip)' new-files.txt existing-sums.txt > SHA256SUMS.txt
           cat new-sums.txt >> SHA256SUMS.txt
           sort -k2 -o SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
-          gh release upload wheels-v2 wheels/*.whl SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --clobber
+          # Checksums first, so a wheel is never on the release without one (the
+          # installer would refuse it, and it could not be replaced). A listed
+          # wheel whose upload then fails is just absent: the installer builds
+          # from source and the next run uploads it with a fresh checksum.
+          gh release upload wheels-v2 SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload wheels-v2 "${new[@]}" --repo "$GITHUB_REPOSITORY"
           cp SHA256SUMS.txt wheels/
 
       - name: Upload wheels as workflow artifact
