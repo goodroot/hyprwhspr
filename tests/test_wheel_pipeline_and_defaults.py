@@ -127,6 +127,14 @@ class WheelChecksumTests(unittest.TestCase):
         urlretrieve.assert_called_once()
         self.assertEqual(path.read_bytes(), self.WHEEL)
 
+    def test_cached_wheel_is_used_offline(self):
+        cached = self.cache / "vulkan" / self.pip_name
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(self.WHEEL)
+        path, urlretrieve = self._download(None)
+        self.assertEqual(path, cached)
+        urlretrieve.assert_not_called()
+
     def test_published_checksum_is_read_from_the_release_sums(self):
         sums = (f"{'a' * 64}  other.whl\n{'b' * 64}  {self.name}\n").encode()
         response = mock.MagicMock()
@@ -143,14 +151,40 @@ class WheelChecksumTests(unittest.TestCase):
             self.assertIsNone(backend_installer._published_wheel_sha256(self.name))
 
 
+class WheelLoadProbeTests(unittest.TestCase):
+    def _probe(self, **result):
+        run = mock.Mock(return_value=mock.Mock(**result)) if result else mock.Mock(
+            side_effect=backend_installer.subprocess.TimeoutExpired("python", 60))
+        with mock.patch.object(backend_installer.subprocess, "run", run), \
+                mock.patch.object(backend_installer, "log_warning") as warn:
+            loaded = backend_installer._wheel_native_libs_load(Path("/venv/bin/pip"))
+        return loaded, run, warn
+
+    def test_extension_is_imported_with_the_venv_python(self):
+        loaded, run, _ = self._probe(returncode=0, stderr="")
+        self.assertTrue(loaded)
+        self.assertEqual(run.call_args.args[0], ["/venv/bin/python", "-c", "import _pywhispercpp"])
+
+    def test_missing_library_is_reported(self):
+        loaded, _, warn = self._probe(
+            returncode=1, stderr="Traceback\nImportError: libvulkan.so.1: cannot open shared object file")
+        self.assertFalse(loaded)
+        self.assertIn("libvulkan.so.1", warn.call_args.args[0])
+
+    def test_hung_import_counts_as_failure(self):
+        self.assertFalse(self._probe()[0])
+
+
 class VulkanWheelInstallTests(unittest.TestCase):
-    def _install(self, wheel, wheel_installs=True, glibc=(2, 42)):
+    def _install(self, wheel, wheel_installs=True, glibc=(2, 42), wheel_loads=True):
         """Run install_pywhispercpp_vulkan; returns (result, download, from_wheel, prepare mocks)."""
         with mock.patch.object(backend_installer, "_glibc_version", return_value=glibc), \
                 mock.patch.object(backend_installer, "download_pywhispercpp_wheel",
                                   return_value=wheel) as download, \
                 mock.patch.object(backend_installer, "install_pywhispercpp_from_wheel",
                                   return_value=wheel_installs) as from_wheel, \
+                mock.patch.object(backend_installer, "_wheel_native_libs_load",
+                                  return_value=wheel_loads), \
                 mock.patch.object(backend_installer, "install_system_dependencies"), \
                 mock.patch.object(backend_installer, "_missing_vulkan_build_tools", return_value=[]), \
                 mock.patch.object(backend_installer, "_prepare_pywhispercpp_sources",
@@ -176,6 +210,12 @@ class VulkanWheelInstallTests(unittest.TestCase):
 
     def test_failed_wheel_install_builds_from_source(self):
         _, _, _, prepare = self._install(Path("/cache/vulkan/pywhispercpp.whl"), wheel_installs=False)
+        prepare.assert_called_once()
+
+    def test_wheel_that_does_not_load_builds_from_source(self):
+        result, _, from_wheel, prepare = self._install(Path("/cache/vulkan/x.whl"), wheel_loads=False)
+        self.assertFalse(result)
+        from_wheel.assert_called_once()
         prepare.assert_called_once()
 
     def test_older_or_unknown_glibc_skips_the_wheel(self):

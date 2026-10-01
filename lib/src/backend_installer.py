@@ -525,16 +525,19 @@ def download_pywhispercpp_wheel(variant: Optional[str] = None) -> Optional[Path]
     install_path = variant_cache_dir / install_filename
 
     expected_sha256 = _published_wheel_sha256(download_filename)
-    if expected_sha256 is None:
-        log_debug(f"Pre-built wheel not published or checksum list unavailable: {download_filename}")
-        return None
 
-    # Cached wheel (pip-compatible name in the variant subdirectory) is used only if it still verifies
+    # A cached wheel (pip-compatible name in the variant subdirectory) only gets
+    # there after its checksum verified, and published wheels are never
+    # overwritten, so it stays usable offline. Re-check it when the list is reachable.
     if install_path.exists():
-        if compute_file_hash(install_path) == expected_sha256:
+        if expected_sha256 is None or compute_file_hash(install_path) == expected_sha256:
             log_info(f"Using cached wheel: {variant}/{install_filename}")
             return install_path
         install_path.unlink()
+
+    if expected_sha256 is None:
+        log_debug(f"Pre-built wheel not published or checksum list unavailable: {download_filename}")
+        return None
 
     log_info(f"Downloading pre-built wheel: {download_filename}")
 
@@ -609,6 +612,25 @@ def install_pywhispercpp_from_wheel(pip_bin: Path, wheel_path: Path) -> bool:
     except subprocess.CalledProcessError as e:
         log_warning(f"Wheel installation failed: {e}")
         return False
+
+
+def _wheel_native_libs_load(pip_bin: Path) -> bool:
+    """True when the installed pywhispercpp extension and its bundled libraries load.
+
+    pip succeeds even when a library the wheel links against is missing; this
+    catches that while a source build can still take over.
+    """
+    try:
+        result = subprocess.run([str(Path(pip_bin).parent / 'python'), '-c', 'import _pywhispercpp'],
+                                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log_warning(f"Could not load the installed wheel: {e}")
+        return False
+    if result.returncode != 0:
+        detail = (result.stderr.strip().splitlines() or ['no output'])[-1]
+        log_warning(f"Installed wheel does not load: {detail}")
+        return False
+    return True
 
 
 # ==================== State Management ====================
@@ -2440,7 +2462,7 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
     if glibc is not None and glibc >= VULKAN_WHEEL_MIN_GLIBC:
         wheel_path = download_pywhispercpp_wheel(VULKAN_WHEEL_VARIANT)
         if wheel_path:
-            if install_pywhispercpp_from_wheel(pip_bin, wheel_path):
+            if install_pywhispercpp_from_wheel(pip_bin, wheel_path) and _wheel_native_libs_load(pip_bin):
                 return True
             log_warning("Pre-built wheel failed, falling back to source build...")
     else:

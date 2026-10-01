@@ -95,6 +95,7 @@ class InstallVulkanTests(unittest.TestCase):
         with mock.patch.object(backend_installer, "_glibc_version", return_value=glibc), \
              mock.patch.object(backend_installer, "download_pywhispercpp_wheel", return_value=wheel), \
              mock.patch.object(backend_installer, "install_pywhispercpp_from_wheel", return_value=True), \
+             mock.patch.object(backend_installer, "_wheel_native_libs_load", return_value=True), \
              mock.patch.object(backend_installer, "_missing_vulkan_build_tools", return_value=missing), \
              mock.patch.object(backend_installer, "install_system_dependencies") as sysdeps, \
              mock.patch.object(backend_installer, "_prepare_pywhispercpp_sources", prepare):
