@@ -3240,8 +3240,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         # Installation successful
         set_install_state('completed')
         if requested_variant == 'cpu' and (enable_cuda or enable_rocm or enable_vulkan):
-            log_warning(f"{backend_type.upper()} build failed; installed a CPU-only build instead. "
-                        "Transcription will run on the CPU.")
+            log_warning(f"{backend_type.upper()} build failed; installed CPU-only instead.")
         else:
             log_success(f"{backend_type.upper()} backend installation completed!")
         return True

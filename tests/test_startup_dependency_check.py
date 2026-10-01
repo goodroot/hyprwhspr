@@ -119,7 +119,7 @@ class StartupDependencyCheckTests(unittest.TestCase):
             with self.subTest(backend=backend):
                 app, logged, result = self._cpu_report(backend, 'cpu')
                 self.assertTrue(result)
-                self.assertIn(f'[WARN] {shown} is configured, but the installed whisper.cpp build is CPU-only', logged)
+                self.assertIn(f'[WARN] {shown} configured, whisper.cpp build is CPU-only', logged)
                 (_title, message), kwargs = app._notify_user.call_args
                 self.assertEqual(kwargs, {'urgency': 'critical'})
                 self.assertIn('hyprwhspr setup', message)

@@ -457,13 +457,14 @@ Run `hyprwhspr setup` and select **Whisper**. On AMD/Intel, setup uses whisper.c
 
 For whisper.cpp on CPU or NVIDIA: `hyprwhspr setup auto --backend cpu` or `--backend nvidia`.
 
-On x86-64, setup installs a pre-built `pywhispercpp` wheel for NVIDIA (CUDA 12) and Vulkan from the `wheels-v2` release, after checking it against the release's `SHA256SUMS.txt`. The Vulkan wheel is built on Debian trixie and needs glibc 2.41 or newer (e.g. Fedora 42+, Debian 13, Arch); on older systems setup skips it. Without a matching wheel it builds from source, which needs `glslc`, the Vulkan headers and the SPIR-V headers. Arch gets them from setup; elsewhere:
+On x86-64, setup fetches a pre-built wheel: CUDA 12, or Vulkan on glibc 2.41+ (Arch, Fedora 42+, Debian 13). Otherwise it builds, and a Vulkan build needs:
 
+- Arch: setup installs it
 - Debian/Ubuntu: `libvulkan-dev glslc spirv-headers`
 - Fedora: `vulkan-headers vulkan-loader-devel glslc spirv-headers-devel`
 - openSUSE: `vulkan-devel shaderc spirv-headers`
 
-Setup checks for them first and names what is missing. If the GPU build fails, setup installs a CPU-only build and says so; the service then warns at every start (`[WARN] vulkan is configured, but the installed whisper.cpp build is CPU-only`) until setup is re-run with **Reinstall backend?** answered yes, or with CPU chosen instead.
+If the GPU build fails, you get CPU, and the service says so at every start. Install what's missing, re-run setup, reinstall the backend.
 
 **Best for:** modern NVIDIA cards or discrete AMD/Intel (via Vulkan) — extremely fast on GPU with `large-v3` or `large-v3-turbo`.
 
@@ -865,7 +866,7 @@ The recording-status indicator — the **mic OSD** — gives visual feedback whi
 `mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup:
 
 - **Overlay mode** — compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland) get the animated always-on-top overlay. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
-- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Notifications require `notify-send` (libnotify). "Transcribing…" stays up until the result replaces it; GNOME applies its own duration.
+- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Notifications require `notify-send` (libnotify). "Transcribing…" stays until the text lands; GNOME keeps its own clock.
 
 Set `mic_osd_enabled: false` to turn off both. The service log records which mode was selected:
 
@@ -1633,18 +1634,11 @@ If the default source ends in `.monitor`, select a real input or set
 
 #### "Missing Python modules" at startup
 
-At start the service checks that every Python module the configured backend
-needs can be found. When one is missing it logs
-`[ERROR] Missing Python modules: <names>` and shows a persistent notification;
-the service keeps running.
-
-This typically follows an update that added a dependency. When the modules
-import but the requirements changed since setup, the log says
-`[WARN] Python dependencies changed since setup` instead. Either way, re-run
-setup, keep the backend and answer **Reinstall backend?** with yes:
+An update brought a dependency your environment lacks. The service runs; dictation may not.
+`Python dependencies changed since setup` is the gentler cousin. Same fix:
 
 ```bash
-hyprwhspr setup   # source checkout: ./bin/hyprwhspr setup
+hyprwhspr setup   # keep the backend, reinstall: yes
 ```
 
 #### Hotkey not working

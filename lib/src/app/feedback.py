@@ -43,8 +43,7 @@ class FeedbackMixin:
         missing = missing_imports(backend, provider)
         if missing:
             names = ', '.join(missing)
-            log(f"[ERROR] Missing Python modules: {names}")
-            log("[ERROR] Dictation may fail until they are installed - run: hyprwhspr setup (Reinstall backend: yes)")
+            log(f"[ERROR] Missing Python modules: {names} - run: hyprwhspr setup (Reinstall backend: yes)")
             self._notify_user(
                 "hyprwhspr", f"Missing Python modules: {names}\n"
                 "Run: hyprwhspr setup and reinstall the backend",
@@ -81,11 +80,10 @@ class FeedbackMixin:
         backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
         if backend not in ('nvidia', 'vulkan') or get_state('installed_backend') != 'cpu':
             return False
-        log(f"[WARN] {backend} is configured, but the installed whisper.cpp build is CPU-only")
-        log("[WARN] Transcription runs on the CPU - run: hyprwhspr setup (Reinstall backend: yes), "
-            "or choose CPU there")
+        log(f"[WARN] {backend} configured, whisper.cpp build is CPU-only - "
+            "run: hyprwhspr setup (Reinstall backend: yes), or choose CPU")
         self._notify_user(
-            "hyprwhspr", f"{backend} is configured, but whisper.cpp runs CPU-only\n"
+            "hyprwhspr", f"{backend} configured, running on CPU\n"
             "Run: hyprwhspr setup and reinstall the backend, or choose CPU",
             urgency="critical")
         return True
