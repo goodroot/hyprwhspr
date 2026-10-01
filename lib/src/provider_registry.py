@@ -12,7 +12,8 @@ DEFAULT_MODEL_BACKENDS: Tuple[str, ...] = ('rest-api',)
 # Provider registry with known cloud transcription providers.
 #
 # 'backends' lists which setup pickers offer a model; it defaults to
-# DEFAULT_MODEL_BACKENDS when omitted. 'realtime' carries the model's Realtime
+# DEFAULT_MODEL_BACKENDS when omitted. 'websocket_protocol' names the wire
+# protocol (realtime_protocols.PROTOCOLS); omitted means OpenAI Realtime. 'realtime' carries the model's Realtime
 # WebSocket capabilities, which drive session payloads and mode guards.
 PROVIDERS: Dict[str, Dict] = {
     'openai': {
@@ -145,6 +146,7 @@ PROVIDERS: Dict[str, Dict] = {
         'name': 'Google (Gemini)',
         'endpoint': 'https://generativelanguage.googleapis.com/v1beta/audio/transcriptions',
         'websocket_endpoint': 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent',
+        'websocket_protocol': 'gemini-live',
         'api_key_prefix': None,
         'api_key_description': 'Google AI API key (from aistudio.google.com)',
         'models': {
@@ -166,6 +168,7 @@ PROVIDERS: Dict[str, Dict] = {
         'name': 'ElevenLabs',
         'endpoint': 'https://api.elevenlabs.io/v1/speech-to-text',
         'websocket_endpoint': 'wss://api.elevenlabs.io/v1/speech-to-text/realtime',
+        'websocket_protocol': 'elevenlabs',
         'api_key_header': 'xi-api-key',
         'api_key_prefix': None,
         'api_key_description': 'ElevenLabs API key',

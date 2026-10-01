@@ -28,8 +28,8 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
     LOG_TAG = '[ELEVENLABS]'
     DEFAULT_SAMPLE_RATE = 16000
 
-    def __init__(self):
-        """Initialize ElevenLabs realtime client"""
+    def __init__(self, mode: str = 'transcribe'):
+        """Initialize ElevenLabs realtime client (transcription only; mode is ignored)"""
         super().__init__()
         self.model = 'scribe_v2_realtime'
         self.input_sample_rate = self.DEFAULT_SAMPLE_RATE

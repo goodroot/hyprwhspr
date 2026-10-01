@@ -737,7 +737,8 @@ Persistent WebSocket streaming. `realtime_mode` selects `transcribe` (speech-to-
 | ElevenLabs | Yes | No — hyprwhspr ignores `realtime_mode` |
 | Custom | Yes | Yes |
 
-Custom endpoints speak the OpenAI Realtime protocol. Set `websocket_provider: "custom"` and `websocket_url`.
+Custom endpoints set `websocket_provider: "custom"` and `websocket_url`. They speak OpenAI Realtime unless
+`websocket_protocol` says otherwise. The API key is optional.
 
 #### OpenAI Realtime
 

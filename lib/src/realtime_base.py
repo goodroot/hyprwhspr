@@ -107,6 +107,9 @@ class RealtimeAudioClientBase:
         if sample_rate > 0:
             self.input_sample_rate = sample_rate
 
+    def configure(self, get_setting):
+        """Read protocol-specific settings before connecting (get_setting(key, default))."""
+
     def set_max_buffer_seconds(self, seconds: float):
         """Set maximum buffer size in seconds for backpressure handling"""
         self.max_buffer_seconds = max(1.0, seconds)  # Minimum 1 second

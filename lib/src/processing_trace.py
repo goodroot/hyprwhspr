@@ -5,10 +5,12 @@ import math
 try:
     from .backend_utils import normalize_backend
     from .openai_realtime_models import uses_manual_commit
+    from .realtime_protocols import resolve_protocol
     from .text_injector import preprocess_text
 except ImportError:
     from backend_utils import normalize_backend
     from openai_realtime_models import uses_manual_commit
+    from realtime_protocols import resolve_protocol
     from text_injector import preprocess_text
 
 
@@ -69,10 +71,12 @@ def classify_vad_mode(config):
     provider = str(_setting(config, 'websocket_provider', '') or '').lower()
     model = _setting(config, 'websocket_model', None)
     realtime_mode = _setting(config, 'realtime_mode', 'transcribe')
-    if provider == 'elevenlabs':
-        return 'provider_managed'
-    if provider == 'google':
-        return 'server_vad'
+    try:
+        protocol_vad = resolve_protocol(provider, _setting(config, 'websocket_protocol', None)).vad
+    except ValueError:
+        protocol_vad = None
+    if protocol_vad:
+        return protocol_vad
     if realtime_mode == 'converse' or uses_manual_commit(model):
         return 'manual_commit'
     return 'server_vad'

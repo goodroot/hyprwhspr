@@ -396,6 +396,12 @@
       "default": null,
       "description": "Explicit WebSocket URL (auto-derived from provider if null)"
     },
+    "websocket_protocol": {
+      "type": ["string", "null"],
+      "enum": ["openai-realtime", "gemini-live", "elevenlabs", null],
+      "default": null,
+      "description": "Wire protocol for websocket_provider 'custom' (null: openai-realtime). Built-in providers use their own."
+    },
     "realtime_timeout": {
       "type": "integer",
       "minimum": 1,

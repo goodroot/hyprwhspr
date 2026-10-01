@@ -8,8 +8,10 @@ from typing import Callable, Optional
 
 try:
     from .dependency_manifest import fingerprint, parse_graph
+    from .realtime_protocols import protocol_for_provider
 except ImportError:
     from dependency_manifest import fingerprint, parse_graph
+    from realtime_protocols import protocol_for_provider
 
 
 CORE_IMPORTS = ('sounddevice', 'numpy', 'soxr', 'soundfile')
@@ -49,7 +51,7 @@ def plan_key(backend: str, provider: Optional[str], variant: Optional[str], erro
     if backend in ('rest-api', 'remote'):
         return 'rest'
     if backend == 'realtime-ws':
-        return 'elevenlabs' if provider == 'elevenlabs' else 'realtime'
+        return protocol_for_provider(provider).deps
     if backend == 'cohere-transcribe':
         return 'cohere'
     if backend == 'onnx-asr':

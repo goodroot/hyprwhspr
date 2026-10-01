@@ -161,6 +161,10 @@ def test_command(live: bool = False, mic_only: bool = False):
                 log_success(f"Provider: {provider_id}, Model: {model_id}")
                 log_success("Credentials configured")
                 backend_ready = True
+            elif provider_id == 'custom':
+                log_success(f"Provider: custom, Model: {model_id}")
+                log_warning("No API key; fine if the endpoint needs none")
+                backend_ready = True
             else:
                 log_error(f"API key not found for provider: {provider_id}")
                 all_passed = False

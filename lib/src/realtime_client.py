@@ -66,6 +66,9 @@ class RealtimeClient(WebSocketRealtimeClientBase):
     # ------------------------------------------------------------------
 
     def _ws_connect_params(self):
+        # Keyless custom endpoints get no header rather than "Bearer None"
+        if not self.api_key:
+            return self.url, None
         return self.url, {'Authorization': f'Bearer {self.api_key}'}
 
     def _on_connect_success(self):
@@ -388,6 +391,12 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         )
         if self.connected:
             self._send_session_update()
+
+    def configure(self, get_setting):
+        self.set_transcription_session_type(
+            get_setting('realtime_transcription_session_type', 'transcription'))
+        self.set_transcription_delay(get_setting('realtime_transcription_delay', 'low'))
+        self.set_conversation_history(get_setting('realtime_conversation_history', 'turn'))
 
     def set_partial_transcript_callback(self, callback):
         """Register a callback for live transcription deltas."""
