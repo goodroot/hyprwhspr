@@ -56,28 +56,28 @@ class ContinuousAutostopTests(unittest.TestCase):
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
 
+    # Chunks paste after 2 silent ticks; the session stops after 5.
     def test_stops_after_timeout_from_last_speech_while_chunks_still_paste(self):
-        # Chunks flush every silent tick; the stop timer keeps counting through them.
-        app = self._app([1.0, 1.0, 0.0], silence_timeout=0.005)
+        app = self._app([1.0, 1.0, 0.0], silence_timeout=0.005, chunk_seconds=0.002)
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
             self._run(app)
         app._stop_recording.assert_called_once_with()
-        self.assertEqual(app._continuous_flush_audio.call_count, 5)
+        app._continuous_flush_audio.assert_called_once_with()   # the pause pasted; silence after it did not
 
     def test_speech_resets_the_stop_timer(self):
-        app = self._app([1.0] + [0.0] * 4 + [1.0] + [0.0] * 4 + [0.0], silence_timeout=0.005)
+        app = self._app([1.0] + [0.0] * 4 + [1.0] + [0.0] * 5, silence_timeout=0.005, chunk_seconds=0.002)
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
             self._run(app)
         app._stop_recording.assert_called_once_with()
-        self.assertEqual(app._continuous_flush_audio.call_count, 4 + 5)
+        self.assertEqual(app._continuous_flush_audio.call_count, 2)
 
-    def test_never_stops_before_speech_or_when_disabled(self):
-        for levels, timeout in (([0.0], 0.005), ([1.0, 0.0], 0)):
+    def test_quiet_room_never_pastes_or_stops(self):
+        for levels, timeout, chunks in (([0.0], 0.005, 0), ([1.0, 0.0], 0, 1)):
             with self.subTest(levels=levels, timeout=timeout):
                 app = self._app(levels, silence_timeout=timeout)
                 self._run(app, ticks=200)
                 app._stop_recording.assert_not_called()
-                app._continuous_flush_audio.assert_called()
+                self.assertEqual(app._continuous_flush_audio.call_count, chunks)
 
     def test_waits_for_an_in_flight_chunk_and_skips_a_replaced_session(self):
         app = self._app([0.0], silence_timeout=1)

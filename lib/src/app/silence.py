@@ -43,6 +43,7 @@ class SilenceMixin:
 
         def monitor():
             silent_count = 0
+            speech_since_flush = False   # a quiet room is not a chunk; don't transcribe it
             quiet_count = 0         # silence since last speech; pastes don't reset it
             heard_speech = False    # don't count toward the stop until speech is heard
             try:
@@ -60,7 +61,9 @@ class SilenceMixin:
                         silent_count += 1
                         quiet_count += 1
                         if silent_count >= samples_needed:
-                            self._continuous_flush_audio()
+                            if speech_since_flush:
+                                self._continuous_flush_audio()
+                                speech_since_flush = False
                             silent_count = 0
                         if stop_samples and heard_speech and quiet_count >= stop_samples:
                             self._continuous_autostop(session, stop_timeout)
@@ -68,7 +71,7 @@ class SilenceMixin:
                     else:
                         silent_count = 0
                         quiet_count = 0
-                        heard_speech = True
+                        heard_speech = speech_since_flush = True
                     self._continuous_silence_stop.wait(self._POLL_INTERVAL)
             except Exception as e:
                 log(f"[CONTINUOUS] Silence monitor error: {e}")
