@@ -35,6 +35,8 @@ class NotificationPresenter:
     }
     # States that represent a finished action and should auto-dismiss.
     _TRANSIENT_STATES = {'success', 'error'}
+    # States that last until the next state replaces or closes them (timeout 0).
+    _PERSISTENT_STATES = {'processing'}
     _APP_NAME = 'hyprwhspr'
     # All status bubbles carry the transient hint (see _send), so they never
     # land in the notification center. These timeouts only govern how long the
@@ -84,8 +86,12 @@ class NotificationPresenter:
         if self._nid is None and state not in self._TRANSIENT_STATES:
             return
         body = self._STATE_TEXT.get(state, self._STATE_TEXT['recording'])
-        timeout = (self._TRANSIENT_TIMEOUT_MS if state in self._TRANSIENT_STATES
-                   else self._active_timeout_ms)
+        if state in self._TRANSIENT_STATES:
+            timeout = self._TRANSIENT_TIMEOUT_MS
+        elif state in self._PERSISTENT_STATES:
+            timeout = 0
+        else:
+            timeout = self._active_timeout_ms
         self._send(body, timeout)
 
     def hide(self):

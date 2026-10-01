@@ -1,9 +1,13 @@
 """Notifications, status files, mic OSD and the audio-level feed."""
 
+import os
 import shutil
 import threading
 import time
 
+from backend_installer import get_state, resolve_dependency_plan
+from backend_utils import normalize_backend
+from dependency_plan import missing_imports
 from paths import (
     AUDIO_LEVEL_FILE, CONFIG_DIR, LONGFORM_STATE_FILE, MIC_ZERO_VOLUME_FILE, MODEL_UNLOADED_FILE,
     RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, RECOVERY_REQUESTED_FILE, RECOVERY_RESULT_FILE,
@@ -28,6 +32,61 @@ class FeedbackMixin:
             notify(title, message, urgency=urgency, timeout_ms=timeout)
         except Exception:
             pass  # Silently fail if notify-send not available
+
+    def _report_missing_dependencies(self):
+        """Log and notify about Python modules the configured backend cannot import.
+
+        Returns the missing module names.
+        """
+        backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+        provider = self.config.get_setting('websocket_provider', None) if backend == 'realtime-ws' else None
+        missing = missing_imports(backend, provider)
+        if missing:
+            names = ', '.join(missing)
+            log(f"[ERROR] Missing Python modules: {names} - run: hyprwhspr setup (Reinstall backend: yes)")
+            self._notify_user(
+                "hyprwhspr", f"Missing Python modules: {names}\n"
+                "Run: hyprwhspr setup and reinstall the backend",
+                urgency="critical")
+        elif self._dependencies_changed_since_setup(backend, provider):
+            # Everything imports, but an update changed the requirements (a new
+            # pin or minimum) since setup last synced the venv.
+            log("[WARN] Python dependencies changed since setup - run: hyprwhspr setup (Reinstall backend: yes)")
+        return missing
+
+    @staticmethod
+    def _dependencies_changed_since_setup(backend: str, provider) -> bool:
+        """True when setup recorded a dependency plan for this backend that no longer matches its manifests."""
+        if os.environ.get('HYPRWHSPR_GENERATION'):
+            return False  # managed releases install a venv per release
+        stored = get_state('dependency_plan_fingerprint')
+        if not stored:
+            return False
+        # Setup picks the GPU manifest by hardware; either one may be installed.
+        variants = {'onnx-asr': (None, 'gpu'), 'faster-whisper': (None, 'cuda')}.get(backend, (None,))
+        try:
+            plans = [resolve_dependency_plan(backend, provider, variant) for variant in variants]
+        except Exception:
+            return False  # no plan for this backend, or unreadable manifests
+        if get_state('dependency_family') != plans[0].family:
+            return False  # backend switched in config without setup; nothing to compare
+        return all(plan.fingerprint != stored for plan in plans)
+
+    def _report_cpu_only_build(self) -> bool:
+        """Log and notify when a GPU backend is configured but the installer recorded a CPU-only build.
+
+        Returns True when the mismatch was reported.
+        """
+        backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+        if backend not in ('nvidia', 'vulkan') or get_state('installed_backend') != 'cpu':
+            return False
+        log(f"[WARN] {backend} configured, whisper.cpp build is CPU-only - "
+            "run: hyprwhspr setup (Reinstall backend: yes), or choose CPU")
+        self._notify_user(
+            "hyprwhspr", f"{backend} configured, running on CPU\n"
+            "Run: hyprwhspr setup and reinstall the backend, or choose CPU",
+            urgency="critical")
+        return True
 
     def _mic_failure_message(self, fallback: str) -> str:
         """Pick user advice for a failed recording start based on what actually failed.

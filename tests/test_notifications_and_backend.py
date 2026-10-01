@@ -64,6 +64,40 @@ class NotificationCompatibilityTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0][0], "gdbus")
 
 
+class NotificationPresenterStateTests(unittest.TestCase):
+    def _sent(self, *states):
+        """Show the bubble, apply states; returns the kwargs of every send."""
+        presenter = NotificationPresenter(active_timeout_ms=5000)
+        with (
+            mock.patch.object(NotificationPresenter, "is_available", return_value=True),
+            mock.patch("mic_osd.notification_presenter.send_notification_with_id",
+                       return_value=7) as send,
+        ):
+            presenter.show()
+            for state in states:
+                presenter.set_state(state)
+        return [call.kwargs for call in send.call_args_list]
+
+    def test_processing_stays_until_replaced(self):
+        processing = self._sent("processing")[-1]
+        self.assertEqual(processing["urgency"], "normal")
+        self.assertEqual(processing["timeout_ms"], 0)
+        self.assertEqual(processing["replaces_id"], 7)
+
+    def test_result_replaces_processing_at_normal_urgency(self):
+        for result in ("success", "error"):
+            with self.subTest(result=result):
+                sent = self._sent("processing", result)[-1]
+                self.assertEqual(sent["urgency"], "normal")
+                self.assertEqual(sent["replaces_id"], 7)
+                self.assertEqual(sent["timeout_ms"], NotificationPresenter._TRANSIENT_TIMEOUT_MS)
+
+    def test_recording_keeps_normal_urgency_and_configured_timeout(self):
+        recording = self._sent()[0]
+        self.assertEqual(recording["urgency"], "normal")
+        self.assertEqual(recording["timeout_ms"], 5000)
+
+
 class BackendInstallerStateTests(unittest.TestCase):
     def test_dependency_manifests_are_backend_and_provider_specific(self):
         with mock.patch.object(backend_installer, "HYPRWHSPR_ROOT", str(ROOT)):
@@ -160,6 +194,45 @@ class BackendInstallerStateTests(unittest.TestCase):
         verify.assert_called_once()
         self.assertEqual(verify.call_args.args[0].family, 'pywhispercpp')
         self.assertEqual(verify.call_args.args[1], pip_bin)
+
+    def test_failed_vulkan_build_reports_the_cpu_fallback(self):
+        state = {"dependency_manifest_hash": "same-hash"}
+        with tempfile.TemporaryDirectory() as tmp:
+            venv_dir = Path(tmp) / "venv"
+            (venv_dir / "bin").mkdir(parents=True)
+            pip_bin = venv_dir / "bin" / "pip"
+            pip_bin.touch()
+            completed = types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            with (
+                mock.patch.object(backend_installer, "VENV_DIR", venv_dir),
+                mock.patch.object(backend_installer, "HYPRWHSPR_ROOT", str(ROOT)),
+                mock.patch.object(backend_installer, "init_state"),
+                mock.patch.object(backend_installer, "_check_mise_active", return_value=False),
+                mock.patch.object(backend_installer, "get_state",
+                                  side_effect=lambda key: state.get(key, "")),
+                mock.patch.object(backend_installer, "setup_vulkan_support", return_value=True),
+                mock.patch.object(backend_installer, "setup_python_venv", return_value=pip_bin),
+                mock.patch.object(backend_installer, "run_command", return_value=completed),
+                mock.patch.object(backend_installer, "_verify_dependency_plan_detailed",
+                                  return_value=backend_installer.DependencyVerification(ok=False)),
+                mock.patch.object(backend_installer, "_verify_and_repair_dependency_plan",
+                                  return_value=backend_installer.DependencyVerification(ok=True)),
+                mock.patch.object(backend_installer, "VenvTransaction",
+                                  return_value=mock.Mock(had_old=False)),
+                mock.patch.object(backend_installer, "install_pywhispercpp_vulkan", return_value=False),
+                mock.patch.object(backend_installer, "install_pywhispercpp_cpu", return_value=True),
+                mock.patch.object(backend_installer, "commit_dependency_state") as commit_state,
+                mock.patch.object(backend_installer, "download_pywhispercpp_model", return_value=True),
+                mock.patch.object(backend_installer, "set_install_state"),
+                mock.patch.object(backend_installer, "log_success") as success,
+                mock.patch.object(backend_installer, "log_warning") as warning,
+            ):
+                self.assertTrue(backend_installer.install_backend("vulkan"))
+        self.assertEqual(commit_state.call_args.args[0].accelerated_variant, "cpu")
+        successes = [call.args[0] for call in success.call_args_list]
+        self.assertFalse([m for m in successes if "backend installation completed" in m])
+        warnings = [call.args[0] for call in warning.call_args_list]
+        self.assertTrue([m for m in warnings if "CPU-only" in m and "VULKAN" in m], warnings)
 
     def test_pywhispercpp_verification_failure_persists_diagnostic_before_cleanup(self):
         state = {"dependency_manifest_hash": "same-hash"}
