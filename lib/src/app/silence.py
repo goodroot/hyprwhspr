@@ -30,7 +30,9 @@ class SilenceMixin:
         with self._recording_lock:
             self._continuous_delivery_failure_notified = False
         self._continuous_stop_silence_monitor()
-        self._continuous_silence_stop.clear()
+        # Per-session event: a straggling old monitor must not be woken by this one.
+        stop_event = threading.Event()
+        self._continuous_silence_stop = stop_event
 
         silence_seconds = self._get_float_setting('continuous_silence_seconds', 2.0)
         configured_threshold = self._get_float_setting('continuous_silence_threshold', 0)
@@ -50,20 +52,23 @@ class SilenceMixin:
                 # Auto-calibrate threshold from noise floor if not manually configured
                 threshold = configured_threshold
                 if threshold <= 0:
-                    threshold = self._calibrate_noise_floor(self._continuous_silence_stop)
+                    threshold = self._calibrate_noise_floor(stop_event)
                     if threshold is None:
                         return
                     log(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f}")
 
-                while self.is_recording and not self._continuous_silence_stop.is_set():
+                while not stop_event.is_set():
+                    if not self._owns_recording(session):
+                        return
                     raw_level = self.audio_capture.rolling_avg_level
                     if raw_level < threshold:
                         silent_count += 1
                         quiet_count += 1
                         if silent_count >= samples_needed:
                             if speech_since_flush:
-                                self._continuous_flush_audio()
-                                speech_since_flush = False
+                                # Busy flush? Keep the chunk pending for the next pause.
+                                if self._continuous_flush_audio(session):
+                                    speech_since_flush = False
                             silent_count = 0
                         if stop_samples and heard_speech and quiet_count >= stop_samples:
                             self._continuous_autostop(session, stop_timeout)
@@ -72,7 +77,7 @@ class SilenceMixin:
                         silent_count = 0
                         quiet_count = 0
                         heard_speech = speech_since_flush = True
-                    self._continuous_silence_stop.wait(self._POLL_INTERVAL)
+                    stop_event.wait(self._POLL_INTERVAL)
             except Exception as e:
                 log(f"[CONTINUOUS] Silence monitor error: {e}")
 
@@ -88,15 +93,20 @@ class SilenceMixin:
             thread.join(timeout=0.5)
         self._continuous_silence_thread = None
 
+    def _owns_recording(self, session):
+        with self._recording_lock:
+            return self.is_recording and self._recording_session is session
+
     def _continuous_autostop(self, session, silence_timeout):
         """End a continuous session from its own monitor thread after `silence_timeout`."""
-        self._continuous_silence_stop.set()   # no join: this is the monitor thread
-        self._continuous_transcription_done.wait(timeout=30)   # let a chunk paste first
-        with self._recording_lock:
-            if self._recording_session is not session:
-                return   # stopped (and maybe restarted) meanwhile - not ours to stop
+        # Let an in-flight chunk paste first; a stop or cancel meanwhile retires us.
+        while True:
+            if not self._owns_recording(session):
+                return
+            if self._continuous_transcription_done.wait(timeout=0.1):
+                break
         log(f"[AUTOSTOP] {silence_timeout:.1f}s of silence - stopping continuous recording")
-        self._stop_recording()   # stop beep; transcribes + pastes only the unflushed tail
+        self._stop_recording(expected_session=session)   # re-checked under the lock
 
     def _autostop_start_silence_monitor(self):
         """Auto-stop recording after `silence_timeout` seconds of silence (toggle/auto modes).
@@ -182,35 +192,41 @@ class SilenceMixin:
         self._continuous_stop_silence_monitor()
         self._continuous_transcription_done.wait(timeout=30)
 
-    def _continuous_flush_audio(self):
+    def _continuous_flush_audio(self, session):
         """Flush accumulated audio: transcribe and paste without stopping recording"""
         if not self._continuous_flush_lock.acquire(blocking=False):
-            return  # another flush/transcription in progress
+            return False  # another flush/transcription in progress; retry later
 
         # Lock is now held — all paths must go through the finally that releases it.
         self._continuous_transcription_done.clear()
         should_transcribe = False
         audio_data = None
         try:
-            audio_data = self.audio_capture.flush_buffer()
+            # Check ownership and swap the buffer atomically: a retired monitor can't take new audio.
+            with self._recording_lock:
+                if not self.is_recording or self._recording_session is not session:
+                    return False
+                language_override = self._current_language_override
+                audio_data = self.audio_capture.flush_buffer()
             if audio_data is None or len(audio_data) == 0:
-                return
+                return True
 
             duration = len(audio_data) / self.audio_capture.sample_rate
             if duration < 0.5 or self._is_zero_volume(audio_data):
-                return
+                return True
 
             log(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription")
             should_transcribe = True
         except Exception as e:
             log(f"[CONTINUOUS] Flush error: {e}")
+            return False
         finally:
             if not should_transcribe:
-                self._continuous_flush_lock.release()
                 self._continuous_transcription_done.set()
+                self._continuous_flush_lock.release()
 
         if not should_transcribe:
-            return
+            return True
 
         # Transcribe in background thread; lock is held until transcription
         # completes so the next flush is blocked until this one finishes.
@@ -219,14 +235,16 @@ class SilenceMixin:
                 transcription = self.whisper_manager.transcribe_audio(
                     audio_data,
                     sample_rate=self.audio_capture.sample_rate,
-                    language_override=self._current_language_override,
+                    language_override=language_override,
                 )
                 if transcription and transcription.strip():
                     text = transcription.strip()
                     if is_hallucination(text, self.config.get_hallucination_markers()):
                         log(f"[CONTINUOUS] Hallucination ignored: {text!r}")
                         return
-                    if self._continuous_cancelled:
+                    with self._recording_lock:
+                        current_session = self._recording_session
+                    if self._continuous_cancelled or current_session is not session:
                         log("[CONTINUOUS] Cancelled — discarding transcription")
                         return
                     outcome = self._inject_text(text)
@@ -242,9 +260,13 @@ class SilenceMixin:
             except Exception as e:
                 log(f"[CONTINUOUS] Transcription error: {e}")
             finally:
-                self._notify_capture("", final=True)
-                self._continuous_flush_lock.release()
+                with self._recording_lock:
+                    current_session = self._recording_session
+                if current_session is session and not self._continuous_cancelled:
+                    self._notify_capture("", final=True)
                 self._continuous_transcription_done.set()
+                self._continuous_flush_lock.release()
 
         self._save_debug_recording(audio_data)
         threading.Thread(target=process, daemon=True).start()
+        return True

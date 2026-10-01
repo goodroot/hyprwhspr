@@ -69,12 +69,16 @@ class DebugRecordingsTests(unittest.TestCase):
         audio = np.full(16000, 0.1, dtype=np.float32)
         app.audio_capture.flush_buffer.return_value = audio
         app.audio_capture.sample_rate = 16000
+        app._recording_lock = threading.Lock()
+        app._recording_session = object()
+        app.is_recording = True
+        app._current_language_override = None
         app._continuous_flush_lock = threading.Lock()
         app._continuous_transcription_done = threading.Event()
         app._is_zero_volume = mock.Mock(return_value=False)
 
         with mock.patch.object(self.main.threading, 'Thread') as thread:
-            app._continuous_flush_audio()
+            app._continuous_flush_audio(app._recording_session)
 
         thread.return_value.start.assert_called_once()
         app.audio_capture.save_audio_to_wav.assert_called_once()

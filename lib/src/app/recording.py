@@ -493,10 +493,11 @@ class RecordingMixin:
         except Exception as e:
             log(f"[WARN] Failed to save debug recording: {e}")
 
-    def _stop_recording(self):
+    def _stop_recording(self, expected_session=None):
         """Stop voice recording and process audio"""
         with self._recording_lock:
-            if not self.is_recording:
+            if (not self.is_recording
+                    or (expected_session is not None and self._recording_session is not expected_session)):
                 return
             self.is_recording = False
             self._recording_finalizing.set()

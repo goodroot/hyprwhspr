@@ -112,13 +112,13 @@ Speak; each pause pastes. Recording rolls on until you press again:
 {
     "recording_mode": "continuous",
     "continuous_silence_seconds": 2.0,  // The pause that pastes. Default 2.0.
-    "continuous_silence_threshold": 0   // Silence level. 0 (default) = calibrate each session.
+    "continuous_silence_threshold": 0,  // Silence level. 0 (default) = calibrate each session.
+    "silence_timeout": 15               // Optional: 15s of quiet ends the session.
 }
 ```
 
 - The final press pastes what's left.
 - Detection off? The log prints the calibrated level; start `continuous_silence_threshold` from there.
-- Add `silence_timeout` to let the session end itself.
 
 ### Auto-stop on silence
 
