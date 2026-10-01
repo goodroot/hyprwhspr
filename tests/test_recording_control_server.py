@@ -171,6 +171,30 @@ class RecordingControlServerTests(unittest.TestCase):
         self.assertEqual(client.recv(100), b"bonjour")
         client.close()
 
+    def test_fifo_write_waits_for_a_late_reader(self):
+        os.mkfifo(self.fifo)
+        received = []
+
+        def late_reader():
+            time.sleep(0.2)
+            fd = os.open(self.fifo, os.O_RDONLY)
+            try:
+                received.append(os.read(fd, 64))
+            finally:
+                os.close(fd)
+
+        reader = threading.Thread(target=late_reader, daemon=True)
+        reader.start()
+        self.assertTrue(self.server._write_fifo("start:Ja-JP\n"))
+        reader.join(2)
+        self.assertEqual(received, [b"start:Ja-JP\n"])
+
+    def test_fifo_write_gives_up_without_a_reader(self):
+        os.mkfifo(self.fifo)
+        started = time.monotonic()
+        self.assertFalse(self.server._write_fifo("start\n", wait=0.1))
+        self.assertLess(time.monotonic() - started, 1.0)
+
     def test_idle_capture_self_triggers_with_language(self):
         self.assertTrue(self.server.prepare_fifo())
         self.assertTrue(self.server.start())

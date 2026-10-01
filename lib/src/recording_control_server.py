@@ -1,10 +1,12 @@
 """Daemon-side transports for recording control and capture clients."""
 
+import errno
 import json
 import os
 import select
 import socket
 import threading
+import time
 from pathlib import Path
 
 
@@ -286,16 +288,28 @@ class RecordingControlServer:
         except OSError:
             pass
 
-    def _write_fifo(self, command):
-        try:
-            fd = os.open(str(self.fifo_path), os.O_WRONLY | os.O_NONBLOCK)
+    FIFO_WRITE_WAIT_SECS = 1.0
+
+    def _write_fifo(self, command, wait=None):
+        # A non-blocking open fails with ENXIO while no reader holds the FIFO:
+        # before the listener first opens it, and as it reopens after EOF.
+        # Retry briefly rather than drop the command.
+        deadline = time.monotonic() + (self.FIFO_WRITE_WAIT_SECS if wait is None else wait)
+        while True:
+            try:
+                fd = os.open(str(self.fifo_path), os.O_WRONLY | os.O_NONBLOCK)
+            except OSError as exc:
+                if exc.errno == errno.ENXIO and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                    continue
+                return False
             try:
                 os.write(fd, command.encode())
+                return True
+            except OSError:
+                return False
             finally:
                 os.close(fd)
-            return True
-        except OSError:
-            return False
 
     def _setup_capture_socket(self):
         try:
