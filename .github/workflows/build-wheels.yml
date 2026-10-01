@@ -77,6 +77,8 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.build_cuda == 'true'
     runs-on: ubuntu-22.04
+    # A build takes about 75 minutes; a stalled job shouldn't hold the run for 6 hours.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -114,6 +116,8 @@ jobs:
 
       - name: Install CUDA Toolkit ${{ env.CUDA_BUILD_VERSION }}
         uses: Jimver/cuda-toolkit@v0.2.36
+        # The network installer can stall indefinitely; fail fast and rerun.
+        timeout-minutes: 30
         id: cuda-toolkit
         with:
           cuda: ${{ env.CUDA_BUILD_VERSION }}.0
@@ -205,7 +209,7 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }} (uv)
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          "$HOME/.local/bin/uv" venv --seed --python ${{ matrix.python-version }} "$RUNNER_TEMP/py"
+          "$HOME/.local/bin/uv" venv --seed --python-preference only-managed --python ${{ matrix.python-version }} "$RUNNER_TEMP/py"
           echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
 
       - name: Derive installer contract (from backend_installer.py)
@@ -310,7 +314,7 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }} (uv)
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          "$HOME/.local/bin/uv" venv --seed --python ${{ matrix.python-version }} "$RUNNER_TEMP/py"
+          "$HOME/.local/bin/uv" venv --seed --python-preference only-managed --python ${{ matrix.python-version }} "$RUNNER_TEMP/py"
           echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
 
       - name: Derive expected filename from installer
