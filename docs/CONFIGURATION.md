@@ -457,7 +457,13 @@ Run `hyprwhspr setup` and select **Whisper**. On AMD/Intel, setup uses whisper.c
 
 For whisper.cpp on CPU or NVIDIA: `hyprwhspr setup auto --backend cpu` or `--backend nvidia`.
 
-On x86-64, setup installs a pre-built `pywhispercpp` wheel for NVIDIA (CUDA 12) and Vulkan from the `wheels-v2` release, after checking it against the release's `SHA256SUMS.txt`. The Vulkan wheel is built on Debian trixie and needs glibc 2.41 or newer (e.g. Fedora 42+, Debian 13, Arch); on older systems setup skips it. Without a matching wheel it builds from source, which for Vulkan needs `glslc`, the Vulkan headers and the SPIR-V headers (Fedora: `vulkan-headers vulkan-loader-devel glslc spirv-headers-devel`). If the GPU build fails, setup installs a CPU-only build and says so; the service then warns at every start (`[WARN] vulkan is configured, but the installed whisper.cpp build is CPU-only`) until setup is re-run with **Reinstall backend?** answered yes, or with CPU chosen instead.
+On x86-64, setup installs a pre-built `pywhispercpp` wheel for NVIDIA (CUDA 12) and Vulkan from the `wheels-v2` release, after checking it against the release's `SHA256SUMS.txt`. The Vulkan wheel is built on Debian trixie and needs glibc 2.41 or newer (e.g. Fedora 42+, Debian 13, Arch); on older systems setup skips it. Without a matching wheel it builds from source, which needs `glslc`, the Vulkan headers and the SPIR-V headers. Arch gets them from setup; elsewhere:
+
+- Debian/Ubuntu: `libvulkan-dev glslc spirv-headers`
+- Fedora: `vulkan-headers vulkan-loader-devel glslc spirv-headers-devel`
+- openSUSE: `vulkan-devel shaderc spirv-headers`
+
+Setup checks for them first and names what is missing. If the GPU build fails, setup installs a CPU-only build and says so; the service then warns at every start (`[WARN] vulkan is configured, but the installed whisper.cpp build is CPU-only`) until setup is re-run with **Reinstall backend?** answered yes, or with CPU chosen instead.
 
 **Best for:** modern NVIDIA cards or discrete AMD/Intel (via Vulkan) — extremely fast on GPU with `large-v3` or `large-v3-turbo`.
 
@@ -859,7 +865,7 @@ The recording-status indicator — the **mic OSD** — gives visual feedback whi
 `mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup:
 
 - **Overlay mode** — compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland) get the animated always-on-top overlay. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
-- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Notifications require `notify-send` (libnotify). The "Transcribing…" notification is sent as critical with no timeout, so it stays on screen (also on GNOME and under Do Not Disturb) until the result notification replaces it.
+- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Notifications require `notify-send` (libnotify). "Transcribing…" stays up until the result replaces it; GNOME applies its own duration.
 
 Set `mic_osd_enabled: false` to turn off both. The service log records which mode was selected:
 
@@ -1632,9 +1638,10 @@ needs can be found. When one is missing it logs
 `[ERROR] Missing Python modules: <names>` and shows a persistent notification;
 the service keeps running.
 
-This typically follows a `git pull` in a source checkout that added a
-dependency. Re-run setup, keep the backend and answer **Reinstall backend?**
-with yes:
+This typically follows an update that added a dependency. When the modules
+import but the requirements changed since setup, the log says
+`[WARN] Python dependencies changed since setup` instead. Either way, re-run
+setup, keep the backend and answer **Reinstall backend?** with yes:
 
 ```bash
 hyprwhspr setup   # source checkout: ./bin/hyprwhspr setup
