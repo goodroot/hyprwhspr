@@ -57,6 +57,24 @@ class RealtimeAudioClientBase:
     LOG_TAG = '[REALTIME]'
     IDLE_CLOSE_SECS = 10.0
 
+    # Session lifecycle. Most protocols keep one connection and clear it between
+    # recordings; a protocol that can't (Phonon) reports a used session through
+    # needs_fresh_session, stays busy until its transcript is consumed, and may
+    # finish a commit after the server has closed the socket.
+    commit_after_disconnect = False
+
+    @property
+    def needs_fresh_session(self) -> bool:
+        return False
+
+    @property
+    def busy(self) -> bool:
+        return False
+
+    def discard_audio(self):
+        """Drop the current recording's audio; the connection stays when it can."""
+        self.clear_audio_buffer()
+
     def __init__(self):
         self.api_key = None
         self.model = None
@@ -152,6 +170,13 @@ class RealtimeAudioClientBase:
 
     def configure(self, get_setting):
         """Read protocol-specific settings before connecting (get_setting(key, default))."""
+        rate = get_setting('websocket_sample_rate', None)
+        if rate is None:
+            return
+        if isinstance(rate, int) and not isinstance(rate, bool) and 8000 <= rate <= 96000:
+            self.sample_rate = rate
+        else:
+            self._log(f'Invalid websocket_sample_rate {rate!r}, using {self.sample_rate}')
 
     def set_max_buffer_seconds(self, seconds: float):
         """Set maximum buffer size in seconds for backpressure handling"""

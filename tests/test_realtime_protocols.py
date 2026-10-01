@@ -176,6 +176,10 @@ class LiveTextModeTests(unittest.TestCase):
         self.assertEqual(live_text_mode("custom", "m", "bogus"), "none")
         self.assertEqual(live_text_mode("openai", "gpt-transcribe", "append_only"), "none")
 
+    def test_custom_protocol_supplies_a_default_promise(self):
+        self.assertEqual(live_text_mode("custom", "phonon-2", None, "phonon"), "revisable")
+        self.assertEqual(live_text_mode("custom", "phonon-2", "none", "phonon"), "none")
+
     def test_waveform_preview_follows_live_text(self):
         for live_text, expected in (("none", False), ("revisable", True), ("append_only", True)):
             with self.subTest(live_text=live_text):

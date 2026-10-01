@@ -22,13 +22,13 @@ except ImportError:
 np = require_package('numpy')
 
 try:
-    from ..backend_utils import normalize_backend
+    from ..backend_utils import is_valid_websocket_url, normalize_backend
     from ..credential_manager import get_credential
     from ..openai_realtime_models import uses_language_context
     from ..provider_registry import get_provider, get_realtime_capabilities
     from ..realtime_protocols import live_text_mode, load_client_class, resolve_protocol
 except ImportError:
-    from backend_utils import normalize_backend
+    from backend_utils import is_valid_websocket_url, normalize_backend
     from credential_manager import get_credential
     from openai_realtime_models import uses_language_context
     from provider_registry import get_provider, get_realtime_capabilities
@@ -120,10 +120,21 @@ class RealtimeWsBackend(TranscriptionBackend):
             log(f'ERROR: {model_id} is supported only with realtime_mode="transcribe"')
             return False
 
+        if (
+            protocol.per_recording_session
+            and self.config.get_setting('recording_mode', 'toggle') in ('continuous', 'long_form')
+        ):
+            log(f'ERROR: {protocol.id} opens one stream per recording; '
+                'continuous and long_form recording are not supported')
+            return False
+
         client = load_client_class(protocol)(mode=realtime_mode)
-        client.configure(self.config.get_setting)
+        client.configure(self._client_setting_reader(provider_id))
 
         websocket_url = self.config.get_setting('websocket_url')
+        if websocket_url and not is_valid_websocket_url(websocket_url):
+            log(f'ERROR: websocket_url must be a ws:// or wss:// URL with a host: {websocket_url!r}')
+            return False
         if not websocket_url:
             if provider_id == 'custom':
                 log('ERROR: Custom realtime backend requires websocket_url to be configured')
@@ -151,7 +162,12 @@ class RealtimeWsBackend(TranscriptionBackend):
         instructions = self._build_instructions(language) if protocol.uses_instructions else None
 
         self._realtime_client = client
-        self._update_client_language(language, model_id=model_id)
+        try:
+            self._update_client_language(language, model_id=model_id)
+        except ValueError as e:
+            log(f'ERROR: {e}')
+            self._realtime_client = None
+            return False
         client.set_max_buffer_seconds(self.config.get_setting('realtime_buffer_max_seconds', 5))
         self.apply_partial_callback(self._realtime_partial_callback)
 
@@ -187,6 +203,17 @@ class RealtimeWsBackend(TranscriptionBackend):
         self.current_model = None
         self.ready = True
         return True
+
+    # Server-shape options that only make sense for a custom endpoint
+    CUSTOM_ONLY_SETTINGS = ('websocket_sample_rate', 'websocket_session_format')
+
+    def _client_setting_reader(self, provider_id: str):
+        """get_setting for the client; built-in providers never see custom-only options."""
+        def get_setting(key, default=None):
+            if provider_id != 'custom' and key in self.CUSTOM_ONLY_SETTINGS:
+                return default
+            return self.config.get_setting(key, default)
+        return get_setting
 
     def _build_instructions(self, language: Optional[str]) -> Optional[str]:
         """Session instructions from the whisper prompt and language."""
@@ -257,7 +284,7 @@ class RealtimeWsBackend(TranscriptionBackend):
             log('[REALTIME] Client not initialized')
             return ""
         
-        if not self._realtime_client.connected:
+        if not (self._realtime_client.connected or self._realtime_client.commit_after_disconnect):
             log('[REALTIME] Client not connected')
             return ""
         
@@ -305,7 +332,18 @@ class RealtimeWsBackend(TranscriptionBackend):
             return None
 
         # Clear server buffer before starting new recording
-        self._realtime_client.clear_audio_buffer()
+        try:
+            self._realtime_client.clear_audio_buffer()
+        except RuntimeError as e:
+            # A one-stream-per-recording socket can close between the readiness
+            # check and here. Capture hasn't started, so one fresh attempt is safe.
+            log(f'[REALTIME] {e}; reconnecting before capture')
+            if not self._reconnect_realtime_client():
+                return None
+            try:
+                self._realtime_client.clear_audio_buffer()
+            except RuntimeError:
+                return None
         self._clear_realtime_partial_preview()
         return self._realtime_streaming_callback
 
@@ -354,6 +392,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         # Waveform: only models whose text streams mid-utterance.
         return live_text_mode(
             provider_id, model_id, self.config.get_setting('websocket_live_text'),
+            self.config.get_setting('websocket_protocol'),
         ) != 'none'
 
     def _clear_realtime_partial_preview(self) -> None:
@@ -378,7 +417,11 @@ class RealtimeWsBackend(TranscriptionBackend):
         or suspend, and nothing outside the resume path rebuilds it.
         """
         if self._realtime_client:
-            if self._realtime_client.connected:
+            if self._realtime_client.busy:
+                log('[REALTIME] Previous recording is still awaiting its transcript')
+                self._last_connect_failure = 'processing'
+                return False
+            if self._realtime_client.connected and not self._realtime_client.needs_fresh_session:
                 self._last_connect_failure = None
                 return True
             return self._reconnect_realtime_client()
@@ -478,7 +521,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         """Drop buffered audio client- and server-side; keep the connection alive."""
         if self._realtime_client:
             try:
-                self._realtime_client.clear_audio_buffer()
+                self._realtime_client.discard_audio()
                 self._clear_realtime_partial_preview()
             except Exception as e:
                 log(f'[REALTIME] Failed to discard audio: {e}')
@@ -496,7 +539,10 @@ class RealtimeWsBackend(TranscriptionBackend):
 
     def update_language(self, language: Optional[str]) -> None:
         """Apply a language override to a connected client (no-op otherwise)."""
-        self._update_client_language(language)
+        try:
+            self._update_client_language(language)
+        except ValueError as e:
+            log(f'[REALTIME] Language override ignored: {e}')
 
     def reinitialize(self) -> bool:
         """Re-establish the connection after suspend/resume (full re-init)."""
@@ -504,6 +550,11 @@ class RealtimeWsBackend(TranscriptionBackend):
 
     def cleanup(self) -> None:
         self.close()
+
+    @property
+    def is_busy(self) -> bool:
+        """A one-stream-per-recording client is still finishing the last recording."""
+        return bool(self._realtime_client and self._realtime_client.busy)
 
     @property
     def is_loaded(self) -> bool:

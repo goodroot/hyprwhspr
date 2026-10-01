@@ -151,7 +151,7 @@ def build_default_config():
         'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai', 'google', 'elevenlabs')
         'websocket_model': None,           # Model identifier (e.g., 'gpt-transcribe')
         'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
-        'websocket_protocol': None,        # Custom endpoints: wire protocol (None: 'openai-realtime')
+        'websocket_protocol': None,        # Custom endpoints: 'openai-realtime' (None) | 'phonon'
         'websocket_sample_rate': None,     # Custom endpoints: audio rate sent (None: protocol default)
         'websocket_session_format': None,  # Custom openai-realtime: 'nested' (GA) | 'flat' (NeMo-Speech.cpp)
         'websocket_live_text': None,       # Custom endpoints: 'none' | 'revisable' | 'append_only'

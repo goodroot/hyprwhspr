@@ -855,7 +855,7 @@ Your server, your protocol. Point `custom` at it and describe how it speaks:
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| `websocket_protocol` | `openai-realtime` | `openai-realtime` |
+| `websocket_protocol` | `openai-realtime`, `phonon` | `openai-realtime` |
 | `websocket_sample_rate` | 8000–96000 | protocol's own |
 | `websocket_session_format` | `nested` (OpenAI GA), `flat` (older servers) | `nested` |
 | `websocket_live_text` | `none`, `revisable`, `append_only` | `none` |
@@ -881,6 +881,20 @@ nemo-speech serve --asr-model nemotron-speech-streaming-en-0.6b.q8_0.gguf \
     "websocket_sample_rate": 16000,
     "websocket_session_format": "flat",
     "websocket_live_text": "append_only"
+}
+```
+
+**Phonon.** [Phonon-2](https://github.com/fermionresearch/phonon) streams raw PCM and opens one connection per
+recording, so it suits toggle, push-to-talk and auto, not continuous or long-form. English only. Live text is
+`revisable` by default.
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "custom",
+    "websocket_protocol": "phonon",
+    "websocket_model": "phonon-2",
+    "websocket_url": "wss://asr.example.com/v1/audio/stream"
 }
 ```
 

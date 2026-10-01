@@ -280,6 +280,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         app._backend_init_failed = False
         app.whisper_manager._model_manually_unloaded = False
         app.whisper_manager.realtime_client_missing = lambda: False
+        app.whisper_manager.realtime_busy = lambda: False
         app.whisper_manager.close_realtime_connection = mock.Mock()
         app._clear_mic_osd_preview_text = mock.Mock()
         app._clear_zero_volume_signal = mock.Mock(

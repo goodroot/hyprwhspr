@@ -166,6 +166,11 @@ class WhisperManager:
         backend = self._backend
         return backend is not None and backend.streams_audio and not backend.is_loaded
 
+    def realtime_busy(self) -> bool:
+        """True while a one-stream-per-recording client still finishes the last recording."""
+        backend = self._active_realtime_backend()
+        return bool(backend is not None and backend.is_busy)
+
     def set_realtime_partial_callback(self, callback: Optional[Callable[[str], None]]) -> None:
         """Set callback for realtime partial transcript previews."""
         self._realtime_partial_callback = callback

@@ -15,6 +15,7 @@ from paths import CONFIG_FILE, DATA_DIR, SOCKET_FILE
 from backend_utils import normalize_backend
 from dependency_plan import PLAN_SPECS, plan_key
 from provider_registry import get_models_for_backend, get_realtime_capabilities, get_realtime_mode
+from realtime_protocols import PROTOCOLS
 from session_environment import classify_display_environment
 
 ROOT = Path(os.environ.get('HYPRWHSPR_ROOT', Path(__file__).resolve().parents[2]))
@@ -117,8 +118,14 @@ def validate_config(path=None):
                 findings.append(finding('config.realtime_mode', 'error', 'Realtime mode does not match the model.'))
             if config['recording_mode'] == 'continuous' and not caps.get('continuous', False):
                 findings.append(finding('config.realtime_continuous', 'error', 'This model does not support continuous recording.'))
-        elif not config['websocket_url']:
-            findings.append(finding('config.realtime_url', 'error', 'Custom realtime provider requires a WebSocket URL.'))
+        else:
+            if not config['websocket_url']:
+                findings.append(finding('config.realtime_url', 'error', 'Custom realtime provider requires a WebSocket URL.'))
+            protocol = PROTOCOLS.get(config['websocket_protocol'] or 'openai-realtime')
+            if (config['recording_mode'] in ('continuous', 'long_form')
+                    and protocol is not None and protocol.per_recording_session):
+                findings.append(finding('config.realtime_continuous', 'error',
+                                        'This protocol opens one stream per recording; use toggle, push_to_talk or auto.'))
     if not findings:
         findings.append(finding('config.valid', 'info', 'Configuration checks passed.'))
     return config, findings, False

@@ -398,7 +398,7 @@
     },
     "websocket_protocol": {
       "type": ["string", "null"],
-      "enum": ["openai-realtime", "gemini-live", "elevenlabs", null],
+      "enum": ["openai-realtime", "phonon", "gemini-live", "elevenlabs", null],
       "default": null,
       "description": "Wire protocol for websocket_provider 'custom' (null: openai-realtime). Built-in providers use their own."
     },

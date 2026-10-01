@@ -30,6 +30,7 @@ class EarlyPlaybackTests(unittest.TestCase):
         app.whisper_manager = mock.Mock()
         app.whisper_manager._model_manually_unloaded = False
         app.whisper_manager.realtime_client_missing.return_value = False
+        app.whisper_manager.realtime_busy.return_value = False
         app.audio_capture = mock.Mock(lock=threading.Lock(), frames_since_start=1)
         app.audio_capture.start_recording.return_value = True
         app.audio_manager = mock.Mock()
@@ -58,6 +59,16 @@ class EarlyPlaybackTests(unittest.TestCase):
                     self.assertEqual(order, ['sound', 'suppress', 'stability'])
                     self.assertEqual(app.playback_suppressor.restore.called, not stable)
                     self.assertEqual(app.is_recording, stable)
+
+    def test_pending_realtime_transcript_blocks_start(self):
+        app = self.app()
+        app.whisper_manager.realtime_busy.return_value = True
+        app._start_recording()
+        self.assertFalse(app.is_recording)
+        app.audio_capture.start_recording.assert_not_called()
+        app._release_blocked_capture.assert_called_once_with()
+        app._notify_user.assert_called_once()
+        self.assertIn('Still transcribing', app._notify_user.call_args.args[1])
 
     def test_cancel_during_suppression_restores_and_old_owner_cannot_restore_new(self):
         for mode in ('duck', 'pause'):

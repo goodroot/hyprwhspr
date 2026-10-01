@@ -406,12 +406,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         if self.session_format == 'flat' and self.mode != 'transcribe':
             self._log('Flat sessions only transcribe; ignoring realtime_mode')
             self.mode = 'transcribe'
-        rate = get_setting('websocket_sample_rate', None)
-        if rate is not None:
-            if isinstance(rate, int) and not isinstance(rate, bool) and 8000 <= rate <= 96000:
-                self.sample_rate = rate
-            else:
-                self._log(f'Invalid websocket_sample_rate {rate!r}, using {self.sample_rate}')
+        super().configure(get_setting)
         self.set_transcription_session_type(
             get_setting('realtime_transcription_session_type', 'transcription'))
         self.set_transcription_delay(get_setting('realtime_transcription_delay', 'low'))

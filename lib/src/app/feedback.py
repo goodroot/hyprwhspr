@@ -116,6 +116,8 @@ class FeedbackMixin:
         failed connect it invites the user to keep retrying against a dead endpoint.
         """
         reason = self.whisper_manager.realtime_connect_failure()
+        if reason == 'processing':
+            return "Still transcribing — try again in a moment"
         if reason == 'failed':
             return "Realtime connection failed — check network or provider status"
         if reason == 'cooldown':

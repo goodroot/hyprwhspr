@@ -35,6 +35,8 @@ class RealtimeProtocol:
     vad: Optional[str] = None      # trace label; None: derived from mode and model
     uses_instructions: bool = False
     derives_url: bool = False      # build the URL from the provider endpoint plus intent/model query
+    live_text: str = 'none'        # default promise for custom endpoints on this protocol
+    per_recording_session: bool = False  # no continuous/long_form: those commit mid-recording
 
 
 PROTOCOLS = {
@@ -60,6 +62,14 @@ PROTOCOLS = {
         deps='elevenlabs',
         vad='provider_managed',
     ),
+    'phonon': RealtimeProtocol(
+        id='phonon',
+        client='phonon_realtime_client:PhononRealtimeClient',
+        deps='realtime',
+        vad='provider_managed',
+        live_text='revisable',
+        per_recording_session=True,
+    ),
 }
 
 
@@ -83,11 +93,16 @@ def resolve_protocol(provider_id: Optional[str], configured: Optional[str] = Non
 
 
 def live_text_mode(provider_id: Optional[str], model_id: Optional[str],
-                   configured: Optional[str] = None) -> str:
+                   configured: Optional[str] = None, protocol: Optional[str] = None) -> str:
     """Live-text promise: configured for custom endpoints, else from model caps."""
     if provider_id == 'custom':
-        mode = str(configured or 'none').strip().lower()
-        return mode if mode in LIVE_TEXT_MODES else 'none'
+        if configured:
+            mode = str(configured).strip().lower()
+            return mode if mode in LIVE_TEXT_MODES else 'none'
+        try:
+            return resolve_protocol(provider_id, protocol).live_text
+        except ValueError:
+            return 'none'
     caps = get_realtime_capabilities(provider_id, model_id)
     if caps.get('live_text') in LIVE_TEXT_MODES:
         return caps['live_text']

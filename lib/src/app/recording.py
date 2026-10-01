@@ -113,6 +113,8 @@ class RecordingMixin:
                 blocked = 'unloaded'
             elif self.whisper_manager.realtime_client_missing():
                 blocked = 'realtime-reconnect'
+            elif self.whisper_manager.realtime_busy():
+                blocked = 'realtime-busy'
             else:
                 blocked = None
                 # Set flag immediately to prevent duplicate starts
@@ -171,6 +173,12 @@ class RecordingMixin:
             self._notify_user("hyprwhspr", "Reconnecting — try again in a moment", urgency="normal")
             log("[CONTROL] Recording blocked: realtime client not connected - reconnecting")
             self._start_backend_init_background()
+            return
+
+        # One-stream-per-recording protocols can't start until the last transcript lands
+        if blocked == 'realtime-busy':
+            self._notify_user("hyprwhspr", "Still transcribing — try again in a moment", urgency="normal")
+            log("[CONTROL] Recording blocked: previous realtime transcript still pending")
             return
 
         # Model was deliberately unloaded to free GPU resources
