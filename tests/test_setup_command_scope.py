@@ -408,6 +408,11 @@ class RemoteConfigSwitchTests(unittest.TestCase):
         config = self._switch({}, 'custom', 'model', None, {'websocket_url': url}, backend_type='realtime-ws')
         self.assertEqual(config['websocket_url'], url)
 
+    def test_realtime_switch_turns_live_typing_off(self):
+        config = self._switch({'realtime_live_typing': True}, 'openai', 'gpt-transcribe', 'sk',
+                              backend_type='realtime-ws')
+        self.assertFalse(config['realtime_live_typing'])
+
     def test_realtime_switch_clears_self_hosted_options(self):
         stale = {'websocket_protocol': 'phonon', 'websocket_session_format': 'flat',
                  'websocket_sample_rate': 16000, 'websocket_live_text': 'append_only'}
@@ -425,12 +430,12 @@ class RemoteConfigSwitchTests(unittest.TestCase):
         class Confirms:
             @staticmethod
             def ask(prompt, default=None, **_kwargs):
-                return 'live typing' in prompt
+                return default
 
         catalog = [(p, m) for p, prov in setup.PROVIDERS.items() if prov.get('websocket_endpoint')
                    for m in setup.get_models_for_backend(p, 'realtime-ws')]
-        # Custom endpoint, NeMo, default URL, default model
-        answers = iter([str(len(catalog) + 1), '2', '', ''])
+        # NeMo (first entry after the cloud catalog), default URL, default model
+        answers = iter([str(len(catalog) + 1), '', ''])
         with (
             mock.patch.object(setup, "Prompt", Answers),
             mock.patch.object(setup, "Confirm", Confirms),

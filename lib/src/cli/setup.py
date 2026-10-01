@@ -291,7 +291,7 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
     print("  [4] Qwen3-ASR    Chinese · Japanese · Korean · experimental")
     print("Cloud:")
     print("  [5] REST API     OpenAI · Groq · Cohere · custom")
-    print("  [6] Realtime WS  low-latency streaming")
+    print("  [6] Realtime WS  OpenAI · Gemini · ElevenLabs · self-hosted")
     print()
 
     # Seed the default with the installed backend, else the configured one, so
@@ -427,13 +427,15 @@ _SELF_HOSTED_KEYS = (
     'websocket_protocol', 'websocket_sample_rate', 'websocket_session_format', 'websocket_live_text',
 )
 _REALTIME_SERVER_PRESETS = (
-    ('OpenAI Realtime-compatible', 'wss://api.example.com/v1/realtime', '', {}),
-    ('NeMo-Speech.cpp', 'ws://127.0.0.1:8080/v1/realtime', 'nemotron-speech-streaming-en-0.6b', {
-        'websocket_sample_rate': 16000,
-        'websocket_session_format': 'flat',
-        'websocket_live_text': 'append_only',
-    }),
-    ('Phonon', '', 'phonon-2', {'websocket_protocol': 'phonon'}),
+    # (label, blurb, default URL, default model, options)
+    ('NeMo-Speech.cpp', 'self-hosted · English · live typing',
+     'ws://127.0.0.1:8080/v1/realtime', 'nemotron-speech-streaming-en-0.6b', {
+         'websocket_sample_rate': 16000,
+         'websocket_session_format': 'flat',
+         'websocket_live_text': 'append_only',
+     }),
+    ('Phonon', 'self-hosted · English', '', 'phonon-2', {'websocket_protocol': 'phonon'}),
+    ('Other server', 'any OpenAI Realtime-compatible endpoint', '', '', {}),
 )
 
 
@@ -463,35 +465,25 @@ def _prompt_realtime_provider_model_selection():
                 f"{provider['name']}: {model_data['name']} - {model_data['description']}"
             )
 
-    custom_choice = len(realtime_options) + 1
-    print(f"  [{custom_choice}] Custom WebSocket endpoint")
+    first_server = len(realtime_options) + 1
+    for offset, (label, blurb, *_rest) in enumerate(_REALTIME_SERVER_PRESETS):
+        print(f"  [{first_server + offset}] {label} - {blurb}")
     print()
 
-    choices = [str(i) for i in range(1, custom_choice + 1)]
+    choices = [str(i) for i in range(1, first_server + len(_REALTIME_SERVER_PRESETS))]
 
     while True:
         try:
             choice = Prompt.ask("Select provider and model", choices=choices, default='1')
             choice_num = int(choice)
 
-            if choice_num == custom_choice:
-                print("\n" + "="*60)
-                print("Custom WebSocket Configuration")
-                print("="*60)
-                print("\nConfigure a custom realtime WebSocket backend.")
-                print()
-                for index, (name, *_rest) in enumerate(_REALTIME_SERVER_PRESETS, 1):
-                    print(f"  [{index}] {name}")
-                preset_choice = Prompt.ask(
-                    "Server type",
-                    choices=[str(i) for i in range(1, len(_REALTIME_SERVER_PRESETS) + 1)],
-                    default='1',
-                )
-                _name, default_url, default_model, preset = _REALTIME_SERVER_PRESETS[int(preset_choice) - 1]
+            if choice_num >= first_server:
+                label, _blurb, default_url, default_model, preset = _REALTIME_SERVER_PRESETS[choice_num - first_server]
+                print(f"\n✓ Selected: {label}")
 
-                websocket_url = Prompt.ask("WebSocket URL", default=default_url or "")
+                websocket_url = Prompt.ask("WebSocket URL", default=default_url or None)
                 if not websocket_url:
-                    log_error("WebSocket URL is required for custom realtime backends")
+                    log_error("A WebSocket URL is required")
                     if not Confirm.ask("Try again?", default=True):
                         return None
                     continue
@@ -501,16 +493,15 @@ def _prompt_realtime_provider_model_selection():
                     if not Confirm.ask("Continue anyway?", default=True):
                         continue
 
-                model_id = Prompt.ask("Model identifier", default=default_model)
+                model_id = Prompt.ask("Model", default=default_model or None)
                 if not model_id:
-                    log_error("Model identifier is required for custom realtime backends")
+                    log_error("A model name is required")
                     if not Confirm.ask("Try again?", default=True):
                         return None
                     continue
 
-                has_api_key = Confirm.ask("Do you have an API key?", default=False)
                 api_key = None
-                if has_api_key:
+                if Confirm.ask("API key? Most self-hosted servers need none", default=False):
                     api_key = getpass.getpass("Enter API key: ")
                     if api_key:
                         save_credential('custom', api_key)
@@ -518,7 +509,7 @@ def _prompt_realtime_provider_model_selection():
                 custom_config = {'websocket_url': websocket_url, **preset}
                 if preset.get('websocket_live_text') == 'append_only':
                     custom_config['realtime_live_typing'] = Confirm.ask(
-                        "Type words while you speak? (live typing)", default=False)
+                        "Type words while you speak? (experimental)", default=True)
                 return ('custom', model_id, api_key, custom_config)
 
             provider_id, provider, model_id, model_data = realtime_options[choice_num - 1]
@@ -797,8 +788,8 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         config['websocket_url'] = (custom_config or {}).get('websocket_url')
         for key in _SELF_HOSTED_KEYS:
             config[key] = (custom_config or {}).get(key)
-        if custom_config and 'realtime_live_typing' in custom_config:
-            config['realtime_live_typing'] = custom_config['realtime_live_typing']
+        # Asked only for append-only servers; anything else turns it off.
+        config['realtime_live_typing'] = bool((custom_config or {}).get('realtime_live_typing'))
         return config
     
     config = {
