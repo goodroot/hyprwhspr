@@ -171,7 +171,7 @@ Managed release rollout and recovery: [installation guide](docs/MANAGED_INSTALLA
 For full configuration and customization, see the **[Configuration guide](docs/CONFIGURATION.md)**.
 
 - [Minimal configuration](docs/CONFIGURATION.md#minimal-configuration)
-- [Recording modes](docs/CONFIGURATION.md#recording-modes) -- toggle, push-to-talk, auto, long-form
+- [Recording modes](docs/CONFIGURATION.md#recording-modes) -- toggle, push-to-talk, auto, continuous, long-form
 - [Custom hotkeys](docs/CONFIGURATION.md#custom-hotkeys) -- key support, secondary shortcuts, Hyprland bindings
 - [Backends](docs/CONFIGURATION.md#backends) -- Cohere Transcribe, Parakeet, Whisper, Qwen3-ASR, REST API, Realtime WebSocket
 - [GPU resource management](docs/CONFIGURATION.md#gpu-resource-management) -- unload/reload model to free VRAM

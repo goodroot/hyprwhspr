@@ -68,7 +68,7 @@ Tokens are stored as-is on disk and expanded at read time:
 
 ### Toggle mode
 
-Toggle hotkey mode (default) - press to start, press again to stop:
+Press to start, press again to stop. The default:
 
 ```jsonc
 {
@@ -93,7 +93,7 @@ Hold to record, release to stop:
 
 ### Auto mode
 
-Hybrid tap/hold - automatically detects your intent:
+Tap or hold; it reads your intent:
 
 ```jsonc
 {
@@ -101,42 +101,39 @@ Hybrid tap/hold - automatically detects your intent:
 }
 ```
 
-- **Tap** (< 400ms) - Toggle behavior: tap to start recording, tap again to stop
-- **Hold** (>= 400ms) - Push-to-talk behavior: hold to record, release to stop
-
-### Auto-stop on silence
-
-In **toggle**, **auto**, and **continuous** modes, `silence_timeout` automatically stops recording (transcribe + paste) after a period of silence — press once, speak, and it finalizes itself when you go quiet:
-
-```jsonc
-{
-    "recording_mode": "toggle",
-    "silence_timeout": 2.5  // Auto-stop after 2.5s of silence. 0 (default) = disabled.
-}
-```
-
-- Default is `0` (disabled) - existing behavior is unchanged.
-- The timer **only arms after speech is detected**, so it won't fire while you're still composing your first sentence.
-- The silence threshold auto-calibrates from your mic's noise floor (shares `continuous_silence_threshold`).
-- Manual stop still works at any time; the stop beep signals the auto-stop. This is purely additive.
+- **Tap** (< 400ms): toggle. Tap again to stop.
+- **Hold** (≥ 400ms): push-to-talk. Release to stop.
 
 ### Continuous mode
 
-Press to start, speak naturally, and when you pause for a couple seconds the text is automatically transcribed and pasted. Press again to stop:
+Speak; each pause pastes. Recording rolls on until you press again:
 
 ```jsonc
 {
     "recording_mode": "continuous",
-    "continuous_silence_seconds": 2.0,  // Optional: seconds of silence before auto-paste (default: 2.0)
-    "continuous_silence_threshold": 0    // Optional: 0 = auto-calibrate from noise floor (default). Set manually if needed.
+    "continuous_silence_seconds": 2.0,  // The pause that pastes. Default 2.0.
+    "continuous_silence_threshold": 0   // Silence level. 0 (default) = calibrate each session.
 }
 ```
 
-- Recording continues after each auto-paste, so you can keep dictating
-- The final press stops recording and pastes any remaining audio
-- Or set `silence_timeout` (e.g. `15`) to end the session after a longer quiet; pauses still paste
-- Lower `continuous_silence_seconds` to trigger paste after shorter pauses
-- The silence threshold is auto-calibrated from your mic's noise floor at the start of each session; if detection feels off, set `continuous_silence_threshold` manually (check logs for the auto-calibrated value)
+- The final press pastes what's left.
+- Detection off? The log prints the calibrated level; start `continuous_silence_threshold` from there.
+- Add `silence_timeout` to let the session end itself.
+
+### Auto-stop on silence
+
+Go quiet and recording ends on its own — in toggle, auto, or continuous mode:
+
+```jsonc
+{
+    "silence_timeout": 2.5  // Seconds of quiet. 0 (default) = off.
+}
+```
+
+- Arms only once you speak; a slow first sentence is safe.
+- Hears silence the way continuous mode does, same threshold.
+- In continuous mode, choose a longer quiet (say `15`): pauses still paste, the long silence ends it.
+- The stop beep marks it. Press to stop sooner.
 
 ### Long-form mode
 
