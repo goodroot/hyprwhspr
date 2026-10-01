@@ -30,8 +30,7 @@ class SilenceMixin:
         with self._recording_lock:
             self._continuous_delivery_failure_notified = False
         self._continuous_stop_silence_monitor()
-        # Each generation owns its event. If a prior monitor takes longer than
-        # the bounded join, starting a new session must not wake it back up.
+        # Per-session event: a straggling old monitor must not be woken by this one.
         stop_event = threading.Event()
         self._continuous_silence_stop = stop_event
 
@@ -59,9 +58,7 @@ class SilenceMixin:
                     log(f"[CONTINUOUS] Auto-calibrated threshold={threshold:.5f}")
 
                 while not stop_event.is_set():
-                    with self._recording_lock:
-                        active_session = self.is_recording and self._recording_session is session
-                    if not active_session:
+                    if not self._owns_recording(session):
                         return
                     raw_level = self.audio_capture.rolling_avg_level
                     if raw_level < threshold:
@@ -69,13 +66,12 @@ class SilenceMixin:
                         quiet_count += 1
                         if silent_count >= samples_needed:
                             if speech_since_flush:
-                                # A busy flush still owns the previous audio chunk.
-                                # Keep this pending until a later pause can flush it.
-                                if self._continuous_flush_audio(expected_session=session):
+                                # Busy flush? Keep the chunk pending for the next pause.
+                                if self._continuous_flush_audio(session):
                                     speech_since_flush = False
                             silent_count = 0
                         if stop_samples and heard_speech and quiet_count >= stop_samples:
-                            self._continuous_autostop(session, stop_timeout, stop_event)
+                            self._continuous_autostop(session, stop_timeout)
                             return
                     else:
                         silent_count = 0
@@ -90,32 +86,27 @@ class SilenceMixin:
 
     def _continuous_stop_silence_monitor(self):
         """Stop the continuous silence monitor"""
-        stop_event = self._continuous_silence_stop
-        stop_event.set()
+        self._continuous_silence_stop.set()
         thread = self._continuous_silence_thread
         # The monitor itself reaches here via silence_timeout's _stop_recording()
         if thread and thread.is_alive() and threading.current_thread() is not thread:
             thread.join(timeout=0.5)
         self._continuous_silence_thread = None
 
-    def _continuous_autostop(self, session, silence_timeout, stop_event=None):
-        """End a continuous session from its own monitor thread after `silence_timeout`."""
+    def _owns_recording(self, session):
         with self._recording_lock:
-            still_current = self.is_recording and self._recording_session is session
-        if not still_current:
-            return
-        (stop_event or self._continuous_silence_stop).set()   # no join: this is the monitor thread
-        # A final-tail transcription must not overlap an in-flight chunk. Keep
-        # checking ownership while waiting so manual stop/cancel can retire us.
-        while not self._continuous_transcription_done.wait(timeout=0.1):
-            with self._recording_lock:
-                still_current = self.is_recording and self._recording_session is session
-            if not still_current:
+            return self.is_recording and self._recording_session is session
+
+    def _continuous_autostop(self, session, silence_timeout):
+        """End a continuous session from its own monitor thread after `silence_timeout`."""
+        # Let an in-flight chunk paste first; a stop or cancel meanwhile retires us.
+        while True:
+            if not self._owns_recording(session):
                 return
+            if self._continuous_transcription_done.wait(timeout=0.1):
+                break
         log(f"[AUTOSTOP] {silence_timeout:.1f}s of silence - stopping continuous recording")
-        # Validate the session atomically with the transition to stopped. A
-        # new recording may start after the wait above, before stop acquires its lock.
-        self._stop_recording(expected_session=session)
+        self._stop_recording(expected_session=session)   # re-checked under the lock
 
     def _autostop_start_silence_monitor(self):
         """Auto-stop recording after `silence_timeout` seconds of silence (toggle/auto modes).
@@ -201,7 +192,7 @@ class SilenceMixin:
         self._continuous_stop_silence_monitor()
         self._continuous_transcription_done.wait(timeout=30)
 
-    def _continuous_flush_audio(self, expected_session=None):
+    def _continuous_flush_audio(self, session):
         """Flush accumulated audio: transcribe and paste without stopping recording"""
         if not self._continuous_flush_lock.acquire(blocking=False):
             return False  # another flush/transcription in progress; retry later
@@ -211,12 +202,9 @@ class SilenceMixin:
         should_transcribe = False
         audio_data = None
         try:
-            # Validate ownership and swap the capture buffer in one short
-            # critical section so a retired monitor cannot consume a new session.
+            # Check ownership and swap the buffer atomically: a retired monitor can't take new audio.
             with self._recording_lock:
-                session = self._recording_session
-                if expected_session is not None and (
-                        not self.is_recording or session is not expected_session):
+                if not self.is_recording or self._recording_session is not session:
                     return False
                 language_override = self._current_language_override
                 audio_data = self.audio_capture.flush_buffer()

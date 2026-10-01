@@ -112,15 +112,13 @@ Speak; each pause pastes. Recording rolls on until you press again:
 {
     "recording_mode": "continuous",
     "continuous_silence_seconds": 2.0,  // The pause that pastes. Default 2.0.
-    "continuous_silence_threshold": 0,  // 0 (default) = calibrate each session.
-    "silence_timeout": 15               // Optional session end after 15s of quiet.
+    "continuous_silence_threshold": 0,  // Silence level. 0 (default) = calibrate each session.
+    "silence_timeout": 15               // Optional: 15s of quiet ends the session.
 }
 ```
 
 - The final press pastes what's left.
 - Detection off? The log prints the calibrated level; start `continuous_silence_threshold` from there.
-- `silence_timeout` is measured from the last speech; chunk pastes do not reset it. `0` (the default) leaves continuous recording running until you stop it.
-- When the timeout is reached, any in-flight chunk finishes first; recording then stops and processes the remaining audio in order.
 
 ### Auto-stop on silence
 
@@ -134,7 +132,7 @@ Go quiet and recording ends on its own — in toggle, auto, or continuous mode:
 
 - Arms only once you speak; a slow first sentence is safe.
 - Hears silence the way continuous mode does, same threshold.
-- In continuous mode, choose a longer quiet (say `15`): shorter pauses still paste, and the long silence stops recording before the remaining audio is processed.
+- In continuous mode, choose a longer quiet (say `15`): pauses still paste, the long silence ends it.
 - The stop beep marks it. Press to stop sooner.
 
 ### Long-form mode
