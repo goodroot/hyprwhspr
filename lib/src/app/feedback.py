@@ -1,10 +1,11 @@
 """Notifications, status files, mic OSD and the audio-level feed."""
 
+import os
 import shutil
 import threading
 import time
 
-from backend_installer import get_state
+from backend_installer import get_state, resolve_dependency_plan
 from backend_utils import normalize_backend
 from dependency_plan import missing_imports
 from paths import (
@@ -48,7 +49,29 @@ class FeedbackMixin:
                 "hyprwhspr", f"Missing Python modules: {names}\n"
                 "Run: hyprwhspr setup and reinstall the backend",
                 urgency="critical")
+        elif self._dependencies_changed_since_setup(backend, provider):
+            # Everything imports, but an update changed the requirements (a new
+            # pin or minimum) since setup last synced the venv.
+            log("[WARN] Python dependencies changed since setup - run: hyprwhspr setup (Reinstall backend: yes)")
         return missing
+
+    @staticmethod
+    def _dependencies_changed_since_setup(backend: str, provider) -> bool:
+        """True when setup recorded a dependency plan for this backend that no longer matches its manifests."""
+        if os.environ.get('HYPRWHSPR_GENERATION'):
+            return False  # managed releases install a venv per release
+        stored = get_state('dependency_plan_fingerprint')
+        if not stored:
+            return False
+        # Setup picks the GPU manifest by hardware; either one may be installed.
+        variants = {'onnx-asr': (None, 'gpu'), 'faster-whisper': (None, 'cuda')}.get(backend, (None,))
+        try:
+            plans = [resolve_dependency_plan(backend, provider, variant) for variant in variants]
+        except Exception:
+            return False  # no plan for this backend, or unreadable manifests
+        if get_state('dependency_family') != plans[0].family:
+            return False  # backend switched in config without setup; nothing to compare
+        return all(plan.fingerprint != stored for plan in plans)
 
     def _report_cpu_only_build(self) -> bool:
         """Log and notify when a GPU backend is configured but the installer recorded a CPU-only build.

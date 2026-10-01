@@ -2,6 +2,7 @@
 import ast
 import contextlib
 import io
+import os
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,6 +25,8 @@ class StartupDependencyCheckTests(unittest.TestCase):
         finder = mock.Mock(return_value=missing)
         output = io.StringIO()
         with patch_app_global(self.main.hyprwhsprApp, 'missing_imports', finder), \
+                mock.patch.object(self.main.hyprwhsprApp, '_dependencies_changed_since_setup',
+                                  return_value=False), \
                 contextlib.redirect_stdout(output):
             result = app._report_missing_dependencies()
         return app, finder, output.getvalue(), result
@@ -52,6 +55,53 @@ class StartupDependencyCheckTests(unittest.TestCase):
         _app, finder, _logged, _result = self._report((), {
             'transcription_backend': 'realtime-ws', 'websocket_provider': 'elevenlabs'})
         finder.assert_called_once_with('realtime-ws', 'elevenlabs')
+
+    def _changed(self, backend, state, fingerprints, env=None):
+        """Run the drift check with fake state and one plan fingerprint per variant."""
+        plans = {variant: mock.Mock(fingerprint=fp, family=family)
+                 for variant, (fp, family) in fingerprints.items()}
+        with patch_app_global(self.main.hyprwhsprApp, 'get_state', lambda key: state.get(key)), \
+                patch_app_global(self.main.hyprwhsprApp, 'resolve_dependency_plan',
+                                 lambda b, p, variant: plans[variant]), \
+                mock.patch.dict('os.environ', env or {}, clear=False):
+            if not env:
+                os.environ.pop('HYPRWHSPR_GENERATION', None)
+            return self.main.hyprwhsprApp._dependencies_changed_since_setup(backend, None)
+
+    def test_stale_venv_after_an_update_is_detected(self):
+        state = {'dependency_plan_fingerprint': 'old', 'dependency_family': 'pywhispercpp'}
+        self.assertTrue(self._changed('vulkan', state, {None: ('new', 'pywhispercpp')}))
+
+    def test_synced_venv_is_not_reported(self):
+        state = {'dependency_plan_fingerprint': 'same', 'dependency_family': 'pywhispercpp'}
+        self.assertFalse(self._changed('vulkan', state, {None: ('same', 'pywhispercpp')}))
+
+    def test_gpu_manifest_counts_as_synced(self):
+        state = {'dependency_plan_fingerprint': 'gpu', 'dependency_family': 'onnx'}
+        self.assertFalse(self._changed('onnx-asr', state, {None: ('cpu', 'onnx'), 'gpu': ('gpu', 'onnx')}))
+
+    def test_backend_switched_without_setup_is_not_drift(self):
+        state = {'dependency_plan_fingerprint': 'old', 'dependency_family': 'onnx'}
+        self.assertFalse(self._changed('vulkan', state, {None: ('new', 'pywhispercpp')}))
+
+    def test_no_recorded_plan_or_managed_release_is_silent(self):
+        plans = {None: ('new', 'pywhispercpp')}
+        self.assertFalse(self._changed('vulkan', {}, plans))
+        state = {'dependency_plan_fingerprint': 'old', 'dependency_family': 'pywhispercpp'}
+        self.assertFalse(self._changed('vulkan', state, plans, env={'HYPRWHSPR_GENERATION': '{}'}))
+
+    def test_drift_is_logged_without_a_notification(self):
+        app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+        app.config = FakeConfig({'transcription_backend': 'vulkan'})
+        app._notify_user = mock.Mock()
+        output = io.StringIO()
+        with patch_app_global(self.main.hyprwhsprApp, 'missing_imports', mock.Mock(return_value=())), \
+                mock.patch.object(self.main.hyprwhsprApp, '_dependencies_changed_since_setup',
+                                  return_value=True), \
+                contextlib.redirect_stdout(output):
+            app._report_missing_dependencies()
+        self.assertIn('[WARN] Python dependencies changed since setup', output.getvalue())
+        self.assertFalse(app._notify_user.called)
 
     def _cpu_report(self, backend, installed):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
