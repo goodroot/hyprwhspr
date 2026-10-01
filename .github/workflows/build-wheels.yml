@@ -6,8 +6,9 @@ name: Build PyWhisperCPP Wheels
 # the installer downloads from (WHEEL_BASE_URL); published wheels are never
 # overwritten, a rebuild bumps PYWHISPERCPP_WHEEL_BUILD instead. Pushes to main
 # are gated by a preflight that skips each variant whose wheels for the pinned
-# version and build are already published, so a version or build bump ships
-# wheels automatically and unrelated installer edits cost two curls.
+# version and build are already published and checksummed for every Python, so
+# a version or build bump ships wheels automatically, a partly published variant
+# is completed by the next run, and unrelated installer edits cost two requests.
 
 on:
   workflow_dispatch:
@@ -26,6 +27,8 @@ concurrency:
 
 env:
   CUDA_BUILD_VERSION: '12.6'  # one 12.x build serves all CUDA 12
+  # Keep in sync with every build/verify matrix below (checked by the tests).
+  PYTHON_VERSIONS: '3.11 3.12 3.13 3.14'
 
 jobs:
   preflight:
@@ -40,6 +43,8 @@ jobs:
 
       - name: Skip variants whose wheels are already published
         id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "build_cuda=true" >> "$GITHUB_OUTPUT"
@@ -47,20 +52,24 @@ jobs:
             echo "manual run: building all variants"
             exit 0
           fi
+          # A wheel counts as published only with its checksum: the installer
+          # refuses wheels SHA256SUMS.txt does not list.
+          assets=$(gh release view wheels-v2 --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name') || true
+          sums=$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/wheels-v2/SHA256SUMS.txt" || true)
           vulkan=$(PYTHONPATH=lib/src python3 -c "import backend_installer as b; print(b.VULKAN_WHEEL_VARIANT)")
           for pair in "cuda:cuda12" "vulkan:${vulkan}"; do
             key="${pair%%:*}"
             variant="${pair#*:}"
-            probe=$(PYTHONPATH=lib/src python3 -c "import backend_installer as b; print(b._get_wheel_filename('3.14', '${variant}', True))")
-            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/wheels-v2/${probe}"
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
-            if [ "$code" = "302" ]; then
-              echo "build_${key}=false" >> "$GITHUB_OUTPUT"
-              echo "already on wheels-v2: $probe - nothing to do"
-            else
-              echo "build_${key}=true" >> "$GITHUB_OUTPUT"
-              echo "missing on wheels-v2 (HTTP $code): $probe - building"
-            fi
+            build=false
+            for py in $PYTHON_VERSIONS; do
+              name=$(PYTHONPATH=lib/src python3 -c "import backend_installer as b; print(b._get_wheel_filename('${py}', '${variant}', True))")
+              if ! grep -qxF "$name" <<< "$assets" || ! awk '{print $2}' <<< "$sums" | grep -qxF "$name"; then
+                echo "not published with a checksum: $name"
+                build=true
+              fi
+            done
+            echo "build_${key}=${build}" >> "$GITHUB_OUTPUT"
+            [ "$build" = true ] || echo "${key}: all wheels already on wheels-v2 - nothing to do"
           done
 
   build-cuda:
@@ -431,20 +440,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          shopt -s nullglob
+          # Published wheels are never overwritten: keep any already on the
+          # release (a manual run, or a run completing a partly published variant).
+          published=$(gh release view wheels-v2 --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          for whl in wheels/*.whl; do
+            if grep -qxF "$(basename "$whl")" <<< "$published"; then
+              echo "::notice::already published, keeping it: $(basename "$whl")"
+              rm "$whl"
+            fi
+          done
+          new=(wheels/*.whl)
+          if [ ${#new[@]} -eq 0 ]; then
+            echo "nothing new to publish"
+            exit 0
+          fi
           ls -la wheels/
           (cd wheels && sha256sum *.whl) > new-sums.txt
           # Merge with the release's existing checksums: replace entries for
-          # files being (re)uploaded, keep every other version's entries.
+          # files being uploaded, keep every other entry.
           gh release download wheels-v2 --repo "$GITHUB_REPOSITORY" \
             --pattern SHA256SUMS.txt --output existing-sums.txt || : > existing-sums.txt
           awk '{print $2}' new-sums.txt > new-files.txt
-          grep -vFf new-files.txt existing-sums.txt > SHA256SUMS.txt || true
+          awk 'NR == FNR { skip[$1]; next } !($2 in skip)' new-files.txt existing-sums.txt > SHA256SUMS.txt
           cat new-sums.txt >> SHA256SUMS.txt
           sort -k2 -o SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
-          # Fails if a wheel of this version and build is already published.
-          gh release upload wheels-v2 wheels/*.whl --repo "$GITHUB_REPOSITORY"
+          # Checksums first, so a wheel is never on the release without one (the
+          # installer would refuse it, and it could not be replaced). A listed
+          # wheel whose upload then fails is just absent: the installer builds
+          # from source and the next run uploads it with a fresh checksum.
           gh release upload wheels-v2 SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload wheels-v2 "${new[@]}" --repo "$GITHUB_REPOSITORY"
           cp SHA256SUMS.txt wheels/
 
       - name: Upload wheels as workflow artifact

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -260,10 +261,23 @@ class WheelWorkflowContractTests(unittest.TestCase):
         self.assertEqual(workflow.count("GGML_OPENMP: 'OFF'"), builds)
         self.assertEqual(workflow.count("patchelf --set-rpath '$ORIGIN'"), builds)
         self.assertEqual(workflow.count('--build-number "$WHEEL_BUILD"'), builds)
-        wheel_uploads = [line for line in workflow.splitlines() if "gh release upload" in line and ".whl" in line]
-        self.assertEqual(len(wheel_uploads), 1)
-        self.assertNotIn("--clobber", wheel_uploads[0])
+        uploads = [line.strip() for line in workflow.splitlines() if "gh release upload" in line]
+        self.assertEqual(len(uploads), 2)
+        # Checksums go up before the wheels, and only the checksum list is replaced.
+        self.assertIn("SHA256SUMS.txt", uploads[0])
+        self.assertIn("--clobber", uploads[0])
+        self.assertIn('"${new[@]}"', uploads[1])
+        self.assertNotIn("--clobber", uploads[1])
         self.assertNotIn("LD_LIBRARY_PATH=", workflow)
+
+    def test_preflight_checks_every_python_the_matrices_build(self):
+        workflow = (ROOT / ".github" / "workflows" / "build-wheels.yml").read_text(encoding="utf-8")
+        declared = re.search(r"PYTHON_VERSIONS: '([^']+)'", workflow).group(1).split()
+        matrices = re.findall(r"python-version: \[([^\]]+)\]", workflow)
+        self.assertEqual(len(matrices), 4)
+        for matrix in matrices:
+            self.assertEqual([v.strip(" '") for v in matrix.split(",")], declared)
+        self.assertIn("for py in $PYTHON_VERSIONS", workflow)
 
 
 class ConfigDefaultsTests(unittest.TestCase):
