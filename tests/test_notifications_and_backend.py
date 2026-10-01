@@ -80,7 +80,7 @@ class NotificationPresenterStateTests(unittest.TestCase):
 
     def test_processing_stays_until_replaced(self):
         processing = self._sent("processing")[-1]
-        self.assertEqual(processing["urgency"], "critical")
+        self.assertEqual(processing["urgency"], "normal")
         self.assertEqual(processing["timeout_ms"], 0)
         self.assertEqual(processing["replaces_id"], 7)
 

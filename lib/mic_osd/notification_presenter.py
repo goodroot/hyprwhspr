@@ -35,13 +35,12 @@ class NotificationPresenter:
     }
     # States that represent a finished action and should auto-dismiss.
     _TRANSIENT_STATES = {'success', 'error'}
-    # States sent as critical with no timeout; replaced or closed by the next state.
+    # States that last until the next state replaces or closes them (timeout 0).
     _PERSISTENT_STATES = {'processing'}
     _APP_NAME = 'hyprwhspr'
     # All status bubbles carry the transient hint (see _send), so they never
     # land in the notification center. These timeouts only govern how long the
-    # banner lingers on screen (GNOME ignores -t and uses its own duration,
-    # except for critical banners, which it keeps until they are closed).
+    # banner lingers on screen (GNOME ignores -t and uses its own duration).
     _ACTIVE_TIMEOUT_MS = 5000
     _TRANSIENT_TIMEOUT_MS = 2000
 
@@ -54,13 +53,13 @@ class NotificationPresenter:
     def is_available() -> bool:
         return shutil.which('notify-send') is not None or shutil.which('gdbus') is not None
 
-    def _send(self, body: str, timeout_ms: int, urgency: str = 'normal'):
+    def _send(self, body: str, timeout_ms: int):
         """Show or replace the status notification. Captures/keeps the id so
         subsequent calls replace the same bubble instead of stacking."""
         # transient: bypass the server's persistence so status bubbles never
         # accumulate in the notification center (mirrors the ephemeral overlay).
         nid = send_notification_with_id(
-            self._APP_NAME, body, urgency=urgency, timeout_ms=timeout_ms,
+            self._APP_NAME, body, urgency='normal', timeout_ms=timeout_ms,
             app_name=self._APP_NAME, replaces_id=self._nid, transient=True)
         if nid is not None:
             self._nid = nid
@@ -88,11 +87,12 @@ class NotificationPresenter:
             return
         body = self._STATE_TEXT.get(state, self._STATE_TEXT['recording'])
         if state in self._TRANSIENT_STATES:
-            self._send(body, self._TRANSIENT_TIMEOUT_MS)
+            timeout = self._TRANSIENT_TIMEOUT_MS
         elif state in self._PERSISTENT_STATES:
-            self._send(body, 0, urgency='critical')
+            timeout = 0
         else:
-            self._send(body, self._active_timeout_ms)
+            timeout = self._active_timeout_ms
+        self._send(body, timeout)
 
     def hide(self):
         # Actively close the bubble so it does not persist in the notification
