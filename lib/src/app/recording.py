@@ -456,6 +456,7 @@ class RecordingMixin:
             )
         elif outcome is not None:
             log(f"[LIVE] Dictation finished ({len((text or '').split())} words)")
+            self._mark_delivery_healthy()
         return outcome
 
     def _cleanup_recording_state(self, session=None):
@@ -747,25 +748,28 @@ class RecordingMixin:
             else:
                 log(f"[INJECT] Injection dispatched ({len(text)} chars)")
 
-            # Text injection succeeded (or was intentionally consumed) - system is fully healthy
-            # Cancel any pending background recovery
-            if self._background_recovery_needed.is_set():
-                log("[HEALTH] Successful recording detected - canceling background recovery")
-                self._background_recovery_needed.clear()
-                # Write recovery success result (system self-healed via user activity)
-                self._write_recovery_result(True, 'user_activity_validated')
-                with self._mic_state_lock:
-                    self._mic_disconnected = False
-                self._clear_error_state_signals()
-            try:
-                # Ensure any active recovery is aborted once user activity proves health
-                self.audio_capture.abort_recovery()
-            except Exception:
-                pass
+            self._mark_delivery_healthy()
             return outcome
         except Exception as e:
             log(f"[ERROR] Text injection failed: {e}")
             return InjectionOutcome.FAILED
+
+    def _mark_delivery_healthy(self):
+        """A dictation landed (or was consumed): the system is fully healthy."""
+        # Cancel any pending background recovery
+        if self._background_recovery_needed.is_set():
+            log("[HEALTH] Successful recording detected - canceling background recovery")
+            self._background_recovery_needed.clear()
+            # Write recovery success result (system self-healed via user activity)
+            self._write_recovery_result(True, 'user_activity_validated')
+            with self._mic_state_lock:
+                self._mic_disconnected = False
+            self._clear_error_state_signals()
+        try:
+            # Ensure any active recovery is aborted once user activity proves health
+            self.audio_capture.abort_recovery()
+        except Exception:
+            pass
 
     def _is_zero_volume(self, audio_data) -> bool:
         """Check if audio data has zero or near-zero volume"""

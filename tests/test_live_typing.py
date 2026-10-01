@@ -413,6 +413,7 @@ class RecordingLifecycleTests(unittest.TestCase):
         app._show_result_and_hide = mock.Mock()
         app._clear_mic_osd_preview_text = mock.Mock()
         app._inject_text = mock.Mock(return_value=InjectionOutcome.INJECTED)
+        app._mark_delivery_healthy = mock.Mock()
         app.whisper_manager = types.SimpleNamespace(
             transcribe_audio=mock.Mock(return_value=transcript),
             realtime_live_typing_supported=lambda: supported,
@@ -434,6 +435,7 @@ class RecordingLifecycleTests(unittest.TestCase):
         app._process_audio([0.0])
         session.finish.assert_called_once_with("hello there friend")
         app._inject_text.assert_not_called()
+        app._mark_delivery_healthy.assert_called_once_with()
         app._show_result_and_hide.assert_called_once_with(True)
         self.assertIsNone(app._live_typing)
 
@@ -443,6 +445,7 @@ class RecordingLifecycleTests(unittest.TestCase):
         session.finish.return_value = InjectionOutcome.FAILED
         app._process_audio([0.0])
         app._notify_user.assert_called_once()
+        app._mark_delivery_healthy.assert_not_called()
         app.audio_manager.play_error_sound.assert_not_called()
         app._show_result_and_hide.assert_called_once_with(False)
 
