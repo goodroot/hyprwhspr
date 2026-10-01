@@ -415,6 +415,11 @@
       "default": null,
       "description": "Custom openai-realtime endpoints: session.update shape. flat suits pre-GA servers such as NeMo-Speech.cpp (transcribe only)."
     },
+    "realtime_live_typing": {
+      "type": "boolean",
+      "default": false,
+      "description": "Type text while you speak. Needs append_only live text in transcribe mode; off with a post_transcription_hook, capture, continuous or long_form."
+    },
     "websocket_live_text": {
       "type": ["string", "null"],
       "enum": ["none", "revisable", "append_only", null],

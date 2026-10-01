@@ -884,6 +884,19 @@ nemo-speech serve --asr-model nemotron-speech-streaming-en-0.6b.q8_0.gguf \
 }
 ```
 
+**Live typing.** With `append_only` live text, words can land while you speak:
+
+```jsonc
+{
+    "realtime_live_typing": true
+}
+```
+
+Words arrive about once a chunk and are never revised; the final transcript only adds what's left, such as
+the last word and its punctuation. Enter, the trailing space and the clipboard restore happen once, at stop.
+Cancel keeps what's already typed. It stays off with a `post_transcription_hook`, `record capture`, and in
+continuous or long-form mode, which need the whole dictation.
+
 **Phonon.** [Phonon-2](https://github.com/fermionresearch/phonon) streams raw PCM and opens one connection per
 recording, so it suits toggle, push-to-talk and auto, not continuous or long-form. English only. Live text is
 `revisable` by default.

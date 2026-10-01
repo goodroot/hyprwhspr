@@ -421,6 +421,22 @@ def _prompt_faster_whisper_model_selection(current_model: Optional[str] = None) 
             continue
 
 
+# Self-hosted server presets: they only fill in how the server speaks, so a
+# server that isn't listed works the same way through the options in the docs.
+_SELF_HOSTED_KEYS = (
+    'websocket_protocol', 'websocket_sample_rate', 'websocket_session_format', 'websocket_live_text',
+)
+_REALTIME_SERVER_PRESETS = (
+    ('OpenAI Realtime-compatible', 'wss://api.example.com/v1/realtime', '', {}),
+    ('NeMo-Speech.cpp', 'ws://127.0.0.1:8080/v1/realtime', 'nemotron-speech-streaming-en-0.6b', {
+        'websocket_sample_rate': 16000,
+        'websocket_session_format': 'flat',
+        'websocket_live_text': 'append_only',
+    }),
+    ('Phonon', '', 'phonon-2', {'websocket_protocol': 'phonon'}),
+)
+
+
 def _prompt_realtime_provider_model_selection():
     """
     Prompt user for realtime provider and model selection in one flat list.
@@ -464,8 +480,16 @@ def _prompt_realtime_provider_model_selection():
                 print("="*60)
                 print("\nConfigure a custom realtime WebSocket backend.")
                 print()
+                for index, (name, *_rest) in enumerate(_REALTIME_SERVER_PRESETS, 1):
+                    print(f"  [{index}] {name}")
+                preset_choice = Prompt.ask(
+                    "Server type",
+                    choices=[str(i) for i in range(1, len(_REALTIME_SERVER_PRESETS) + 1)],
+                    default='1',
+                )
+                _name, default_url, default_model, preset = _REALTIME_SERVER_PRESETS[int(preset_choice) - 1]
 
-                websocket_url = Prompt.ask("WebSocket URL (e.g., wss://api.example.com/v1/realtime)", default="")
+                websocket_url = Prompt.ask("WebSocket URL", default=default_url or "")
                 if not websocket_url:
                     log_error("WebSocket URL is required for custom realtime backends")
                     if not Confirm.ask("Try again?", default=True):
@@ -477,7 +501,7 @@ def _prompt_realtime_provider_model_selection():
                     if not Confirm.ask("Continue anyway?", default=True):
                         continue
 
-                model_id = Prompt.ask("Model identifier", default="")
+                model_id = Prompt.ask("Model identifier", default=default_model)
                 if not model_id:
                     log_error("Model identifier is required for custom realtime backends")
                     if not Confirm.ask("Try again?", default=True):
@@ -491,7 +515,10 @@ def _prompt_realtime_provider_model_selection():
                     if api_key:
                         save_credential('custom', api_key)
 
-                custom_config = {'websocket_url': websocket_url}
+                custom_config = {'websocket_url': websocket_url, **preset}
+                if preset.get('websocket_live_text') == 'append_only':
+                    custom_config['realtime_live_typing'] = Confirm.ask(
+                        "Type words while you speak? (live typing)", default=False)
                 return ('custom', model_id, api_key, custom_config)
 
             provider_id, provider, model_id, model_data = realtime_options[choice_num - 1]
@@ -768,6 +795,10 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         # omit, or a custom URL from an earlier setup overrides the provider's
         # own endpoint.
         config['websocket_url'] = (custom_config or {}).get('websocket_url')
+        for key in _SELF_HOSTED_KEYS:
+            config[key] = (custom_config or {}).get(key)
+        if custom_config and 'realtime_live_typing' in custom_config:
+            config['realtime_live_typing'] = custom_config['realtime_live_typing']
         return config
     
     config = {

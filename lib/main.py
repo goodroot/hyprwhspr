@@ -128,6 +128,8 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         # Covers the short stop-recording window before _process_audio claims
         # is_processing, so file requests cannot steal the backend in between.
         self._recording_finalizing = threading.Event()
+        # This recording's live typing (realtime_live_typing), or None
+        self._live_typing = None
         self.audio_level_thread = None
         self._audio_level_stop = threading.Event()  # Signals audio level thread to exit immediately
         self.recovery_attempted = threading.Event()  # Thread-safe flag: track if recovery was attempted for current error state
@@ -309,6 +311,8 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
 
         if hasattr(self.whisper_manager, 'set_realtime_partial_callback'):
             self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
+        if hasattr(self.whisper_manager, 'set_realtime_live_listener'):
+            self.whisper_manager.set_realtime_live_listener(self._on_live_text)
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()

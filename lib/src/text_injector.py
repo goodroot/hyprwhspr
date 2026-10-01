@@ -195,6 +195,43 @@ class InjectionOutcome(Enum):
     FAILED = "failed"
 
 
+_CLIPBOARD_UNSAVED = object()
+
+# A chunk starting with one of these attaches to the previous chunk: spoken
+# "comma" renders as ",", which must not follow a separating space.
+_NO_SPACE_BEFORE = set(',.?!:;)]}\n')
+# ...and nothing follows these with a space.
+_NO_SPACE_AFTER = set('([{\n\t')
+
+
+def _phrase_word(word: str) -> str:
+    return re.sub(r'[^\w]', '', word.lower())
+
+
+@dataclass
+class _StreamSession:
+    """One recording's live-typed delivery (realtime_live_typing).
+
+    Per-dictation work - saving and restoring the clipboard, auto_submit's
+    Enter, retaining text for recovery - happens once per session, not once
+    per chunk. Ported from Jacob Banghart's incremental injection (#261).
+    """
+    saved_clipboard: Any = _CLIPBOARD_UNSAVED
+    last_pasted: Optional[str] = None
+    last_char: str = ''
+    held: List[str] = None
+    raw_parts: List[str] = None
+    injected_any: bool = False
+    failed: bool = False
+    # Text never reached the app (injection disabled for it, or no paste
+    # tool): no Enter, no clipboard restore.
+    not_pasted: bool = False
+
+    def __post_init__(self):
+        self.held = []
+        self.raw_parts = []
+
+
 DEFAULT_PASTE_KEYCODE = 47  # Linux evdev KEY_V on QWERTY
 NON_XKB_INPUT_METHOD_LAYOUT = '__non_xkb_input_method__'
 _UNSET_LAYOUT_VALUES = {'(unset)', 'unset', 'n/a', 'none'}
@@ -322,6 +359,8 @@ class TextInjector:
     """Handles injecting text into focused applications"""
 
     _LAYOUT_CACHE_TTL_S = 1.0
+    # The live-typed dictation in progress (realtime_live_typing).
+    _stream: Optional[_StreamSession] = None
 
     def __init__(self, config_manager=None):
         # Configuration
@@ -1375,6 +1414,140 @@ except Exception:
         with self._delivery_lock:
             return self._prepare_and_inject_text(text)
 
+    def inject_stream_chunk(self, text: str, final: bool = False) -> InjectionOutcome:
+        """Deliver one chunk of a dictation typed while recording.
+
+        Chunks are joined with a separating space, except before punctuation
+        and after an opening bracket or newline. Words that could begin a
+        multi-word spoken command or word override ("new" of "new line") are
+        held and delivered with the next chunk, so the phrase is preprocessed
+        as one. `final` (a finalized segment) releases what's held, except a
+        trailing "new line". The post-transcription hook doesn't run: it takes
+        a whole dictation, and live typing is off while one is configured.
+        """
+        with self._delivery_lock:
+            session = self._stream
+            if session is None:
+                session = self._stream = _StreamSession()
+            words = session.held + text.split()
+            hold = self._stream_holdback(words, final)
+            deliver, session.held = words[:len(words) - hold], words[len(words) - hold:]
+            if not deliver:
+                return InjectionOutcome.INJECTED
+            return self._deliver_stream_words(session, deliver)
+
+    def end_stream(self, submit: bool = True) -> Optional[InjectionOutcome]:
+        """Finish the live-typed dictation.
+
+        Delivers held words, adds the trailing space append_trailing_space asks
+        for, retains the whole dictation for copy-last/paste-last, sends
+        auto_submit's Enter once, and schedules the one clipboard restore.
+        submit=False (a cancelled recording) skips the held words and the
+        Enter. Returns None when nothing was typed, else the worst outcome.
+        """
+        with self._delivery_lock:
+            session, self._stream = self._stream, None
+            if session is None:
+                return None
+            if submit and session.held:
+                self._deliver_stream_words(session, session.held)
+            if not session.injected_any:
+                return InjectionOutcome.FAILED if session.failed else None
+
+            full_text = self._preprocess_text(' '.join(session.raw_parts))
+            if (
+                submit
+                and not session.failed
+                and session.last_char not in _NO_SPACE_AFTER
+                and self._should_append_trailing_space(full_text)
+            ):
+                if self._inject_via_clipboard_and_hotkey(' ', auto_submit=False, stream=session):
+                    full_text += ' '
+                else:
+                    session.failed = True
+            with self._last_text_lock:
+                self._last_text = full_text
+
+            if (
+                session.saved_clipboard is not _CLIPBOARD_UNSAVED
+                and not session.not_pasted
+                and session.last_pasted is not None
+            ):
+                restore_delay = 5.0
+                if self.config_manager:
+                    restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
+                self._restore_clipboard(
+                    session.saved_clipboard,
+                    injected=session.last_pasted.encode("utf-8"),
+                    delay=restore_delay,
+                )
+            if submit and not session.failed and not session.not_pasted:
+                self._send_enter_if_auto_submit()
+            return InjectionOutcome.FAILED if session.failed else InjectionOutcome.INJECTED
+
+    def _deliver_stream_words(self, session: _StreamSession, words: List[str]) -> InjectionOutcome:
+        raw = ' '.join(words)
+        session.raw_parts.append(raw)
+        # Preprocessing strips a chunk's edges, which would drop the newline
+        # of a "new line" that starts it, so render leading ones here.
+        newlines = 0
+        if _config_setting(self.config_manager, 'symbol_replacements', True):
+            while [_phrase_word(w) for w in words[:2]] == ['new', 'line']:
+                words = words[2:]
+                newlines += 1
+        processed = self._preprocess_text(' '.join(words))
+        if not processed:
+            # Includes a "new line" with nothing after it: like the trailing
+            # newline inject_text trims, it would only act as Enter.
+            return InjectionOutcome.INJECTED
+        processed = '\n' * newlines + processed
+        if (
+            session.injected_any
+            and session.last_char not in _NO_SPACE_AFTER
+            and processed[0] not in _NO_SPACE_BEFORE
+            and not ends_with_no_space_script(session.last_char)
+        ):
+            processed = ' ' + processed
+        if self._inject_via_clipboard_and_hotkey(processed, auto_submit=False, stream=session):
+            session.injected_any = True
+            session.last_char = processed[-1]
+            return InjectionOutcome.INJECTED
+        session.failed = True
+        return InjectionOutcome.FAILED
+
+    def _stream_holdback(self, words: List[str], final: bool = False) -> int:
+        """How many trailing words to hold for the next chunk.
+
+        A trailing "new line" is always held, to start the next chunk; if
+        nothing follows it, it's dropped like any trailing newline. Unless
+        `final`, so is any tail that could still grow into a multi-word phrase
+        that preprocessing rewrites (spoken commands, word overrides, filler).
+        """
+        symbols = _config_setting(self.config_manager, 'symbol_replacements', True)
+        tail = [_phrase_word(w) for w in words]
+        if symbols and tail[-2:] == ['new', 'line']:
+            return 2
+        if final:
+            return 0
+        phrases = []
+        if symbols:
+            phrases.append(('new', 'line'))
+            phrases.extend(tuple(command.split()) for command, _ in _SPOKEN_REPLACEMENTS)
+        config = self.config_manager
+        if config is not None:
+            phrases.extend(config.get_word_overrides() or {})
+            if config.get_filter_filler_words():
+                phrases.extend(config.get_filler_words() or [])
+        longest = 0
+        for phrase in phrases:
+            if isinstance(phrase, str):
+                phrase = tuple(_phrase_word(w) for w in phrase.split())
+            for k in range(min(len(phrase) - 1, len(tail)), longest, -1):
+                if tuple(tail[-k:]) == phrase[:k]:
+                    longest = k
+                    break
+        return longest
+
     def recover_last(self, action):
         """Recover prepared text without rerunning hooks or submitting Enter."""
         if action == 'clear_last':
@@ -1510,7 +1683,10 @@ except Exception:
 
     # ------------------------ Paste injection (primary method) ------------------------
 
-    def _inject_via_clipboard_and_hotkey(self, text: str, auto_submit: bool = True, retain: bool = False) -> bool:
+    def _inject_via_clipboard_and_hotkey(
+        self, text: str, auto_submit: bool = True, retain: bool = False,
+        stream: Optional[_StreamSession] = None,
+    ) -> bool:
         """Copy text to clipboard, then trigger the compositor-native paste path."""
         try:
             window_lookup_needed = self._active_window_lookup_needed()
@@ -1534,6 +1710,8 @@ except Exception:
                 # avoids leaking dictated text (e.g. into a password field) onto the
                 # clipboard where other apps could read it.
                 log(f"Injection disabled for focused app ({app_match}); leaving it untouched.")
+                if stream is not None:
+                    stream.not_pasted = True
                 return True
 
             # Only ordinary, permitted delivery can replace recovery text.
@@ -1568,16 +1746,28 @@ except Exception:
                     return True
 
             with self._clipboard_lock:
+                if stream is not None:
+                    return self._paste_via_clipboard(
+                        text, paste_chord, gnome_wayland_session, auto_submit, stream=stream)
                 return self._paste_via_clipboard(text, paste_chord, gnome_wayland_session, auto_submit)
 
         except Exception as e:
             log(f"Clipboard+hotkey injection failed: {e}")
             return False
 
-    def _paste_via_clipboard(self, text, paste_chord, gnome_wayland_session, auto_submit):
-        """Deliver while owning _clipboard_lock, excluding background restores."""
+    def _paste_via_clipboard(self, text, paste_chord, gnome_wayland_session, auto_submit, stream=None):
+        """Deliver while owning _clipboard_lock, excluding background restores.
+
+        With a stream session, the clipboard is saved before its first chunk
+        only - by the next chunk it holds the previous one - and restored once,
+        by end_stream.
+        """
         try:
-            saved_clipboard = self._save_clipboard()
+            saved_clipboard = None
+            if stream is None:
+                saved_clipboard = self._save_clipboard()
+            elif stream.saved_clipboard is _CLIPBOARD_UNSAVED:
+                stream.saved_clipboard = self._save_clipboard()
 
             # Copy text to clipboard
             if not self._copy_text_to_clipboard(text):
@@ -1638,6 +1828,8 @@ except Exception:
                 log("No key-injection tool available; text is on the clipboard.")
                 # Text is clipboard-only: don't restore old clipboard (would erase it)
                 # and don't auto-submit (nothing was pasted into the field).
+                if stream is not None:
+                    stream.not_pasted = True
                 return True
 
             # Only restore clipboard after successful injection — if injection failed,
@@ -1645,7 +1837,10 @@ except Exception:
             # the exception: the ydotool chord is an automatic fallback after direct
             # typing was skipped, and a failed chord should not clobber the user's
             # previous clipboard.
-            if pasted:
+            if stream is not None:
+                if pasted:
+                    stream.last_pasted = text
+            elif pasted:
                 restore_delay = 5.0
                 if self.config_manager:
                     restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))

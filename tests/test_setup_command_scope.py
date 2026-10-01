@@ -408,6 +408,46 @@ class RemoteConfigSwitchTests(unittest.TestCase):
         config = self._switch({}, 'custom', 'model', None, {'websocket_url': url}, backend_type='realtime-ws')
         self.assertEqual(config['websocket_url'], url)
 
+    def test_realtime_switch_clears_self_hosted_options(self):
+        stale = {'websocket_protocol': 'phonon', 'websocket_session_format': 'flat',
+                 'websocket_sample_rate': 16000, 'websocket_live_text': 'append_only'}
+        config = self._switch(stale, 'openai', 'gpt-transcribe', 'sk', backend_type='realtime-ws')
+        for key in stale:
+            self.assertIsNone(config[key], key)
+
+    def test_realtime_nemo_preset_fills_the_server_shape(self):
+        class Answers:
+            @staticmethod
+            def ask(_prompt, choices=None, default=None, **_kwargs):
+                answer = next(answers)
+                return answer or default
+
+        class Confirms:
+            @staticmethod
+            def ask(prompt, default=None, **_kwargs):
+                return 'live typing' in prompt
+
+        catalog = [(p, m) for p, prov in setup.PROVIDERS.items() if prov.get('websocket_endpoint')
+                   for m in setup.get_models_for_backend(p, 'realtime-ws')]
+        # Custom endpoint, NeMo, default URL, default model
+        answers = iter([str(len(catalog) + 1), '2', '', ''])
+        with (
+            mock.patch.object(setup, "Prompt", Answers),
+            mock.patch.object(setup, "Confirm", Confirms),
+            mock.patch.object(setup, "save_credential"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            provider_id, model_id, api_key, custom_config = setup._prompt_realtime_provider_model_selection()
+        config = setup._generate_remote_config(provider_id, model_id, api_key, custom_config,
+                                               backend_type='realtime-ws')
+        self.assertEqual((provider_id, model_id, api_key), ('custom', 'nemotron-speech-streaming-en-0.6b', None))
+        self.assertEqual(config['websocket_url'], 'ws://127.0.0.1:8080/v1/realtime')
+        self.assertEqual(config['websocket_session_format'], 'flat')
+        self.assertEqual(config['websocket_sample_rate'], 16000)
+        self.assertEqual(config['websocket_live_text'], 'append_only')
+        self.assertIsNone(config['websocket_protocol'])
+        self.assertTrue(config['realtime_live_typing'])
+
     def test_rest_custom_without_key_drops_the_previous_provider(self):
         stale = {'rest_api_provider': 'openai'}
         config = self._switch(stale, 'custom', None, None, {'endpoint': 'http://localhost:9000/asr'})

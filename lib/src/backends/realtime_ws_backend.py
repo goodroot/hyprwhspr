@@ -170,6 +170,10 @@ class RealtimeWsBackend(TranscriptionBackend):
             return False
         client.set_max_buffer_seconds(self.config.get_setting('realtime_buffer_max_seconds', 5))
         self.apply_partial_callback(self._realtime_partial_callback)
+        self.apply_live_listener(getattr(self._manager, '_realtime_live_listener', None))
+        if self.config.get_setting('realtime_live_typing', False) and not self.live_typing_supported:
+            log('[REALTIME] realtime_live_typing needs live_text "append_only" in transcribe mode; '
+                'text pastes at stop')
 
         self._realtime_connect_params = {
             'websocket_url': websocket_url,
@@ -367,6 +371,23 @@ class RealtimeWsBackend(TranscriptionBackend):
             )
         if not enabled:
             self._clear_realtime_partial_preview()
+
+    def apply_live_listener(self, listener) -> None:
+        """Route structured live text (committed, tail) to `listener`."""
+        if self._realtime_client:
+            self._realtime_client.set_live_text_listener(listener)
+
+    @property
+    def live_typing_supported(self) -> bool:
+        """The model promises append-only live text, so typing it early is safe."""
+        if self.config.get_setting('realtime_mode', 'transcribe') != 'transcribe':
+            return False
+        return live_text_mode(
+            self.config.get_setting('websocket_provider'),
+            self.config.get_setting('websocket_model'),
+            self.config.get_setting('websocket_live_text'),
+            self.config.get_setting('websocket_protocol'),
+        ) == 'append_only'
 
     def _is_partial_preview_enabled(
         self,

@@ -8,6 +8,7 @@ from paths import DEBUG_RECORDINGS_DIR
 from text_injector import InjectionOutcome
 from processing_trace import build_processing_trace
 from hallucination import is_hallucination
+from live_typing import LiveTypingSession
 from service_log import log
 from backend_utils import normalize_backend
 
@@ -223,6 +224,8 @@ class RecordingMixin:
                 # Restore audio if it was ducked or paused
                 self._restore_recording_playback(session)
                 return
+            if streaming_callback is not None:
+                self._open_live_typing()
             
             # Helper function to verify stream is working and play sound
             def verify_and_play_sound():
@@ -280,6 +283,7 @@ class RecordingMixin:
                 if not verified:
                     # Stream broken - stop recording (thread will clean up stream)
                     self.audio_capture.stop_recording()
+                    self._cancel_live_typing()
 
                     # Reset state
                     with self._recording_lock:
@@ -317,6 +321,7 @@ class RecordingMixin:
                 if not stable:
                     # Stream stopped working shortly after starting
                     self.audio_capture.stop_recording()
+                    self._cancel_live_typing()
                     with self._recording_lock:
                         self.is_recording = False
                     self._write_recording_status(False)
@@ -357,6 +362,7 @@ class RecordingMixin:
                 self._stop_audio_level_monitoring()
 
                 self.whisper_manager.close_realtime_connection("recording start failure")
+                self._cancel_live_typing()
 
                 # Stop recording (will clean up if thread started)
                 try:
@@ -386,6 +392,7 @@ class RecordingMixin:
             self._stop_audio_level_monitoring()
 
             self.whisper_manager.close_realtime_connection("recording start failure")
+            self._cancel_live_typing()
 
             with self._recording_lock:
                 self.is_recording = False
@@ -402,8 +409,63 @@ class RecordingMixin:
                 self._recording_starting = False
             self._start_settled.set()
 
+    # ------------------------ Live typing ------------------------
+
+    def _live_typing_eligible(self) -> bool:
+        """Type while speaking only where a whole-dictation consumer can't be skipped."""
+        if not self.config.get_setting('realtime_live_typing', False):
+            return False
+        if self.config.get_setting('recording_mode', 'toggle') in ('continuous', 'long_form'):
+            return False
+        hook = self.config.get_setting('post_transcription_hook', None)
+        if isinstance(hook, str) and hook.strip():
+            return False
+        if self._recording_control_server.has_capture_subscriber():
+            return False
+        return self.whisper_manager.realtime_live_typing_supported()
+
+    def _open_live_typing(self):
+        """Start this recording's live typing when eligible."""
+        self._cancel_live_typing()  # a start that never finished may have left one
+        if self._live_typing_eligible():
+            self._live_typing = LiveTypingSession(
+                self.text_injector, self.config.get_hallucination_markers())
+
+    def _on_live_text(self, committed, tail):
+        """Realtime live-text listener (receiver thread)."""
+        session = getattr(self, '_live_typing', None)
+        if session is not None:
+            session.on_live_text(committed, tail)
+
+    def _take_live_typing(self):
+        session = getattr(self, '_live_typing', None)
+        self._live_typing = None
+        return session
+
+    def _cancel_live_typing(self):
+        session = self._take_live_typing()
+        if session is not None:
+            session.cancel()
+
+    def _finish_live_typing(self, text):
+        """Finish live typing with the final transcript; None if nothing was typed live."""
+        session = self._take_live_typing()
+        if session is None:
+            return None
+        outcome = session.finish(text or '')
+        if outcome == InjectionOutcome.FAILED:
+            log("[ERROR] Live-typed text delivery failed")
+            self._notify_user(
+                "hyprwhspr", "Text delivery failed. Recover with hyprwhspr record copy-last or record paste-last",
+                urgency="normal",
+            )
+        elif outcome is not None:
+            log(f"[LIVE] Dictation finished ({len((text or '').split())} words)")
+        return outcome
+
     def _cleanup_recording_state(self, session=None):
         """Best-effort cleanup after any recording ends. Safe to call multiple times."""
+        self._cancel_live_typing()
         session = session if session is not None else self._recording_session
         # Release recording state and capture clients before teardown can block.
         try:
@@ -589,6 +651,8 @@ class RecordingMixin:
             except Exception:
                 pass  # Best effort cleanup
         finally:
+            # No-op once _process_audio took it; broken/silent streams never get there
+            self._cancel_live_typing()
             self._recording_finalizing.clear()
 
     def _process_audio(self, audio_data):
@@ -607,7 +671,11 @@ class RecordingMixin:
                 language_override=self._current_language_override,
             )
 
-            if transcription and transcription.strip():
+            # Words already typed live: type the rest, no hallucination re-check
+            live_outcome = self._finish_live_typing(transcription)
+            if live_outcome is not None:
+                success = live_outcome != InjectionOutcome.FAILED
+            elif transcription and transcription.strip():
                 text = transcription.strip()
 
                 # Filter out Whisper hallucination markers - don't touch clipboard

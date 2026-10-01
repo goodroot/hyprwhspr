@@ -155,6 +155,7 @@ def build_default_config():
         'websocket_sample_rate': None,     # Custom endpoints: audio rate sent (None: protocol default)
         'websocket_session_format': None,  # Custom openai-realtime: 'nested' (GA) | 'flat' (NeMo-Speech.cpp)
         'websocket_live_text': None,       # Custom endpoints: 'none' | 'revisable' | 'append_only'
+        'realtime_live_typing': False,     # Type append-only live text while speaking
         'realtime_timeout': 30,            # Completion timeout (seconds)
         'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks
         'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)

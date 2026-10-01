@@ -59,6 +59,8 @@ class WhisperManager:
         # Realtime partial-preview callback; owned by the manager (not the
         # realtime backend) so it survives backend re-creation on resume
         self._realtime_partial_callback = None
+        # Structured live-text listener (committed, tail) for live typing
+        self._realtime_live_listener = None
 
         # Thread safety for model operations
         # Serializes local model use and backend replacement.  An RLock keeps
@@ -165,6 +167,18 @@ class WhisperManager:
         """True when the streaming backend has no client (destructive close)."""
         backend = self._backend
         return backend is not None and backend.streams_audio and not backend.is_loaded
+
+    def set_realtime_live_listener(self, listener) -> None:
+        """Set the listener for structured live text (committed, tail)."""
+        self._realtime_live_listener = listener
+        backend = self._backend
+        if backend is not None and backend.streams_audio:
+            backend.apply_live_listener(listener)
+
+    def realtime_live_typing_supported(self) -> bool:
+        """The active realtime model's live text is append-only."""
+        backend = self._active_realtime_backend()
+        return bool(backend is not None and backend.live_typing_supported)
 
     def realtime_busy(self) -> bool:
         """True while a one-stream-per-recording client still finishes the last recording."""
