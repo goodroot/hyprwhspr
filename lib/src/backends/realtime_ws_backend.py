@@ -111,7 +111,8 @@ class RealtimeWsBackend(TranscriptionBackend):
 
         realtime_mode = self.config.get_setting('realtime_mode', 'transcribe')
         if realtime_mode not in protocol.modes:
-            log(f'[REALTIME] {protocol.id} only transcribes; ignoring realtime_mode={realtime_mode!r}')
+            log(f'[REALTIME] {protocol.id} supports realtime_mode {"/".join(protocol.modes)}; '
+                f'using transcribe instead of {realtime_mode!r}')
             realtime_mode = 'transcribe'
         if (
             realtime_mode != 'transcribe'
