@@ -323,7 +323,7 @@ With `grab_keys: false` (default), hyprwhspr can start even if you are not in th
 
 Speed on each model's best hardware. Accuracy from the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard). Memory is RAM or VRAM, roughly. ARM64 runs on CPU. Whisper ships smaller models; see its tables. † Experimental.
 
-Cloud: [REST API](#rest-api) and [Realtime WebSocket](#realtime-websocket). Speed and accuracy follow the provider.
+Cloud or your own server: [REST API](#rest-api) and [Realtime WebSocket](#realtime-websocket). Speed and accuracy follow the provider.
 
 `hyprwhspr setup auto` picks Whisper for your hardware: faster-whisper on NVIDIA or CPU, whisper.cpp on AMD/Intel.
 
@@ -735,11 +735,7 @@ Persistent WebSocket streaming. `realtime_mode` selects `transcribe` (speech-to-
 | OpenAI | Yes | Yes, on a `gpt-realtime-*` model |
 | Google Gemini | Yes | Yes |
 | ElevenLabs | Yes | No — hyprwhspr ignores `realtime_mode` |
-| Custom | Yes | Yes |
-
-Custom endpoints set `websocket_provider: "custom"` and `websocket_url`. They speak OpenAI Realtime unless
-`websocket_protocol` says otherwise. The API key is optional. `websocket_live_text: "revisable"` turns on the waveform
-preview for servers that stream text mid-utterance.
+| [Self-hosted](#self-hosted-streaming) | Yes | OpenAI-compatible servers only |
 
 #### OpenAI Realtime
 
@@ -851,21 +847,13 @@ Uses native 16kHz audio (no resampling) and auto-reconnects on connection drops.
 
 #### Self-hosted streaming
 
-Your server, your protocol. Point `custom` at it and describe how it speaks:
+Run your own server; no API key needed. `hyprwhspr setup` → **Realtime WS** lists NeMo-Speech.cpp, Phonon, and any
+OpenAI Realtime-compatible server.
 
-| Setting | Values | Default |
-| --- | --- | --- |
-| `websocket_protocol` | `openai-realtime`, `phonon` | `openai-realtime` |
-| `websocket_sample_rate` | 8000–96000 | protocol's own |
-| `websocket_session_format` | `nested` (OpenAI GA), `flat` (older servers) | `nested` |
-| `websocket_live_text` | `none`, `revisable`, `append_only` | `none` |
-
-`revisable` shows live text in the OSD; `append_only` promises emitted words never change.
-
-**NeMo-Speech.cpp.** Get the [server](https://github.com/NVIDIA/NeMo-Speech.cpp/releases) and
+**NeMo-Speech.cpp** — English, [live typing](#live-typing). Get the
+[server](https://github.com/NVIDIA/NeMo-Speech.cpp/releases) and
 [`nemotron-speech-streaming-en-0.6b.q8_0.gguf`](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b/resolve/main/nemotron-speech-streaming-en-0.6b.q8_0.gguf)
-(700MB, ~2.7GB VRAM, English). `rnnt_right_context 13` gives 1.12s chunks, the setting behind the model card's
-WER; the default 160ms is noticeably worse.
+(700MB, ~2.7GB VRAM). Serve 1.12s chunks; the 160ms default is noticeably less accurate:
 
 ```bash
 nemo-speech serve --asr-model nemotron-speech-streaming-en-0.6b.q8_0.gguf \
@@ -884,22 +872,8 @@ nemo-speech serve --asr-model nemotron-speech-streaming-en-0.6b.q8_0.gguf \
 }
 ```
 
-**Live typing.** With `append_only` live text, words can land while you speak:
-
-```jsonc
-{
-    "realtime_live_typing": true
-}
-```
-
-Words arrive about once a chunk and are never revised; the final transcript only adds what's left, such as
-the last word and its punctuation. Enter, the trailing space and the clipboard restore happen once, at stop.
-Cancel keeps what's already typed. It stays off with a `post_transcription_hook`, `record capture`, and in
-continuous or long-form mode, which need the whole dictation.
-
-**Phonon.** [Phonon-2](https://github.com/fermionresearch/phonon) streams raw PCM and opens one connection per
-recording, so it suits toggle, push-to-talk and auto, not continuous or long-form. English only. Live text is
-`revisable` by default.
+**[Phonon](https://github.com/fermionresearch/phonon)** — English, live OSD preview. One stream per recording:
+toggle, push-to-talk or auto.
 
 ```jsonc
 {
@@ -910,6 +884,34 @@ recording, so it suits toggle, push-to-talk and auto, not continuous or long-for
     "websocket_url": "wss://asr.example.com/v1/audio/stream"
 }
 ```
+
+**Anything else** — describe how it speaks:
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `websocket_protocol` | `openai-realtime`, `phonon` | `openai-realtime` |
+| `websocket_sample_rate` | 8000–96000 | protocol's own |
+| `websocket_session_format` | `nested`, `flat` (older servers) | `nested` |
+| `websocket_live_text` | `none`, `revisable`, `append_only` | `none` |
+
+`revisable` shows live text in the OSD. `append_only` means sent words never change, which allows live typing.
+
+#### Live typing
+
+> Experimental.
+
+Words land as you speak. Needs a model whose words never change once sent (`append_only`): today, NeMo.
+
+```jsonc
+{
+    "realtime_live_typing": true
+}
+```
+
+- Typed words stay; at stop, the rest arrives with its punctuation.
+- Enter, the trailing space and the clipboard restore wait for stop.
+- Cancel keeps what's typed.
+- Off with a `post_transcription_hook`, `record capture`, continuous or long-form. `hyprwhspr config validate` says why.
 
 ## Audio and visual feedback
 
@@ -962,7 +964,7 @@ systemctl --user restart hyprwhspr
 
 #### Pill live transcript
 
-Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` plus a `realtime-ws` backend that streams partial transcripts (OpenAI, ElevenLabs — not Gemini yet). Final transcription and paste are unaffected.
+Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` plus a `realtime-ws` backend that streams partial transcripts (OpenAI, ElevenLabs, self-hosted — not Gemini yet). Final transcription and paste are unaffected.
 
 ```jsonc
 {
