@@ -31,6 +31,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
     VALID_TRANSCRIPTION_DELAYS = {'minimal', 'low', 'medium', 'high', 'xhigh'}
     VALID_CONVERSATION_HISTORY = {'session', 'turn'}
     VALID_TRANSCRIPTION_SESSION_TYPES = {'transcription', 'realtime'}
+    VALID_SESSION_FORMATS = {'nested', 'flat'}
 
     def __init__(self, mode: str = 'transcribe'):
         """
@@ -45,6 +46,9 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self.transcription_prompt = None
         self.conversation_history = 'turn'
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
+        # 'flat': servers predating OpenAI's GA schema (NeMo-Speech.cpp) read
+        # sample_rate/language directly under session and only transcribe.
+        self.session_format = 'nested'
 
         # Track if buffer was committed (by VAD or manual)
         # Prevents double-commit error when VAD auto-commits on speech end
@@ -276,7 +280,11 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         if not self.connected or not self.ws:
             return
 
-        if self.mode == 'transcribe':
+        if self.session_format == 'flat':
+            session_data = {'sample_rate': self.sample_rate}
+            if self.language:
+                session_data['language'] = self.language
+        elif self.mode == 'transcribe':
             # Dictation; strict proxies need the 'realtime' envelope
             # Build transcription config - omit language for auto-detect
             model = self.model or 'gpt-4o-mini-transcribe'
@@ -314,7 +322,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                     'input': {
                         'format': {
                             'type': 'audio/pcm',
-                            'rate': 24000
+                            'rate': self.sample_rate
                         },
                         'transcription': transcription_config,
                         'turn_detection': turn_detection
@@ -330,7 +338,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                     'input': {
                         'format': {
                             'type': 'audio/pcm',
-                            'rate': 24000
+                            'rate': self.sample_rate
                         },
                         'turn_detection': None  # Manual commit on stop
                     }
@@ -391,6 +399,19 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             self._send_session_update()
 
     def configure(self, get_setting):
+        self.session_format = self._normalize_choice(
+            get_setting('websocket_session_format', None), self.VALID_SESSION_FORMATS, 'nested',
+            'websocket_session_format'
+        )
+        if self.session_format == 'flat' and self.mode != 'transcribe':
+            self._log('Flat sessions only transcribe; ignoring realtime_mode')
+            self.mode = 'transcribe'
+        rate = get_setting('websocket_sample_rate', None)
+        if rate is not None:
+            if isinstance(rate, int) and not isinstance(rate, bool) and 8000 <= rate <= 96000:
+                self.sample_rate = rate
+            else:
+                self._log(f'Invalid websocket_sample_rate {rate!r}, using {self.sample_rate}')
         self.set_transcription_session_type(
             get_setting('realtime_transcription_session_type', 'transcription'))
         self.set_transcription_delay(get_setting('realtime_transcription_delay', 'low'))

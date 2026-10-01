@@ -152,6 +152,8 @@ def build_default_config():
         'websocket_model': None,           # Model identifier (e.g., 'gpt-transcribe')
         'websocket_url': None,             # Optional: explicit WebSocket URL (auto-derived if None)
         'websocket_protocol': None,        # Custom endpoints: wire protocol (None: 'openai-realtime')
+        'websocket_sample_rate': None,     # Custom endpoints: audio rate sent (None: protocol default)
+        'websocket_session_format': None,  # Custom openai-realtime: 'nested' (GA) | 'flat' (NeMo-Speech.cpp)
         'websocket_live_text': None,       # Custom endpoints: 'none' | 'revisable' | 'append_only'
         'realtime_timeout': 30,            # Completion timeout (seconds)
         'realtime_buffer_max_seconds': 5,  # Max buffer before dropping chunks

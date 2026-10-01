@@ -402,6 +402,19 @@
       "default": null,
       "description": "Wire protocol for websocket_provider 'custom' (null: openai-realtime). Built-in providers use their own."
     },
+    "websocket_sample_rate": {
+      "type": ["integer", "null"],
+      "minimum": 8000,
+      "maximum": 96000,
+      "default": null,
+      "description": "Custom endpoints: audio rate sent to the server (null: the protocol's own)"
+    },
+    "websocket_session_format": {
+      "type": ["string", "null"],
+      "enum": ["nested", "flat", null],
+      "default": null,
+      "description": "Custom openai-realtime endpoints: session.update shape. flat suits pre-GA servers such as NeMo-Speech.cpp (transcribe only)."
+    },
     "websocket_live_text": {
       "type": ["string", "null"],
       "enum": ["none", "revisable", "append_only", null],

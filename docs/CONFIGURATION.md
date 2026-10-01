@@ -849,6 +849,41 @@ Uses native 16kHz audio (no resampling) and auto-reconnects on connection drops.
 }
 ```
 
+#### Self-hosted streaming
+
+Your server, your protocol. Point `custom` at it and describe how it speaks:
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `websocket_protocol` | `openai-realtime` | `openai-realtime` |
+| `websocket_sample_rate` | 8000–96000 | protocol's own |
+| `websocket_session_format` | `nested` (OpenAI GA), `flat` (older servers) | `nested` |
+| `websocket_live_text` | `none`, `revisable`, `append_only` | `none` |
+
+`revisable` shows live text in the OSD; `append_only` promises emitted words never change.
+
+**NeMo-Speech.cpp.** Get the [server](https://github.com/NVIDIA/NeMo-Speech.cpp/releases) and
+[`nemotron-speech-streaming-en-0.6b.q8_0.gguf`](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b/resolve/main/nemotron-speech-streaming-en-0.6b.q8_0.gguf)
+(700MB, ~2.7GB VRAM, English). `rnnt_right_context 13` gives 1.12s chunks, the setting behind the model card's
+WER; the default 160ms is noticeably worse.
+
+```bash
+nemo-speech serve --asr-model nemotron-speech-streaming-en-0.6b.q8_0.gguf \
+    --asr.streaming.rnnt_right_context 13
+```
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "custom",
+    "websocket_model": "nemotron-speech-streaming-en-0.6b",
+    "websocket_url": "ws://127.0.0.1:8080/v1/realtime",
+    "websocket_sample_rate": 16000,
+    "websocket_session_format": "flat",
+    "websocket_live_text": "append_only"
+}
+```
+
 ## Audio and visual feedback
 
 ### Themed visualizer

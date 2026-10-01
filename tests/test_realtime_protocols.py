@@ -185,5 +185,75 @@ class LiveTextModeTests(unittest.TestCase):
                     backend._is_partial_preview_enabled("custom", "local-model", "transcribe"), expected)
 
 
+
+class FakeWebSocket:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, payload):
+        import json
+        self.sent.append(json.loads(payload))
+
+
+NEMO = {
+    **CUSTOM,
+    "websocket_model": "nemotron-speech-streaming-en-0.6b",
+    "websocket_sample_rate": 16000,
+    "websocket_session_format": "flat",
+    "websocket_live_text": "append_only",
+}
+
+
+class FlatSessionTests(unittest.TestCase):
+    def _configured(self, values, mode="transcribe"):
+        client = RealtimeClient(mode=mode)
+        client.configure(FakeConfig(values).get_setting)
+        client.connected = True
+        client.ws = FakeWebSocket()
+        return client
+
+    def test_flat_session_sends_rate_and_language_only(self):
+        client = self._configured(NEMO)
+        client.language = "en"
+        client._send_session_update()
+        self.assertEqual(client.ws.sent[-1],
+                         {"type": "session.update", "session": {"sample_rate": 16000, "language": "en"}})
+
+    def test_flat_session_omits_unset_language(self):
+        client = self._configured(NEMO)
+        client._send_session_update()
+        self.assertEqual(client.ws.sent[-1]["session"], {"sample_rate": 16000})
+
+    def test_flat_session_forces_transcribe(self):
+        client = self._configured(NEMO, mode="converse")
+        self.assertEqual(client.mode, "transcribe")
+
+    def test_nested_session_reports_configured_rate(self):
+        client = self._configured({"websocket_sample_rate": 16000})
+        client.model = "gpt-transcribe"
+        client._send_session_update()
+        fmt = client.ws.sent[-1]["session"]["audio"]["input"]["format"]
+        self.assertEqual(fmt, {"type": "audio/pcm", "rate": 16000})
+
+    def test_defaults_stay_openai(self):
+        client = self._configured({})
+        self.assertEqual((client.session_format, client.sample_rate), ("nested", 24000))
+
+    def test_invalid_rate_keeps_default(self):
+        for rate in (0, 4000, "16000", True, 192000):
+            with self.subTest(rate=rate):
+                self.assertEqual(self._configured({"websocket_sample_rate": rate}).sample_rate, 24000)
+
+    def test_nemo_config_initializes_keyless_with_preview(self):
+        backend = _backend({**NEMO, "mic_osd_style": "waveform"})
+        backend._manager._realtime_partial_callback = lambda _text: None
+        with mock.patch.object(realtime_ws_backend, "get_credential", return_value=None), \
+             mock.patch.object(RealtimeClient, "connect", return_value=True):
+            self.assertTrue(backend.initialize())
+        client = backend._realtime_client
+        self.assertEqual((client.session_format, client.sample_rate), ("flat", 16000))
+        self.assertIsNotNone(client.partial_transcript_callback)
+
+
 if __name__ == "__main__":
     unittest.main()
