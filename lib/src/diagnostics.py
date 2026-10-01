@@ -15,7 +15,7 @@ from paths import CONFIG_FILE, DATA_DIR, SOCKET_FILE
 from backend_utils import normalize_backend
 from dependency_plan import PLAN_SPECS, plan_key
 from provider_registry import get_models_for_backend, get_realtime_capabilities, get_realtime_mode
-from realtime_protocols import PROTOCOLS
+from realtime_protocols import PROTOCOLS, live_typing_conflict
 from session_environment import classify_display_environment
 
 ROOT = Path(os.environ.get('HYPRWHSPR_ROOT', Path(__file__).resolve().parents[2]))
@@ -125,7 +125,11 @@ def validate_config(path=None):
             if (config['recording_mode'] in ('continuous', 'long_form')
                     and protocol is not None and protocol.per_recording_session):
                 findings.append(finding('config.realtime_continuous', 'error',
-                                        'This protocol opens one stream per recording; use toggle, push_to_talk or auto.'))
+                                        f'{protocol.id} streams one recording at a time; use toggle, push_to_talk or auto.'))
+    if config.get('realtime_live_typing'):
+        conflict = live_typing_conflict(lambda key, default=None: config.get(key, default))
+        if conflict:
+            findings.append(finding('config.live_typing', 'warning', f'Live typing is off: {conflict}.'))
     if not findings:
         findings.append(finding('config.valid', 'info', 'Configuration checks passed.'))
     return config, findings, False

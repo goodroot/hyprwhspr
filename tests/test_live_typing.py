@@ -24,6 +24,7 @@ from backends import RealtimeWsBackend  # noqa: E402
 from hallucination import could_be_hallucination  # noqa: E402
 from live_typing import LiveTyper, LiveTypingSession  # noqa: E402
 from realtime_client import RealtimeClient  # noqa: E402
+from realtime_protocols import live_typing_conflict  # noqa: E402
 from text_injector import InjectionOutcome  # noqa: E402
 
 
@@ -422,8 +423,6 @@ class RecordingLifecycleTests(unittest.TestCase):
         self.assertTrue(self._app()._live_typing_eligible())
         self.assertFalse(self._app(supported=False)._live_typing_eligible())
         self.assertFalse(self._app(settings={"realtime_live_typing": False})._live_typing_eligible())
-        self.assertFalse(self._app(settings={"recording_mode": "continuous"})._live_typing_eligible())
-        self.assertFalse(self._app(settings={"post_transcription_hook": "cat"})._live_typing_eligible())
         app = self._app()
         app._recording_control_server.has_capture_subscriber.return_value = True
         self.assertFalse(app._live_typing_eligible())
@@ -468,6 +467,27 @@ class RecordingLifecycleTests(unittest.TestCase):
         app._live_typing = session = mock.Mock()
         app._on_live_text("a", "b")
         session.on_live_text.assert_called_once_with("a", "b")
+
+
+class LiveTypingConflictTests(unittest.TestCase):
+    NEMO = {"transcription_backend": "realtime-ws", "websocket_provider": "custom",
+            "websocket_live_text": "append_only"}
+
+    def conflict(self, **overrides):
+        values = {**self.NEMO, **overrides}
+        return live_typing_conflict(lambda key, default=None: values.get(key, default))
+
+    def test_append_only_transcription_has_no_conflict(self):
+        self.assertIsNone(self.conflict())
+        self.assertIsNone(self.conflict(recording_mode="push_to_talk", post_transcription_hook="  "))
+
+    def test_each_whole_dictation_consumer_is_named(self):
+        self.assertEqual(self.conflict(recording_mode="continuous"), "continuous needs the whole dictation")
+        self.assertEqual(self.conflict(recording_mode="long_form"), "long_form needs the whole dictation")
+        self.assertIn("post_transcription_hook", self.conflict(post_transcription_hook="cat"))
+        self.assertEqual(self.conflict(realtime_mode="converse"), "converse mode")
+        self.assertEqual(self.conflict(websocket_live_text="revisable"), "this model may revise words")
+        self.assertIn("realtime-ws", self.conflict(transcription_backend="onnx-asr"))
 
 
 class BackendSupportTests(unittest.TestCase):

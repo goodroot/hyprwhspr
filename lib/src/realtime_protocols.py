@@ -109,6 +109,26 @@ def live_text_mode(provider_id: Optional[str], model_id: Optional[str],
     return 'revisable' if caps.get('continuous') else 'none'
 
 
+def live_typing_conflict(get_setting) -> Optional[str]:
+    """Why realtime_live_typing can't run under this config, or None."""
+    if get_setting('transcription_backend', None) not in (None, 'realtime-ws'):
+        return 'it needs the realtime-ws backend'
+    if get_setting('realtime_mode', 'transcribe') != 'transcribe':
+        return 'converse mode'
+    if live_text_mode(
+        get_setting('websocket_provider', None), get_setting('websocket_model', None),
+        get_setting('websocket_live_text', None), get_setting('websocket_protocol', None),
+    ) != 'append_only':
+        return 'this model may revise words'
+    mode = get_setting('recording_mode', 'toggle')
+    if mode in ('continuous', 'long_form'):
+        return f'{mode} needs the whole dictation'
+    hook = get_setting('post_transcription_hook', None)
+    if isinstance(hook, str) and hook.strip():
+        return 'post_transcription_hook needs the whole dictation'
+    return None
+
+
 def load_client_class(protocol: RealtimeProtocol):
     """Import the protocol's client class, package-relative when possible."""
     module_name, class_name = protocol.client.split(':')

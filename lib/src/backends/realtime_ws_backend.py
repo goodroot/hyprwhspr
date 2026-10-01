@@ -26,13 +26,13 @@ try:
     from ..credential_manager import get_credential
     from ..openai_realtime_models import uses_language_context
     from ..provider_registry import get_provider, get_realtime_capabilities
-    from ..realtime_protocols import live_text_mode, load_client_class, resolve_protocol
+    from ..realtime_protocols import live_text_mode, live_typing_conflict, load_client_class, resolve_protocol
 except ImportError:
     from backend_utils import is_valid_websocket_url, normalize_backend
     from credential_manager import get_credential
     from openai_realtime_models import uses_language_context
     from provider_registry import get_provider, get_realtime_capabilities
-    from realtime_protocols import live_text_mode, load_client_class, resolve_protocol
+    from realtime_protocols import live_text_mode, live_typing_conflict, load_client_class, resolve_protocol
 
 from .base import TranscriptionBackend
 
@@ -124,8 +124,7 @@ class RealtimeWsBackend(TranscriptionBackend):
             protocol.per_recording_session
             and self.config.get_setting('recording_mode', 'toggle') in ('continuous', 'long_form')
         ):
-            log(f'ERROR: {protocol.id} opens one stream per recording; '
-                'continuous and long_form recording are not supported')
+            log(f'ERROR: {protocol.id} streams one recording at a time; use toggle, push_to_talk or auto')
             return False
 
         client = load_client_class(protocol)(mode=realtime_mode)
@@ -171,9 +170,10 @@ class RealtimeWsBackend(TranscriptionBackend):
         client.set_max_buffer_seconds(self.config.get_setting('realtime_buffer_max_seconds', 5))
         self.apply_partial_callback(self._realtime_partial_callback)
         self.apply_live_listener(getattr(self._manager, '_realtime_live_listener', None))
-        if self.config.get_setting('realtime_live_typing', False) and not self.live_typing_supported:
-            log('[REALTIME] realtime_live_typing needs live_text "append_only" in transcribe mode; '
-                'text pastes at stop')
+        if self.config.get_setting('realtime_live_typing', False):
+            conflict = live_typing_conflict(self.config.get_setting)
+            if conflict:
+                log(f'[REALTIME] Live typing off: {conflict}; text pastes at stop')
 
         self._realtime_connect_params = {
             'websocket_url': websocket_url,
@@ -379,15 +379,8 @@ class RealtimeWsBackend(TranscriptionBackend):
 
     @property
     def live_typing_supported(self) -> bool:
-        """The model promises append-only live text, so typing it early is safe."""
-        if self.config.get_setting('realtime_mode', 'transcribe') != 'transcribe':
-            return False
-        return live_text_mode(
-            self.config.get_setting('websocket_provider'),
-            self.config.get_setting('websocket_model'),
-            self.config.get_setting('websocket_live_text'),
-            self.config.get_setting('websocket_protocol'),
-        ) == 'append_only'
+        """Config allows typing live text early (append-only model, whole-dictation consumers off)."""
+        return live_typing_conflict(self.config.get_setting) is None
 
     def _is_partial_preview_enabled(
         self,

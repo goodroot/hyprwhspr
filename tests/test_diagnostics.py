@@ -128,6 +128,17 @@ class ValidationTests(unittest.TestCase):
         self.assertNotIn(SECRET, json.dumps(findings))
         self.assertNotIn('THREADS', json.dumps(findings))
 
+    def test_live_typing_conflict_is_a_warning(self):
+        base = {'transcription_backend': 'realtime-ws', 'websocket_provider': 'custom',
+                'websocket_model': 'm', 'websocket_url': 'ws://127.0.0.1:8080/v1/realtime',
+                'websocket_live_text': 'append_only', 'realtime_live_typing': True}
+        _, findings, _ = self.validate(base)
+        self.assertNotIn('config.live_typing', {f['check_id'] for f in findings})
+        _, findings, _ = self.validate({**base, 'recording_mode': 'continuous'})
+        warning = next(f for f in findings if f['check_id'] == 'config.live_typing')
+        self.assertEqual(warning['severity'], 'warning')
+        self.assertIn('continuous', warning['explanation'])
+
     def test_schema_url_is_never_followed(self):
         _, findings, _ = self.validate({'$schema': 'https://' + SECRET})
         self.assertFalse(any(f['severity'] == 'error' for f in findings))

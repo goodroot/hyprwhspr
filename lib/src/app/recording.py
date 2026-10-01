@@ -412,13 +412,8 @@ class RecordingMixin:
     # ------------------------ Live typing ------------------------
 
     def _live_typing_eligible(self) -> bool:
-        """Type while speaking only where a whole-dictation consumer can't be skipped."""
+        """Opted in, allowed by config (see live_typing_conflict), and no capture client waiting."""
         if not self.config.get_setting('realtime_live_typing', False):
-            return False
-        if self.config.get_setting('recording_mode', 'toggle') in ('continuous', 'long_form'):
-            return False
-        hook = self.config.get_setting('post_transcription_hook', None)
-        if isinstance(hook, str) and hook.strip():
             return False
         if self._recording_control_server.has_capture_subscriber():
             return False
