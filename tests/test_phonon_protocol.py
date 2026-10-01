@@ -335,6 +335,24 @@ class PhononClientTests(unittest.TestCase):
         self.assertEqual(client.commit_and_get_text(0), '')
         self.assertFalse(client.connected)
 
+    def test_close_reported_as_error_after_done_keeps_the_transcript(self):
+        # Real websocket-client calls on_error ("Connection closed normally")
+        # when the server closes after done; that must not fail the result.
+        class ErrorOnCloseSocket(FakeSocket):
+            def send(self, payload, opcode=1):
+                self.sent.append((opcode, payload))
+                if opcode == 1 and json.loads(payload)['type'] == 'end':
+                    self.event(type='done', text='Kept.')
+                    self.on_error(self, 'Connection closed normally (code 1000)')
+                    self.on_close(self, 1000, '')
+
+        client = PhononRealtimeClient()
+        client._websocket_transport = types.SimpleNamespace(WebSocketApp=ErrorOnCloseSocket)
+        self.addCleanup(client.close)
+        self.assertTrue(client.connect('ws://asr.example.test/stream', None, 'phonon-2'))
+        client.append_audio(np.zeros(160, dtype=np.float32))
+        self.assertEqual(client.commit_and_get_text(1), 'Kept.')
+
     def test_partial_replacement_and_segment_deduplication(self):
         client = self.client()
         previews = []

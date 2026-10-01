@@ -123,7 +123,9 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
 
     def _on_error(self, ws, error, generation=None):
         with self.lock:
-            if self._is_active_connection(ws, generation):
+            # websocket-client reports the server's normal close after `done`
+            # as an error; the transcript is already complete by then.
+            if self._is_active_connection(ws, generation) and not self.response_complete:
                 self._fail_locked(f'WebSocket failure: {error}')
 
     def _on_close(self, ws, close_status_code, close_msg, generation=None):
