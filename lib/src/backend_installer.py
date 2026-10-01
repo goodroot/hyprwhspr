@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import hashlib
 import shutil
+import glob
 import re
 import urllib.request
 import uuid
@@ -415,6 +416,32 @@ def _get_wheel_variant(cuda_version: Optional[str]) -> Optional[str]:
 VULKAN_WHEEL_VARIANT = "vulkan"
 # glibc of the Debian trixie image the Vulkan wheels are built on
 VULKAN_WHEEL_MIN_GLIBC = (2, 41)
+# Runtime plus what ggml-vulkan's CMake needs for a source build:
+# find_package(Vulkan COMPONENTS glslc) and find_package(SPIRV-Headers CONFIG)
+VULKAN_PACMAN_PACKAGES = ['vulkan-headers', 'vulkan-icd-loader', 'shaderc', 'spirv-headers', 'vulkan-tools']
+VULKAN_BUILD_PACKAGE_HINTS = (
+    "Debian/Ubuntu: sudo apt install libvulkan-dev glslc spirv-headers",
+    "Fedora: sudo dnf install vulkan-headers vulkan-loader-devel glslc spirv-headers-devel",
+    "openSUSE: sudo zypper install vulkan-devel shaderc spirv-headers",
+    "Arch: sudo pacman -S vulkan-headers shaderc spirv-headers",
+)
+_VULKAN_HEADER_PATHS = ('/usr/include/vulkan/vulkan.h', '/usr/local/include/vulkan/vulkan.h')
+_SPIRV_HEADERS_CONFIG_GLOBS = tuple(
+    f"{prefix}/{libdir}/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake"
+    for prefix in ('/usr', '/usr/local')
+    for libdir in ('share', 'lib', 'lib64', 'lib/*'))
+
+
+def _missing_vulkan_build_tools() -> list:
+    """Names of the Vulkan source-build prerequisites that cannot be found."""
+    missing = []
+    if not any(Path(p).exists() for p in _VULKAN_HEADER_PATHS):
+        missing.append('Vulkan headers')
+    if not shutil.which('glslc'):
+        missing.append('glslc')
+    if not any(glob.glob(pattern) for pattern in _SPIRV_HEADERS_CONFIG_GLOBS):
+        missing.append('SPIRV-Headers')
+    return missing
 
 
 def _glibc_version() -> Optional[tuple]:
@@ -1121,39 +1148,24 @@ def setup_vulkan_support() -> bool:
     """
     log_info("Setting up Vulkan support...")
 
-    # 1. Install Vulkan dependencies (both runtime and development headers)
+    # 1. Install Vulkan runtime and source-build dependencies (Arch only). Other
+    # distros may not need build tools at all when the pre-built wheel applies;
+    # install_pywhispercpp_vulkan checks them before a source build.
     if shutil.which('pacman'):
         log_info("Installing Vulkan dependencies...")
-        vulkan_pkgs = ['vulkan-headers', 'vulkan-icd-loader', 'shaderc', 'vulkan-tools']
         try:
             result = run_sudo_command(
-                ['pacman', '-S', '--needed', '--noconfirm'] + vulkan_pkgs,
+                ['pacman', '-S', '--needed', '--noconfirm'] + VULKAN_PACMAN_PACKAGES,
                 check=False
             )
             if not result or result.returncode != 0:
                 log_warning("Could not install Vulkan packages, checking for an existing Vulkan setup")
         except Exception as e:
             log_warning(f"Could not install Vulkan dependencies ({e}), checking for an existing Vulkan setup")
-    else:
-        # Check if Vulkan development files are available
-        log_info("Checking for Vulkan development files...")
-        # Look for vulkan headers in common locations
-        vulkan_header_paths = [
-            '/usr/include/vulkan/vulkan.h',
-            '/usr/local/include/vulkan/vulkan.h',
-        ]
-        has_vulkan_dev = any(Path(p).exists() for p in vulkan_header_paths)
-        if not has_vulkan_dev:
-            log_warning("Vulkan development headers not found")
-            log_info("Please install Vulkan development packages:")
-            log_info("  Debian/Ubuntu: sudo apt install libvulkan-dev vulkan-tools shaderc")
-            log_info("  Fedora: sudo dnf install vulkan-headers vulkan-loader-devel shaderc")
-            log_info("  openSUSE: sudo zypper install vulkan-devel shaderc")
-            return False
 
     # 2. Verify Vulkan is now available
     if not shutil.which('vulkaninfo'):
-        log_warning("vulkaninfo not available after installation")
+        log_warning("vulkaninfo not found - install vulkan-tools")
         return False
 
     try:
@@ -2434,6 +2446,13 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
     else:
         required = '.'.join(map(str, VULKAN_WHEEL_MIN_GLIBC))
         log_info(f"Pre-built Vulkan wheel needs glibc {required} or newer; building from source")
+
+    missing = _missing_vulkan_build_tools()
+    if missing:
+        log_warning(f"Cannot build with Vulkan, missing: {', '.join(missing)}")
+        for hint in VULKAN_BUILD_PACKAGE_HINTS:
+            log_info(f"  {hint}")
+        return False
 
     install_system_dependencies()
 
