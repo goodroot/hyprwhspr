@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import jsonschema
+try:
+    import jsonschema
+except ImportError:  # optional here: only the validator cases need it
+    jsonschema = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,11 +41,13 @@ class ConfigSchemaSyncTests(unittest.TestCase):
         cls.schema_keys = set(cls.schema_properties) - {"$schema"}
         # Exercise the full bundled schema contract, including declared URI
         # formats, rather than only checking default-key synchronization.
-        cls.validator = jsonschema.Draft202012Validator(
+        cls.validator = jsonschema and jsonschema.Draft202012Validator(
             schema, format_checker=jsonschema.FormatChecker()
         )
 
     def _errors(self, instance):
+        if self.validator is None:
+            self.skipTest('jsonschema is not installed')
         return list(self.validator.iter_errors(instance))
 
     def test_rest_endpoint_url_is_not_pattern_validated(self):
