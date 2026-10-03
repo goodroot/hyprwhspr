@@ -141,6 +141,7 @@ def build_default_config():
         'qwen3_asr_timeout': 180,              # Sidecar request timeout (1-600 seconds)
         'qwen3_asr_ctx_size': 8192,            # llama-server --ctx-size (512-65536); null = llama.cpp default (32000)
         'rest_endpoint_url': None,         # Full HTTP or HTTPS URL for remote transcription
+        'rest_fallback_endpoint_urls': [],  # Ordered fallback URLs for retryable REST failures
         'rest_api_provider': None,          # Provider identifier for credential lookup (e.g., 'openai', 'groq', 'custom')
         'rest_api_key': None,              # DEPRECATED: Optional API key for authentication (kept for backward compatibility)
         'rest_headers': {},                # Additional HTTP headers for remote transcription

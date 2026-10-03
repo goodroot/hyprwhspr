@@ -27,9 +27,9 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
-    from .backend_utils import normalize_backend, release_memory
+    from .backend_utils import normalize_backend, redact_url, release_memory
 except ImportError:
-    from backend_utils import normalize_backend, release_memory
+    from backend_utils import normalize_backend, redact_url, release_memory
 
 try:
     from .backend_installer import PYWHISPERCPP_MODELS_DIR
@@ -517,7 +517,10 @@ class WhisperManager:
         backend = self._current_backend_name()
 
         if backend == 'rest-api':
-            endpoint_url = self.config.get_setting('rest_endpoint_url', 'not configured')
+            endpoint_url = redact_url(self.config.get_setting('rest_endpoint_url')) or 'not configured'
+            fallbacks = self.config.get_setting('rest_fallback_endpoint_urls', [])
+            if isinstance(fallbacks, list) and fallbacks:
+                return f"REST API ({endpoint_url}, +{len(fallbacks)} fallback{'s' if len(fallbacks) > 1 else ''})"
             return f"REST API ({endpoint_url})"
         if backend not in BACKENDS:
             # pywhispercpp hardware variants (cpu/nvidia/vulkan)

@@ -503,6 +503,34 @@ class RemoteConfigSwitchTests(unittest.TestCase):
         config = self._switch(stale, 'custom', None, 'key', {'endpoint': 'http://localhost:9000/asr'})
         self.assertEqual(config['rest_body'], {})
 
+    def test_rest_custom_switch_clears_stale_fallback_endpoints(self):
+        # A fallback left from a previous provider would receive the new
+        # provider's credential; setup_config merges, so it must be reset.
+        stale = {'rest_fallback_endpoint_urls': ['https://old.example/v1/audio/transcriptions']}
+        config = self._switch(stale, 'custom', None, 'key', {'endpoint': 'http://localhost:9000/asr'})
+        self.assertEqual(config['rest_fallback_endpoint_urls'], [])
+
+    def test_rest_rerun_on_same_endpoint_keeps_fallbacks(self):
+        fallbacks = ['https://mirror.example/v1/audio/transcriptions']
+        stale = {'rest_endpoint_url': 'http://localhost:9000/asr', 'rest_api_provider': 'custom',
+                 'rest_fallback_endpoint_urls': fallbacks}
+        config = self._switch(stale, 'custom', None, 'key', {'endpoint': 'http://localhost:9000/asr'},
+                              existing_cfg=stale)
+        self.assertEqual(config['rest_fallback_endpoint_urls'], fallbacks)
+
+    def test_rest_endpoint_change_clears_fallbacks_with_warning(self):
+        stale = {'rest_endpoint_url': 'http://localhost:9000/asr', 'rest_api_provider': 'custom',
+                 'rest_fallback_endpoint_urls': ['https://mirror.example/v1/audio/transcriptions']}
+        with mock.patch.object(setup, 'log_warning') as warn:
+            config = self._switch(stale, 'openai', 'whisper-1', 'sk', existing_cfg=stale)
+        self.assertEqual(config['rest_fallback_endpoint_urls'], [])
+        warn.assert_called_once()
+
+    def test_rest_known_provider_switch_clears_stale_fallback_endpoints(self):
+        stale = {'rest_fallback_endpoint_urls': ['https://old.example/v1/audio/transcriptions']}
+        config = self._switch(stale, 'openai', 'whisper-1', 'sk')
+        self.assertEqual(config['rest_fallback_endpoint_urls'], [])
+
 
 class ConfigDefaultTests(unittest.TestCase):
     def test_defaults_match_schema_for_new_settings(self):

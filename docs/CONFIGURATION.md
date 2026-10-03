@@ -713,6 +713,9 @@ Connect to any backend, local or cloud, via your own custom configuration:
 {
     "transcription_backend": "rest-api",
     "rest_endpoint_url": "https://your-server.example.com/transcribe",
+    "rest_fallback_endpoint_urls": [      // optional ordered fallback endpoints
+        "https://fallback.example.com/v1/audio/transcriptions"
+    ],
     "rest_headers": {                     // optional arbitrary headers
         "authorization": "Bearer your-api-key-here"
     },
@@ -720,10 +723,14 @@ Connect to any backend, local or cloud, via your own custom configuration:
         "model": "custom-model"
     },
     "rest_api_key": "your-api-key-here",  // equivalent to rest_headers: { authorization: Bearer your-api-key-here }
-    "rest_timeout": 30,                   // optional, default: 30
+    "rest_timeout": 30,                   // optional, default: 30; per endpoint
     "rest_audio_format": "wav"            // optional audio format sent to the endpoint: "wav" (default) | "mp3"
 }
 ```
+
+`rest_fallback_endpoint_urls` are mirrors of the primary, tried in order. They get the same key, headers and body.
+Failover happens only when an endpoint can't be reached or answers 429 or 5xx.
+Behind a keyed `https://` primary, `http://` fallbacks are skipped.
 
 ### Realtime WebSocket
 

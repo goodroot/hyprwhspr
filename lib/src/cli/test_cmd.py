@@ -15,9 +15,9 @@ except ImportError:
     from backend_installer import PYWHISPERCPP_MODELS_DIR
 
 try:
-    from ..backend_utils import normalize_backend
+    from ..backend_utils import is_valid_http_url, normalize_backend, redact_url
 except ImportError:
-    from backend_utils import normalize_backend
+    from backend_utils import is_valid_http_url, normalize_backend, redact_url
 
 try:
     from ..credential_manager import get_credential
@@ -121,7 +121,14 @@ def test_command(live: bool = False, mic_only: bool = False):
             log_error("REST endpoint URL not configured")
             all_passed = False
         else:
-            log_success(f"Endpoint: {endpoint_url}")
+            log_success(f"Endpoint: {redact_url(endpoint_url)}")
+            fallbacks = config.get_setting('rest_fallback_endpoint_urls', [])
+            for fallback in fallbacks if isinstance(fallbacks, list) else []:
+                fallback = fallback.strip() if isinstance(fallback, str) else fallback
+                if is_valid_http_url(fallback):
+                    log_success(f"Fallback: {redact_url(fallback)}")
+                else:
+                    log_warning(f"Fallback ignored (not an http(s) URL): {redact_url(fallback) or fallback!r}")
 
             # Check credentials
             provider_id = config.get_setting('rest_api_provider')

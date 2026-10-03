@@ -347,6 +347,18 @@
       "default": null,
       "description": "Full HTTP or HTTPS URL for remote transcription endpoint"
     },
+    "rest_fallback_endpoint_urls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uri",
+        "pattern": "^https?://",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Ordered mirror URLs of rest_endpoint_url, tried when an endpoint is unreachable or returns HTTP 429/5xx"
+    },
     "rest_api_provider": {
       "type": ["string", "null"],
       "default": null,

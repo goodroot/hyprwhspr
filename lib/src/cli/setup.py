@@ -762,7 +762,7 @@ def _prompt_remote_provider_selection(filter_realtime: bool = False):
             continue
 
 
-def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: str, custom_config: Optional[dict] = None, backend_type: str = 'rest-api') -> dict:
+def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: str, custom_config: Optional[dict] = None, backend_type: str = 'rest-api', existing_cfg: Optional[dict] = None) -> dict:
     """
     Generate remote backend configuration based on provider/model selection.
     
@@ -772,6 +772,7 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         api_key: API key to use
         custom_config: Custom config dict for custom backends
         backend_type: Backend type ('rest-api' or 'realtime-ws')
+        existing_cfg: Current config, to keep REST fallbacks for an unchanged endpoint
     
     Returns:
         Configuration dictionary ready to be saved
@@ -797,6 +798,10 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         # Deprecated plaintext key: the backend falls back to it when
         # rest_api_provider is None, so clear it or it reaches this endpoint.
         'rest_api_key': None,
+        # setup_config merges into the existing config: a fallback endpoint
+        # left from an earlier provider would receive the new provider's
+        # credential, so every generated REST config starts with none.
+        'rest_fallback_endpoint_urls': [],
     }
 
     if custom_config:
@@ -821,6 +826,16 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         config['rest_api_provider'] = provider_id
         config['rest_headers'] = {}  # Clear custom headers from an earlier setup
         config['rest_body'] = model_config['body'].copy()
+
+    # Fallbacks are mirrors that get this endpoint's key: keep them only if
+    # the endpoint and provider are unchanged.
+    existing = existing_cfg or {}
+    fallbacks = existing.get('rest_fallback_endpoint_urls') or []
+    if (fallbacks and existing.get('rest_endpoint_url') == config['rest_endpoint_url']
+            and existing.get('rest_api_provider') == config['rest_api_provider']):
+        config['rest_fallback_endpoint_urls'] = list(fallbacks)
+    elif fallbacks:
+        log_warning("Endpoint changed: fallback endpoints cleared")
     
     return config
 
@@ -1050,7 +1065,8 @@ def setup_command(python_path: Optional[str] = None):
         
         # Generate remote configuration
         try:
-            remote_config = _generate_remote_config(provider_id, model_id, api_key, custom_config, backend_type='rest-api')
+            remote_config = _generate_remote_config(provider_id, model_id, api_key, custom_config, backend_type='rest-api',
+                                                    existing_cfg=existing_cfg)
             log_success("Remote configuration generated")
         except Exception as e:
             log_error(f"Failed to generate remote configuration: {e}")

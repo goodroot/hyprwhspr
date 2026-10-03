@@ -3,7 +3,7 @@
 import gc
 import re
 import sys
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 
 def is_valid_websocket_url(url):
@@ -16,6 +16,57 @@ def is_valid_websocket_url(url):
         return bool(parsed.hostname) and parsed.port != 0
     except ValueError:
         return False
+
+
+def is_valid_http_url(url):
+    """An http:// or https:// URL with a host, checked without contacting it."""
+    if (not isinstance(url, str) or not url.startswith(('http://', 'https://'))
+            or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url)):
+        return False
+    try:
+        parsed = urlsplit(url)
+        return bool(parsed.hostname) and parsed.port != 0
+    except ValueError:
+        return False
+
+
+def endpoint_key(url):
+    """Identity of a valid HTTP(S) URL for de-duplication.
+
+    Scheme and host compare case-insensitively and a trailing slash is
+    ignored, so "https://Host/x" and "https://host/x/" are one endpoint.
+    """
+    parsed = urlsplit(url)
+    return (parsed.scheme.lower(), (parsed.hostname or '').lower(), parsed.port,
+            parsed.path.rstrip('/'), parsed.query)
+
+
+def redact_url(url):
+    """Return a log-safe endpoint URL.
+
+    Keeps the scheme, host, port, and path so the target stays identifiable
+    while dropping embedded userinfo (which may carry credentials) and the
+    query/fragment (which may carry tokens).
+    """
+    if not isinstance(url, str) or not url:
+        return url
+    try:
+        parts = urlsplit(url)
+        hostname = parts.hostname
+    except ValueError:
+        # Unparseable (e.g. a malformed IPv6 literal): keep nothing that
+        # could carry a secret.
+        return '<redacted-endpoint>'
+    # A log-safe endpoint needs a real, non-empty authority. Without one the
+    # "path" may actually be userinfo/query data (e.g. "https:/user:pw@host/x"
+    # or a scheme-less "user:pw@host/x"), so echo nothing at all.
+    if not parts.netloc or not hostname:
+        return '<redacted-endpoint>'
+    netloc = parts.netloc
+    if '@' in netloc:
+        # rsplit keeps the real authority even if userinfo contains '@'.
+        netloc = netloc.rsplit('@', 1)[1]
+    return urlunsplit((parts.scheme, netloc, parts.path, '', ''))
 
 
 def release_memory() -> bool:
