@@ -6,9 +6,10 @@ OpenAI-compatible transcription API) and returns the transcript.
 Stateless: configuration is re-read on every request.
 """
 
+import re
 import time
 from typing import Optional
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 try:
     from ..service_log import log
@@ -27,36 +28,24 @@ try:
 except ImportError:
     from credential_manager import get_credential
 
+try:
+    from ..backend_utils import endpoint_key, is_valid_http_url, redact_url
+except ImportError:
+    from backend_utils import endpoint_key, is_valid_http_url, redact_url
+
 from .base import TranscriptionBackend
 
 
-def _redact_endpoint(url):
-    """Return a log-safe endpoint URL.
+_URL_RE = re.compile(r'[A-Za-z][A-Za-z0-9+.-]*://[^\s\'"<>()]+')
+# urllib3 names the request target alone: "... with url: /path?query".
+_URL_TARGET_RE = re.compile(r'(url: /[^\s?#\'"]*)[?#][^\s\'"]*')
 
-    Keeps the scheme, host, port, and path so the target stays identifiable
-    while dropping embedded userinfo (which may carry credentials) and the
-    query/fragment (which may carry tokens). The request itself always uses
-    the original, unmodified URL.
-    """
-    if not isinstance(url, str) or not url:
-        return url
-    try:
-        parts = urlsplit(url)
-        hostname = parts.hostname
-    except ValueError:
-        # Unparseable (e.g. a malformed IPv6 literal): keep nothing that
-        # could carry a secret.
-        return '<redacted-endpoint>'
-    # A log-safe endpoint needs a real, non-empty authority. Without one the
-    # "path" may actually be userinfo/query data (e.g. "https:/user:pw@host/x"
-    # or a scheme-less "user:pw@host/x"), so echo nothing at all.
-    if not parts.netloc or not hostname:
-        return '<redacted-endpoint>'
-    netloc = parts.netloc
-    if '@' in netloc:
-        # rsplit keeps the real authority even if userinfo contains '@'.
-        netloc = netloc.rsplit('@', 1)[1]
-    return urlunsplit((parts.scheme, netloc, parts.path, '', ''))
+
+def _safe_error(exc):
+    """Exception type and message with URLs redacted for the log."""
+    text = _URL_RE.sub(lambda match: redact_url(match.group(0)), str(exc))
+    text = _URL_TARGET_RE.sub(r'\1', text)
+    return f'{type(exc).__name__}: {text}' if text else type(exc).__name__
 
 
 class RestApiBackend(TranscriptionBackend):
@@ -89,15 +78,15 @@ class RestApiBackend(TranscriptionBackend):
             log('ERROR: REST backend selected but rest_endpoint_url not configured')
             return False
 
-        if not endpoint_url.startswith('https://') and not endpoint_url.startswith('http://'):
-            log(f'WARNING: REST endpoint URL should start with https:// or http://: {_redact_endpoint(endpoint_url)}')
+        if not is_valid_http_url(endpoint_url.strip() if isinstance(endpoint_url, str) else endpoint_url):
+            log(f'WARNING: REST endpoint URL should be an http:// or https:// URL: {redact_url(endpoint_url)}')
 
         # Validate timeout is reasonable
         timeout = self.config.get_setting('rest_timeout', 30)
         if timeout < 1 or timeout > 300:
             log(f'WARNING: REST timeout should be between 1-300 seconds, got {timeout}')
 
-        log(f'[BACKEND] Using REST API: {_redact_endpoint(endpoint_url)}')
+        log(f'[BACKEND] Using REST API: {redact_url(endpoint_url)}')
         log(f'[REST] Timeout configured: {timeout}s')
 
         # Log user-defined config objects (sanitized)
@@ -129,6 +118,10 @@ class RestApiBackend(TranscriptionBackend):
             if body_count > 0:
                 log(f'[REST] Custom body fields configured ({body_count} fields)')
 
+        fallbacks = self._resolve_endpoints(endpoint_url, warn=True)[1:]
+        if fallbacks:
+            log(f'[REST] Fallbacks: {", ".join(redact_url(url) for url in fallbacks)}')
+
         language = self.config.get_setting('language', None)
         if language:
             log(f'[REST] Language hint: {language}')
@@ -137,6 +130,57 @@ class RestApiBackend(TranscriptionBackend):
         self.current_model = None
         self.ready = True
         return True
+
+    def _has_credential(self):
+        """Whether requests carry a key: stored, legacy, or a custom Authorization header."""
+        provider_id = self.config.get_setting('rest_api_provider')
+        if provider_id:
+            if get_credential(provider_id):
+                return True
+        elif self.config.get_setting('rest_api_key'):
+            return True
+        rest_headers = self.config.get_setting('rest_headers', {})
+        return isinstance(rest_headers, dict) and any(
+            str(key).lower() == 'authorization' and value is not None
+            for key, value in rest_headers.items())
+
+    def _resolve_endpoints(self, endpoint_url, warn=False):
+        """Primary first, then usable fallbacks, in order.
+
+        Fallbacks are mirrors that get the primary's key, headers and body.
+        Entries that are not HTTP(S) URLs with a host, or repeat an earlier
+        endpoint, are dropped. So is an http:// fallback behind a keyed
+        https:// primary: it would send the key in cleartext. Warnings name
+        the index only, since the value may embed credentials.
+        """
+        primary = endpoint_url.strip() if isinstance(endpoint_url, str) else endpoint_url
+        endpoints = [primary]
+        fallbacks = self.config.get_setting('rest_fallback_endpoint_urls', [])
+        if not isinstance(fallbacks, list):
+            if warn:
+                log('WARNING: rest_fallback_endpoint_urls must be an array; ignoring invalid value')
+            return endpoints
+        if not fallbacks:
+            return endpoints
+
+        seen = {endpoint_key(primary)} if is_valid_http_url(primary) else set()
+        keyed_https = (isinstance(primary, str) and primary.lower().startswith('https://')
+                       and self._has_credential())
+        for index, url in enumerate(fallbacks):
+            url = url.strip() if isinstance(url, str) else url
+            if not is_valid_http_url(url):
+                reason = 'invalid'
+            elif endpoint_key(url) in seen:
+                reason = 'duplicate'
+            elif keyed_https and url.lower().startswith('http://'):
+                reason = 'plain-http (would leak the key)'
+            else:
+                seen.add(endpoint_key(url))
+                endpoints.append(url)
+                continue
+            if warn:
+                log(f'WARNING: [REST] Ignoring {reason} rest_fallback_endpoint_urls entry at index {index}')
+        return endpoints
 
     def transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000, language_override: Optional[str] = None) -> str:
         """
@@ -210,40 +254,15 @@ class RestApiBackend(TranscriptionBackend):
             if not endpoint_url:
                 raise ValueError('REST endpoint URL not configured')
 
-            # Build the ordered attempt list: normalized primary first, then
-            # configured fallbacks. Only valid HTTP(S) URLs are kept; non-string,
-            # empty, non-HTTP(S), and duplicate values are dropped after
-            # normalization so the same endpoint is never tried twice. Warnings
-            # never include the value, which could embed credentials.
-            primary_endpoint_url = endpoint_url.strip() if isinstance(endpoint_url, str) else endpoint_url
-            endpoint_urls = [primary_endpoint_url]
-            fallback_urls = self.config.get_setting('rest_fallback_endpoint_urls', [])
-            if not isinstance(fallback_urls, list):
-                log('WARNING: rest_fallback_endpoint_urls must be an array; ignoring invalid value')
-                fallback_urls = []
-            for index, fallback_url in enumerate(fallback_urls):
-                if not isinstance(fallback_url, str):
-                    log(f'WARNING: [REST] Ignoring non-string rest_fallback_endpoint_urls entry at index {index}')
-                    continue
-                normalized = fallback_url.strip()
-                if not normalized:
-                    log(f'WARNING: [REST] Ignoring empty rest_fallback_endpoint_urls entry at index {index}')
-                    continue
-                if not (normalized.startswith('http://') or normalized.startswith('https://')):
-                    log(f'WARNING: [REST] Ignoring non-HTTP(S) rest_fallback_endpoint_urls entry at index {index}')
-                    continue
-                if normalized in endpoint_urls:
-                    log(f'WARNING: [REST] Ignoring duplicate rest_fallback_endpoint_urls entry at index {index}')
-                    continue
-                endpoint_urls.append(normalized)
+            endpoint_urls = self._resolve_endpoints(endpoint_url)
 
             # Extract model information from rest_body if available (before processing)
             model_info = rest_body.get('model') if isinstance(rest_body, dict) else None
 
             if model_info:
-                log_msg = f'[REST API] {_redact_endpoint(endpoint_url)} - model: {model_info}'
+                log_msg = f'[REST API] {redact_url(endpoint_url)} - model: {model_info}'
             else:
-                log_msg = f'[REST API] {_redact_endpoint(endpoint_url)}'
+                log_msg = f'[REST API] {redact_url(endpoint_url)}'
 
             log(log_msg)
 
@@ -281,30 +300,30 @@ class RestApiBackend(TranscriptionBackend):
                 param_summary = ', '.join(f'{k}={v[:20] + "..." if isinstance(v, str) and len(v) > 20 else v}' for k, v in data.items())
                 log(f'[REST] Request params: {param_summary}')
 
-            # Send the request, advancing to the next endpoint only for
-            # transient transport failures, HTTP 429, or HTTP 5xx. Audio,
-            # headers, and form data are prepared once and reused verbatim.
+            # Send the request, advancing to the next endpoint only when the
+            # server never got the audio (connection errors, including connect
+            # timeouts) or refused it (HTTP 429/5xx). A read timeout means the
+            # server may still be transcribing; retrying would bill it twice.
             for index, request_url in enumerate(endpoint_urls):
                 has_fallback = index + 1 < len(endpoint_urls)
                 try:
-                    log(f'[REST] Sending request to {_redact_endpoint(request_url)}...')
+                    log(f'[REST] Sending request to {redact_url(request_url)}...')
                     start_time = time.time()
                     response = requests.post(request_url, files=files, data=data, headers=headers, timeout=timeout)
                     response_time = time.time() - start_time
                     log(f'[REST] Response received in {response_time:.2f}s (status: {response.status_code})')
-                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-                    if has_fallback:
-                        # Reason only, never the exception text or credentials.
-                        log(f'WARNING: [REST] {type(exc).__name__} contacting {_redact_endpoint(request_url)}; trying fallback endpoint')
-                        continue
-                    # Exhausted: reuse the existing transport failure logging.
-                    raise
+                except requests.exceptions.ConnectionError as exc:
+                    if not has_fallback:
+                        raise
+                    log(f'WARNING: [REST] Could not reach {redact_url(request_url)} '
+                        f'({_safe_error(exc)}); trying fallback endpoint')
+                    continue
 
                 # Check for HTTP errors
                 if response.status_code != 200:
                     retryable = response.status_code == 429 or response.status_code >= 500
                     if retryable and has_fallback:
-                        log(f'WARNING: [REST] Status {response.status_code} from {_redact_endpoint(request_url)}; trying fallback endpoint')
+                        log(f'WARNING: [REST] Status {response.status_code} from {redact_url(request_url)}; trying fallback endpoint')
                         # Release the discarded response body before the retry.
                         response.close()
                         continue
@@ -343,25 +362,17 @@ class RestApiBackend(TranscriptionBackend):
                 log(f'[REST] Transcription received ({len(transcription)} chars)')
                 return transcription.strip()
 
-        # Failure logs below are deliberately type-only by privacy decision:
-        # arbitrary exception text can carry the request URL, query string,
-        # userinfo, or response/payload details, so only the exception class
-        # and a redacted endpoint (or "<unknown>") are emitted.
         except requests.exceptions.Timeout:
-            # Keep the configured duration; the exception text is never used.
-            log(f'ERROR: REST API request timed out after {timeout}s')
+            log(f'ERROR: REST API request timed out after {timeout}s at {redact_url(request_url) or "<unknown>"}')
             return ''
         except requests.exceptions.ConnectionError as exc:
-            # Exception text can embed the full request URL (query/userinfo);
-            # log only the type and the redacted endpoint.
-            log(f'ERROR: Failed to connect to REST API ({type(exc).__name__}) at '
-                f'{_redact_endpoint(request_url) or "<unknown>"}')
+            log(f'ERROR: Failed to connect to REST API at {redact_url(request_url) or "<unknown>"}: '
+                f'{_safe_error(exc)}')
             return ''
         except requests.exceptions.RequestException as exc:
-            log(f'ERROR: REST API request failed ({type(exc).__name__}) at '
-                f'{_redact_endpoint(request_url) or "<unknown>"}')
+            log(f'ERROR: REST API request failed at {redact_url(request_url) or "<unknown>"}: '
+                f'{_safe_error(exc)}')
             return ''
         except Exception as exc:
-            log(f'ERROR: REST transcription failed ({type(exc).__name__}) at '
-                f'{_redact_endpoint(request_url) or "<unknown>"}')
+            log(f'ERROR: REST transcription failed: {_safe_error(exc)}')
             return ''

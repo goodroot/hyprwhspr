@@ -84,7 +84,7 @@ class RestApiFailoverTests(unittest.TestCase):
     # -- transport fallback --------------------------------------------
 
     def test_connection_error_and_timeout_use_fallback(self):
-        for failure in (requests.ConnectionError("down"), requests.Timeout("slow")):
+        for failure in (requests.ConnectionError("down"), requests.ConnectTimeout("slow")):
             with self.subTest(failure=type(failure).__name__):
                 backend = self.backend()
                 with mock.patch.object(requests, "post", side_effect=[failure, response()]) as post:
@@ -143,7 +143,7 @@ class RestApiFailoverTests(unittest.TestCase):
                 backend = self.backend()
                 with mock.patch.object(
                         requests, "post",
-                        side_effect=[requests.Timeout("slow"), response(payload={key: "hi"})]) as post:
+                        side_effect=[requests.ConnectTimeout("slow"), response(payload={key: "hi"})]) as post:
                     self.assertEqual(self.transcribe(backend), "hi")
                 self.assertEqual(attempted_urls(post), [PRIMARY, FALLBACK])
 
@@ -151,9 +151,10 @@ class RestApiFailoverTests(unittest.TestCase):
 
     def test_malformed_fallback_setting_is_ignored_with_warning(self):
         backend = self.backend(rest_fallback_endpoint_urls="not-a-list")
+        with mock.patch("backends.rest_api_backend.log") as logger:
+            backend.initialize()
         with mock.patch.object(requests, "post", side_effect=requests.ConnectionError("down")) as post:
-            with mock.patch("backends.rest_api_backend.log") as logger:
-                self.assertEqual(self.transcribe(backend), "")
+            self.assertEqual(self.transcribe(backend), "")
         self.assertEqual(attempted_urls(post), [PRIMARY])
         messages = [str(call.args[0]) for call in logger.call_args_list if call.args]
         self.assertTrue(any("rest_fallback_endpoint_urls" in m and "ignoring" in m for m in messages),
@@ -166,7 +167,7 @@ class RestApiFailoverTests(unittest.TestCase):
             rest_fallback_endpoint_urls=[PRIMARY, FALLBACK],
         )
         with mock.patch.object(requests, "post",
-                               side_effect=[requests.Timeout("slow"), response()]) as post:
+                               side_effect=[requests.ConnectTimeout("slow"), response()]) as post:
             self.assertEqual(self.transcribe(backend), "hello")
         # The padded primary is attempted stripped, and the clean fallback that
         # matches it is dropped instead of being tried twice.
@@ -192,22 +193,24 @@ class RestApiFailoverTests(unittest.TestCase):
             ],
         )
         with mock.patch("backends.rest_api_backend.log") as logger:
+            backend.initialize()
             with mock.patch.object(requests, "post",
                                    side_effect=[requests.ConnectionError("down"), response(429),
                                                 response(429), response()]) as post:
                 self.assertEqual(self.transcribe(backend), "hello")
         self.assertEqual(attempted_urls(post), [PRIMARY, FALLBACK, padded.strip(), other])
         warnings = [str(c.args[0]) for c in logger.call_args_list
-                    if c.args and "WARNING" in str(c.args[0])]
+                    if c.args and "Ignoring" in str(c.args[0])]
         joined = "\n".join(str(c.args[0]) for c in logger.call_args_list if c.args)
-        self.assertTrue(any("non-string" in w for w in warnings), warnings)
-        self.assertTrue(any("empty" in w for w in warnings), warnings)
-        self.assertTrue(any("non-HTTP" in w for w in warnings), warnings)
+        # Indexes 1-6 invalid, 0 and 8 duplicates; each warned exactly once.
+        self.assertEqual(sum("invalid" in w for w in warnings), 6, warnings)
+        self.assertEqual(sum("duplicate" in w for w in warnings), 2, warnings)
         self.assertNotIn("super-secret-key", joined)
 
     def test_duplicate_fallback_entry_is_ignored_with_indexed_warning(self):
         backend = self.backend(rest_fallback_endpoint_urls=[FALLBACK, FALLBACK])
         with mock.patch("backends.rest_api_backend.log") as logger:
+            backend.initialize()
             with mock.patch.object(requests, "post",
                                    side_effect=[requests.ConnectionError("down"), response()]) as post:
                 self.assertEqual(self.transcribe(backend), "hello")
@@ -218,6 +221,84 @@ class RestApiFailoverTests(unittest.TestCase):
         self.assertTrue(any("index 1" in m for m in duplicate), duplicate)
         # Credential-safe: the ignored URL value is never echoed.
         self.assertFalse(any(FALLBACK in m for m in duplicate), duplicate)
+
+    def test_read_timeout_does_not_fail_over(self):
+        # The server already has the audio; a retry would transcribe it twice.
+        backend = self.backend()
+        with mock.patch.object(requests, "post", side_effect=requests.ReadTimeout("slow")) as post:
+            self.assertEqual(self.transcribe(backend), "")
+        self.assertEqual(attempted_urls(post), [PRIMARY])
+
+    def test_hostless_fallback_is_skipped_and_chain_continues(self):
+        backend = self.backend(rest_fallback_endpoint_urls=["https://", "http://:0/x", FALLBACK])
+        with mock.patch.object(requests, "post",
+                               side_effect=[requests.ConnectionError("down"), response()]) as post:
+            self.assertEqual(self.transcribe(backend), "hello")
+        self.assertEqual(attempted_urls(post), [PRIMARY, FALLBACK])
+
+    def test_case_and_trailing_slash_variants_are_one_endpoint(self):
+        backend = self.backend(rest_fallback_endpoint_urls=[
+            "https://PRIMARY.test/v1/audio/transcriptions/", FALLBACK])
+        with mock.patch.object(requests, "post",
+                               side_effect=[requests.ConnectionError("down"), response()]) as post:
+            self.assertEqual(self.transcribe(backend), "hello")
+        self.assertEqual(attempted_urls(post), [PRIMARY, FALLBACK])
+
+    def test_keyed_https_primary_skips_plain_http_fallback(self):
+        plain = "http://mirror.test/v1/audio/transcriptions"
+        for settings in ({"rest_api_key": "k"},
+                         {"rest_headers": {"authorization": "Bearer k"}}):
+            with self.subTest(settings=settings):
+                backend = self.backend(rest_fallback_endpoint_urls=[plain, FALLBACK], **settings)
+                with mock.patch("backends.rest_api_backend.log") as logger:
+                    backend.initialize()
+                with mock.patch.object(requests, "post",
+                                       side_effect=[requests.ConnectionError("down"), response()]) as post:
+                    self.assertEqual(self.transcribe(backend), "hello")
+                self.assertEqual(attempted_urls(post), [PRIMARY, FALLBACK])
+                messages = [str(c.args[0]) for c in logger.call_args_list if c.args]
+                self.assertTrue(any("plain-http" in m and "index 0" in m for m in messages), messages)
+
+    def test_plain_http_fallback_allowed_without_key_or_from_http_primary(self):
+        plain = "http://mirror.test/v1/audio/transcriptions"
+        for settings in ({}, {"rest_api_key": "k", "rest_endpoint_url": "http://primary.test/v1"}):
+            with self.subTest(settings=settings):
+                backend = self.backend(rest_fallback_endpoint_urls=[plain], **settings)
+                with mock.patch.object(requests, "post",
+                                       side_effect=[requests.ConnectionError("down"), response()]) as post:
+                    self.assertEqual(self.transcribe(backend), "hello")
+                self.assertEqual(attempted_urls(post)[1], plain)
+
+    def test_fallback_warnings_only_at_initialize(self):
+        backend = self.backend(rest_fallback_endpoint_urls=["nope", FALLBACK])
+        with mock.patch("backends.rest_api_backend.log") as logger:
+            backend.initialize()
+        init_messages = [str(c.args[0]) for c in logger.call_args_list if c.args]
+        self.assertTrue(any("Ignoring invalid" in m for m in init_messages), init_messages)
+        self.assertTrue(any("Fallbacks: " + FALLBACK in m for m in init_messages), init_messages)
+        with mock.patch("backends.rest_api_backend.log") as logger:
+            with mock.patch.object(requests, "post", return_value=response()):
+                self.transcribe(backend)
+        self.assertFalse(any("Ignoring" in str(c.args[0]) for c in logger.call_args_list if c.args))
+
+    def test_connection_failure_logs_reason_with_urllib3_target_redacted(self):
+        error = requests.ConnectionError(
+            "HTTPSConnectionPool(host='primary.test', port=443): Max retries exceeded "
+            "with url: /v1/audio/transcriptions?key=leak-query (Caused by NameResolutionError)")
+        backend = self.backend(rest_fallback_endpoint_urls=[])
+        with mock.patch.object(requests, "post", side_effect=error):
+            with mock.patch("backends.rest_api_backend.log") as logger:
+                self.assertEqual(self.transcribe(backend), "")
+        joined = "\n".join(str(c.args[0]) for c in logger.call_args_list if c.args)
+        self.assertIn("NameResolutionError", joined)
+        self.assertNotIn("leak-query", joined)
+
+    def test_unconfigured_endpoint_logs_its_message(self):
+        backend = self.backend(rest_endpoint_url=None)
+        with mock.patch("backends.rest_api_backend.log") as logger:
+            self.assertEqual(self.transcribe(backend), "")
+        joined = "\n".join(str(c.args[0]) for c in logger.call_args_list if c.args)
+        self.assertIn("REST endpoint URL not configured", joined)
 
     def test_retryable_http_status_closes_response_before_failover(self):
         rejected = response(503)
@@ -231,7 +312,7 @@ class RestApiFailoverTests(unittest.TestCase):
 
     def test_exhausted_endpoints_return_empty_transcript(self):
         backend = self.backend()
-        with mock.patch.object(requests, "post", side_effect=[requests.Timeout("slow"), response(503)]) as post:
+        with mock.patch.object(requests, "post", side_effect=[requests.ConnectTimeout("slow"), response(503)]) as post:
             self.assertEqual(self.transcribe(backend), "")
         self.assertEqual(attempted_urls(post), [PRIMARY, FALLBACK])
 
@@ -246,7 +327,7 @@ class RestApiFailoverTests(unittest.TestCase):
 
     def test_request_is_prepared_once_and_reused_across_attempts(self):
         backend = self.backend()
-        with mock.patch.object(requests, "post", side_effect=[requests.Timeout("slow"), response()]) as post:
+        with mock.patch.object(requests, "post", side_effect=[requests.ConnectTimeout("slow"), response()]) as post:
             self.transcribe(backend)
         backend._numpy_to_wav_bytes.assert_called_once()
         first, second = post.call_args_list
@@ -262,7 +343,7 @@ class RestApiFailoverTests(unittest.TestCase):
             language="en",
             whisper_prompt="preserve this prompt",
         )
-        with mock.patch.object(requests, "post", side_effect=[requests.Timeout("slow"), response()]) as post:
+        with mock.patch.object(requests, "post", side_effect=[requests.ConnectTimeout("slow"), response()]) as post:
             self.assertEqual(self.transcribe(backend), "hello")
         first, second = post.call_args_list
         for call in (first, second):
@@ -278,7 +359,7 @@ class RestApiFailoverTests(unittest.TestCase):
         # The reason must be explicit for both a transport exception type and an
         # HTTP status, and no attempt may leak the credential.
         scenarios = {
-            "exception": ([requests.Timeout("slow"), response()], "Timeout"),
+            "exception": ([requests.ConnectTimeout("slow"), response()], "Could not reach"),
             "http-status": ([response(503), response()], "503"),
         }
         for name, (side_effect, reason) in scenarios.items():
@@ -298,7 +379,7 @@ class RestApiFailoverTests(unittest.TestCase):
     # -- endpoint redaction --------------------------------------------
 
     def test_redact_endpoint_strips_userinfo_query_and_fragment(self):
-        from backends.rest_api_backend import _redact_endpoint
+        from backend_utils import redact_url as _redact_endpoint
         raw = ("https://alice:s3cr3t-pw@api.example.com:8443"
                "/v1/audio/transcriptions?api_key=query-secret#frag")
         redacted = _redact_endpoint(raw)
@@ -310,7 +391,7 @@ class RestApiFailoverTests(unittest.TestCase):
     def test_redact_endpoint_placeholders_urls_without_authority(self):
         # Anything without a valid non-empty host has no safe authority to
         # name: the "path" may actually be userinfo/query, so refuse to echo.
-        from backends.rest_api_backend import _redact_endpoint
+        from backend_utils import redact_url as _redact_endpoint
         cases = (
             "https:/alice:pw@host/path",
             "https:///alice:pw@host/path",
@@ -326,7 +407,7 @@ class RestApiFailoverTests(unittest.TestCase):
                 self.assertEqual(_redact_endpoint(raw), "<redacted-endpoint>", raw)
 
     def test_redact_endpoint_keeps_well_formed_authority_without_secrets(self):
-        from backends.rest_api_backend import _redact_endpoint
+        from backend_utils import redact_url as _redact_endpoint
         cases = {
             "userinfo-with-at": (
                 "https://alice:p@ss@host.test:9443/v1/audio/transcriptions?token=q#frag-secret",
@@ -358,7 +439,7 @@ class RestApiFailoverTests(unittest.TestCase):
         fallback = ("https://bob:hunter2@fallback.test"
                     "/v1/audio/transcriptions?token=fb-secret")
         scenarios = {
-            "transport": [requests.Timeout("slow"), response()],
+            "transport": [requests.ConnectTimeout("slow"), response()],
             "http-status": [response(503), response()],
         }
         for name, side_effect in scenarios.items():
@@ -417,7 +498,7 @@ class RestApiFailoverTests(unittest.TestCase):
                 self.assertEqual(self.transcribe(backend), "")
         return "\n".join(str(c.args[0]) for c in logger.call_args_list if c.args)
 
-    def test_exhausted_connection_error_logs_type_and_safe_endpoint_only(self):
+    def test_exhausted_connection_error_logs_redacted_reason(self):
         secret_url = ("https://leakuser:leak-pw@secret.test"
                       "/leak/path?token=leak-query#leak-frag")
         joined = self._exhausted_log(
@@ -425,11 +506,10 @@ class RestApiFailoverTests(unittest.TestCase):
         self.assertIn("ConnectionError", joined)
         self.assertIn("primary.test", joined)
         self.assertIn("/v1/audio/transcriptions", joined)
-        for secret in ("leakuser", "leak-pw", "secret.test", "leak-query",
-                       "leak-frag", "token="):
+        for secret in ("leakuser", "leak-pw", "leak-query", "leak-frag", "token="):
             self.assertNotIn(secret, joined, secret)
 
-    def test_exhausted_request_exception_logs_type_and_safe_endpoint_only(self):
+    def test_exhausted_request_exception_logs_redacted_reason(self):
         secret_url = ("https://leakuser:leak-pw@secret.test"
                       "/leak/path?token=leak-query#leak-frag")
         joined = self._exhausted_log(
@@ -437,20 +517,43 @@ class RestApiFailoverTests(unittest.TestCase):
         self.assertIn("InvalidURL", joined)
         self.assertIn("primary.test", joined)
         self.assertIn("/v1/audio/transcriptions", joined)
-        for secret in ("leakuser", "leak-pw", "secret.test", "leak-query",
-                       "leak-frag", "token="):
+        for secret in ("leakuser", "leak-pw", "leak-query", "leak-frag", "token="):
             self.assertNotIn(secret, joined, secret)
 
-    def test_exhausted_unexpected_exception_logs_type_and_safe_endpoint_only(self):
+    def test_exhausted_unexpected_exception_logs_redacted_reason(self):
         secret_url = ("https://leakuser:leak-pw@secret.test"
                       "/leak/path?token=leak-query#leak-frag")
         joined = self._exhausted_log(ValueError(f"boom {secret_url}"))
         self.assertIn("ValueError", joined)
         self.assertIn("primary.test", joined)
-        for secret in ("leakuser", "leak-pw", "secret.test", "leak-query",
-                       "leak-frag", "token="):
+        for secret in ("leakuser", "leak-pw", "leak-query", "leak-frag", "token="):
             self.assertNotIn(secret, joined, secret)
 
+
+
+class EndpointHelperTests(unittest.TestCase):
+    def test_is_valid_http_url(self):
+        from backend_utils import is_valid_http_url
+        for url in ("https://h.test/x", "http://127.0.0.1:9000/asr", "https://[::1]:8443/"):
+            self.assertTrue(is_valid_http_url(url), url)
+        for url in (None, "", "https://", "http://:0/x", "http://h.test:0/x", "ftp://h.test/x",
+                    "h.test/x", "https://h .test/x", "https://h.test/x\n", "https://[::1/x"):
+            self.assertFalse(is_valid_http_url(url), url)
+
+    def test_endpoint_key_ignores_case_and_trailing_slash(self):
+        from backend_utils import endpoint_key
+        self.assertEqual(endpoint_key("https://Host.test/x/"), endpoint_key("HTTPS://host.test/x"))
+        self.assertNotEqual(endpoint_key("https://h.test/x"), endpoint_key("http://h.test/x"))
+        self.assertNotEqual(endpoint_key("https://h.test/x"), endpoint_key("https://h.test:8443/x"))
+
+    def test_backend_info_redacts_and_counts_fallbacks(self):
+        from whisper_manager import WhisperManager
+        fake = mock.Mock(config=Config(
+            rest_endpoint_url="https://u:pw@primary.test/v1?key=secret",
+            rest_fallback_endpoint_urls=[FALLBACK, FALLBACK + "2"]))
+        fake._current_backend_name.return_value = "rest-api"
+        self.assertEqual(WhisperManager.get_backend_info(fake),
+                         "REST API (https://primary.test/v1, +2 fallbacks)")
 
 if __name__ == "__main__":
     unittest.main()
