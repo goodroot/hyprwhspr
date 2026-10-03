@@ -357,7 +357,7 @@
       },
       "uniqueItems": true,
       "default": [],
-      "description": "Ordered fallback URLs used after transport errors, HTTP 429, or HTTP 5xx responses"
+      "description": "Ordered mirror URLs of rest_endpoint_url, tried when an endpoint is unreachable or returns HTTP 429/5xx"
     },
     "rest_api_provider": {
       "type": ["string", "null"],

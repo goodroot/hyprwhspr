@@ -723,27 +723,14 @@ Connect to any backend, local or cloud, via your own custom configuration:
         "model": "custom-model"
     },
     "rest_api_key": "your-api-key-here",  // equivalent to rest_headers: { authorization: Bearer your-api-key-here }
-    "rest_timeout": 30,                   // optional, default: 30; applies to each endpoint attempt
+    "rest_timeout": 30,                   // optional, default: 30; per endpoint
     "rest_audio_format": "wav"            // optional audio format sent to the endpoint: "wav" (default) | "mp3"
 }
 ```
 
-`rest_fallback_endpoint_urls` is an ordered list of additional endpoints tried after
-the primary `rest_endpoint_url`. The primary is required. Canonical validation is the
-bundled JSON Schema: fallback entries must be unique, non-empty `http://`/`https://`
-URLs. The runtime additionally ignores malformed or duplicate entries with a
-credential-safe warning, but only as defense in depth for configurations that bypass
-that validation — it does not make an invalid configuration canonical. Every attempt
-reuses the same prepared audio, headers, body fields, and selected credential — nothing
-is rebuilt or re-authenticated per endpoint. Failover occurs only for connection errors,
-timeouts, HTTP 429, and HTTP 5xx responses. Other HTTP 4xx responses and invalid
-successful payloads stop immediately without trying a fallback.
-
-Each endpoint attempt gets the full `rest_timeout`, so the worst-case latency scales
-with the number of configured endpoints (`rest_timeout` multiplied by the number of
-endpoints that time out). Logged endpoint URLs are redacted: embedded userinfo and the
-query/fragment are stripped, so the scheme/host/port/path identify the target without
-exposing credentials.
+`rest_fallback_endpoint_urls` are mirrors of the primary, tried in order. They get the same key, headers and body.
+Failover happens only when an endpoint can't be reached or answers 429 or 5xx.
+Behind a keyed `https://` primary, `http://` fallbacks are skipped.
 
 ### Realtime WebSocket
 
