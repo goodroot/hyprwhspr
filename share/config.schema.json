@@ -347,6 +347,18 @@
       "default": null,
       "description": "Full HTTP or HTTPS URL for remote transcription endpoint"
     },
+    "rest_fallback_endpoint_urls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uri",
+        "pattern": "^https?://",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Ordered fallback URLs used after transport errors, HTTP 429, or HTTP 5xx responses"
+    },
     "rest_api_provider": {
       "type": ["string", "null"],
       "default": null,

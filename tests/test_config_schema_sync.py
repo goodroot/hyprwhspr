@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import jsonschema
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -34,6 +36,51 @@ class ConfigSchemaSyncTests(unittest.TestCase):
         )
         cls.schema_properties = schema["properties"]
         cls.schema_keys = set(cls.schema_properties) - {"$schema"}
+        # Exercise the full bundled schema contract, including declared URI
+        # formats, rather than only checking default-key synchronization.
+        cls.validator = jsonschema.Draft202012Validator(
+            schema, format_checker=jsonschema.FormatChecker()
+        )
+
+    def _errors(self, instance):
+        return list(self.validator.iter_errors(instance))
+
+    def test_rest_endpoint_url_is_not_pattern_validated(self):
+        # The runtime supports environment-token indirection and normalizes the
+        # URL at use, so the schema must not reject the primary by pattern.
+        for value in (
+            None,
+            "http://example.com/transcribe",
+            "https://example.com/transcribe",
+            "example.com/transcribe",
+            "not a url",
+            "ftp://example.com/transcribe",
+            "env:MY_TRANSCRIBE_ENDPOINT",
+            "",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(self._errors({"rest_endpoint_url": value}), [], value)
+
+    def test_rest_fallback_endpoint_urls_accept_http_scheme(self):
+        instance = {
+            "rest_fallback_endpoint_urls": [
+                "http://a.example/v1/audio/transcriptions",
+                "https://b.example/v1/audio/transcriptions",
+            ]
+        }
+        self.assertEqual(self._errors(instance), [])
+
+    def test_rest_fallback_endpoint_urls_reject_invalid_entries(self):
+        for value in (
+            ["example.com/v1/audio/transcriptions"],   # scheme-less
+            ["ftp://example.com/v1/audio/transcriptions"],  # wrong scheme
+            ["not a url"],                              # invalid
+            [""],                                       # minLength
+            [None],                                     # explicit null is a type error
+            ["https://a.example/v1", "https://a.example/v1"],  # uniqueItems
+        ):
+            with self.subTest(value=value):
+                self.assertTrue(self._errors({"rest_fallback_endpoint_urls": value}), value)
 
     def test_every_default_has_a_schema_entry(self):
         self.assertEqual(sorted(self.defaults - self.schema_keys), [])

@@ -503,6 +503,18 @@ class RemoteConfigSwitchTests(unittest.TestCase):
         config = self._switch(stale, 'custom', None, 'key', {'endpoint': 'http://localhost:9000/asr'})
         self.assertEqual(config['rest_body'], {})
 
+    def test_rest_custom_switch_clears_stale_fallback_endpoints(self):
+        # A fallback left from a previous provider would receive the new
+        # provider's credential; setup_config merges, so it must be reset.
+        stale = {'rest_fallback_endpoint_urls': ['https://old.example/v1/audio/transcriptions']}
+        config = self._switch(stale, 'custom', None, 'key', {'endpoint': 'http://localhost:9000/asr'})
+        self.assertEqual(config['rest_fallback_endpoint_urls'], [])
+
+    def test_rest_known_provider_switch_clears_stale_fallback_endpoints(self):
+        stale = {'rest_fallback_endpoint_urls': ['https://old.example/v1/audio/transcriptions']}
+        config = self._switch(stale, 'openai', 'whisper-1', 'sk')
+        self.assertEqual(config['rest_fallback_endpoint_urls'], [])
+
 
 class ConfigDefaultTests(unittest.TestCase):
     def test_defaults_match_schema_for_new_settings(self):

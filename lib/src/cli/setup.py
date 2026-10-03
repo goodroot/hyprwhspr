@@ -797,6 +797,10 @@ def _generate_remote_config(provider_id: str, model_id: Optional[str], api_key: 
         # Deprecated plaintext key: the backend falls back to it when
         # rest_api_provider is None, so clear it or it reaches this endpoint.
         'rest_api_key': None,
+        # setup_config merges into the existing config: a fallback endpoint
+        # left from an earlier provider would receive the new provider's
+        # credential, so every generated REST config starts with none.
+        'rest_fallback_endpoint_urls': [],
     }
 
     if custom_config:

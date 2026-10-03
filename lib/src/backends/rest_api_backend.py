@@ -8,6 +8,7 @@ Stateless: configuration is re-read on every request.
 
 import time
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 try:
     from ..service_log import log
@@ -27,6 +28,35 @@ except ImportError:
     from credential_manager import get_credential
 
 from .base import TranscriptionBackend
+
+
+def _redact_endpoint(url):
+    """Return a log-safe endpoint URL.
+
+    Keeps the scheme, host, port, and path so the target stays identifiable
+    while dropping embedded userinfo (which may carry credentials) and the
+    query/fragment (which may carry tokens). The request itself always uses
+    the original, unmodified URL.
+    """
+    if not isinstance(url, str) or not url:
+        return url
+    try:
+        parts = urlsplit(url)
+        hostname = parts.hostname
+    except ValueError:
+        # Unparseable (e.g. a malformed IPv6 literal): keep nothing that
+        # could carry a secret.
+        return '<redacted-endpoint>'
+    # A log-safe endpoint needs a real, non-empty authority. Without one the
+    # "path" may actually be userinfo/query data (e.g. "https:/user:pw@host/x"
+    # or a scheme-less "user:pw@host/x"), so echo nothing at all.
+    if not parts.netloc or not hostname:
+        return '<redacted-endpoint>'
+    netloc = parts.netloc
+    if '@' in netloc:
+        # rsplit keeps the real authority even if userinfo contains '@'.
+        netloc = netloc.rsplit('@', 1)[1]
+    return urlunsplit((parts.scheme, netloc, parts.path, '', ''))
 
 
 class RestApiBackend(TranscriptionBackend):
@@ -60,14 +90,14 @@ class RestApiBackend(TranscriptionBackend):
             return False
 
         if not endpoint_url.startswith('https://') and not endpoint_url.startswith('http://'):
-            log(f'WARNING: REST endpoint URL should start with https:// or http://: {endpoint_url}')
+            log(f'WARNING: REST endpoint URL should start with https:// or http://: {_redact_endpoint(endpoint_url)}')
 
         # Validate timeout is reasonable
         timeout = self.config.get_setting('rest_timeout', 30)
         if timeout < 1 or timeout > 300:
             log(f'WARNING: REST timeout should be between 1-300 seconds, got {timeout}')
 
-        log(f'[BACKEND] Using REST API: {endpoint_url}')
+        log(f'[BACKEND] Using REST API: {_redact_endpoint(endpoint_url)}')
         log(f'[REST] Timeout configured: {timeout}s')
 
         # Log user-defined config objects (sanitized)
@@ -122,6 +152,9 @@ class RestApiBackend(TranscriptionBackend):
         """
         requests = self._requests_client()
         try:
+            # Tracks the endpoint being attempted so outer failure handlers can
+            # name it safely; stays None if an error precedes the attempt loop.
+            request_url = None
 
             # Get REST endpoint configuration
             endpoint_url = self.config.get_setting('rest_endpoint_url')
@@ -177,13 +210,40 @@ class RestApiBackend(TranscriptionBackend):
             if not endpoint_url:
                 raise ValueError('REST endpoint URL not configured')
 
+            # Build the ordered attempt list: normalized primary first, then
+            # configured fallbacks. Only valid HTTP(S) URLs are kept; non-string,
+            # empty, non-HTTP(S), and duplicate values are dropped after
+            # normalization so the same endpoint is never tried twice. Warnings
+            # never include the value, which could embed credentials.
+            primary_endpoint_url = endpoint_url.strip() if isinstance(endpoint_url, str) else endpoint_url
+            endpoint_urls = [primary_endpoint_url]
+            fallback_urls = self.config.get_setting('rest_fallback_endpoint_urls', [])
+            if not isinstance(fallback_urls, list):
+                log('WARNING: rest_fallback_endpoint_urls must be an array; ignoring invalid value')
+                fallback_urls = []
+            for index, fallback_url in enumerate(fallback_urls):
+                if not isinstance(fallback_url, str):
+                    log(f'WARNING: [REST] Ignoring non-string rest_fallback_endpoint_urls entry at index {index}')
+                    continue
+                normalized = fallback_url.strip()
+                if not normalized:
+                    log(f'WARNING: [REST] Ignoring empty rest_fallback_endpoint_urls entry at index {index}')
+                    continue
+                if not (normalized.startswith('http://') or normalized.startswith('https://')):
+                    log(f'WARNING: [REST] Ignoring non-HTTP(S) rest_fallback_endpoint_urls entry at index {index}')
+                    continue
+                if normalized in endpoint_urls:
+                    log(f'WARNING: [REST] Ignoring duplicate rest_fallback_endpoint_urls entry at index {index}')
+                    continue
+                endpoint_urls.append(normalized)
+
             # Extract model information from rest_body if available (before processing)
             model_info = rest_body.get('model') if isinstance(rest_body, dict) else None
 
             if model_info:
-                log_msg = f'[REST API] {endpoint_url} - model: {model_info}'
+                log_msg = f'[REST API] {_redact_endpoint(endpoint_url)} - model: {model_info}'
             else:
-                log_msg = f'[REST API] {endpoint_url}'
+                log_msg = f'[REST API] {_redact_endpoint(endpoint_url)}'
 
             log(log_msg)
 
@@ -221,59 +281,87 @@ class RestApiBackend(TranscriptionBackend):
                 param_summary = ', '.join(f'{k}={v[:20] + "..." if isinstance(v, str) and len(v) > 20 else v}' for k, v in data.items())
                 log(f'[REST] Request params: {param_summary}')
 
-            # Send the request
-            log(f'[REST] Sending request to {endpoint_url}...')
-            start_time = time.time()
-            response = requests.post(endpoint_url, files=files, data=data, headers=headers, timeout=timeout)
-            response_time = time.time() - start_time
-            log(f'[REST] Response received in {response_time:.2f}s (status: {response.status_code})')
-
-            # Check for HTTP errors
-            if response.status_code != 200:
-                error_msg = f'REST API returned status {response.status_code}'
+            # Send the request, advancing to the next endpoint only for
+            # transient transport failures, HTTP 429, or HTTP 5xx. Audio,
+            # headers, and form data are prepared once and reused verbatim.
+            for index, request_url in enumerate(endpoint_urls):
+                has_fallback = index + 1 < len(endpoint_urls)
                 try:
-                    error_detail = response.json()
-                    error_msg += f': {error_detail}'
-                except Exception:
-                    error_msg += f': {response.text[:200]}'
-                log(f'ERROR: {error_msg}')
-                return ''
+                    log(f'[REST] Sending request to {_redact_endpoint(request_url)}...')
+                    start_time = time.time()
+                    response = requests.post(request_url, files=files, data=data, headers=headers, timeout=timeout)
+                    response_time = time.time() - start_time
+                    log(f'[REST] Response received in {response_time:.2f}s (status: {response.status_code})')
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                    if has_fallback:
+                        # Reason only, never the exception text or credentials.
+                        log(f'WARNING: [REST] {type(exc).__name__} contacting {_redact_endpoint(request_url)}; trying fallback endpoint')
+                        continue
+                    # Exhausted: reuse the existing transport failure logging.
+                    raise
 
-            # Parse the response
-            try:
-                result = response.json()
-            except Exception as json_err:
-                # Show raw response for debugging
-                raw_body = response.text[:500] if response.text else '(empty)'
-                log(f'ERROR: Failed to parse JSON response: {json_err}')
-                log(f'[REST] Raw response body: {raw_body}')
-                log(f'[REST] Content-Type: {response.headers.get("Content-Type", "not set")}')
-                return ''
+                # Check for HTTP errors
+                if response.status_code != 200:
+                    retryable = response.status_code == 429 or response.status_code >= 500
+                    if retryable and has_fallback:
+                        log(f'WARNING: [REST] Status {response.status_code} from {_redact_endpoint(request_url)}; trying fallback endpoint')
+                        # Release the discarded response body before the retry.
+                        response.close()
+                        continue
+                    error_msg = f'REST API returned status {response.status_code}'
+                    try:
+                        error_detail = response.json()
+                        error_msg += f': {error_detail}'
+                    except Exception:
+                        error_msg += f': {response.text[:200]}'
+                    log(f'ERROR: {error_msg}')
+                    return ''
 
-            # Try common response formats
-            transcription = ''
-            if 'text' in result:
-                transcription = result['text']
-            elif 'transcription' in result:
-                transcription = result['transcription']
-            elif 'result' in result:
-                transcription = result['result']
-            else:
-                log(f'ERROR: Unexpected response format: {result}')
-                return ''
+                # Parse the response
+                try:
+                    result = response.json()
+                except Exception as json_err:
+                    # Show raw response for debugging
+                    raw_body = response.text[:500] if response.text else '(empty)'
+                    log(f'ERROR: Failed to parse JSON response: {json_err}')
+                    log(f'[REST] Raw response body: {raw_body}')
+                    log(f'[REST] Content-Type: {response.headers.get("Content-Type", "not set")}')
+                    return ''
 
-            log(f'[REST] Transcription received ({len(transcription)} chars)')
-            return transcription.strip()
+                # Try common response formats
+                transcription = ''
+                if 'text' in result:
+                    transcription = result['text']
+                elif 'transcription' in result:
+                    transcription = result['transcription']
+                elif 'result' in result:
+                    transcription = result['result']
+                else:
+                    log(f'ERROR: Unexpected response format: {result}')
+                    return ''
 
+                log(f'[REST] Transcription received ({len(transcription)} chars)')
+                return transcription.strip()
+
+        # Failure logs below are deliberately type-only by privacy decision:
+        # arbitrary exception text can carry the request URL, query string,
+        # userinfo, or response/payload details, so only the exception class
+        # and a redacted endpoint (or "<unknown>") are emitted.
         except requests.exceptions.Timeout:
+            # Keep the configured duration; the exception text is never used.
             log(f'ERROR: REST API request timed out after {timeout}s')
             return ''
-        except requests.exceptions.ConnectionError as e:
-            log(f'ERROR: Failed to connect to REST API: {e}')
+        except requests.exceptions.ConnectionError as exc:
+            # Exception text can embed the full request URL (query/userinfo);
+            # log only the type and the redacted endpoint.
+            log(f'ERROR: Failed to connect to REST API ({type(exc).__name__}) at '
+                f'{_redact_endpoint(request_url) or "<unknown>"}')
             return ''
-        except requests.exceptions.RequestException as e:
-            log(f'ERROR: REST API request failed: {e}')
+        except requests.exceptions.RequestException as exc:
+            log(f'ERROR: REST API request failed ({type(exc).__name__}) at '
+                f'{_redact_endpoint(request_url) or "<unknown>"}')
             return ''
-        except Exception as e:
-            log(f'ERROR: REST transcription failed: {e}')
+        except Exception as exc:
+            log(f'ERROR: REST transcription failed ({type(exc).__name__}) at '
+                f'{_redact_endpoint(request_url) or "<unknown>"}')
             return ''
