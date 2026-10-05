@@ -32,6 +32,8 @@ def make_injector():
     injector = TextInjector.__new__(TextInjector)
     injector.config_manager = ConfigStub()
     injector._delivery_lock = threading.RLock()
+    injector._stream_lock = threading.Lock()
+    injector._stream = None
     injector._clipboard_lock = threading.RLock()
     injector._last_text_lock = threading.Lock()
     injector._last_text = None

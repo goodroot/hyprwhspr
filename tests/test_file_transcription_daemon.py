@@ -31,6 +31,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
         app.config = FakeConfig(backend)
         app.text_injector = mock.Mock()
+        app.text_injector.stream_busy.return_value = False
         app._recording_lock = threading.Lock()
         app._ptt_press_time = None
         app._ptt_locked = False

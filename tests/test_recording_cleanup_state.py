@@ -18,6 +18,8 @@ class RecordingCleanupStateTests(unittest.TestCase):
 
     def _app(self, status_path):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+        app.text_injector = mock.Mock()
+        app.text_injector.stream_busy.return_value = False
         app.playback_suppressor = types.SimpleNamespace(is_active=False)
         app._playback_lock = threading.Lock()
         app._playback_session = app._recording_session = None

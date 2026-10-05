@@ -15,6 +15,8 @@ class EarlyPlaybackTests(unittest.TestCase):
 
     def app(self, mode='duck'):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+        app.text_injector = mock.Mock()
+        app.text_injector.stream_busy.return_value = False
         app._recording_lock = threading.Lock()
         app._playback_lock = threading.Lock()
         app._playback_session = None
@@ -59,6 +61,53 @@ class EarlyPlaybackTests(unittest.TestCase):
                     self.assertEqual(order, ['sound', 'suppress', 'stability'])
                     self.assertEqual(app.playback_suppressor.restore.called, not stable)
                     self.assertEqual(app.is_recording, stable)
+
+    def test_live_cleanup_blocks_start_until_worker_finishes(self):
+        from live_typing import LiveTypingSession
+        from tests.text_injector_helpers import make_injector
+
+        app = self.app()
+        app.text_injector = injector = make_injector()
+        injector.config_manager = ConfigStub({'append_trailing_space': False})
+        entered, release = threading.Event(), threading.Event()
+
+        def paste(*args, **kwargs):
+            entered.set()
+            return release.wait(2)
+
+        with (
+            mock.patch.object(injector, '_inject_via_clipboard_and_hotkey', side_effect=paste),
+            mock.patch.object(injector, '_send_enter_if_auto_submit') as enter,
+        ):
+            session = LiveTypingSession(injector)
+            session.FINISH_TIMEOUT_SECS = .03
+            try:
+                session.on_live_text('', 'hello ')
+                self.assertTrue(entered.wait(1))
+                session.finish('hello final')
+                app._live_typing = None
+                app._start_recording()
+                self.assertFalse(app.is_recording)
+                app.audio_capture.start_recording.assert_not_called()
+                app._release_blocked_capture.assert_called_once_with()
+                self.assertEqual(app._notify_user.call_args.args[1],
+                                 'Text delivery is still stopping — try again.')
+                release.set()
+                self.assertTrue(session._done.wait(1))
+                enter.assert_not_called()
+
+                def stable(delay):
+                    app.audio_capture.frames_since_start += 1
+
+                with mock.patch('time.sleep', side_effect=stable):
+                    app._start_recording()
+                self.assertTrue(app.is_recording)
+                app.audio_capture.start_recording.assert_called_once()
+            finally:
+                release.set()
+                session.cancel()
+                session._worker.join(1)
+                self.assertFalse(session._worker.is_alive())
 
     def test_pending_realtime_transcript_blocks_start(self):
         app = self.app()

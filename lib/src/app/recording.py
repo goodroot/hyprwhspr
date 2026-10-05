@@ -99,7 +99,9 @@ class RecordingMixin:
         with self._recording_lock:
             if self.is_recording:
                 return
-            if self._recording_starting:
+            if self.text_injector.stream_busy():
+                blocked = 'text-delivery'
+            elif self._recording_starting:
                 # A stopped start is still releasing capture; refuse until it settles.
                 blocked = 'starting'
             elif self._model_initializing:
@@ -140,6 +142,11 @@ class RecordingMixin:
         # Model is still loading in background
         if blocked in ('initializing', 'init-failed', 'realtime-reconnect'):
             self._notify_when_ready = True
+
+        if blocked == 'text-delivery':
+            self._notify_user(
+                "hyprwhspr", "Text delivery is still stopping — try again.", urgency="normal")
+            return
 
         if blocked == 'starting':
             self._notify_user("hyprwhspr", "Still stopping — try again", urgency="normal")

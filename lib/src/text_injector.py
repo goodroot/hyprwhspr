@@ -13,7 +13,7 @@ import threading
 import json
 import ast
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -226,6 +226,10 @@ class _StreamSession:
     # Text never reached the app (injection disabled for it, or no paste
     # tool): no Enter, no clipboard restore.
     not_pasted: bool = False
+    # A blocked app must not expose its dictation through copy-last/paste-last.
+    recovery_allowed: bool = True
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    recovery_text: Optional[str] = None
 
     def __post_init__(self):
         self.held = []
@@ -366,6 +370,8 @@ class TextInjector:
         # Configuration
         self.config_manager = config_manager
         self._delivery_lock = threading.RLock()
+        self._stream_lock = threading.Lock()
+        self._stream = None
         self._clipboard_lock = threading.RLock()
         self._last_text_lock = threading.Lock()
         self._last_text = None
@@ -1374,9 +1380,11 @@ except Exception:
 
         threading.Thread(target=_restore, daemon=True).start()
 
-    def _send_enter_if_auto_submit(self):
+    def _send_enter_if_auto_submit(self, cancel_event=None):
         """Send Enter key if auto_submit is enabled"""
         if not (self.config_manager and self.config_manager.get_setting('auto_submit', False)):
+            return
+        if cancel_event is not None and cancel_event.is_set():
             return
         try:
             if self._is_x11_session() and getattr(self, 'xdotool_available', False):
@@ -1388,6 +1396,8 @@ except Exception:
                     stderr = (enter_result.stderr or b'').decode('utf-8', 'ignore')
                     log(f"  xdotool Enter key failed: {stderr}")
             elif self._is_hyprland_session() and self._send_shortcut_hyprland('enter'):
+                return
+            elif cancel_event is not None and cancel_event.is_set():
                 return
             elif self.ydotool_available:
                 enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1)  # 28 = Enter
@@ -1409,12 +1419,40 @@ except Exception:
 
     # ------------------------ Public API ------------------------
 
+    def stream_busy(self) -> bool:
+        """Read ownership without waiting for desktop operations."""
+        with self._stream_lock:
+            return self._stream is not None
+
+    def begin_stream(self) -> _StreamSession:
+        """Reserve delivery before launching a live-typing worker."""
+        if not self._delivery_lock.acquire(blocking=False):
+            raise RuntimeError('Text delivery is busy')
+        try:
+            with self._stream_lock:
+                if self._stream is not None:
+                    raise RuntimeError('Text delivery is busy')
+                self._stream = _StreamSession()
+                return self._stream
+        finally:
+            self._delivery_lock.release()
+
+    def release_stream(self, session: _StreamSession) -> None:
+        """Release only this worker's reservation, after cleanup."""
+        with self._stream_lock:
+            if self._stream is session:
+                self._stream = None
+
     def inject_text(self, text: str) -> InjectionOutcome:
         """Prepare, retain and deliver one dictation at a time."""
+        if self.stream_busy():
+            return InjectionOutcome.FAILED
         with self._delivery_lock:
+            if self.stream_busy():
+                return InjectionOutcome.FAILED
             return self._prepare_and_inject_text(text)
 
-    def inject_stream_chunk(self, text: str, final: bool = False) -> InjectionOutcome:
+    def inject_stream_chunk(self, session: _StreamSession, text: str, final: bool = False) -> InjectionOutcome:
         """Deliver one chunk of a dictation typed while recording.
 
         Chunks are joined with a separating space, except before punctuation
@@ -1425,10 +1463,12 @@ except Exception:
         trailing "new line". The post-transcription hook doesn't run: it takes
         a whole dictation, and live typing is off while one is configured.
         """
+        with self._stream_lock:
+            if session is not self._stream or session.cancelled.is_set():
+                return InjectionOutcome.FAILED
         with self._delivery_lock:
-            session = self._stream
-            if session is None:
-                session = self._stream = _StreamSession()
+            if session is not self._stream or session.cancelled.is_set():
+                return InjectionOutcome.FAILED
             words = session.held + text.split()
             hold = self._stream_holdback(words, final)
             deliver, session.held = words[:len(words) - hold], words[len(words) - hold:]
@@ -1436,7 +1476,7 @@ except Exception:
                 return InjectionOutcome.INJECTED
             return self._deliver_stream_words(session, deliver)
 
-    def end_stream(self, submit: bool = True) -> Optional[InjectionOutcome]:
+    def end_stream(self, session: _StreamSession, submit: bool = True) -> Optional[InjectionOutcome]:
         """Finish the live-typed dictation.
 
         Delivers held words, adds the trailing space append_trailing_space asks
@@ -1445,18 +1485,38 @@ except Exception:
         submit=False (a cancelled recording) skips the held words and the
         Enter. Returns None when nothing was typed, else the worst outcome.
         """
+        if session is not self._stream:
+            return InjectionOutcome.FAILED
+        try:
+            return self._finish_stream(session, submit)
+        finally:
+            try:
+                if session.recovery_text is not None and session.recovery_allowed:
+                    with self._last_text_lock:
+                        self._last_text = self._preprocess_text(session.recovery_text)
+            finally:
+                self.release_stream(session)
+
+    def _finish_stream(self, session, submit):
         with self._delivery_lock:
-            session, self._stream = self._stream, None
-            if session is None:
-                return None
-            if submit and session.held:
-                self._deliver_stream_words(session, session.held)
+            if session is not self._stream:
+                return InjectionOutcome.FAILED
+            if submit and not session.failed and not session.cancelled.is_set() and session.held:
+                try:
+                    self._deliver_stream_words(session, session.held)
+                except Exception as e:
+                    session.failed = True
+                    log(f'[LIVE] Held text delivery failed: {e}')
+            full_text = self._preprocess_text(' '.join(session.raw_parts))
             if not session.injected_any:
+                if session.failed and session.recovery_allowed:
+                    with self._last_text_lock:
+                        self._last_text = full_text
                 return InjectionOutcome.FAILED if session.failed else None
 
-            full_text = self._preprocess_text(' '.join(session.raw_parts))
             if (
                 submit
+                and not session.cancelled.is_set()
                 and not session.failed
                 and session.last_char not in _NO_SPACE_AFTER
                 and self._should_append_trailing_space(full_text)
@@ -1465,8 +1525,9 @@ except Exception:
                     full_text += ' '
                 else:
                     session.failed = True
-            with self._last_text_lock:
-                self._last_text = full_text
+            if session.recovery_allowed:
+                with self._last_text_lock:
+                    self._last_text = full_text
 
             if (
                 session.saved_clipboard is not _CLIPBOARD_UNSAVED
@@ -1481,11 +1542,13 @@ except Exception:
                     injected=session.last_pasted.encode("utf-8"),
                     delay=restore_delay,
                 )
-            if submit and not session.failed and not session.not_pasted:
-                self._send_enter_if_auto_submit()
+            if submit and not session.cancelled.is_set() and not session.failed and not session.not_pasted:
+                self._send_enter_if_auto_submit(cancel_event=session.cancelled)
             return InjectionOutcome.FAILED if session.failed else InjectionOutcome.INJECTED
 
     def _deliver_stream_words(self, session: _StreamSession, words: List[str]) -> InjectionOutcome:
+        if session.cancelled.is_set():
+            return InjectionOutcome.FAILED
         raw = ' '.join(words)
         session.raw_parts.append(raw)
         # Preprocessing strips a chunk's edges, which would drop the newline
@@ -1525,10 +1588,6 @@ except Exception:
         """
         symbols = _config_setting(self.config_manager, 'symbol_replacements', True)
         tail = [_phrase_word(w) for w in words]
-        if symbols and tail[-2:] == ['new', 'line']:
-            return 2
-        if final:
-            return 0
         phrases = []
         if symbols:
             phrases.append(('new', 'line'))
@@ -1539,13 +1598,20 @@ except Exception:
             if config.get_filter_filler_words():
                 phrases.extend(config.get_filler_words() or [])
         longest = 0
-        for phrase in phrases:
+        for phrase in (() if final else phrases):
             if isinstance(phrase, str):
                 phrase = tuple(_phrase_word(w) for w in phrase.split())
             for k in range(min(len(phrase) - 1, len(tail)), longest, -1):
                 if tuple(tail[-k:]) == phrase[:k]:
                     longest = k
                     break
+        # Keep the whole trailing run, including before an unfinished phrase:
+        # preprocessing strips every newline left at the end of a chunk.
+        if symbols:
+            end = len(tail) - longest
+            while end >= 2 and tail[end - 2:end] == ['new', 'line']:
+                longest += 2
+                end -= 2
         return longest
 
     def recover_last(self, action):
@@ -1556,9 +1622,11 @@ except Exception:
             return True, 'Last dictation cleared'
         if action not in ('copy_last', 'paste_last'):
             return False, 'Unknown recovery action'
-        if not self._delivery_lock.acquire(blocking=False):
+        if self.stream_busy() or not self._delivery_lock.acquire(blocking=False):
             return False, 'Text delivery is busy; try again when it finishes'
         try:
+            if self.stream_busy():
+                return False, 'Text delivery is busy; try again when it finishes'
             with self._last_text_lock:
                 text = self._last_text
             if text is None:
@@ -1712,7 +1780,11 @@ except Exception:
                 log(f"Injection disabled for focused app ({app_match}); leaving it untouched.")
                 if stream is not None:
                     stream.not_pasted = True
+                    stream.recovery_allowed = False
                 return True
+
+            if stream is not None and stream.cancelled.is_set():
+                return False
 
             # Only ordinary, permitted delivery can replace recovery text.
             # Re-paste must not undo a concurrent clear-last request.
@@ -1739,12 +1811,16 @@ except Exception:
             ):
                 self._clear_stuck_modifiers()
                 time.sleep(0.05)
+                if stream is not None and stream.cancelled.is_set():
+                    return False
                 typed = self._type_text_ydotool(text)
                 if typed:
                     if auto_submit:
                         self._send_enter_if_auto_submit()
                     return True
 
+            if stream is not None and stream.cancelled.is_set():
+                return False
             with self._clipboard_lock:
                 if stream is not None:
                     return self._paste_via_clipboard(
@@ -1769,6 +1845,9 @@ except Exception:
             elif stream.saved_clipboard is _CLIPBOARD_UNSAVED:
                 stream.saved_clipboard = self._save_clipboard()
 
+            if stream is not None and stream.cancelled.is_set():
+                return False
+
             # Copy text to clipboard
             if not self._copy_text_to_clipboard(text):
                 return False
@@ -1786,12 +1865,14 @@ except Exception:
             # is seen as a real device, unlike wtype's virtual-keyboard protocol
             # which Mutter blocks), so we use them on GNOME too — this is the path
             # taken when direct typing was skipped for a non-US layout / non-ASCII text.
+            if stream is not None and stream.cancelled.is_set():
+                return False
             pasted = False
             if self._is_x11_session() and getattr(self, 'xdotool_available', False):
                 pasted = self._send_paste_keys_xdotool(paste_chord)
             elif self._is_hyprland_session():
                 pasted = self._send_shortcut_hyprland(paste_chord)
-                if not pasted and self.wtype_available:
+                if not pasted and self.wtype_available and not (stream and stream.cancelled.is_set()):
                     pasted = self._send_paste_keys_wtype(paste_chord)
                     if pasted:
                         self._clear_stuck_modifiers()
@@ -1802,7 +1883,7 @@ except Exception:
                     # state so subsequent physical keypresses are not affected.
                     self._clear_stuck_modifiers()
 
-            if not pasted and self.ydotool_available:
+            if not pasted and self.ydotool_available and not (stream and stream.cancelled.is_set()):
                 if self.wtype_available:
                     log(f"⚠️  wtype rejected paste chord {paste_chord!r}; falling back to ydotool.")
                 else:
@@ -1815,7 +1896,8 @@ except Exception:
                 # Unicode and pastes correctly regardless of the active layout.
                 _prev_layout = self._gnome_force_latin_layout()
                 try:
-                    pasted = self._send_paste_keys_slow(paste_chord)
+                    if stream is None or not stream.cancelled.is_set():
+                        pasted = self._send_paste_keys_slow(paste_chord)
                 finally:
                     self._gnome_restore_layout(_prev_layout)
 
