@@ -6,9 +6,9 @@ import sys
 from urllib.parse import urlsplit, urlunsplit
 
 
-def is_valid_websocket_url(url):
-    """A ws:// or wss:// URL with a host, checked without contacting it."""
-    if (not isinstance(url, str) or not url.startswith(('ws://', 'wss://'))
+def _is_valid_endpoint_url(url, schemes):
+    """Validate a supported scheme and authority without contacting the host."""
+    if (not isinstance(url, str) or not url.startswith(schemes)
             or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url)):
         return False
     try:
@@ -16,18 +16,16 @@ def is_valid_websocket_url(url):
         return bool(parsed.hostname) and parsed.port != 0
     except ValueError:
         return False
+
+
+def is_valid_websocket_url(url):
+    """A ws:// or wss:// URL with a host, checked without contacting it."""
+    return _is_valid_endpoint_url(url, ('ws://', 'wss://'))
 
 
 def is_valid_http_url(url):
     """An http:// or https:// URL with a host, checked without contacting it."""
-    if (not isinstance(url, str) or not url.startswith(('http://', 'https://'))
-            or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url)):
-        return False
-    try:
-        parsed = urlsplit(url)
-        return bool(parsed.hostname) and parsed.port != 0
-    except ValueError:
-        return False
+    return _is_valid_endpoint_url(url, ('http://', 'https://'))
 
 
 def endpoint_key(url):
