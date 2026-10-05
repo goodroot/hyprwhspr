@@ -71,11 +71,17 @@ class FakeInjector:
         self.ended = []
         self.fail = fail
 
-    def inject_stream_chunk(self, text, final=False):
+    def begin_stream(self):
+        return types.SimpleNamespace(cancelled=threading.Event(), failed=False)
+
+    def release_stream(self, handle):
+        pass
+
+    def inject_stream_chunk(self, handle, text, final=False):
         self.chunks.append((text, final))
         return InjectionOutcome.FAILED if self.fail else InjectionOutcome.INJECTED
 
-    def end_stream(self, submit=True):
+    def end_stream(self, handle, submit=True):
         self.ended.append(submit)
         return InjectionOutcome.INJECTED if self.chunks else None
 
@@ -117,9 +123,9 @@ class LiveTypingSessionTests(unittest.TestCase):
         release = threading.Event()
         original = injector.inject_stream_chunk
 
-        def slow(text, final=False):
+        def slow(handle, text, final=False):
             release.wait(2)
-            return original(text, final)
+            return original(handle, text, final)
 
         injector.inject_stream_chunk = slow
         session = LiveTypingSession(injector)
@@ -129,7 +135,232 @@ class LiveTypingSessionTests(unittest.TestCase):
         session.cancel()
         self.assertLessEqual(len(injector.chunks), 1)
         self.assertEqual(injector.ended, [False])
-        self.assertIsNone(session.finish("one two"))
+        self.assertEqual(session.finish("one two"), InjectionOutcome.FAILED)
+
+
+class LiveTypingShutdownTests(unittest.TestCase):
+    def _session(self, settings=None):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({
+            "append_trailing_space": False, **(settings or {}),
+        })
+        session = LiveTypingSession(injector)
+        session.FINISH_TIMEOUT_SECS = 0.03
+        self.addCleanup(self._stop, session)
+        return injector, session
+
+    def _stop(self, session):
+        session.cancel()
+        session._worker.join(1)
+        self.assertFalse(session._worker.is_alive())
+
+    def _stall(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        return entered, release
+
+    def test_timeout_discards_queue_and_reserves_delivery_through_cleanup(self):
+        injector, session = self._session()
+        entered, release = self._stall()
+        calls = []
+
+        def paste(text, **kwargs):
+            calls.append(text)
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return True
+
+        with (
+            mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", side_effect=paste),
+            mock.patch.object(injector, "_send_enter_if_auto_submit") as enter,
+        ):
+            session.on_live_text("", "hello ")
+            self.assertTrue(entered.wait(1))
+            session.on_live_text("", "hello queued ")
+            self.assertEqual(session.finish("Hello queued remainder."), InjectionOutcome.FAILED)
+            self.assertTrue(injector.stream_busy())
+            self.assertEqual(injector.inject_text("overlap"), InjectionOutcome.FAILED)
+            for action in ("copy_last", "paste_last"):
+                self.assertFalse(injector.recover_last(action)[0])
+            with self.assertRaises(RuntimeError):
+                LiveTypingSession(injector)
+            release.set()
+            self.assertTrue(session._done.wait(1))
+            self.assertEqual(calls, ["hello"])
+            enter.assert_not_called()
+            self.assertEqual(injector._last_text, "Hello queued remainder.")
+            self.assertFalse(injector.stream_busy())
+            self.assertEqual(session.finish("ignored"), InjectionOutcome.FAILED)
+            next_session = LiveTypingSession(injector)
+            next_session.cancel()
+
+    def test_explicit_cancel_keeps_only_attempted_text(self):
+        injector, session = self._session()
+        entered, release = self._stall()
+
+        def paste(text, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return True
+
+        with (
+            mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", side_effect=paste) as delivery,
+            mock.patch.object(injector, "_send_enter_if_auto_submit") as enter,
+        ):
+            session.on_live_text("", "hello ")
+            self.assertTrue(entered.wait(1))
+            session.on_live_text("", "hello queued ")
+            session.cancel()
+            self.assertTrue(injector.stream_busy())
+            release.set()
+            self.assertTrue(session._done.wait(1))
+            self.assertEqual(delivery.call_count, 1)
+            self.assertEqual(injector._last_text, "hello")
+            enter.assert_not_called()
+
+    def test_timeout_during_each_finalization_stage_suppresses_later_delivery(self):
+        for stage in ("held", "space", "restore"):
+            with self.subTest(stage=stage):
+                injector, session = self._session({"append_trailing_space": True})
+                entered, release = self._stall()
+                calls = []
+
+                def paste(text, stream=None, **kwargs):
+                    calls.append(text)
+                    stream.saved_clipboard = b"original"
+                    stream.last_pasted = text
+                    if (stage == "held" and text == " question") or (stage == "space" and text == " "):
+                        entered.set()
+                        self.assertTrue(release.wait(2))
+                    return True
+
+                def restore(*args, **kwargs):
+                    if stage == "restore":
+                        entered.set()
+                        self.assertTrue(release.wait(2))
+
+                with (
+                    mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", side_effect=paste),
+                    mock.patch.object(injector, "_restore_clipboard", side_effect=restore) as cleanup,
+                    mock.patch.object(injector, "_send_enter_if_auto_submit") as enter,
+                ):
+                    session.on_live_text("", "open question ")
+                    result = []
+                    finisher = threading.Thread(target=lambda: result.append(session.finish("open question")))
+                    finisher.start()
+                    self.assertTrue(entered.wait(1))
+                    finisher.join(1)
+                    self.assertFalse(finisher.is_alive())
+                    self.assertEqual(result, [InjectionOutcome.FAILED])
+                    self.assertTrue(injector.stream_busy())
+                    release.set()
+                    self.assertTrue(session._done.wait(1))
+                    enter.assert_not_called()
+                    cleanup.assert_called_once()
+                    if stage == "held":
+                        self.assertEqual(calls, ["open", " question"])
+                    self.assertEqual(session.finish("ignored"), InjectionOutcome.FAILED)
+
+    def test_timeout_during_submit_does_not_dispatch_a_fallback_enter(self):
+        injector, session = self._session({"auto_submit": True})
+        entered, release = self._stall()
+
+        def native_enter(chord):
+            self.assertEqual(chord, "enter")
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return False
+
+        with (
+            mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=True),
+            mock.patch.object(injector, "_is_hyprland_session", return_value=True),
+            mock.patch.object(injector, "_send_shortcut_hyprland", side_effect=native_enter),
+            mock.patch.object(injector, "_run_ydotool") as fallback,
+        ):
+            session.on_live_text("", "hello ")
+            self.assertEqual(session.finish("hello"), InjectionOutcome.FAILED)
+            self.assertTrue(entered.is_set())
+            release.set()
+            self.assertTrue(session._done.wait(1))
+            fallback.assert_not_called()
+
+    def test_stale_handles_cannot_modify_or_close_next_stream(self):
+        injector = make_injector()
+        old = injector.begin_stream()
+        injector.end_stream(old, submit=False)
+        current = injector.begin_stream()
+        self.assertEqual(injector.inject_stream_chunk(old, "stale"), InjectionOutcome.FAILED)
+        self.assertEqual(injector.end_stream(old), InjectionOutcome.FAILED)
+        injector.release_stream(old)
+        self.assertIs(injector._stream, current)
+        self.assertEqual(current.raw_parts, [])
+        injector.end_stream(current, submit=False)
+
+    def test_delivery_exception_prevents_submit_and_cleanup_runs_once(self):
+        injector, session = self._session()
+        with (
+            mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", side_effect=RuntimeError("paste failed")),
+            mock.patch.object(injector, "end_stream", wraps=injector.end_stream) as cleanup,
+            mock.patch.object(injector, "_send_enter_if_auto_submit") as enter,
+        ):
+            session.on_live_text("", "hello ")
+            self.assertEqual(session.finish("hello"), InjectionOutcome.FAILED)
+            session.cancel()
+            self.assertEqual(session.finish("hello"), InjectionOutcome.FAILED)
+            cleanup.assert_called_once()
+            enter.assert_not_called()
+            self.assertFalse(injector.stream_busy())
+
+    def test_no_live_text_fallback_waits_for_cleanup_and_fails_on_timeout(self):
+        injector, session = self._session()
+        entered, release = self._stall()
+
+        def cleanup(*args):
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return None
+
+        with mock.patch.object(injector, "_finish_stream", side_effect=cleanup):
+            self.assertEqual(session.finish("Thank you."), InjectionOutcome.FAILED)
+            self.assertTrue(entered.is_set())
+            self.assertTrue(injector.stream_busy())
+            release.set()
+            self.assertTrue(session._done.wait(1))
+            self.assertEqual(session.finish("Thank you."), InjectionOutcome.FAILED)
+
+    def test_thread_start_failure_releases_reservation(self):
+        injector = make_injector()
+        with mock.patch("live_typing.threading.Thread.start", side_effect=RuntimeError("no thread")):
+            with self.assertRaises(RuntimeError):
+                LiveTypingSession(injector)
+        self.assertFalse(injector.stream_busy())
+
+    def test_cleanup_exception_releases_ownership_and_fails(self):
+        injector, session = self._session()
+        with mock.patch.object(injector, "_finish_stream", side_effect=RuntimeError("cleanup failed")):
+            self.assertEqual(session.finish("thank you"), InjectionOutcome.FAILED)
+        self.assertTrue(session._done.is_set())
+        self.assertFalse(injector.stream_busy())
+
+    def test_timeout_does_not_expose_blocked_app_transcript(self):
+        injector, session = self._session()
+        entered, release = self._stall()
+        injector._last_text = "previous"
+
+        def blocked(text, stream=None, **kwargs):
+            stream.recovery_allowed = False
+            stream.not_pasted = True
+            entered.set()
+            self.assertTrue(release.wait(2))
+            return True
+
+        with mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", side_effect=blocked):
+            session.on_live_text("", "secret ")
+            self.assertTrue(entered.wait(1))
+            self.assertEqual(session.finish("secret final words"), InjectionOutcome.FAILED)
+            release.set()
+            self.assertTrue(session._done.wait(1))
+            self.assertEqual(injector._last_text, "previous")
 
 
 class RealtimeClientToInjectorTests(unittest.TestCase):
@@ -200,134 +431,156 @@ class TextInjectorStreamSessionTests(unittest.TestCase):
         self.enter = mock.patch.object(injector, "_send_enter_if_auto_submit").start()
         self.restore = mock.patch.object(injector, "_restore_clipboard").start()
         self.addCleanup(mock.patch.stopall)
-        return injector
+        return injector, injector.begin_stream()
 
     def test_chunks_are_joined_with_a_leading_space(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("can you", final=False)
-        injector.inject_stream_chunk("check the logs", final=False)
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "can you", final=False)
+        injector.inject_stream_chunk(handle, "check the logs", final=False)
         self.assertEqual(self.pasted, ["can you", " check the logs"])
 
     def test_auto_submit_enter_is_sent_once_at_the_end(self):
-        injector = self._injector({"auto_submit": True})
-        injector.inject_stream_chunk("can you", final=False)
-        injector.inject_stream_chunk("check the logs", final=True)
+        injector, handle = self._injector({"auto_submit": True})
+        injector.inject_stream_chunk(handle, "can you", final=False)
+        injector.inject_stream_chunk(handle, "check the logs", final=True)
         self.enter.assert_not_called()
-        self.assertEqual(injector.end_stream(), InjectionOutcome.INJECTED)
+        self.assertEqual(injector.end_stream(handle), InjectionOutcome.INJECTED)
         self.enter.assert_called_once()
 
     def test_segments_stay_separated_when_trailing_space_is_off(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("Hello.", final=True)
-        injector.inject_stream_chunk("How are you?", final=True)
-        injector.end_stream()
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "Hello.", final=True)
+        injector.inject_stream_chunk(handle, "How are you?", final=True)
+        injector.end_stream(handle)
         self.assertEqual("".join(self.pasted), "Hello. How are you?")
 
     def test_trailing_space_setting_applies_once_at_the_end(self):
-        injector = self._injector({"append_trailing_space": True})
-        injector.inject_stream_chunk("Hello there.", final=True)
-        injector.end_stream()
+        injector, handle = self._injector({"append_trailing_space": True})
+        injector.inject_stream_chunk(handle, "Hello there.", final=True)
+        injector.end_stream(handle)
         self.assertEqual(self.pasted, ["Hello there.", " "])
 
     def test_spoken_punctuation_attaches_to_the_previous_chunk(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("hello", final=False)
-        injector.inject_stream_chunk("comma world", final=False)
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "hello", final=False)
+        injector.inject_stream_chunk(handle, "comma world", final=False)
         self.assertEqual("".join(self.pasted), "hello, world")
 
     def test_multi_word_command_split_across_chunks_is_held_together(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("is it done question", final=False)
-        injector.inject_stream_chunk("mark", final=True)
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "is it done question", final=False)
+        injector.inject_stream_chunk(handle, "mark", final=True)
         self.assertEqual("".join(self.pasted), "is it done?")
 
     def test_new_line_split_across_chunks_survives(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("first item new", final=False)
-        injector.inject_stream_chunk("line second item", final=True)
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "first item new", final=False)
+        injector.inject_stream_chunk(handle, "line second item", final=True)
         self.assertEqual("".join(self.pasted), "first item\nsecond item")
 
     def test_new_line_after_already_typed_words_survives(self):
         # "hello" is typed before "new" completes; the newline then starts a
         # chunk, where preprocessing's strip would otherwise drop it.
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("I said hello", final=False)
-        injector.inject_stream_chunk("new", final=False)
-        injector.inject_stream_chunk("line world", final=False)
-        injector.inject_stream_chunk("again.", final=True)
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "I said hello", final=False)
+        injector.inject_stream_chunk(handle, "new", final=False)
+        injector.inject_stream_chunk(handle, "line world", final=False)
+        injector.inject_stream_chunk(handle, "again.", final=True)
         self.assertEqual("".join(self.pasted), "I said hello\nworld again.")
 
     def test_segment_starting_with_new_line_keeps_it(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("Dear John,", final=True)
-        injector.inject_stream_chunk("new line thanks for the update.", final=True)
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "Dear John,", final=True)
+        injector.inject_stream_chunk(handle, "new line thanks for the update.", final=True)
         self.assertEqual("".join(self.pasted), "Dear John,\nthanks for the update.")
 
     def test_trailing_new_line_is_dropped_like_inject_text_does(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("last item new line", final=True)
-        injector.end_stream()
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "last item new line", final=True)
+        injector.end_stream(handle)
         self.assertEqual("".join(self.pasted), "last item")
 
     def test_multi_word_filler_split_across_chunks_is_filtered(self):
-        injector = self._injector({
+        injector, handle = self._injector({
             "append_trailing_space": False,
             "filter_filler_words": True,
             "filler_words": ["you know"],
         })
-        injector.inject_stream_chunk("it was you", final=False)
-        injector.inject_stream_chunk("know great", final=True)
+        injector.inject_stream_chunk(handle, "it was you", final=False)
+        injector.inject_stream_chunk(handle, "know great", final=True)
         self.assertNotIn("you know", "".join(self.pasted))
         self.assertNotIn("know", "".join(self.pasted))
 
     def test_new_line_at_a_segment_end_waits_for_the_next_word(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("first item new line", final=True)
-        injector.inject_stream_chunk("second item", final=True)
-        injector.end_stream()
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "first item new line", final=True)
+        injector.inject_stream_chunk(handle, "second item", final=True)
+        injector.end_stream(handle)
         self.assertEqual("".join(self.pasted), "first item\nsecond item")
 
+    def test_consecutive_new_lines_at_a_chunk_boundary_survive(self):
+        for first, second, final in (
+            ("first item new line new line", "second item", True),
+            ("first item new line new", "line second item", False),
+        ):
+            with self.subTest(first=first):
+                injector, handle = self._injector({"append_trailing_space": False})
+                injector.inject_stream_chunk(handle, first, final=final)
+                injector.inject_stream_chunk(handle, second, final=True)
+                injector.end_stream(handle)
+                self.assertEqual("".join(self.pasted), "first item\n\nsecond item")
+
     def test_multi_word_override_split_across_chunks_matches(self):
-        injector = self._injector({
+        injector, handle = self._injector({
             "append_trailing_space": False,
             "word_overrides": {"hyper whisper": "hyprwhspr"},
         })
-        injector.inject_stream_chunk("I use hyper", final=False)
-        injector.inject_stream_chunk("whisper daily", final=False)
+        injector.inject_stream_chunk(handle, "I use hyper", final=False)
+        injector.inject_stream_chunk(handle, "whisper daily", final=False)
         self.assertEqual("".join(self.pasted), "I use hyprwhspr daily")
 
     def test_held_words_are_delivered_at_the_end(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("open the question", final=False)
-        injector.end_stream()
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "open the question", final=False)
+        injector.end_stream(handle)
         self.assertEqual("".join(self.pasted), "open the question")
 
     def test_whole_dictation_is_retained_for_recovery(self):
-        injector = self._injector({"append_trailing_space": False})
-        injector.inject_stream_chunk("hello", final=False)
-        injector.inject_stream_chunk("there friend.", final=True)
-        injector.end_stream()
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector.inject_stream_chunk(handle, "hello", final=False)
+        injector.inject_stream_chunk(handle, "there friend.", final=True)
+        injector.end_stream(handle)
         self.assertEqual(injector._last_text, "hello there friend.")
 
     def test_cancel_skips_held_words_and_enter(self):
-        injector = self._injector({"auto_submit": True, "append_trailing_space": True})
-        injector.inject_stream_chunk("open the question", final=False)
-        injector.end_stream(submit=False)
+        injector, handle = self._injector({"auto_submit": True, "append_trailing_space": True})
+        injector.inject_stream_chunk(handle, "open the question", final=False)
+        injector.end_stream(handle, submit=False)
         self.assertEqual(self.pasted, ["open the"])
         self.enter.assert_not_called()
 
     def test_failed_chunk_makes_the_dictation_fail_without_enter(self):
-        injector = self._injector({"auto_submit": True})
+        injector, handle = self._injector({"auto_submit": True})
         with mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=False):
             self.assertEqual(
-                injector.inject_stream_chunk("hello", final=True), InjectionOutcome.FAILED
+                injector.inject_stream_chunk(handle, "hello", final=True), InjectionOutcome.FAILED
             )
-        self.assertEqual(injector.end_stream(), InjectionOutcome.FAILED)
+        self.assertEqual(injector.end_stream(handle), InjectionOutcome.FAILED)
         self.enter.assert_not_called()
 
-    def test_end_without_a_stream_is_a_noop(self):
-        injector = self._injector()
-        self.assertIsNone(injector.end_stream())
+    def test_all_failed_chunks_retain_the_current_dictation_for_recovery(self):
+        injector, handle = self._injector({"append_trailing_space": False})
+        injector._last_text = "previous dictation"
+        with mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=False):
+            injector.inject_stream_chunk(handle, "hello", final=False)
+            injector.inject_stream_chunk(handle, "there friend", final=True)
+        self.assertEqual(injector.end_stream(handle), InjectionOutcome.FAILED)
+        self.assertEqual(injector._last_text, "hello there friend")
+        self.enter.assert_not_called()
+
+    def test_end_without_delivered_text_is_a_noop(self):
+        injector, handle = self._injector()
+        self.assertIsNone(injector.end_stream(handle))
         self.enter.assert_not_called()
         self.restore.assert_not_called()
 
@@ -337,7 +590,9 @@ class TextInjectorStreamClipboardTests(unittest.TestCase):
 
     def test_no_enter_when_injection_is_disabled_for_the_focused_app(self):
         injector = make_injector()
+        handle = injector.begin_stream()
         injector.config_manager = ConfigStub({"auto_submit": True})
+        injector._last_text = "previous dictation"
         with (
             mock.patch.object(injector, "_active_window_lookup_needed", return_value=False),
             mock.patch.object(injector, "_is_gnome_wayland_session", return_value=False),
@@ -346,15 +601,17 @@ class TextInjectorStreamClipboardTests(unittest.TestCase):
             mock.patch.object(injector, "_send_enter_if_auto_submit") as enter,
             mock.patch.object(injector, "_restore_clipboard") as restore,
         ):
-            injector.inject_stream_chunk("hunter two", final=True)
-            injector.end_stream()
+            injector.inject_stream_chunk(handle, "hunter two", final=True)
+            injector.end_stream(handle)
 
         paste.assert_not_called()
         enter.assert_not_called()
         restore.assert_not_called()
+        self.assertEqual(injector._last_text, "previous dictation")
 
     def test_clipboard_saved_once_and_restored_once_to_the_original(self):
         injector = make_injector()
+        handle = injector.begin_stream()
         injector.config_manager = ConfigStub({"append_trailing_space": False})
         clipboard = {"value": b"https://original.example"}
 
@@ -375,10 +632,10 @@ class TextInjectorStreamClipboardTests(unittest.TestCase):
             mock.patch.object(injector, "_send_enter_if_auto_submit"),
             mock.patch("text_injector.time.sleep"),
         ):
-            injector.inject_stream_chunk("hello there", final=False)
-            injector.inject_stream_chunk("friend", final=True)
+            injector.inject_stream_chunk(handle, "hello there", final=False)
+            injector.inject_stream_chunk(handle, "friend", final=True)
             restore.assert_not_called()
-            injector.end_stream()
+            injector.end_stream(handle)
 
         save.assert_called_once()
         restore.assert_called_once()
@@ -400,6 +657,7 @@ class RecordingLifecycleTests(unittest.TestCase):
             get_hallucination_markers=lambda: None,
         )
         app.text_injector = mock.Mock()
+        app.text_injector.stream_busy.return_value = False
         app._live_typing = None
         app._recording_lock = threading.Lock()
         app.is_processing = False

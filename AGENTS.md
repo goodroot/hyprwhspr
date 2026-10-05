@@ -15,7 +15,8 @@ This repository is a Linux desktop speech-to-text application supporting Wayland
 - `share/config.schema.json`: machine-readable configuration schema.
 - `scripts/`: install/bootstrap sources. `scripts/install.sh` is copied into the website during its build.
 - `tests/`: stdlib `unittest` tests; install dependencies with `python -m pip install -r requirements-test.txt`.
-- `website/`: Astro site; edit `src/` and `public/`, not generated `.astro/`, `dist/`, or `node_modules/` content.
+- `website/`: Astro site (marketing at `/`, docs at `/docs/` via Starlight); edit `src/` and `public/`, not generated `.astro/`, `dist/`, or `node_modules/` content.
+- `docs/`: canonical docs source (one page per `.md`); synced to `website/src/content/docs/docs/` and `public/docs/` at build time, edit `docs/`, not generated output.
 
 ## Fast workflow
 
@@ -32,7 +33,7 @@ This repository is a Linux desktop speech-to-text application supporting Wayland
    python -m unittest discover -s tests -v
    ```
 
-4. For website changes, run from `website/`:
+4. For website or docs changes, run from `website/` (the docs build also checks links):
 
    ```bash
    npm run build

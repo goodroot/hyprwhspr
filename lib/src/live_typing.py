@@ -12,11 +12,11 @@ import threading
 from typing import List, Optional, Tuple
 
 try:
-    from .hallucination import could_be_hallucination, is_hallucination
+    from .hallucination import could_be_hallucination
     from .service_log import log
     from .text_injector import InjectionOutcome
 except ImportError:
-    from hallucination import could_be_hallucination, is_hallucination
+    from hallucination import could_be_hallucination
     from service_log import log
     from text_injector import InjectionOutcome
 
@@ -81,8 +81,16 @@ class LiveTypingSession:
         self._queue = queue.Queue()
         self._open = True
         self._failed = False
+        self._done = threading.Event()
+        self._handle = injector.begin_stream()
+        self._outcome = None
+        self._started = False
         self._worker = threading.Thread(target=self._run, name='live-typing', daemon=True)
-        self._worker.start()
+        try:
+            self._worker.start()
+        except Exception:
+            injector.release_stream(self._handle)
+            raise
 
     def on_live_text(self, committed: str, tail: str) -> None:
         """Live-text listener; called on the realtime receiver thread."""
@@ -94,73 +102,75 @@ class LiveTypingSession:
                 self._queue.put((words, final))
 
     def _run(self):
-        while True:
-            item = self._queue.get()
-            if item is None:
-                return
-            words, final = item
+        try:
+            while True:
+                item = self._queue.get()
+                if item is None:
+                    break
+                if self._handle.cancelled.is_set():
+                    continue
+                words, final = item
+                try:
+                    outcome = self._injector.inject_stream_chunk(
+                        self._handle, ' '.join(words), final=final)
+                except Exception as e:
+                    log(f'[LIVE] Typing failed: {e}')
+                    outcome = InjectionOutcome.FAILED
+                if outcome == InjectionOutcome.FAILED:
+                    self._failed = True
+                    self._handle.failed = True
+            self._outcome = self._injector.end_stream(
+                self._handle, submit=self._started and not self._failed
+                and not self._handle.cancelled.is_set())
+        except Exception as e:
+            log(f'[LIVE] Finishing typed text failed: {e}')
+            self._failed = True
+        finally:
             try:
-                outcome = self._injector.inject_stream_chunk(' '.join(words), final=final)
-            except Exception as e:
-                log(f'[LIVE] Typing failed: {e}')
-                outcome = InjectionOutcome.FAILED
-            if outcome == InjectionOutcome.FAILED:
-                self._failed = True
+                self._injector.release_stream(self._handle)
+            finally:
+                self._done.set()
 
-    def _close(self, remainder: Optional[List[str]] = None) -> bool:
-        """Stop intake, queue the remainder, and drain the worker. False on timeout."""
-        if remainder:
-            self._queue.put((remainder, True))
-        self._queue.put(None)
-        self._worker.join(self.FINISH_TIMEOUT_SECS)
-        if self._worker.is_alive():
-            log('[LIVE] Typing worker still busy; finishing anyway')
+    def _wait(self, recovery_text=None):
+        if not self._done.wait(self.FINISH_TIMEOUT_SECS):
+            if recovery_text is not None:
+                self._handle.recovery_text = recovery_text
+            self._handle.cancelled.set()
+            self._failed = True
+            log('[LIVE] Text delivery timed out; stopping pending typing')
             return False
         return True
 
     def finish(self, final_text: str) -> Optional[InjectionOutcome]:
-        """Type what's left of the final transcript and end the dictation.
-
-        Returns None when nothing was typed live (opening words were still held
-        as a possible phantom): the caller delivers the transcript normally.
-        """
+        """Wait for delivery and cleanup; timeout cancels all pending typing."""
         with self._lock:
-            if not self._open:
-                return None
-            self._open = False
-            started = self._typer.typed > 0
-            if not started:
+            if self._open:
+                self._open = False
+                self._started = self._typer.typed > 0
+                # Retain the complete transcript if the bounded wait times out,
+                # even when queued words never reached the injector.
+                self._final_text = final_text
+                if self._started:
+                    remainder = self._typer.finish(final_text)
+                    if remainder:
+                        self._queue.put((remainder, True))
                 self._queue.put(None)
-                remainder = None
-            else:
-                remainder = self._typer.finish(final_text)
-        if not started:
-            self._worker.join(self.FINISH_TIMEOUT_SECS)
-            self._injector.end_stream(submit=False)
-            return None
-        drained = self._close(remainder)
-        try:
-            outcome = self._injector.end_stream(submit=True)
-        except Exception as e:
-            log(f'[LIVE] Finishing typed text failed: {e}')
-            outcome = InjectionOutcome.FAILED
-        if self._failed or not drained or outcome == InjectionOutcome.FAILED:
+        if not self._wait(getattr(self, '_final_text', None)):
             return InjectionOutcome.FAILED
-        return outcome or InjectionOutcome.INJECTED
+        if self._failed or self._outcome == InjectionOutcome.FAILED:
+            return InjectionOutcome.FAILED
+        if not self._started:
+            return None
+        return self._outcome or InjectionOutcome.INJECTED
 
     def cancel(self) -> None:
-        """Drop pending words and end without Enter; already-typed words stay."""
+        """Stop pending typing and wait a bounded time for worker cleanup."""
         with self._lock:
-            if not self._open:
+            if self._done.is_set():
                 return
-            self._open = False
-            while True:
-                try:
-                    self._queue.get_nowait()
-                except queue.Empty:
-                    break
-        self._close()
-        try:
-            self._injector.end_stream(submit=False)
-        except Exception as e:
-            log(f'[LIVE] Ending typed text failed: {e}')
+            self._failed = True
+            self._handle.cancelled.set()
+            if self._open:
+                self._open = False
+                self._queue.put(None)
+        self._wait()

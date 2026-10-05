@@ -86,6 +86,8 @@ class PushToTalkLockTests(unittest.TestCase):
     def _app(self, recording_mode='push_to_talk', lock_seconds=0.0, lock_absent=False,
              recording=False, mock_stop=True, mock_start=True, mock_cancel=True):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+        app.text_injector = mock.Mock()
+        app.text_injector.stream_busy.return_value = False
         config = mock.Mock()
 
         def get_setting(key, default=None):
