@@ -1,0 +1,41 @@
+{
+  "name": "hyprwhspr-docs-site",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Isolated Astro Starlight docs site generated from canonical docs/. No runtime application code.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "generate": "node scripts/generate-docs.mjs",
+    "dev": "node scripts/generate-docs.mjs && astro dev",
+    "build": "node scripts/generate-docs.mjs && astro build",
+    "preview": "astro preview",
+    "test": "node --test tests/generator.test.mjs tests/verify.test.mjs",
+    "verify": "node scripts/verify-build.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.5",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "astro": "7.3.5",
+    "sharp": "^0.35.5"
+  },
+  "dependenciesMeta": {},
+  "overrides": {
+    "esbuild": "0.28.2",
+    "svgo": "^4.1.0",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "github-slugger": "2.0.0",
+    "gray-matter": "4.0.3",
+    "mdast-util-to-string": "4.0.0",
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-parse": "11.0.0",
+    "remark-stringify": "11.0.0",
+    "unified": "11.0.5",
+    "unist-util-visit": "5.1.0"
+  }
+}

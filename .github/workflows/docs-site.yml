@@ -1,0 +1,98 @@
+# Isolated docs site for canonical docs/. Never takes over existing Pages by default.
+# Deployment is opt-in: push to main (or manual dispatch) AND the repository
+# variable DOCS_PAGES_ENABLED == 'true'. No CNAME/DNS changes, never enables
+# Pages automatically (configure-pages runs with enablement:false and only when
+# deployment is eligible; plain CI/PR builds use GITHUB_REPOSITORY-derived
+# defaults or DOCS_SITE_URL/DOCS_BASE_PATH overrides, no Pages API needed).
+
+name: Docs site
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'docs-site/**'
+      - '.github/workflows/docs-site.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'docs-site/**'
+      - '.github/workflows/docs-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-site-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: read
+    concurrency:
+      group: docs-site-build-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      # Supplies origin/base_path for project Pages without enabling Pages.
+      # Runs ONLY when deployment is eligible (main push/dispatch + opt-in var);
+      # all other builds skip the Pages API entirely and fall back to
+      # GITHUB_REPOSITORY-derived defaults (or DOCS_* overrides). Fork PRs
+      # verify the same way without touching Pages settings.
+      - name: Configure Pages base
+        id: pages
+        if: (github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) && vars.DOCS_PAGES_ENABLED == 'true'
+        uses: actions/configure-pages@v5
+        with:
+          enablement: false
+      - run: npm ci
+        working-directory: docs-site
+      - run: npm test
+        working-directory: docs-site
+      - name: Build docs site
+        working-directory: docs-site
+        env:
+          DOCS_SITE_URL: ${{ steps.pages.outputs.origin }}
+          DOCS_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: npm run build
+      - name: Verify production output
+        working-directory: docs-site
+        env:
+          DOCS_SITE_URL: ${{ steps.pages.outputs.origin }}
+          DOCS_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: npm run verify
+      - name: Upload Pages artifact
+        if: (github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) && vars.DOCS_PAGES_ENABLED == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/dist
+
+  deploy:
+    needs: build
+    if: (github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) && vars.DOCS_PAGES_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
