@@ -1,7 +1,6 @@
 // Generator tests: temp fixtures, no network, no repo mutation.
-// Covers frontmatter/title escaping, code-fence preservation, link/ref/image/
-// raw-HTML rewriting, nested paths, anchor parity (duplicates/punctuation/
-// emoji), assets/attachments, stale deletion, determinism, site/base variations.
+// Covers mapping, rewriting, collisions, determinism, site/base.
+// Physical shapes include docs/ prefix; routes evaluated on full path.
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,10 +30,10 @@ function makeCtx(overrides = {}) {
   return {
     currentCanonicalRel: 'CONFIGURATION.md',
     routeMapLower: new Map([
-      ['configuration.md', 'configuration'],
-      ['managed-installation.md', 'managed-installation'],
-      ['benchmarks/orukeet-linux-20260918.md', 'benchmarks/orukeet-linux-20260918'],
-      ['a/b/c.md', 'a/b/c'],
+      ['configuration.md', 'docs/configuration'],
+      ['managed-installation.md', 'docs/managed-installation'],
+      ['benchmarks/orukeet-linux-20260918.md', 'docs/benchmarks/orukeet-linux-20260918'],
+      ['a/b/c.md', 'docs/a/b/c'],
     ]),
     base: '/hyprwhspr',
     warnings: [],
@@ -47,23 +46,20 @@ function makeCtx(overrides = {}) {
 
 describe('canonical mapping', () => {
   it('lowercases generated filenames and routes, preserves nesting', () => {
-    assert.equal(canonicalToGenerated('CONFIGURATION.md'), 'configuration.md');
-    assert.equal(canonicalToGenerated('MANAGED_INSTALLATION.md'), 'managed-installation.md');
-    assert.equal(
-      canonicalToGenerated('benchmarks/orukeet-linux-20260918.md'),
-      'benchmarks/orukeet-linux-20260918.md',
-    );
-    assert.equal(canonicalToGenerated('A/B/C.MD'), 'a/b/c.md');
-    assert.equal(canonicalToRoute('CONFIGURATION.md'), 'configuration');
-    assert.equal(canonicalToRoute('MANAGED_INSTALLATION.md'), 'managed-installation');
-    assert.equal(canonicalToRoute('benchmarks/orukeet-linux-20260918.md'), 'benchmarks/orukeet-linux-20260918');
+    assert.equal(canonicalToGenerated('CONFIGURATION.md'), 'docs/configuration.md');
+    assert.equal(canonicalToGenerated('MANAGED_INSTALLATION.md'), 'docs/managed-installation.md');
+    assert.equal(canonicalToGenerated('benchmarks/orukeet-linux-20260918.md'), 'docs/benchmarks/orukeet-linux-20260918.md');
+    assert.equal(canonicalToGenerated('A/B/C.MD'), 'docs/a/b/c.md');
+    assert.equal(canonicalToRoute('CONFIGURATION.md'), 'docs/configuration');
+    assert.equal(canonicalToRoute('MANAGED_INSTALLATION.md'), 'docs/managed-installation');
+    assert.equal(canonicalToRoute('benchmarks/orukeet-linux-20260918.md'), 'docs/benchmarks/orukeet-linux-20260918');
   });
 
   it('routeToUrl respects base variations', () => {
-    assert.equal(routeToUrl('configuration', '/hyprwhspr'), '/hyprwhspr/configuration/');
-    assert.equal(routeToUrl('configuration', '/'), '/configuration/');
-    assert.equal(routeToUrl('configuration', '/custom/'), '/custom/configuration/');
-    assert.equal(routeToUrl('a/b/c', '/hyprwhspr'), '/hyprwhspr/a/b/c/');
+    assert.equal(routeToUrl('docs/configuration', '/hyprwhspr'), '/hyprwhspr/docs/configuration/');
+    assert.equal(routeToUrl('docs/configuration', '/'), '/docs/configuration/');
+    assert.equal(routeToUrl('docs/configuration', '/custom/'), '/custom/docs/configuration/');
+    assert.equal(routeToUrl('docs/a/b/c', '/hyprwhspr'), '/hyprwhspr/docs/a/b/c/');
   });
 
   it('assetRelToUrl respects base variations', () => {
@@ -82,21 +78,24 @@ describe('site/base resolution', () => {
     process.env = { ...OLD };
   });
 
-  it('defaults to upstream owner/repo project pages', () => {
+  it('defaults to single-site root base and marketing site', () => {
     delete process.env.DOCS_SITE_URL;
     delete process.env.DOCS_SITE;
     delete process.env.DOCS_BASE_PATH;
     delete process.env.DOCS_BASE;
     delete process.env.GITHUB_REPOSITORY;
-    assert.equal(resolveSite(), 'https://goodroot.github.io');
-    assert.equal(resolveBase(), '/hyprwhspr');
+    assert.equal(resolveSite(), 'https://hyprwhspr.com');
+    assert.equal(resolveBase(), '/');
   });
 
-  it('derives owner from GITHUB_REPOSITORY', () => {
+  it('ignores GITHUB_REPOSITORY for single-site defaults', () => {
     delete process.env.DOCS_SITE_URL;
     delete process.env.DOCS_SITE;
+    delete process.env.DOCS_BASE_PATH;
+    delete process.env.DOCS_BASE;
     process.env.GITHUB_REPOSITORY = 'octo/example';
-    assert.equal(resolveSite(), 'https://octo.github.io');
+    assert.equal(resolveSite(), 'https://hyprwhspr.com');
+    assert.equal(resolveBase(), '/');
   });
 
   it('supports explicit overrides and aliases', () => {
@@ -115,8 +114,8 @@ describe('site/base resolution', () => {
   it('normalizes root base for preview', () => {
     assert.equal(normalizeBase('/'), '/');
     assert.equal(normalizeBase(''), '/');
-    assert.equal(normalizeBase('/hyprwhspr/'), '/hyprwhspr');
-    assert.equal(normalizeBase('hyprwhspr'), '/hyprwhspr');
+    assert.equal(normalizeBase('/docs/'), '/docs');
+    assert.equal(normalizeBase('docs'), '/docs');
   });
 });
 
@@ -134,21 +133,21 @@ describe('rewriteUrl', () => {
     const ctx = makeCtx({ currentCanonicalRel: 'CONFIGURATION.md' });
     assert.equal(
       rewriteUrl('benchmarks/orukeet-linux-20260918.md', ctx),
-      '/hyprwhspr/benchmarks/orukeet-linux-20260918/',
+      '/hyprwhspr/docs/benchmarks/orukeet-linux-20260918/',
     );
     assert.equal(
       rewriteUrl('MANAGED_INSTALLATION.md', ctx),
-      '/hyprwhspr/managed-installation/',
+      '/hyprwhspr/docs/managed-installation/',
     );
     // Fragment preserved verbatim (anchor parity).
     assert.equal(
       rewriteUrl('benchmarks/orukeet-linux-20260918.md#results', ctx),
-      '/hyprwhspr/benchmarks/orukeet-linux-20260918/#results',
+      '/hyprwhspr/docs/benchmarks/orukeet-linux-20260918/#results',
     );
     const rootCtx = makeCtx({ currentCanonicalRel: 'benchmarks/orukeet-linux-20260918.md' });
     // Nested file linking upward (case-insensitive .MD handling via lower map).
-    rootCtx.routeMapLower.set('configuration.md', 'configuration');
-    assert.equal(rewriteUrl('../CONFIGURATION.md#backends', rootCtx), '/hyprwhspr/configuration/#backends');
+    rootCtx.routeMapLower.set('configuration.md', 'docs/configuration');
+    assert.equal(rewriteUrl('../CONFIGURATION.md#backends', rootCtx), '/hyprwhspr/docs/configuration/#backends');
   });
 
   it('rewrites relative assets to static files with base', () => {
@@ -178,10 +177,7 @@ describe('rewriteUrl', () => {
 
   it('respects root base variation', () => {
     const ctx = makeCtx({ base: '/' });
-    assert.equal(
-      rewriteUrl('benchmarks/orukeet-linux-20260918.md', ctx),
-      '/benchmarks/orukeet-linux-20260918/',
-    );
+    assert.equal(rewriteUrl('benchmarks/orukeet-linux-20260918.md', ctx), '/docs/benchmarks/orukeet-linux-20260918/');
     assert.equal(rewriteUrl('assets/pill-states.png', ctx), '/docs/assets/pill-states.png');
   });
 });
@@ -195,7 +191,6 @@ describe('transformMarkdown', () => {
     const fm = matter(markdown);
     assert.equal(fm.data.title, 'Foo "bar": baz & qux');
     assert.ok(fm.data.editUrl.endsWith('/docs/CONFIGURATION.md'));
-    // H1 gone, body retained.
     assert.ok(!fm.content.startsWith('# Foo'));
     assert.ok(fm.content.includes('Body.'));
   });
@@ -242,7 +237,7 @@ describe('transformMarkdown', () => {
     ].join('\n');
     const { markdown } = await transformMarkdown('CONFIGURATION.md', raw, ctx);
     const fm = matter(markdown);
-    assert.ok(fm.content.includes('/hyprwhspr/benchmarks/orukeet-linux-20260918/'));
+    assert.ok(fm.content.includes('/hyprwhspr/docs/benchmarks/orukeet-linux-20260918/'));
     assert.ok(fm.content.includes('/hyprwhspr/docs/assets/pill-states.png'));
     // Code fence preserved verbatim (still contains .md, not rewritten to route).
     assert.ok(fm.content.includes('# [not a link](benchmarks/orukeet-linux-20260918.md)'));
@@ -264,7 +259,7 @@ describe('transformMarkdown', () => {
       '',
     ].join('\n');
     const { markdown } = await transformMarkdown('CONFIGURATION.md', raw, ctx);
-    assert.ok(markdown.includes('/hyprwhspr/benchmarks/orukeet-linux-20260918/'));
+    assert.ok(markdown.includes('/hyprwhspr/docs/benchmarks/orukeet-linux-20260918/'));
     assert.ok(markdown.includes('{ "x": "[r]: benchmarks/orukeet-linux-20260918.md" }'));
   });
 
@@ -283,7 +278,7 @@ describe('transformMarkdown', () => {
       '',
     ].join('\n');
     const { markdown } = await transformMarkdown('CONFIGURATION.md', raw, ctx);
-    assert.ok(markdown.includes('<a href="/hyprwhspr/benchmarks/orukeet-linux-20260918/">'));
+    assert.ok(markdown.includes('<a href="/hyprwhspr/docs/benchmarks/orukeet-linux-20260918/">'));
     assert.ok(markdown.includes('<img src="/hyprwhspr/docs/assets/pill-states.png"'));
     assert.ok(markdown.includes('<a href="benchmarks/orukeet-linux-20260918.md">code</a>'));
   });
@@ -305,7 +300,6 @@ describe('transformMarkdown', () => {
     assert.ok(description.length > 0);
     const fm = matter(markdown);
     assert.equal(fm.data.editUrl, 'https://github.com/goodroot/hyprwhspr/edit/main/docs/SUB/FILE.md');
-    // Round-trips through YAML safely.
     assert.equal(matter(markdown).data.title, 'Hello: "world"');
   });
 });
@@ -316,7 +310,7 @@ describe('generate() with temp fixtures', () => {
   let generatedRoot = '';
   let publicRoot = '';
   beforeEach(async () => {
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'docs-site-test-'));
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-test-'));
     canonicalRoot = path.join(tmp, 'docs');
     generatedRoot = path.join(tmp, 'out', 'docs');
     publicRoot = path.join(tmp, 'out', 'public');
@@ -338,20 +332,19 @@ describe('generate() with temp fixtures', () => {
     await writeCanonical();
     const first = await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
     assert.deepEqual(first.canonicalRels.sort(), ['CONFIGURATION.md', 'benchmarks/nested.md']);
-    const genA = await fs.readFile(path.join(generatedRoot, 'configuration.md'), 'utf8');
-    assert.ok(genA.includes('/hyprwhspr/benchmarks/nested/#frag'));
+    const genA = await fs.readFile(path.join(generatedRoot, 'docs', 'configuration.md'), 'utf8');
+    assert.ok(genA.includes('/hyprwhspr/docs/benchmarks/nested/#frag'));
     assert.ok(genA.includes('/hyprwhspr/docs/assets/x.png'));
-    const genB = await fs.readFile(path.join(generatedRoot, 'benchmarks', 'nested.md'), 'utf8');
+    const genB = await fs.readFile(path.join(generatedRoot, 'docs', 'benchmarks', 'nested.md'), 'utf8');
     assert.ok(genB.includes('/hyprwhspr/docs/benchmarks/nested.json'));
-    // Assets mirrored.
     assert.ok((await fs.stat(path.join(publicRoot, 'assets', 'x.png'))).isFile());
     assert.ok((await fs.stat(path.join(publicRoot, 'benchmarks', 'nested.json'))).isFile());
     const snapshot = new Map();
-    for (const rel of ['configuration.md', 'benchmarks/nested.md']) {
+    for (const rel of ['docs/configuration.md', 'docs/benchmarks/nested.md']) {
       snapshot.set(rel, await fs.readFile(path.join(generatedRoot, ...rel.split('/')), 'utf8'));
     }
     const second = await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
-    for (const rel of ['configuration.md', 'benchmarks/nested.md']) {
+    for (const rel of ['docs/configuration.md', 'docs/benchmarks/nested.md']) {
       assert.equal(await fs.readFile(path.join(generatedRoot, ...rel.split('/')), 'utf8'), snapshot.get(rel));
     }
     assert.deepEqual(second.canonicalRels.sort(), first.canonicalRels.sort());
@@ -360,13 +353,13 @@ describe('generate() with temp fixtures', () => {
   it('deletes stale generated files and stale assets', async () => {
     await writeCanonical();
     await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
-    assert.ok((await fs.stat(path.join(generatedRoot, 'configuration.md'))).isFile());
+    assert.ok((await fs.stat(path.join(generatedRoot, 'docs', 'configuration.md'))).isFile());
     await fs.unlink(path.join(canonicalRoot, 'benchmarks', 'nested.md'));
     await fs.unlink(path.join(canonicalRoot, 'benchmarks', 'nested.json'));
     const result = await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
     let missing = false;
     try {
-      await fs.stat(path.join(generatedRoot, 'benchmarks', 'nested.md'));
+      await fs.stat(path.join(generatedRoot, 'docs', 'benchmarks', 'nested.md'));
     } catch {
       missing = true;
     }
@@ -383,10 +376,10 @@ describe('generate() with temp fixtures', () => {
 
   it('never touches handwritten index.mdx', async () => {
     await writeCanonical();
-    await fs.mkdir(generatedRoot, { recursive: true });
-    await fs.writeFile(path.join(generatedRoot, 'index.mdx'), 'handwritten');
+    await fs.mkdir(path.join(generatedRoot, 'docs'), { recursive: true });
+    await fs.writeFile(path.join(generatedRoot, 'docs', 'index.mdx'), 'handwritten');
     await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
-    assert.equal(await fs.readFile(path.join(generatedRoot, 'index.mdx'), 'utf8'), 'handwritten');
+    assert.equal(await fs.readFile(path.join(generatedRoot, 'docs', 'index.mdx'), 'utf8'), 'handwritten');
   });
 
   it('heading anchor parity: duplicates and punctuation survive generation', async () => {
@@ -395,7 +388,7 @@ describe('generate() with temp fixtures', () => {
       '# Guide\n\n## Setup\n\n## Setup\n\n### Available models\n\n### Available models\n\n#### Cohere 🇨🇦\n\nSee [a](#setup) and [b](#setup-1) and [c](#available-models-1).\n',
     );
     await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
-    const out = await fs.readFile(path.join(generatedRoot, 'configuration.md'), 'utf8');
+    const out = await fs.readFile(path.join(generatedRoot, 'docs', 'configuration.md'), 'utf8');
     const tree = unified().use(remarkParse).parse(matter(out).content);
     const headings = [];
     visit(tree, 'heading', (node) => headings.push({ depth: node.depth, text: mdastToString(node) }));
@@ -411,10 +404,10 @@ describe('generate() with temp fixtures', () => {
     const result = await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
     assert.ok(result.canonicalRels.includes('benchmarks/nested.md'));
     const ctx = makeCtx({ currentCanonicalRel: 'CONFIGURATION.md' });
-    ctx.routeMapLower.set('benchmarks/nested.md', 'benchmarks/nested');
+    ctx.routeMapLower.set('benchmarks/nested.md', 'docs/benchmarks/nested');
     assert.equal(
       rewriteUrl('benchmarks/nested.md?x=1#frag', ctx),
-      '/hyprwhspr/benchmarks/nested/?x=1#frag',
+      '/hyprwhspr/docs/benchmarks/nested/?x=1#frag',
     );
   });
 
@@ -432,7 +425,7 @@ describe('collision detection (before any writes)', () => {
   let generatedRoot = '';
   let publicRoot = '';
   beforeEach(async () => {
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'docs-site-collision-'));
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-collision-'));
     canonicalRoot = path.join(tmp, 'docs');
     generatedRoot = path.join(tmp, 'out', 'docs');
     publicRoot = path.join(tmp, 'out', 'public');
@@ -452,7 +445,7 @@ describe('collision detection (before any writes)', () => {
     // No output writes happened.
     let exists = true;
     try {
-      await fs.stat(path.join(generatedRoot, 'foo-bar.md'));
+      await fs.stat(path.join(generatedRoot, 'docs', 'foo-bar.md'));
     } catch {
       exists = false;
     }
@@ -483,7 +476,7 @@ describe('markdown-only policy (.mdx rejected)', () => {
   let generatedRoot = '';
   let publicRoot = '';
   beforeEach(async () => {
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'docs-site-mdx-'));
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-mdx-'));
     canonicalRoot = path.join(tmp, 'docs');
     generatedRoot = path.join(tmp, 'out', 'docs');
     publicRoot = path.join(tmp, 'out', 'public');
@@ -531,10 +524,8 @@ describe('frontmatter adaptation', () => {
     const fm = matter(markdown);
     assert.equal(fm.data.title, 'Real Title');
     assert.equal(fm.data.editUrl, 'https://github.com/goodroot/hyprwhspr/edit/main/docs/SUB/FILE.md');
-    // Preserved safe fields.
     assert.deepEqual(fm.data.sidebar, { order: 5 });
     assert.equal(fm.data.custom, 'keepme');
-    // Description derived from body (no canonical description to compete).
     assert.ok(typeof fm.data.description === 'string' && fm.data.description.includes('First para body'));
     assert.equal(description, fm.data.description);
   });
@@ -553,7 +544,6 @@ describe('H1 title semantics', () => {
     const ctx = makeCtx();
     const raw = 'Intro para.\n\n# Late Title\n\nBody.\n';
     const { title, markdown } = await transformMarkdown('X.md', raw, ctx);
-    // Filename fallback (no leading H1, no frontmatter title).
     assert.equal(title, 'X');
     const fm = matter(markdown);
     // Misplaced H1 retained (never strip arbitrary sections).
@@ -639,9 +629,8 @@ describe('GFM tables and tasks', () => {
       '',
     ].join('\n');
     const { markdown } = await transformMarkdown('CONFIGURATION.md', raw, ctx);
-    assert.ok(markdown.includes('/hyprwhspr/benchmarks/orukeet-linux-20260918/'));
+    assert.ok(markdown.includes('/hyprwhspr/docs/benchmarks/orukeet-linux-20260918/'));
     assert.ok(markdown.includes('/hyprwhspr/docs/assets/pill-states.png'));
-    // Table + task syntax preserved (GFM round-trip).
     assert.ok(markdown.includes('|'));
     assert.ok(markdown.includes('- [ ]') && markdown.includes('- [x]'));
   });
@@ -658,13 +647,8 @@ describe('deterministic codepoint ordering', () => {
 });
 
 describe('effective Starlight routes (installed loader parity)', () => {
-  it('nested INDEX.md strips to its directory; root index -> ""', async () => {
-    // Matches the installed routing code sequentially (not a strip-all loop):
-    // astro/dist/content/utils.js getContentEntryIdAndSlug
-    // (github-slugger per segment + ONE trailing /index strip) plus
-    // Starlight normalizeIndexSlug (exact `index` -> ``) plus
-    // Starlight slugToParam (`index`/`''`/`/` -> root, else ONE trailing
-    // /index strip + `.normalize()`).
+  it('nested INDEX strips on full docs/ path; docs/index -> docs', async () => {
+    // Matches installed Astro+Starlight stages on the full collection path.
     const { slug: githubSlug } = await import('github-slugger');
     function installedEffective(generatedRel) {
       const withoutExt = generatedRel.replace(/\.mdx?$/i, '');
@@ -678,41 +662,26 @@ describe('effective Starlight routes (installed loader parity)', () => {
       if (id.endsWith('/index')) id = id.slice(0, -6);
       return id.normalize();
     }
-    assert.equal(generatedToEffectiveRoute('guide/index.md'), 'guide');
-    assert.equal(generatedToEffectiveRoute('GUIDE/INDEX.md'.toLowerCase().replace(/_/g, '-')), 'guide');
-    assert.equal(generatedToEffectiveRoute('index.md'), '');
-    assert.equal(generatedToEffectiveRoute('benchmarks/index.md'), 'benchmarks');
-    assert.equal(generatedToEffectiveRoute('configuration.md'), 'configuration');
+    assert.equal(generatedToEffectiveRoute('docs/guide/index.md'), 'docs/guide');
+    assert.equal(generatedToEffectiveRoute('docs/index.md'), 'docs');
+    assert.equal(generatedToEffectiveRoute('docs/benchmarks/index.md'), 'docs/benchmarks');
+    assert.equal(generatedToEffectiveRoute('docs/configuration.md'), 'docs/configuration');
     // Repeated trailing INDEX: exactly one strip per stage, not strip-all.
-    // GUIDE/INDEX/INDEX.md -> Astro `guide/index` -> Starlight `guide`.
-    assert.equal(generatedToEffectiveRoute('guide/index/index.md'), 'guide');
-    // GUIDE/INDEX/INDEX/INDEX.md -> Astro `guide/index/index` -> Starlight `guide/index`.
-    assert.equal(generatedToEffectiveRoute('guide/index/index/index.md'), 'guide/index');
-    // Root parity: INDEX/INDEX.md also claims `/` like INDEX.md.
-    assert.equal(generatedToEffectiveRoute('index/index.md'), '');
+    assert.equal(generatedToEffectiveRoute('docs/guide/index/index.md'), 'docs/guide');
+    assert.equal(generatedToEffectiveRoute('docs/guide/index/index/index.md'), 'docs/guide/index');
+    assert.equal(generatedToEffectiveRoute('docs/index/index.md'), 'docs');
     // Unicode: composed vs decomposed converge only after `.normalize()`.
-    assert.equal(generatedToEffectiveRoute('café.md'), 'café');
-    assert.equal(generatedToEffectiveRoute('café.md'), 'café');
-    assert.equal(generatedToEffectiveRoute('café.md'), generatedToEffectiveRoute('café.md'));
-    // Generator matches the installed loader exactly for these shapes.
-    for (const g of [
-      'guide/index.md',
-      'guide/index/index.md',
-      'guide/index/index/index.md',
-      'index.md',
-      'index/index.md',
-      'benchmarks/index.md',
-      'configuration.md',
-      'café.md',
-      'café.md',
-    ]) {
+    assert.equal(generatedToEffectiveRoute('docs/café.md'), 'docs/café');
+    assert.equal(generatedToEffectiveRoute('docs/café.md'), 'docs/café');
+    assert.equal(generatedToEffectiveRoute('docs/café.md'), generatedToEffectiveRoute('docs/café.md'));
+    for (const g of ['docs/guide/index.md', 'docs/guide/index/index.md', 'docs/guide/index/index/index.md', 'docs/index.md', 'docs/index/index.md', 'docs/benchmarks/index.md', 'docs/configuration.md', 'docs/café.md', 'docs/café.md']) {
       assert.equal(generatedToEffectiveRoute(g), installedEffective(g));
     }
-    assert.equal(canonicalToEffectiveRoute('GUIDE/INDEX.md'), 'guide');
-    assert.equal(canonicalToEffectiveRoute('GUIDE.md'), 'guide');
-    assert.equal(canonicalToRoute('GUIDE/INDEX.md'), 'guide');
-    assert.equal(canonicalToEffectiveRoute('GUIDE/INDEX/INDEX.md'), 'guide');
-    assert.equal(canonicalToEffectiveRoute('GUIDE/INDEX/INDEX/INDEX.md'), 'guide/index');
+    assert.equal(canonicalToEffectiveRoute('GUIDE/INDEX.md'), 'docs/guide');
+    assert.equal(canonicalToEffectiveRoute('GUIDE.md'), 'docs/guide');
+    assert.equal(canonicalToRoute('GUIDE/INDEX.md'), 'docs/guide');
+    assert.equal(canonicalToEffectiveRoute('GUIDE/INDEX/INDEX.md'), 'docs/guide');
+    assert.equal(canonicalToEffectiveRoute('GUIDE/INDEX/INDEX/INDEX.md'), 'docs/guide/index');
   });
 });
 
@@ -722,7 +691,7 @@ describe('nested INDEX link routing (temp fixture)', () => {
   let generatedRoot = '';
   let publicRoot = '';
   beforeEach(async () => {
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'docs-site-nested-index-'));
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-nested-index-'));
     canonicalRoot = path.join(tmp, 'docs');
     generatedRoot = path.join(tmp, 'out', 'docs');
     publicRoot = path.join(tmp, 'out', 'public');
@@ -732,21 +701,20 @@ describe('nested INDEX link routing (temp fixture)', () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it('links to GUIDE/INDEX.md use effective /guide/ (file stays nested)', async () => {
+  it('links to GUIDE/INDEX.md use effective /docs/guide/', async () => {
     await fs.writeFile(path.join(canonicalRoot, 'GUIDE', 'INDEX.md'), '# Nested Guide\n\nBody.\n');
     await fs.writeFile(
       path.join(canonicalRoot, 'CONFIGURATION.md'),
       '# Config\n\nSee [nested](GUIDE/INDEX.md) and [frag](GUIDE/INDEX.md#section).\n',
     );
     await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
-    // Output file keeps nested index.md path (one page per source file).
-    const nestedOut = await fs.readFile(path.join(generatedRoot, 'guide', 'index.md'), 'utf8');
+    const nestedOut = await fs.readFile(path.join(generatedRoot, 'docs', 'guide', 'index.md'), 'utf8');
     assert.ok(matter(nestedOut).data.title.includes('Nested Guide'));
     // Internal links use the effective Starlight route, not guide/index.
-    const configOut = await fs.readFile(path.join(generatedRoot, 'configuration.md'), 'utf8');
-    assert.ok(configOut.includes('/hyprwhspr/guide/'));
-    assert.ok(configOut.includes('/hyprwhspr/guide/#section'));
-    assert.ok(!configOut.includes('/hyprwhspr/guide/index/'));
+    const configOut = await fs.readFile(path.join(generatedRoot, 'docs', 'configuration.md'), 'utf8');
+    assert.ok(configOut.includes('/hyprwhspr/docs/guide/'));
+    assert.ok(configOut.includes('/hyprwhspr/docs/guide/#section'));
+    assert.ok(!configOut.includes('/hyprwhspr/docs/guide/index/'));
   });
 });
 
@@ -756,7 +724,7 @@ describe('effective-route collisions (before any writes)', () => {
   let generatedRoot = '';
   let publicRoot = '';
   beforeEach(async () => {
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'docs-site-effective-collision-'));
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-effective-collision-'));
     canonicalRoot = path.join(tmp, 'docs');
     generatedRoot = path.join(tmp, 'out', 'docs');
     publicRoot = path.join(tmp, 'out', 'public');
@@ -766,16 +734,16 @@ describe('effective-route collisions (before any writes)', () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it('rejects GUIDE.md vs GUIDE/INDEX.md (same effective guide)', async () => {
+  it('rejects GUIDE.md vs GUIDE/INDEX.md (same effective docs/guide)', async () => {
     await fs.writeFile(path.join(canonicalRoot, 'GUIDE.md'), '# Guide\n');
     await fs.mkdir(path.join(canonicalRoot, 'GUIDE'), { recursive: true });
     await fs.writeFile(path.join(canonicalRoot, 'GUIDE', 'INDEX.md'), '# Nested\n');
     await assert.rejects(
       generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }),
-      /route-collision.*effective Starlight route "guide"/,
+      /route-collision.*effective Starlight route "docs\/guide"/,
     );
     // No partial writes.
-    for (const rel of ['guide.md', 'guide/index.md']) {
+    for (const rel of ['docs/guide.md', 'docs/guide/index.md']) {
       let exists = true;
       try {
         await fs.stat(path.join(generatedRoot, ...rel.split('/')));
@@ -794,16 +762,16 @@ describe('effective-route collisions (before any writes)', () => {
     );
   });
 
-  it('rejects nested INDEX/INDEX.md vs handwritten root (same effective "/")', async () => {
+  it('rejects nested INDEX/INDEX.md vs handwritten docs landing', async () => {
     await fs.mkdir(path.join(canonicalRoot, 'INDEX'), { recursive: true });
     await fs.writeFile(path.join(canonicalRoot, 'INDEX', 'INDEX.md'), '# Deep Home\n');
     await assert.rejects(
       generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }),
-      /route-collision.*effective Starlight route "\/" \(root\)/,
+      /route-collision.*effective Starlight route "\/docs\/"/,
     );
     let exists = true;
     try {
-      await fs.stat(path.join(generatedRoot, 'index', 'index.md'));
+      await fs.stat(path.join(generatedRoot, 'docs', 'index', 'index.md'));
     } catch {
       exists = false;
     }
@@ -817,7 +785,7 @@ describe('repeated trailing INDEX (temp fixtures)', () => {
   let generatedRoot = '';
   let publicRoot = '';
   beforeEach(async () => {
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'docs-site-repeated-index-'));
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-repeated-index-'));
     canonicalRoot = path.join(tmp, 'docs');
     generatedRoot = path.join(tmp, 'out', 'docs');
     publicRoot = path.join(tmp, 'out', 'public');
@@ -827,7 +795,7 @@ describe('repeated trailing INDEX (temp fixtures)', () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it('links to GUIDE/INDEX/INDEX.md use effective /guide/ (not /guide/index/)', async () => {
+  it('links to GUIDE/INDEX/INDEX.md use effective /docs/guide/', async () => {
     await fs.mkdir(path.join(canonicalRoot, 'GUIDE', 'INDEX'), { recursive: true });
     await fs.writeFile(path.join(canonicalRoot, 'GUIDE', 'INDEX', 'INDEX.md'), '# Deep Guide\n\nBody.\n');
     await fs.writeFile(
@@ -835,16 +803,15 @@ describe('repeated trailing INDEX (temp fixtures)', () => {
       '# Config\n\nSee [deep](GUIDE/INDEX/INDEX.md) and [frag](GUIDE/INDEX/INDEX.md#section).\n',
     );
     await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
-    // Output file keeps the nested path (one page per source file).
-    const deepOut = await fs.readFile(path.join(generatedRoot, 'guide', 'index', 'index.md'), 'utf8');
+    const deepOut = await fs.readFile(path.join(generatedRoot, 'docs', 'guide', 'index', 'index.md'), 'utf8');
     assert.ok(matter(deepOut).data.title.includes('Deep Guide'));
-    const configOut = await fs.readFile(path.join(generatedRoot, 'configuration.md'), 'utf8');
-    assert.ok(configOut.includes('/hyprwhspr/guide/'));
-    assert.ok(configOut.includes('/hyprwhspr/guide/#section'));
-    assert.ok(!configOut.includes('/hyprwhspr/guide/index/'));
+    const configOut = await fs.readFile(path.join(generatedRoot, 'docs', 'configuration.md'), 'utf8');
+    assert.ok(configOut.includes('/hyprwhspr/docs/guide/'));
+    assert.ok(configOut.includes('/hyprwhspr/docs/guide/#section'));
+    assert.ok(!configOut.includes('/hyprwhspr/docs/guide/index/'));
   });
 
-  it('triple INDEX links to /guide/index/ (only one strip per stage)', async () => {
+  it('triple INDEX links to /docs/guide/index/', async () => {
     await fs.mkdir(path.join(canonicalRoot, 'GUIDE', 'INDEX', 'INDEX'), { recursive: true });
     await fs.writeFile(
       path.join(canonicalRoot, 'GUIDE', 'INDEX', 'INDEX', 'INDEX.md'),
@@ -856,23 +823,23 @@ describe('repeated trailing INDEX (temp fixtures)', () => {
     );
     await generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/hyprwhspr' });
     const tripleOut = await fs.readFile(
-      path.join(generatedRoot, 'guide', 'index', 'index', 'index.md'),
+      path.join(generatedRoot, 'docs', 'guide', 'index', 'index', 'index.md'),
       'utf8',
     );
     assert.ok(matter(tripleOut).data.title.includes('Triple Guide'));
-    const configOut = await fs.readFile(path.join(generatedRoot, 'configuration.md'), 'utf8');
-    assert.ok(configOut.includes('/hyprwhspr/guide/index/'));
+    const configOut = await fs.readFile(path.join(generatedRoot, 'docs', 'configuration.md'), 'utf8');
+    assert.ok(configOut.includes('/hyprwhspr/docs/guide/index/'));
   });
 
-  it('rejects GUIDE.md vs GUIDE/INDEX/INDEX.md (same effective guide, no partial writes)', async () => {
+  it('rejects GUIDE.md vs GUIDE/INDEX/INDEX.md (same docs/guide)', async () => {
     await fs.writeFile(path.join(canonicalRoot, 'GUIDE.md'), '# Guide\n');
     await fs.mkdir(path.join(canonicalRoot, 'GUIDE', 'INDEX'), { recursive: true });
     await fs.writeFile(path.join(canonicalRoot, 'GUIDE', 'INDEX', 'INDEX.md'), '# Deep\n');
     await assert.rejects(
       generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }),
-      /route-collision.*effective Starlight route "guide"/,
+      /route-collision.*effective Starlight route "docs\/guide"/,
     );
-    for (const rel of ['guide.md', 'guide/index/index.md']) {
+    for (const rel of ['docs/guide.md', 'docs/guide/index/index.md']) {
       let exists = true;
       try {
         await fs.stat(path.join(generatedRoot, ...rel.split('/')));
@@ -890,7 +857,7 @@ describe('unicode normalization collisions (temp fixtures)', () => {
   let generatedRoot = '';
   let publicRoot = '';
   beforeEach(async () => {
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'docs-site-unicode-collision-'));
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-unicode-collision-'));
     canonicalRoot = path.join(tmp, 'docs');
     generatedRoot = path.join(tmp, 'out', 'docs');
     publicRoot = path.join(tmp, 'out', 'public');
@@ -900,9 +867,8 @@ describe('unicode normalization collisions (temp fixtures)', () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it('rejects composed vs decomposed CAFÉ.md (same effective café, no partial writes)', async () => {
-    // U+00E9 (composed) vs U+0065 U+0301 (decomposed): distinct on disk,
-    // identical after Starlight slugToParam `.normalize()`.
+  it('rejects composed vs decomposed CAFE.md (same docs/cafe)', async () => {
+    // Composed vs decomposed converge after `.normalize()`.
     const composed = 'CAF\u00c9.md';
     const decomposed = 'CAFE\u0301.md';
     assert.notEqual(composed, decomposed);
@@ -911,9 +877,9 @@ describe('unicode normalization collisions (temp fixtures)', () => {
     await fs.writeFile(path.join(canonicalRoot, decomposed), '# Decomposed\n');
     await assert.rejects(
       generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }),
-      /route-collision.*effective Starlight route "caf\u00e9"/,
+      /route-collision.*effective Starlight route "docs\/caf\u00e9"/,
     );
-    for (const rel of ['caf\u00e9.md', 'cafe\u0301.md']) {
+    for (const rel of ['docs/caf\u00e9.md', 'docs/cafe\u0301.md']) {
       let exists = true;
       try {
         await fs.stat(path.join(generatedRoot, ...rel.split('/')));
@@ -931,7 +897,7 @@ describe('frontmatter slug override rejection (before any writes)', () => {
   let generatedRoot = '';
   let publicRoot = '';
   beforeEach(async () => {
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'docs-site-slug-override-'));
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-slug-override-'));
     canonicalRoot = path.join(tmp, 'docs');
     generatedRoot = path.join(tmp, 'out', 'docs');
     publicRoot = path.join(tmp, 'out', 'public');
@@ -952,7 +918,7 @@ describe('frontmatter slug override rejection (before any writes)', () => {
     );
     let exists = true;
     try {
-      await fs.stat(path.join(generatedRoot, 'guide.md'));
+      await fs.stat(path.join(generatedRoot, 'docs', 'guide.md'));
     } catch {
       exists = false;
     }
@@ -967,5 +933,122 @@ describe('frontmatter slug override rejection (before any writes)', () => {
     assert.ok(!Object.hasOwn(fm.data, 'slug'), 'slug must not survive transformation');
     assert.deepEqual(fm.data.sidebar, { order: 1 });
     assert.equal(fm.data.title, 'Guide');
+  });
+});
+
+describe('route versus asset collisions', () => {
+  it('rejects route colliding with mirrored asset path', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-route-asset-'));
+    const canonicalRoot = path.join(tmp, 'docs');
+    const generatedRoot = path.join(tmp, 'out', 'docs');
+    const publicRoot = path.join(tmp, 'out', 'public');
+    await fs.mkdir(canonicalRoot, { recursive: true });
+    await fs.writeFile(path.join(canonicalRoot, 'GUIDE.md'), '# Guide\n');
+    await fs.writeFile(path.join(canonicalRoot, 'guide'), 'asset without extension');
+    try {
+      await assert.rejects(generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }), /route-collision/);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects asset guide/index.html shadowing route docs/guide output', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-asset-html-'));
+    const canonicalRoot = path.join(tmp, 'docs');
+    const generatedRoot = path.join(tmp, 'out', 'docs');
+    const publicRoot = path.join(tmp, 'out', 'public');
+    await fs.mkdir(path.join(canonicalRoot, 'guide'), { recursive: true });
+    await fs.writeFile(path.join(canonicalRoot, 'GUIDE.md'), '# Guide\n');
+    await fs.writeFile(path.join(canonicalRoot, 'guide', 'index.html'), '<html></html>');
+    try {
+      await assert.rejects(
+        generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }),
+        /route-collision.*docs\/guide\/index\.html/,
+      );
+      let exists = true;
+      try {
+        await fs.stat(path.join(generatedRoot, 'docs', 'guide.md'));
+      } catch {
+        exists = false;
+      }
+      assert.equal(exists, false);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects asset index.html shadowing handwritten docs landing', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-asset-landing-'));
+    const canonicalRoot = path.join(tmp, 'docs');
+    const generatedRoot = path.join(tmp, 'out', 'docs');
+    const publicRoot = path.join(tmp, 'out', 'public');
+    await fs.mkdir(canonicalRoot, { recursive: true });
+    await fs.writeFile(path.join(canonicalRoot, 'CONFIGURATION.md'), '# Config\n');
+    await fs.writeFile(path.join(canonicalRoot, 'index.html'), '<html></html>');
+    try {
+      await assert.rejects(
+        generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }),
+        /route-collision.*docs\/index\.html/,
+      );
+      let exists = true;
+      try {
+        await fs.stat(path.join(generatedRoot, 'docs', 'configuration.md'));
+      } catch {
+        exists = false;
+      }
+      assert.equal(exists, false);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('empty-slug and degenerate routes', () => {
+  it('rejects unsluggable !.md claiming docs landing', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-empty-slug-'));
+    const canonicalRoot = path.join(tmp, 'docs');
+    const generatedRoot = path.join(tmp, 'out', 'docs');
+    const publicRoot = path.join(tmp, 'out', 'public');
+    await fs.mkdir(canonicalRoot, { recursive: true });
+    await fs.writeFile(path.join(canonicalRoot, '!.md'), '# Empty\n');
+    try {
+      await assert.rejects(
+        generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }),
+        /route-collision.*\/docs\//,
+      );
+      let exists = true;
+      try {
+        await fs.stat(path.join(generatedRoot, 'docs', '!.md'));
+      } catch {
+        exists = false;
+      }
+      assert.equal(exists, false);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects empty segment route A/!/B.md', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'website-degenerate-'));
+    const canonicalRoot = path.join(tmp, 'docs');
+    const generatedRoot = path.join(tmp, 'out', 'docs');
+    const publicRoot = path.join(tmp, 'out', 'public');
+    await fs.mkdir(path.join(canonicalRoot, 'A', '!'), { recursive: true });
+    await fs.writeFile(path.join(canonicalRoot, 'A', '!', 'B.md'), '# B\n');
+    try {
+      await assert.rejects(
+        generate({ canonicalRoot, generatedRoot, publicDocsRoot: publicRoot, base: '/' }),
+        /route-collision/,
+      );
+      let exists = true;
+      try {
+        await fs.stat(path.join(generatedRoot, 'docs', 'a', '!', 'b.md'));
+      } catch {
+        exists = false;
+      }
+      assert.equal(exists, false);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
   });
 });

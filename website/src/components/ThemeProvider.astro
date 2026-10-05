@@ -1,0 +1,14 @@
+---
+import StockThemeProvider from '@astrojs/starlight/components/ThemeProvider.astro';
+---
+
+{/* First visit defaults to dark; explicit light/dark/Auto respected. */}
+<script is:inline>
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme') === null) {
+      localStorage.setItem('starlight-theme', 'dark');
+    }
+  } catch {}
+</script>
+
+<StockThemeProvider />

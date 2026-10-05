@@ -1,6 +1,5 @@
-// Offline production verification for docs-site/dist.
-// Checks internal href/src resolve, fragments resolve to heading ids,
-// all mirrored canonical assets exist, and Pagefind output was emitted.
+// Offline verification for website/dist with docs at /docs/.
+// Checks links, fragments, assets, marketing, install.sh, pagefind.
 // Usage: node scripts/verify-build.mjs [distDir]
 
 import { promises as fs } from 'node:fs';
@@ -9,9 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { normalizeBase, resolveBase } from './site-base.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DOCS_SITE_DIR = path.resolve(HERE, '..');
-const REPO_ROOT = path.resolve(DOCS_SITE_DIR, '..');
+const WEBSITE_DIR = path.resolve(HERE, '..');
+const REPO_ROOT = path.resolve(WEBSITE_DIR, '..');
 export const CANONICAL_ROOT = path.join(REPO_ROOT, 'docs');
+export const INSTALL_SH = path.join(REPO_ROOT, 'scripts', 'install.sh');
 
 export function compareCodepoints(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -89,23 +89,22 @@ export async function listCanonicalAssetRels(canonicalRoot) {
 }
 
 function urlPathToDistFile(distDir, urlPath) {
-  // urlPath is already stripped of query/fragment, decoded, starting with / or relative.
-  // Returns absolute dist file path or null if not mappable.
   let p = decodeURIComponent(urlPath);
   if (p === '' ) return null;
-  // Directory -> index.html
   if (p.endsWith('/')) return path.join(distDir, ...p.split('/').filter(Boolean), 'index.html');
-  // File with extension -> direct
   if (path.extname(p) !== '') return path.join(distDir, ...p.split('/').filter(Boolean));
-  // Extensionless route -> <route>/index.html
   return path.join(distDir, ...p.split('/').filter(Boolean), 'index.html');
 }
 
 export async function verify(options = {}) {
-  const distDir = options.distDir ?? path.join(DOCS_SITE_DIR, 'dist');
-  const base = normalizeBase(options.base ?? resolveBase()) ?? '/hyprwhspr';
+  const distDir = options.distDir ?? path.join(WEBSITE_DIR, 'dist');
+  const base = normalizeBase(options.base ?? resolveBase()) ?? '/';
   const canonicalRoot = options.canonicalRoot ?? CANONICAL_ROOT;
+  const installSh = options.installSh ?? INSTALL_SH;
   const checkPagefind = options.checkPagefind ?? true;
+  const checkMarketing = options.checkMarketing ?? true;
+  const checkDocsRoutes = options.checkDocsRoutes ?? true;
+  const checkInstallSh = options.checkInstallSh ?? true;
   const errors = [];
   const warnings = [];
   const htmlFiles = await listHtmlFiles(distDir);
@@ -148,9 +147,7 @@ export async function verify(options = {}) {
       let targetFile = null;
       if (urlPath.startsWith('/')) {
         if (base !== '/' && !urlPath.startsWith(basePrefix) && urlPath !== base) {
-          // Absolute URL without the project base is broken under project
-          // Pages (e.g. /favicon.svg instead of /hyprwhspr/favicon.svg).
-          // Hard error for both links and assets — never silently skip.
+          // Absolute URL missing the base prefix is a hard error.
           errors.push(`${relFromDist}: ${kind} ${u} missing base prefix ${base}`);
           continue;
         }
@@ -158,9 +155,6 @@ export async function verify(options = {}) {
         distPath = urlPathToDistFile(distDir, stripped);
         targetFile = distPath;
       } else {
-        // Relative URL in built HTML (e.g. landing page uses base-agnostic
-        // relative links). Resolve against the current file's URL directory,
-        // then map to dist the same way as absolute paths.
         const curUrlDir = `/${path.relative(distDir, path.dirname(f)).split(path.sep).join('/')}/`;
         const merged = path.posix.normalize(path.posix.join(curUrlDir, urlPath));
         targetFile = urlPathToDistFile(distDir, merged);
@@ -182,9 +176,6 @@ export async function verify(options = {}) {
       }
     }
   }
-  // Every mirrored canonical asset must exist in dist (public/docs mirror),
-  // not just a hardcoded sample. Derived from the canonical tree so a deleted
-  // or unmirrored file fails the build.
   let expectedAssets;
   if (options.expectedAssets !== undefined) {
     expectedAssets = options.expectedAssets;
@@ -199,7 +190,58 @@ export async function verify(options = {}) {
       errors.push(`missing dist asset: ${rel}`);
     }
   }
-  // Pagefind emitted (Starlight default search).
+  // Require marketing routes to stay built.
+  if (checkMarketing) {
+    for (const rel of ['index.html', 'privacy/index.html', 'linux-speech-to-text/index.html', 'best-speech-to-text-models/index.html', 'dictation-future-programming/index.html']) {
+      try {
+        await fs.stat(path.join(distDir, ...rel.split('/')));
+      } catch {
+        errors.push(`missing marketing route: ${rel}`);
+      }
+    }
+  }
+  // Require docs routes under /docs/ and forbid unprefixed duplicates.
+  if (checkDocsRoutes) {
+    for (const rel of ['docs/index.html', 'docs/configuration/index.html', 'docs/managed-installation/index.html']) {
+      try {
+        await fs.stat(path.join(distDir, ...rel.split('/')));
+      } catch {
+        errors.push(`missing docs route: ${rel}`);
+      }
+    }
+    try {
+      const entries = await fs.readdir(path.join(canonicalRoot, 'benchmarks'));
+      let found = false;
+      for (const e of entries) {
+        if (e.toLowerCase().endsWith('.md')) {
+          const stem = e.replace(/\.md$/i, '').toLowerCase().replace(/_/g, '-');
+          try {
+            await fs.stat(path.join(distDir, 'docs', 'benchmarks', stem, 'index.html'));
+            found = true;
+          } catch {}
+        }
+      }
+      if (!found) errors.push('missing docs route: docs/benchmarks/<report>/index.html');
+    } catch {
+      errors.push('missing docs route: docs/benchmarks/<report>/index.html');
+    }
+    for (const rel of ['configuration/index.html', 'managed-installation/index.html']) {
+      try {
+        await fs.stat(path.join(distDir, ...rel.split('/')));
+        errors.push(`unprefixed docs route must not exist: ${rel}`);
+      } catch {}
+    }
+  }
+  // Require copied install.sh to match the canonical script byte-for-byte.
+  if (checkInstallSh) {
+    try {
+      const [a, b] = await Promise.all([fs.readFile(path.join(distDir, 'install.sh')), fs.readFile(installSh)]);
+      if (!a.equals(b)) errors.push('install.sh byte mismatch: dist/install.sh differs from scripts/install.sh');
+    } catch {
+      errors.push('missing dist asset: install.sh (expected copy of scripts/install.sh)');
+    }
+  }
+  // Require Pagefind output.
   const pagefindCandidates = ['pagefind/pagefind.js', 'pagefind/pagefind-ui.js', '_pagefind/pagefind.js'];
   let pagefindFound = false;
   for (const c of pagefindCandidates) {
@@ -209,7 +251,7 @@ export async function verify(options = {}) {
       break;
     } catch {}
   }
-  // Also accept any pagefind directory with files.
+  // Accept any non-empty pagefind directory.
   if (!pagefindFound) {
     for (const d of ['pagefind', '_pagefind']) {
       try {
@@ -227,7 +269,7 @@ export async function verify(options = {}) {
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const distDir = process.argv[2] ?? path.join(DOCS_SITE_DIR, 'dist');
+  const distDir = process.argv[2] ?? path.join(WEBSITE_DIR, 'dist');
   verify({ distDir }).then(({ errors, warnings, htmlFiles, base }) => {
     console.log(`verify: ${htmlFiles} html files, base ${base}`);
     for (const w of warnings) console.warn(`verify warning: ${w}`);

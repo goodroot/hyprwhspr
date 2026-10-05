@@ -1,10 +1,7 @@
-/* hyprwhspr docs theme: Tokyo Night, matching the marketing site
-   (website/src/styles/global.css + website/src/pages/index.astro).
-   Only Starlight native tokens (--sl-*) plus a few narrowly scoped selectors.
-   No global reset import: Starlight's own reset/layers must keep working. */
+/* Docs theme: Tokyo Night matching marketing site. */
+/* Only Starlight --sl-* tokens plus scoped selectors. */
 
 :root {
-  /* Marketing palette (dark, default). */
   --hypr-bg: #1a1b26;
   --hypr-bg-alt: #16161e;
   --hypr-surface: #24283b;
@@ -17,12 +14,10 @@
   --hypr-cyan: #7dcfff;
   --hypr-purple: #bb9af7;
 
-  /* Accent: marketing blue, with a lighter high variant for dark-bg text. */
   --sl-color-accent-low: #232a45;
   --sl-color-accent: #7aa2f7;
   --sl-color-accent-high: #b3c6f7;
 
-  /* Grayscale mapped onto Tokyo Night steps. */
   --sl-color-white: #e8eaf6;
   --sl-color-gray-1: #e8eaf6;
   --sl-color-gray-2: #c0caf5;
@@ -32,14 +27,12 @@
   --sl-color-gray-6: #24283b;
   --sl-color-black: #16161e;
 
-  /* Aside/note hues aligned with the marketing accents. */
   --sl-hue-orange: 25;
   --sl-hue-green: 84;
   --sl-hue-blue: 222;
   --sl-hue-purple: 267;
   --sl-hue-red: 350;
 
-  /* Surfaces: page bg, header/sidebar on bg-alt, inline code on surface. */
   --sl-color-text: #c0caf5;
   --sl-color-text-accent: #7aa2f7;
   --sl-color-text-invert: #1a1b26;
@@ -54,17 +47,13 @@
 
   --sl-color-backdrop-overlay: rgba(22, 22, 30, 0.66);
 
-  /* JetBrains Mono by default, as on the marketing site.
-     The font files are hosted locally via @fontsource/jetbrains-mono
-     (see astro.config.mjs customCss); the rest is a local fallback stack. */
   --sl-font: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace,
     SFMono-Regular, Menlo, monospace;
   --sl-font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace,
     SFMono-Regular, Menlo, monospace;
 }
 
-/* Accessible light mode in the same blue/purple family. Links and accents
-   use a darkened blue that keeps >= 4.5:1 contrast on the light background. */
+/* Light mode keeps >= 4.5:1 contrast on light background. */
 :root[data-theme='light'] {
   --sl-color-accent-low: #dfe4fb;
   --sl-color-accent: #2f4fc4;
@@ -95,16 +84,13 @@
   --sl-color-backdrop-overlay: rgba(42, 46, 66, 0.45);
 }
 
-/* Terminal '$ ' motif in front of the header site title. Decorative only:
-   the DOM title, link target, and accessible name are untouched. */
+/* Decorative '$ ' prefix; DOM title and link target untouched. */
 .site-title > span::before {
   content: '$ ';
   color: var(--sl-color-gray-3);
   font-weight: 400;
 }
 
-/* Marketing link behavior: blue, cyan on hover (dark); the light theme
-   deepens both stops to preserve contrast. */
 .sl-markdown-content a:hover {
   color: var(--hypr-cyan, #7dcfff);
 }
@@ -113,8 +99,6 @@
   color: #1e3a9e;
 }
 
-/* Long code lines and wide tables must scroll inside the content column
-   instead of breaking the layout at 390px or overflowing on desktop. */
 .sl-markdown-content pre,
 .sl-markdown-content table {
   max-width: 100%;

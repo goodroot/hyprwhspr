@@ -2,6 +2,11 @@
 dist/
 # copied from ../scripts/install.sh at build time
 public/install.sh
+# generated docs from ../docs (never commit)
+src/content/docs/docs/*.md
+src/content/docs/docs/**/*.md
+src/content/docs/docs/benchmarks/
+public/docs/
 # generated types
 .astro/
 
