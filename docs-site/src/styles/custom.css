@@ -1,7 +1,4 @@
-/* hyprwhspr docs theme: Tokyo Night, matching the marketing site
-   (website/src/styles/global.css + website/src/pages/index.astro).
-   Only Starlight native tokens (--sl-*) plus a few narrowly scoped selectors.
-   No global reset import: Starlight's own reset/layers must keep working. */
+/* Tokyo Night, matching website/. */
 
 :root {
   /* Marketing palette (dark, default). */

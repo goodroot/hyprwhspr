@@ -2,15 +2,10 @@
 import StockThemeProvider from '@astrojs/starlight/components/ThemeProvider.astro';
 ---
 
-{/* Default to dark (marketing match) only on first visit.
-    - localStorage 'starlight-theme' === null means never chosen: seed 'dark'.
-    - 'dark' / 'light' means explicit choice: respect it.
-    - '' means explicit Auto: respect it (stock follows OS + live-updates).
-    Runs before the stock provider script, then defers to stock logic.
-    Blocked storage must not crash the inline script. */}
+{/* Dark on first visit, like hyprwhspr.com; any explicit choice wins. */}
 <script is:inline>
   try {
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme') === null) {
+    if (localStorage.getItem('starlight-theme') === null) {
       localStorage.setItem('starlight-theme', 'dark');
     }
   } catch {}
