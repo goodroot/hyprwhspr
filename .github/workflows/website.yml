@@ -2,10 +2,10 @@ name: Website build
 
 on:
   pull_request:
-    paths: ['website/**', 'scripts/install.sh', '.github/workflows/website.yml']
+    paths: ['website/**', 'docs/**', 'scripts/install.sh', '.github/workflows/website.yml']
   push:
     branches: [main]
-    paths: ['website/**', 'scripts/install.sh', '.github/workflows/website.yml']
+    paths: ['website/**', 'docs/**', 'scripts/install.sh', '.github/workflows/website.yml']
 
 permissions:
   contents: read

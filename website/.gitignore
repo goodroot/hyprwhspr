@@ -2,6 +2,10 @@
 dist/
 # copied from ../scripts/install.sh at build time
 public/install.sh
+# docs synced from ../docs at build time
+src/content/docs/docs/*
+!src/content/docs/docs/index.mdx
+public/docs/
 # generated types
 .astro/
 

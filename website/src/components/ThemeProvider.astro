@@ -1,0 +1,14 @@
+---
+import StockThemeProvider from '@astrojs/starlight/components/ThemeProvider.astro';
+---
+
+{/* Dark on first visit, like hyprwhspr.com; any explicit choice wins. */}
+<script is:inline>
+  try {
+    if (localStorage.getItem('starlight-theme') === null) {
+      localStorage.setItem('starlight-theme', 'dark');
+    }
+  } catch {}
+</script>
+
+<StockThemeProvider />
