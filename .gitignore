@@ -44,9 +44,3 @@ CLAUDE.md
 
 # Local agent worktree / tooling state
 .claude/
-
-# website generated docs (canonical docs pipeline; never commit)
-website/src/content/docs/docs/*.md
-website/src/content/docs/docs/**/*.md
-website/src/content/docs/docs/benchmarks/
-website/public/docs/

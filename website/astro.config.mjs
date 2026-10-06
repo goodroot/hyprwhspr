@@ -15,7 +15,7 @@ export default defineConfig({
       description: 'Configure, install and benchmark hyprwhspr.',
       disable404Route: true,
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/goodroot/hyprwhspr' }],
-      editLink: { baseUrl: 'https://github.com/goodroot/hyprwhspr/edit/main/docs/' },
+      editLink: { baseUrl: 'https://github.com/goodroot/hyprwhspr/edit/main/website/' },
       customCss: ['@fontsource/jetbrains-mono/latin-400.css', '@fontsource/jetbrains-mono/latin-500.css', '@fontsource/jetbrains-mono/latin-600.css', './src/styles/custom.css'],
       expressiveCode: { themes: ['tokyo-night', 'github-light'] },
       components: { ThemeProvider: './src/components/ThemeProvider.astro' },

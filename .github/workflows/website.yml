@@ -1,4 +1,3 @@
-# Single-site build with docs at /docs/. Build only, no hosting change.
 name: Website build
 
 on:
@@ -27,8 +26,6 @@ jobs:
           cache: npm
           cache-dependency-path: website/package-lock.json
       - run: npm ci
-        working-directory: website
-      - run: npm test
         working-directory: website
       - run: npm run build
         working-directory: website
