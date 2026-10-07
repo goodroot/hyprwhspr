@@ -5,7 +5,6 @@ Spawns mic-osd once in daemon mode, then uses SIGUSR1/SIGUSR2 to show/hide.
 This eliminates subprocess spawn latency on each recording.
 """
 
-import glob
 import subprocess
 import signal
 import sys
@@ -128,30 +127,53 @@ class MicOSDRunner:
     
     @staticmethod
     def _layer_shell_ld_preload() -> str:
-        """Resolve the gtk4-layer-shell .so to LD_PRELOAD.
+        """Resolve the gtk4-layer-shell library that the Gtk4LayerShell typelib loads.
 
-        Searches common library paths including lib64 (Fedora/RHEL) and versioned
-        .so files (distros that only ship the unversioned symlink in -devel).
+        The preload must be that exact file. A second copy elsewhere on the
+        system (Ghostty's package, for one, installs /usr/lib/libgtk4-layer-shell.so)
+        keeps its own state, so the typelib's copy never hooks libwayland,
+        init_for_window() fails, and the OSD becomes an ordinary toplevel that
+        takes keyboard focus from the window dictation should paste into.
+
+        The library is loaded lazily, so the probe calls into it before reading
+        its own mappings. It runs in a subprocess to keep GTK out of this process.
+
+        @return Absolute path of the library the typelib loads, or "" when it
+                cannot be resolved (logged; the OSD then runs without the preload).
         """
-        for pattern in [
-            '/usr/lib64/libgtk4-layer-shell.so*',
-            '/usr/lib/libgtk4-layer-shell.so*',
-            '/usr/lib/*/libgtk4-layer-shell.so*',
-            '/usr/local/lib64/libgtk4-layer-shell.so*',
-            '/usr/local/lib/libgtk4-layer-shell.so*',
-        ]:
-            for candidate in sorted(glob.glob(pattern)):
-                resolved = os.path.realpath(candidate)
-                if os.path.isfile(resolved):
-                    return resolved
-        return ""
+        probe = (
+            "import gi; gi.require_version('Gtk4LayerShell', '1.0');"
+            "from gi.repository import Gtk4LayerShell;"
+            "Gtk4LayerShell.get_major_version();"
+            "print(*{line.split(None, 5)[5].strip() for line in open('/proc/self/maps')"
+            " if 'libgtk4-layer-shell' in line}, sep='\\n')"
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable or 'python3', '-c', probe],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"[MIC-OSD] Could not resolve gtk4-layer-shell library: {e}", flush=True)
+            return ""
+        libraries = result.stdout.split()
+        if result.returncode != 0 or len(libraries) != 1:
+            detail = result.stderr.strip().splitlines()[-1:] or libraries
+            print(f"[MIC-OSD] Could not resolve gtk4-layer-shell library: {detail}", flush=True)
+            return ""
+        return libraries[0]
 
     @staticmethod
     def _layer_shell_environment() -> dict:
-        """Build the child-only environment for the selected runtime."""
+        """Build the child-only environment for the selected runtime.
+
+        @return A copy of os.environ with the system gtk4-layer-shell preloaded
+                ahead of any existing LD_PRELOAD, or the bundled runtime's
+                environment when only the bundle is usable.
+        """
         env = os.environ.copy()
-        preload = MicOSDRunner._layer_shell_ld_preload()
         if MicOSDRunner._system_dependencies_available():
+            preload = MicOSDRunner._layer_shell_ld_preload()
             if preload:
                 current = env.get('LD_PRELOAD', '')
                 env['LD_PRELOAD'] = f"{preload} {current}".strip()

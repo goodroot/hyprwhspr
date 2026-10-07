@@ -96,7 +96,7 @@ class VisualizerRuntimeTests(unittest.TestCase):
             self.assertTrue(MicOSDRunner._bundled_dependencies_available())
         run.assert_called_once()
 
-    def test_system_runtime_without_glob_does_not_mix_in_bundle(self):
+    def test_system_runtime_without_preload_does_not_mix_in_bundle(self):
         with (
             mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
             mock.patch.object(MicOSDRunner, "_layer_shell_ld_preload", return_value=""),
@@ -106,6 +106,37 @@ class VisualizerRuntimeTests(unittest.TestCase):
         ):
             self.assertEqual(MicOSDRunner._layer_shell_environment(), {"SYSTEM": "1"})
         bundled.assert_not_called()
+
+    def test_system_runtime_preloads_the_library_the_typelib_loads(self):
+        probe = mock.Mock(
+            returncode=0,
+            stdout="/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0\n",
+            stderr="",
+        )
+        with (
+            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
+            mock.patch.object(runner_module.subprocess, "run", return_value=probe),
+            mock.patch.object(runner_module.os, "environ", {"LD_PRELOAD": "/old.so"}),
+        ):
+            env = MicOSDRunner._layer_shell_environment()
+        self.assertEqual(
+            env["LD_PRELOAD"],
+            "/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0 /old.so",
+        )
+
+    def test_unresolved_or_ambiguous_layer_shell_library_is_not_preloaded(self):
+        cases = {
+            "probe failed": mock.Mock(returncode=1, stdout="", stderr="ValueError: Namespace not available"),
+            "two copies mapped": mock.Mock(returncode=0, stdout="/a/libgtk4-layer-shell.so\n/b/libgtk4-layer-shell.so.0\n", stderr=""),
+        }
+        for name, probe in cases.items():
+            with (
+                self.subTest(name),
+                mock.patch.object(runner_module.subprocess, "run", return_value=probe),
+                mock.patch("builtins.print") as printed,
+            ):
+                self.assertEqual(MicOSDRunner._layer_shell_ld_preload(), "")
+                self.assertIn("Could not resolve gtk4-layer-shell library", printed.call_args.args[0])
 
     def test_download_requires_matching_pinned_checksum(self):
         with tempfile.TemporaryDirectory() as tmp:
