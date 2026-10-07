@@ -33,11 +33,7 @@ except ImportError:
 
 
 class LayerShellResolutionError(RuntimeError):
-    """The gtk4-layer-shell library the typelib loads could not be identified.
-
-    Launching the OSD anyway would leave it without a working layer surface,
-    as an ordinary window that takes keyboard focus, so callers must not start it.
-    """
+    pass
 
 
 class MicOSDRunner:
@@ -144,11 +140,7 @@ class MicOSDRunner:
         takes keyboard focus from the window dictation should paste into.
 
         The library is loaded lazily, so the probe calls into it before reading
-        its own mappings. It runs in a subprocess to keep GTK out of this process.
-
-        @return Absolute path of the library the typelib loads.
-        @throws LayerShellResolutionError if the probe fails, times out, or finds
-                zero or several mapped copies (e.g. a conflicting LD_PRELOAD).
+        its own mappings.
         """
         probe = (
             "import gi; gi.require_version('Gtk4LayerShell', '1.0');"
@@ -176,13 +168,7 @@ class MicOSDRunner:
 
     @staticmethod
     def _layer_shell_environment() -> dict:
-        """Build the child-only environment for the selected runtime.
-
-        @return A copy of os.environ with the system gtk4-layer-shell preloaded
-                ahead of any existing LD_PRELOAD, or the bundled runtime's
-                environment when only the bundle is usable.
-        @throws LayerShellResolutionError if the system library cannot be resolved.
-        """
+        """Build the child-only environment for the selected runtime."""
         env = os.environ.copy()
         if MicOSDRunner._system_dependencies_available():
             preload = MicOSDRunner._layer_shell_ld_preload()
@@ -266,13 +252,8 @@ class MicOSDRunner:
             return f"gtk4-layer-shell not installed. Install: {layer_pkg}"
         return ""
     
-    def _ensure_daemon(self):
-        """Ensure the daemon process is running.
-
-        @return True when a daemon is running or was started; False when it
-                could not start, including when the layer-shell library is
-                unresolved (the daemon is then deliberately not launched).
-        """
+    def _ensure_daemon(self) -> bool:
+        """Ensure the daemon process is running."""
         # Check in-memory reference first
         if self._process is not None and self._process.poll() is None:
             return True  # Already running
@@ -319,8 +300,6 @@ sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
-        # Set LD_PRELOAD for gtk4-layer-shell. Without the exact library the
-        # overlay would open as a focus-taking window, so do not start it.
         try:
             env = self._layer_shell_environment()
         except LayerShellResolutionError as e:
