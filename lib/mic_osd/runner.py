@@ -142,11 +142,13 @@ class MicOSDRunner:
         takes keyboard focus from the window dictation should paste into.
 
         The library is loaded lazily, so the probe calls into it before reading
-        its own mappings. Only two mapped copies is fatal; a failed probe falls
-        back to the path search rather than disabling the overlay.
+        its own mappings. Inherited layer-shell preloads are dropped so the probe
+        sees only the typelib's copy. A failed probe falls back to the path
+        search rather than disabling the overlay.
         """
-        if MicOSDRunner._layer_shell_preload:
-            return MicOSDRunner._layer_shell_preload
+        cached = MicOSDRunner._layer_shell_preload
+        if cached and os.path.isfile(cached):
+            return cached
         probe = (
             "import gi; gi.require_version('Gtk4LayerShell', '1.0');"
             "from gi.repository import Gtk4LayerShell;"
@@ -154,15 +156,17 @@ class MicOSDRunner:
             "print(*{line.split(None, 5)[5].strip() for line in open('/proc/self/maps')"
             " if 'libgtk4-layer-shell' in line}, sep='\\n')"
         )
+        env = os.environ.copy()
+        env['LD_PRELOAD'] = MicOSDRunner._without_layer_shell_preload(env.get('LD_PRELOAD', ''))
         try:
             result = subprocess.run(
                 [sys.executable or 'python3', '-c', probe],
-                capture_output=True, text=True, timeout=5,
+                env=env, capture_output=True, text=True, errors='replace', timeout=5,
             )
         except (OSError, subprocess.SubprocessError) as e:
             print(f"[MIC-OSD] layer-shell library probe failed: {e}", flush=True)
             return MicOSDRunner._layer_shell_path_search()
-        libraries = result.stdout.splitlines()
+        libraries = [line for line in result.stdout.splitlines() if line.strip()]
         if result.returncode != 0 or not libraries:
             detail = (result.stderr.strip().splitlines() or ['no library mapped'])[-1]
             print(f"[MIC-OSD] layer-shell library probe failed: {detail}", flush=True)
@@ -173,6 +177,12 @@ class MicOSDRunner:
             )
         MicOSDRunner._layer_shell_preload = libraries[0]
         return libraries[0]
+
+    @staticmethod
+    def _without_layer_shell_preload(value: str) -> str:
+        """Drop gtk4-layer-shell entries from an LD_PRELOAD value."""
+        entries = value.replace(':', ' ').split()
+        return ' '.join(e for e in entries if 'libgtk4-layer-shell' not in os.path.basename(e))
 
     @staticmethod
     def _layer_shell_path_search() -> str:
@@ -197,7 +207,7 @@ class MicOSDRunner:
         if MicOSDRunner._system_dependencies_available():
             preload = MicOSDRunner._layer_shell_ld_preload()
             if preload:
-                current = env.get('LD_PRELOAD', '')
+                current = MicOSDRunner._without_layer_shell_preload(env.get('LD_PRELOAD', ''))
                 env['LD_PRELOAD'] = f"{preload} {current}".strip()
         elif visualizer_runtime.is_complete():
             env = visualizer_runtime.bundled_environment(env)

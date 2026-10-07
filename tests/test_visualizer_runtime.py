@@ -132,11 +132,37 @@ class VisualizerRuntimeTests(unittest.TestCase):
         probe = mock.Mock(returncode=0, stdout="/usr/lib/libgtk4-layer-shell.so.1.3.0\n", stderr="")
         with (
             mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
+            mock.patch.object(runner_module.os.path, "isfile", return_value=True),
             mock.patch.object(runner_module.subprocess, "run", return_value=probe) as run,
         ):
             for _ in range(2):
                 self.assertEqual(MicOSDRunner._layer_shell_ld_preload(), "/usr/lib/libgtk4-layer-shell.so.1.3.0")
         run.assert_called_once()
+
+    def test_cached_layer_shell_library_is_reprobed_once_removed(self):
+        probe = mock.Mock(returncode=0, stdout="/usr/lib/libgtk4-layer-shell.so.1.4.0\n", stderr="")
+        with (
+            mock.patch.object(MicOSDRunner, "_layer_shell_preload", "/usr/lib/libgtk4-layer-shell.so.1.3.0"),
+            mock.patch.object(runner_module.os.path, "isfile", return_value=False),
+            mock.patch.object(runner_module.subprocess, "run", return_value=probe),
+        ):
+            self.assertEqual(MicOSDRunner._layer_shell_ld_preload(), "/usr/lib/libgtk4-layer-shell.so.1.4.0")
+
+    def test_inherited_layer_shell_preload_is_replaced(self):
+        probe = mock.Mock(returncode=0, stdout="/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0\n", stderr="")
+        inherited = {"LD_PRELOAD": "/usr/lib/libgtk4-layer-shell.so:/old.so"}
+        with (
+            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
+            mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
+            mock.patch.object(runner_module.subprocess, "run", return_value=probe) as run,
+            mock.patch.object(runner_module.os, "environ", inherited),
+        ):
+            env = MicOSDRunner._layer_shell_environment()
+        self.assertEqual(run.call_args.kwargs["env"]["LD_PRELOAD"], "/old.so")
+        self.assertEqual(
+            env["LD_PRELOAD"],
+            "/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0 /old.so",
+        )
 
     def test_ambiguous_layer_shell_library_raises(self):
         probe = mock.Mock(returncode=0, stdout="/a/libgtk4-layer-shell.so\n/b/libgtk4-layer-shell.so.0\n", stderr="")
@@ -151,7 +177,7 @@ class VisualizerRuntimeTests(unittest.TestCase):
     def test_failed_layer_shell_probe_falls_back_to_path_search(self):
         cases = {
             "probe failed": {"return_value": mock.Mock(returncode=1, stdout="", stderr="ValueError: Namespace not available")},
-            "nothing mapped": {"return_value": mock.Mock(returncode=0, stdout="", stderr="")},
+            "nothing mapped": {"return_value": mock.Mock(returncode=0, stdout="\n", stderr="")},
             "probe timed out": {"side_effect": runner_module.subprocess.TimeoutExpired("python3", 5)},
         }
         for name, run in cases.items():
