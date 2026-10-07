@@ -430,8 +430,13 @@ class RecordingMixin:
         """Start this recording's live typing when eligible."""
         self._cancel_live_typing()  # a start that never finished may have left one
         if self._live_typing_eligible():
-            self._live_typing = LiveTypingSession(
-                self.text_injector, self.config.get_hallucination_markers())
+            try:
+                self._live_typing = LiveTypingSession(
+                    self.text_injector, self.config.get_hallucination_markers())
+            except RuntimeError as e:
+                # The previous dictation is still pasting: this one records
+                # anyway and is delivered whole at stop.
+                log(f"[LIVE] Live typing off for this recording: {e}")
 
     def _on_live_text(self, committed, tail):
         """Realtime live-text listener (receiver thread)."""

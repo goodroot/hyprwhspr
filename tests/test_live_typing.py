@@ -715,6 +715,26 @@ class RecordingLifecycleTests(unittest.TestCase):
         app._inject_text.assert_not_called()  # a phantom: dropped like any other
         app.audio_manager.play_error_sound.assert_called_once()
 
+    def test_busy_delivery_records_without_live_typing(self):
+        app = self._app()
+        injector = make_injector()
+        app.text_injector = injector
+        held, release = threading.Event(), threading.Event()
+
+        def paste():  # the previous dictation is still pasting
+            with injector._delivery_lock:
+                held.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=paste)
+        worker.start()
+        self.addCleanup(worker.join)
+        self.addCleanup(release.set)
+        held.wait(5)
+        app._open_live_typing()
+        self.assertIsNone(app._live_typing)
+        self.assertFalse(injector.stream_busy())
+
     def test_cleanup_cancels_live_typing(self):
         app = self._app()
         app._live_typing = session = mock.Mock()
