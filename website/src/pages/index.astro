@@ -62,6 +62,9 @@ import "../styles/global.css";
                         <a class="btn btn-secondary" href="/#install">
                             Quick install
                         </a>
+                        <a class="btn btn-secondary" href="/docs/">
+                            Read the docs
+                        </a>
                     </div>
 
                     <OSD />
@@ -429,6 +432,10 @@ import "../styles/global.css";
                             </div>
                         </div>
                     </div>
+
+                    <p class="install-next">
+                        First dictation, updates and what's next: <a href="/docs/quick-start/">quick start guide →</a>
+                    </p>
                 </div>
             </section>
 
@@ -966,6 +973,15 @@ import "../styles/global.css";
         letter-spacing: 0.1em;
         color: var(--comment);
         text-transform: uppercase;
+    }
+
+    .install-next {
+        font-size: 0.82rem;
+        color: var(--fg-dim);
+    }
+
+    .install-next a {
+        color: var(--blue);
     }
 
     .install-after {
