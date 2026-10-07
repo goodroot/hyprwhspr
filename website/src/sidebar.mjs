@@ -1,7 +1,7 @@
 // Docs sidebar, by slug under /docs/. scripts/sync-docs.mjs fails the build
 // when a page in ../docs is missing here.
 export const sidebar = [
-  { label: 'Start', items: ['docs', 'docs/configuration'] },
+  { label: 'Start', items: ['docs', 'docs/quick-start', 'docs/configuration'] },
   {
     label: 'Use',
     items: [
