@@ -23,6 +23,9 @@
   "overrides": {
     "esbuild": "0.28.2",
     "svgo": "^4.1.0",
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "postcss-nested": {
+      "postcss-selector-parser": "^7.1.6"
+    }
   }
 }
