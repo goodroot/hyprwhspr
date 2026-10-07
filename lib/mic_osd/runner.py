@@ -32,6 +32,14 @@ except ImportError:
     from src import visualizer_runtime
 
 
+class LayerShellResolutionError(RuntimeError):
+    """The gtk4-layer-shell library the typelib loads could not be identified.
+
+    Launching the OSD anyway would leave it without a working layer surface,
+    as an ordinary window that takes keyboard focus, so callers must not start it.
+    """
+
+
 class MicOSDRunner:
     """
     Daemon-based runner for the mic-osd overlay.
@@ -138,8 +146,9 @@ class MicOSDRunner:
         The library is loaded lazily, so the probe calls into it before reading
         its own mappings. It runs in a subprocess to keep GTK out of this process.
 
-        @return Absolute path of the library the typelib loads, or "" when it
-                cannot be resolved (logged; the OSD then runs without the preload).
+        @return Absolute path of the library the typelib loads.
+        @throws LayerShellResolutionError if the probe fails, times out, or finds
+                zero or several mapped copies (e.g. a conflicting LD_PRELOAD).
         """
         probe = (
             "import gi; gi.require_version('Gtk4LayerShell', '1.0');"
@@ -154,13 +163,15 @@ class MicOSDRunner:
                 capture_output=True, text=True, timeout=5,
             )
         except (OSError, subprocess.SubprocessError) as e:
-            print(f"[MIC-OSD] Could not resolve gtk4-layer-shell library: {e}", flush=True)
-            return ""
+            raise LayerShellResolutionError(f"layer-shell library probe failed: {e}") from e
         libraries = result.stdout.split()
-        if result.returncode != 0 or len(libraries) != 1:
-            detail = result.stderr.strip().splitlines()[-1:] or libraries
-            print(f"[MIC-OSD] Could not resolve gtk4-layer-shell library: {detail}", flush=True)
-            return ""
+        if result.returncode != 0:
+            detail = result.stderr.strip().splitlines()[-1:]
+            raise LayerShellResolutionError(f"layer-shell library probe failed: {detail}")
+        if len(libraries) != 1:
+            raise LayerShellResolutionError(
+                f"expected one mapped gtk4-layer-shell library, found {libraries}"
+            )
         return libraries[0]
 
     @staticmethod
@@ -170,13 +181,13 @@ class MicOSDRunner:
         @return A copy of os.environ with the system gtk4-layer-shell preloaded
                 ahead of any existing LD_PRELOAD, or the bundled runtime's
                 environment when only the bundle is usable.
+        @throws LayerShellResolutionError if the system library cannot be resolved.
         """
         env = os.environ.copy()
         if MicOSDRunner._system_dependencies_available():
             preload = MicOSDRunner._layer_shell_ld_preload()
-            if preload:
-                current = env.get('LD_PRELOAD', '')
-                env['LD_PRELOAD'] = f"{preload} {current}".strip()
+            current = env.get('LD_PRELOAD', '')
+            env['LD_PRELOAD'] = f"{preload} {current}".strip()
         elif visualizer_runtime.is_complete():
             env = visualizer_runtime.bundled_environment(env)
         return env
@@ -196,7 +207,11 @@ class MicOSDRunner:
             "Gtk.init();"
             "print('1' if Gtk4LayerShell.is_supported() else '0')"
         )
-        env = MicOSDRunner._layer_shell_environment()
+        try:
+            env = MicOSDRunner._layer_shell_environment()
+        except LayerShellResolutionError as e:
+            print(f"[MIC-OSD] Layer shell unusable: {e}", flush=True)
+            return False
         try:
             result = subprocess.run(
                 [sys.executable or 'python3', '-c', probe],
@@ -252,7 +267,12 @@ class MicOSDRunner:
         return ""
     
     def _ensure_daemon(self):
-        """Ensure the daemon process is running."""
+        """Ensure the daemon process is running.
+
+        @return True when a daemon is running or was started; False when it
+                could not start, including when the layer-shell library is
+                unresolved (the daemon is then deliberately not launched).
+        """
         # Check in-memory reference first
         if self._process is not None and self._process.poll() is None:
             return True  # Already running
@@ -299,8 +319,13 @@ sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
-        # Set LD_PRELOAD for gtk4-layer-shell.
-        env = self._layer_shell_environment()
+        # Set LD_PRELOAD for gtk4-layer-shell. Without the exact library the
+        # overlay would open as a focus-taking window, so do not start it.
+        try:
+            env = self._layer_shell_environment()
+        except LayerShellResolutionError as e:
+            print(f"[MIC-OSD] Not starting daemon: {e}", flush=True)
+            return False
         env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
 
         try:
