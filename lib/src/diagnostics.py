@@ -62,7 +62,7 @@ def validate_config(path=None):
     for key in raw:
         if key in aliases:
             findings.append(finding('config.deprecated', 'warning', 'A deprecated configuration alias is present.',
-                'Review legacy settings in docs/CONFIGURATION.md.'))
+                'Review legacy settings at https://hyprwhspr.com/docs/.'))
         elif key not in known and not re.fullmatch(r'whisper_prompt_[a-z]{2}', key):
             findings.append(finding('config.unknown', 'warning', 'An unknown configuration key is present (name redacted).'))
     # Validate legacy values before normalization so truthiness cannot hide bad types.
@@ -98,7 +98,7 @@ def validate_config(path=None):
         path_parts = list(error.absolute_path)
         key = path_parts[0] if path_parts and path_parts[0] in known else '[redacted]'
         findings.append(finding('config.schema', 'error', f'Invalid setting: {key} ({error.validator}).',
-            'Check the type and allowed values in docs/CONFIGURATION.md.'))
+            'Check the type and allowed values at https://hyprwhspr.com/docs/.'))
     if raw.get('transcription_backend') in ('local', 'remote', 'amd'):
         findings.append(finding('config.deprecated_backend', 'warning', 'A legacy backend name is present.'))
     if any(f['severity'] == 'error' for f in findings):
