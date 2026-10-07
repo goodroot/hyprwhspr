@@ -33,6 +33,10 @@ except ImportError:
     from src import visualizer_runtime
 
 
+class LayerShellResolutionError(RuntimeError):
+    pass
+
+
 class MicOSDRunner:
     """
     Daemon-based runner for the mic-osd overlay.
@@ -45,6 +49,7 @@ class MicOSDRunner:
     OSD_STYLES = ('waveform', 'vu_meter', 'pill')
     _bundled_availability = None
     _bundled_availability_lock = threading.Lock()
+    _layer_shell_preload = None  # probe-confirmed path; fallbacks aren't cached
 
     def __init__(self, level_source=None, style='waveform'):
         """
@@ -128,11 +133,60 @@ class MicOSDRunner:
     
     @staticmethod
     def _layer_shell_ld_preload() -> str:
-        """Resolve the gtk4-layer-shell .so to LD_PRELOAD.
+        """Resolve the gtk4-layer-shell library that the Gtk4LayerShell typelib loads.
 
-        Searches common library paths including lib64 (Fedora/RHEL) and versioned
-        .so files (distros that only ship the unversioned symlink in -devel).
+        The preload must be that exact file. A second copy elsewhere on the
+        system (Ghostty's package, for one, installs /usr/lib/libgtk4-layer-shell.so)
+        keeps its own state, so the typelib's copy never hooks libwayland,
+        init_for_window() fails, and the OSD becomes an ordinary toplevel that
+        takes keyboard focus from the window dictation should paste into.
+
+        The library is loaded lazily, so the probe calls into it before reading
+        its own mappings. Inherited layer-shell preloads are dropped so the probe
+        sees only the typelib's copy. A failed probe falls back to the path
+        search rather than disabling the overlay.
         """
+        cached = MicOSDRunner._layer_shell_preload
+        if cached and os.path.isfile(cached):
+            return cached
+        probe = (
+            "import gi; gi.require_version('Gtk4LayerShell', '1.0');"
+            "from gi.repository import Gtk4LayerShell;"
+            "Gtk4LayerShell.get_major_version();"
+            "print(*{line.split(None, 5)[5].strip() for line in open('/proc/self/maps')"
+            " if 'libgtk4-layer-shell' in line}, sep='\\n')"
+        )
+        env = os.environ.copy()
+        env['LD_PRELOAD'] = MicOSDRunner._without_layer_shell_preload(env.get('LD_PRELOAD', ''))
+        try:
+            result = subprocess.run(
+                [sys.executable or 'python3', '-c', probe],
+                env=env, capture_output=True, text=True, errors='replace', timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"[MIC-OSD] layer-shell library probe failed: {e}", flush=True)
+            return MicOSDRunner._layer_shell_path_search()
+        libraries = [line for line in result.stdout.splitlines() if line.strip()]
+        if result.returncode != 0 or not libraries:
+            detail = (result.stderr.strip().splitlines() or ['no library mapped'])[-1]
+            print(f"[MIC-OSD] layer-shell library probe failed: {detail}", flush=True)
+            return MicOSDRunner._layer_shell_path_search()
+        if len(libraries) > 1:
+            raise LayerShellResolutionError(
+                f"expected one mapped gtk4-layer-shell library, found {libraries}"
+            )
+        MicOSDRunner._layer_shell_preload = libraries[0]
+        return libraries[0]
+
+    @staticmethod
+    def _without_layer_shell_preload(value: str) -> str:
+        """Drop gtk4-layer-shell entries from an LD_PRELOAD value."""
+        entries = value.replace(':', ' ').split()
+        return ' '.join(e for e in entries if 'libgtk4-layer-shell' not in os.path.basename(e))
+
+    @staticmethod
+    def _layer_shell_path_search() -> str:
+        """Fallback: first gtk4-layer-shell .so in common library paths."""
         for pattern in [
             '/usr/lib64/libgtk4-layer-shell.so*',
             '/usr/lib/libgtk4-layer-shell.so*',
@@ -150,10 +204,10 @@ class MicOSDRunner:
     def _layer_shell_environment() -> dict:
         """Build the child-only environment for the selected runtime."""
         env = os.environ.copy()
-        preload = MicOSDRunner._layer_shell_ld_preload()
         if MicOSDRunner._system_dependencies_available():
+            preload = MicOSDRunner._layer_shell_ld_preload()
             if preload:
-                current = env.get('LD_PRELOAD', '')
+                current = MicOSDRunner._without_layer_shell_preload(env.get('LD_PRELOAD', ''))
                 env['LD_PRELOAD'] = f"{preload} {current}".strip()
         elif visualizer_runtime.is_complete():
             env = visualizer_runtime.bundled_environment(env)
@@ -174,7 +228,11 @@ class MicOSDRunner:
             "Gtk.init();"
             "print('1' if Gtk4LayerShell.is_supported() else '0')"
         )
-        env = MicOSDRunner._layer_shell_environment()
+        try:
+            env = MicOSDRunner._layer_shell_environment()
+        except LayerShellResolutionError as e:
+            print(f"[MIC-OSD] Layer shell unusable: {e}", flush=True)
+            return False
         try:
             result = subprocess.run(
                 [sys.executable or 'python3', '-c', probe],
@@ -229,7 +287,7 @@ class MicOSDRunner:
             return f"gtk4-layer-shell not installed. Install: {layer_pkg}"
         return ""
     
-    def _ensure_daemon(self):
+    def _ensure_daemon(self) -> bool:
         """Ensure the daemon process is running."""
         # Check in-memory reference first
         if self._process is not None and self._process.poll() is None:
@@ -277,8 +335,11 @@ sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
-        # Set LD_PRELOAD for gtk4-layer-shell.
-        env = self._layer_shell_environment()
+        try:
+            env = self._layer_shell_environment()
+        except LayerShellResolutionError as e:
+            print(f"[MIC-OSD] Not starting daemon: {e}", flush=True)
+            return False
         env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
 
         try:
