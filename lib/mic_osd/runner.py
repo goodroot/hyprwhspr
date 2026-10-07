@@ -5,6 +5,7 @@ Spawns mic-osd once in daemon mode, then uses SIGUSR1/SIGUSR2 to show/hide.
 This eliminates subprocess spawn latency on each recording.
 """
 
+import glob
 import subprocess
 import signal
 import sys
@@ -140,7 +141,8 @@ class MicOSDRunner:
         takes keyboard focus from the window dictation should paste into.
 
         The library is loaded lazily, so the probe calls into it before reading
-        its own mappings.
+        its own mappings. Only two mapped copies is fatal; a failed probe falls
+        back to the path search rather than disabling the overlay.
         """
         probe = (
             "import gi; gi.require_version('Gtk4LayerShell', '1.0');"
@@ -155,16 +157,34 @@ class MicOSDRunner:
                 capture_output=True, text=True, timeout=5,
             )
         except (OSError, subprocess.SubprocessError) as e:
-            raise LayerShellResolutionError(f"layer-shell library probe failed: {e}") from e
-        libraries = result.stdout.split()
-        if result.returncode != 0:
-            detail = result.stderr.strip().splitlines()[-1:]
-            raise LayerShellResolutionError(f"layer-shell library probe failed: {detail}")
-        if len(libraries) != 1:
+            print(f"[MIC-OSD] layer-shell library probe failed: {e}", flush=True)
+            return MicOSDRunner._layer_shell_path_search()
+        libraries = result.stdout.splitlines()
+        if result.returncode != 0 or not libraries:
+            detail = (result.stderr.strip().splitlines() or ['no library mapped'])[-1]
+            print(f"[MIC-OSD] layer-shell library probe failed: {detail}", flush=True)
+            return MicOSDRunner._layer_shell_path_search()
+        if len(libraries) > 1:
             raise LayerShellResolutionError(
                 f"expected one mapped gtk4-layer-shell library, found {libraries}"
             )
         return libraries[0]
+
+    @staticmethod
+    def _layer_shell_path_search() -> str:
+        """Fallback: first gtk4-layer-shell .so in common library paths."""
+        for pattern in [
+            '/usr/lib64/libgtk4-layer-shell.so*',
+            '/usr/lib/libgtk4-layer-shell.so*',
+            '/usr/lib/*/libgtk4-layer-shell.so*',
+            '/usr/local/lib64/libgtk4-layer-shell.so*',
+            '/usr/local/lib/libgtk4-layer-shell.so*',
+        ]:
+            for candidate in sorted(glob.glob(pattern)):
+                resolved = os.path.realpath(candidate)
+                if os.path.isfile(resolved):
+                    return resolved
+        return ""
 
     @staticmethod
     def _layer_shell_environment() -> dict:
@@ -172,8 +192,9 @@ class MicOSDRunner:
         env = os.environ.copy()
         if MicOSDRunner._system_dependencies_available():
             preload = MicOSDRunner._layer_shell_ld_preload()
-            current = env.get('LD_PRELOAD', '')
-            env['LD_PRELOAD'] = f"{preload} {current}".strip()
+            if preload:
+                current = env.get('LD_PRELOAD', '')
+                env['LD_PRELOAD'] = f"{preload} {current}".strip()
         elif visualizer_runtime.is_complete():
             env = visualizer_runtime.bundled_environment(env)
         return env

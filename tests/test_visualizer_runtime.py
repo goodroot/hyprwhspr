@@ -127,19 +127,42 @@ class VisualizerRuntimeTests(unittest.TestCase):
             "/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0 /old.so",
         )
 
-    def test_unresolved_or_ambiguous_layer_shell_library_raises(self):
+    def test_ambiguous_layer_shell_library_raises(self):
+        probe = mock.Mock(returncode=0, stdout="/a/libgtk4-layer-shell.so\n/b/libgtk4-layer-shell.so.0\n", stderr="")
+        with (
+            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
+            mock.patch.object(runner_module.subprocess, "run", return_value=probe),
+        ):
+            with self.assertRaises(runner_module.LayerShellResolutionError):
+                MicOSDRunner._layer_shell_environment()
+
+    def test_failed_layer_shell_probe_falls_back_to_path_search(self):
         cases = {
-            "probe failed": mock.Mock(returncode=1, stdout="", stderr="ValueError: Namespace not available"),
-            "two copies mapped": mock.Mock(returncode=0, stdout="/a/libgtk4-layer-shell.so\n/b/libgtk4-layer-shell.so.0\n", stderr=""),
+            "probe failed": {"return_value": mock.Mock(returncode=1, stdout="", stderr="ValueError: Namespace not available")},
+            "nothing mapped": {"return_value": mock.Mock(returncode=0, stdout="", stderr="")},
+            "probe timed out": {"side_effect": runner_module.subprocess.TimeoutExpired("python3", 5)},
         }
-        for name, probe in cases.items():
+        for name, run in cases.items():
             with (
                 self.subTest(name),
                 mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
-                mock.patch.object(runner_module.subprocess, "run", return_value=probe),
+                mock.patch.object(runner_module.subprocess, "run", **run),
+                mock.patch.object(MicOSDRunner, "_layer_shell_path_search", return_value="/usr/lib/libgtk4-layer-shell.so.1.3.0"),
+                mock.patch.object(runner_module.os, "environ", {}),
+                mock.patch("builtins.print"),
             ):
-                with self.assertRaises(runner_module.LayerShellResolutionError):
-                    MicOSDRunner._layer_shell_environment()
+                self.assertEqual(
+                    MicOSDRunner._layer_shell_environment(),
+                    {"LD_PRELOAD": "/usr/lib/libgtk4-layer-shell.so.1.3.0"},
+                )
+
+    def test_no_layer_shell_library_found_leaves_ld_preload_alone(self):
+        with (
+            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
+            mock.patch.object(MicOSDRunner, "_layer_shell_ld_preload", return_value=""),
+            mock.patch.object(runner_module.os, "environ", {"SYSTEM": "1"}),
+        ):
+            self.assertEqual(MicOSDRunner._layer_shell_environment(), {"SYSTEM": "1"})
 
     def test_daemon_is_not_launched_with_an_unresolved_layer_shell_library(self):
         with tempfile.TemporaryDirectory() as tmp:
