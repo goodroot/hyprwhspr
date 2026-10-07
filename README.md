@@ -125,7 +125,7 @@ cd hyprwhspr
 4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
 5. **Bam!** Text appears in active buffer!
 
-> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay -- on Noctalia / Omarchy it auto-matches your live shell theme; on GNOME/Mutter you may need to make additional changes. See [Themed visualizer](docs/CONFIGURATION.md#themed-visualizer) for details.
+> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay -- on Noctalia / Omarchy it auto-matches your live shell theme; on GNOME/Mutter you may need to make additional changes. See [Themed visualizer](docs/usage/FEEDBACK.md#themed-visualizer) for details.
 
 Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose).
 
@@ -169,23 +169,17 @@ Managed release rollout and recovery: [installation guide](docs/MANAGED_INSTALLA
 
 ## Documentation
 
-For full configuration and customization, see the **[Configuration guide](docs/CONFIGURATION.md)**.
+All of it at **[hyprwhspr.com/docs](https://hyprwhspr.com/docs/)**, or here:
 
-- [Minimal configuration](docs/CONFIGURATION.md#minimal-configuration)
-- [Recording modes](docs/CONFIGURATION.md#recording-modes) -- toggle, push-to-talk, auto, continuous, long-form
-- [Custom hotkeys](docs/CONFIGURATION.md#custom-hotkeys) -- key support, secondary shortcuts, Hyprland bindings
-- [Backends](docs/CONFIGURATION.md#backends) -- Cohere Transcribe, Parakeet, Whisper, Qwen3-ASR, REST API, Realtime WebSocket
-- [GPU resource management](docs/CONFIGURATION.md#gpu-resource-management) -- unload/reload model to free VRAM
-- [Audio and visual feedback](docs/CONFIGURATION.md#audio-and-visual-feedback) -- visualizer, audio feedback, ducking
-- [Text processing](docs/CONFIGURATION.md#text-processing) -- word overrides, filler words, symbol replacements
-- [Paste and clipboard behavior](docs/CONFIGURATION.md#paste-and-clipboard-behavior) -- paste mode, per-app paste keys, non-QWERTY, auto-submit
-- [Integrations](docs/CONFIGURATION.md#integrations) -- Waybar, Noctalia, Hyprland bindings, external hotkey systems
-- [Troubleshooting](docs/CONFIGURATION.md#troubleshooting)
+- [Configuration](docs/CONFIGURATION.md) -- the config file, validation, minimal setup
+- [Recording modes](docs/usage/RECORDING_MODES.md) · [Hotkeys](docs/usage/HOTKEYS.md) · [Paste](docs/usage/PASTE.md) · [Text processing](docs/usage/TEXT_PROCESSING.md) · [Feedback](docs/usage/FEEDBACK.md)
+- [Backends](docs/backends/OVERVIEW.md) · [Memory](docs/backends/MEMORY.md) -- which model, and freeing it
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ## Getting help
 
 - **Check logs**: `journalctl --user -u hyprwhspr.service`
-- **[Troubleshooting](docs/CONFIGURATION.md#troubleshooting)** covers common issues
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** covers common issues
 - **Still stuck?** [Create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose) - logs helpful!
 
 ## License

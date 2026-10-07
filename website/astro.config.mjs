@@ -5,6 +5,7 @@ import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import { satteri } from '@astrojs/markdown-satteri';
 import { docsLinks } from './src/docs-links.mjs';
+import { sidebar } from './src/sidebar.mjs';
 
 export default defineConfig({
   site: 'https://hyprwhspr.com',
@@ -19,7 +20,7 @@ export default defineConfig({
       customCss: ['@fontsource/jetbrains-mono/latin-400.css', '@fontsource/jetbrains-mono/latin-500.css', '@fontsource/jetbrains-mono/latin-600.css', './src/styles/custom.css'],
       expressiveCode: { themes: ['tokyo-night', 'github-light'] },
       components: { ThemeProvider: './src/components/ThemeProvider.astro' },
-      sidebar: [{ autogenerate: { directory: 'docs' } }],
+      sidebar,
       plugins: [starlightLinksValidator({ exclude: ({ link }) => link.startsWith('/') && !link.startsWith('/docs/') })],
     }),
   ],

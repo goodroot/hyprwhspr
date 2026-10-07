@@ -16,7 +16,7 @@ This repository is a Linux desktop speech-to-text application supporting Wayland
 - `scripts/`: install/bootstrap sources. `scripts/install.sh` is copied into the website during its build.
 - `tests/`: stdlib `unittest` tests; install dependencies with `python -m pip install -r requirements-test.txt`.
 - `website/`: Astro site (marketing at `/`, docs at `/docs/` via Starlight); edit `src/` and `public/`, not generated `.astro/`, `dist/`, or `node_modules/` content.
-- `docs/`: canonical docs source (one page per `.md`); synced to `website/src/content/docs/docs/` and `public/docs/` at build time, edit `docs/`, not generated output.
+- `docs/`: canonical docs source (one page per `.md`, grouped in `usage/`, `backends/`, `integrations/`); synced to `website/src/content/docs/docs/` and `public/docs/` at build time, edit `docs/`, not generated output. Every page needs an entry in `website/src/sidebar.mjs`; the sync fails without one.
 
 ## Fast workflow
 
@@ -43,7 +43,7 @@ Do not run installers, setup, systemd commands, microphone capture, or model dow
 
 ## Contracts that span files
 
-- New or changed configuration keys must stay aligned across `ConfigManager.default_config`, `share/config.schema.json`, relevant CLI/setup behavior, and `docs/CONFIGURATION.md`. `tests/test_config_schema_sync.py` checks the two machine-readable surfaces.
+- New or changed configuration keys must stay aligned across `ConfigManager.default_config`, `share/config.schema.json`, relevant CLI/setup behavior, and the page in `docs/` that covers the feature. `tests/test_config_schema_sync.py` checks the two machine-readable surfaces.
 - CLI subcommands are routed in both `bin/hyprwhspr` and `lib/main.py`; keep both lists synchronized with `lib/cli.py`.
 - Backend wheel names, versions, build tags (`PYWHISPERCPP_WHEEL_BUILD`), and variants (`cuda12`, `VULKAN_WHEEL_VARIANT`) are defined in `lib/src/backend_installer.py` and consumed by `.github/workflows/build-wheels.yml`; avoid duplicating that contract. Published wheels are never overwritten: to ship a rebuild of the same version, bump `PYWHISPERCPP_WHEEL_BUILD`. The installer only installs a wheel whose SHA-256 matches the release's `SHA256SUMS.txt`. Vulkan wheels are built and checked in `debian:trixie` containers (`.github/scripts/verify_vulkan_wheel.py` on Mesa lavapipe); the installer only downloads them on glibc >= `VULKAN_WHEEL_MIN_GLIBC`, and the build job asserts the wheel stays within it. Every wheel build sets `GGML_NATIVE=OFF` and `GGML_OPENMP=OFF` and rewrites the bundled libraries' runpath to `$ORIGIN`; `tests/test_wheel_pipeline_and_defaults.py` checks this.
 - A GPU pywhispercpp install that falls back to CPU records `installed_backend: cpu`; the service warns about it at start (`_report_cpu_only_build`).

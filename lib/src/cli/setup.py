@@ -1412,7 +1412,7 @@ def setup_command(python_path: Optional[str] = None):
         print("\nNote: Window detection unavailable on this system (no hyprctl, niri session, or xdotool).")
         print("Paste will default to Ctrl+V, which works in most apps but not terminals.")
         print("If a paste ever lands in the wrong place, you can override the key combo")
-        print("with paste_mode — see docs/CONFIGURATION.md (Paste mode).")
+        print("with paste_mode — see docs/usage/PASTE.md.")
 
     print()
 

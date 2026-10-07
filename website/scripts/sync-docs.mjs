@@ -4,6 +4,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { slugPath } from '../src/docs-links.mjs';
+import { sidebarSlugs } from '../src/sidebar.mjs';
 
 const SITE = path.resolve(import.meta.dirname, '..');
 const SOURCE = path.resolve(SITE, '..', 'docs');
@@ -17,6 +18,7 @@ for (const entry of await fs.readdir(PAGES)) {
 await fs.rm(ASSETS, { recursive: true, force: true });
 
 const written = new Set();
+const { pages, dirs } = sidebarSlugs();
 for (const rel of (await fs.readdir(SOURCE, { recursive: true })).sort()) {
   const from = path.join(SOURCE, rel);
   if (!(await fs.stat(from)).isFile()) continue;
@@ -28,6 +30,11 @@ for (const rel of (await fs.readdir(SOURCE, { recursive: true })).sort()) {
   const to = slugPath(name);
   if (to === 'index.md' || written.has(to)) throw new Error(`docs/${name}: collides with another page at ${to}`);
   written.add(to);
+
+  const slug = `docs/${to.slice(0, -3)}`;
+  if (!pages.has(slug) && !dirs.some((dir) => slug.startsWith(dir))) {
+    throw new Error(`docs/${name}: add ${slug} to src/sidebar.mjs`);
+  }
 
   const text = await fs.readFile(from, 'utf8');
   const h1 = text.match(/^# (.+)\n+/);

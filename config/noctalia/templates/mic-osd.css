@@ -1,7 +1,7 @@
 /*
  * hyprwhspr mic-OSD colors, rendered by Noctalia's app-theming engine.
  *
- * Install (see docs/CONFIGURATION.md "Noctalia" section):
+ * Install (see docs/integrations/NOCTALIA.md):
  *   copy to  ~/.config/noctalia/templates/noctwhspr-mic-osd.css
  *   and register as a user template rendering to
  *   ~/.config/hyprwhspr/theme/mic-osd.css

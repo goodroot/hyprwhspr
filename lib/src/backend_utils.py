@@ -178,7 +178,7 @@ def language_name(language):
     return LANGUAGE_NAMES.get(language.strip().lower().replace('_', '-'), language)
 
 # One line per local backend, shown before setup installs it. Keep the facts
-# in step with the model table in docs/CONFIGURATION.md.
+# in step with the model table in docs/backends/OVERVIEW.md.
 BACKEND_SUMMARIES = {
     'onnx-asr': 'Parakeet via ONNX · CPU or NVIDIA · ~1 GB',
     'parakeet-cpp': 'Parakeet.cpp · CPU or Vulkan · ~0.9 GB · experimental',
