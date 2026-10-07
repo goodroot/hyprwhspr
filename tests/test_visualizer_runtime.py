@@ -118,6 +118,7 @@ class VisualizerRuntimeTests(unittest.TestCase):
         )
         with (
             mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
+            mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
             mock.patch.object(runner_module.subprocess, "run", return_value=probe),
             mock.patch.object(runner_module.os, "environ", {"LD_PRELOAD": "/old.so"}),
         ):
@@ -127,10 +128,21 @@ class VisualizerRuntimeTests(unittest.TestCase):
             "/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0 /old.so",
         )
 
+    def test_confirmed_layer_shell_library_is_memoized(self):
+        probe = mock.Mock(returncode=0, stdout="/usr/lib/libgtk4-layer-shell.so.1.3.0\n", stderr="")
+        with (
+            mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
+            mock.patch.object(runner_module.subprocess, "run", return_value=probe) as run,
+        ):
+            for _ in range(2):
+                self.assertEqual(MicOSDRunner._layer_shell_ld_preload(), "/usr/lib/libgtk4-layer-shell.so.1.3.0")
+        run.assert_called_once()
+
     def test_ambiguous_layer_shell_library_raises(self):
         probe = mock.Mock(returncode=0, stdout="/a/libgtk4-layer-shell.so\n/b/libgtk4-layer-shell.so.0\n", stderr="")
         with (
             mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
+            mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
             mock.patch.object(runner_module.subprocess, "run", return_value=probe),
         ):
             with self.assertRaises(runner_module.LayerShellResolutionError):
@@ -146,6 +158,7 @@ class VisualizerRuntimeTests(unittest.TestCase):
             with (
                 self.subTest(name),
                 mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
+                mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
                 mock.patch.object(runner_module.subprocess, "run", **run),
                 mock.patch.object(MicOSDRunner, "_layer_shell_path_search", return_value="/usr/lib/libgtk4-layer-shell.so.1.3.0"),
                 mock.patch.object(runner_module.os, "environ", {}),

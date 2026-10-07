@@ -49,6 +49,7 @@ class MicOSDRunner:
     OSD_STYLES = ('waveform', 'vu_meter', 'pill')
     _bundled_availability = None
     _bundled_availability_lock = threading.Lock()
+    _layer_shell_preload = None  # probe-confirmed path; fallbacks aren't cached
 
     def __init__(self, level_source=None, style='waveform'):
         """
@@ -144,6 +145,8 @@ class MicOSDRunner:
         its own mappings. Only two mapped copies is fatal; a failed probe falls
         back to the path search rather than disabling the overlay.
         """
+        if MicOSDRunner._layer_shell_preload:
+            return MicOSDRunner._layer_shell_preload
         probe = (
             "import gi; gi.require_version('Gtk4LayerShell', '1.0');"
             "from gi.repository import Gtk4LayerShell;"
@@ -168,6 +171,7 @@ class MicOSDRunner:
             raise LayerShellResolutionError(
                 f"expected one mapped gtk4-layer-shell library, found {libraries}"
             )
+        MicOSDRunner._layer_shell_preload = libraries[0]
         return libraries[0]
 
     @staticmethod
