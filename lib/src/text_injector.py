@@ -1307,11 +1307,23 @@ except Exception:
         return None
 
     def _try_wl_copy(self, data: bytes) -> Tuple[bool, Optional[str]]:
-        """Try the Wayland clipboard writer and retain a useful failure detail."""
+        """Try the Wayland clipboard writer and retain a useful failure detail.
+
+        UTF-8 data is offered as plain text. Left to infer the type, wl-copy
+        sniffs the content, and ordinary prose can sniff as something else -- a
+        sentence starting with "From " is application/mbox -- leaving no text
+        type for a terminal or text field to paste.
+        """
         if self._is_x11_session() or not shutil.which("wl-copy"):
             return False, None
+        command = ["wl-copy"]
         try:
-            result = subprocess.run(["wl-copy"], input=data, timeout=2)
+            data.decode("utf-8")
+            command += ["--type", "text/plain;charset=utf-8"]
+        except UnicodeDecodeError:
+            pass  # Binary clipboard contents (images, etc.): let wl-copy infer the type
+        try:
+            result = subprocess.run(command, input=data, timeout=2)
             if result.returncode == 0:
                 return True, None
             return False, f"wl-copy exited with status {result.returncode}"

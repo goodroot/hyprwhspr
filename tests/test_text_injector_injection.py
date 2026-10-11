@@ -118,6 +118,49 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
         fallback.assert_called_once_with("café")
 
+    def test_wayland_clipboard_offers_text_as_plain_text(self):
+        # Sniffed by content, this sentence is application/mbox, which a
+        # terminal will not paste.
+        text = "From what I remember, that was not the right word."
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0)
+        with (
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-copy"),
+            mock.patch("text_injector.subprocess.run", return_value=completed) as run,
+        ):
+            self.assertTrue(injector._copy_text_to_clipboard(text))
+
+        run.assert_called_once_with(
+            ["wl-copy", "--type", "text/plain;charset=utf-8"],
+            input=text.encode(),
+            timeout=2,
+        )
+
+    def test_wayland_restore_offers_utf8_as_text_and_leaves_binary_type_inferred(self):
+        injector = self._injector()
+
+        class ImmediateThread:
+            def __init__(self, target, daemon):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        completed = types.SimpleNamespace(returncode=0)
+        with (
+            mock.patch("text_injector.time.sleep"),
+            mock.patch("text_injector.threading.Thread", ImmediateThread),
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-copy"),
+            mock.patch("text_injector.subprocess.run", return_value=completed) as run,
+        ):
+            injector._restore_clipboard(b"From the saved clipboard", delay=0)
+            injector._restore_clipboard(b"\x89PNG\r\n\x1a\n\x00\xff", delay=0)
+
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["wl-copy", "--type", "text/plain;charset=utf-8"], ["wl-copy"]],
+        )
+
     def test_x11_skips_wayland_clipboard_tools_and_uses_xdotool_chord(self):
         injector = self._injector()
         injector.session_type = "x11"
