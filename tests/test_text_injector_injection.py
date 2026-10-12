@@ -28,6 +28,16 @@ import text_injector
 from tests.text_injector_helpers import ConfigStub, make_injector
 
 
+class ImmediateThread:
+    """Run a restore thread's target inline."""
+
+    def __init__(self, target, daemon):
+        self.target = target
+
+    def start(self):
+        self.target()
+
+
 class TextInjectorInjectionTests(unittest.TestCase):
     def test_clipboard_settle_delay_and_failed_copy(self):
         for value, expected in [(0.15, 0.15), (0.03, 0.03), (0, None),
@@ -100,13 +110,6 @@ class TextInjectorInjectionTests(unittest.TestCase):
     def test_restore_fallback_restores_utf8_but_skips_binary(self):
         injector = self._injector()
 
-        class ImmediateThread:
-            def __init__(self, target, daemon):
-                self.target = target
-
-            def start(self):
-                self.target()
-
         with (
             mock.patch("text_injector.time.sleep"),
             mock.patch("text_injector.threading.Thread", ImmediateThread),
@@ -138,13 +141,6 @@ class TextInjectorInjectionTests(unittest.TestCase):
 
     def test_wayland_restore_offers_utf8_as_text_and_leaves_binary_type_inferred(self):
         injector = self._injector()
-
-        class ImmediateThread:
-            def __init__(self, target, daemon):
-                self.target = target
-
-            def start(self):
-                self.target()
 
         completed = types.SimpleNamespace(returncode=0)
         with (
