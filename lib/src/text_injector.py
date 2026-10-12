@@ -1302,7 +1302,7 @@ except Exception:
             pass
 
     def _save_clipboard(self) -> Optional[bytes]:
-        """Save current clipboard contents. Returns raw bytes or None."""
+        """Save current clipboard contents: ClipboardData (with its type) on Wayland, else bytes or None."""
         if not self._is_x11_session() and shutil.which("wl-paste"):
             try:
                 # Read one type and remember it, so restore offers the same type.
