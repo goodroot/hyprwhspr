@@ -23,7 +23,7 @@ class DictationRecoveryTests(unittest.TestCase):
         clipboard = {'text': b'original'}
         callbacks = []
 
-        def write(data):
+        def write(data, mime_type=None):
             clipboard['text'] = data
             return True, None
 
@@ -124,7 +124,7 @@ class DictationRecoveryTests(unittest.TestCase):
                 raise RuntimeError('test did not release restore')
             return b'retained'
 
-        def write(data):
+        def write(data, mime_type=None):
             writes.append(data)
             return True, None
 

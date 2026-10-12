@@ -78,6 +78,19 @@ class _LazyPyperclip:
 pyperclip = _LazyPyperclip()
 
 
+# Plain-text clipboard types, most preferred first; wl-paste picks these too.
+_PLAIN_TEXT_TYPES = ("text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT")
+
+
+class ClipboardData(bytes):
+    """Saved clipboard bytes plus the type they were read as, if known."""
+
+    def __new__(cls, data: bytes, mime_type: Optional[str] = None):
+        obj = super().__new__(cls, data)
+        obj.mime_type = mime_type
+        return obj
+
+
 POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE = 77
 
 _SPOKEN_REPLACEMENTS = (
@@ -1292,9 +1305,16 @@ except Exception:
         """Save current clipboard contents. Returns raw bytes or None."""
         if not self._is_x11_session() and shutil.which("wl-paste"):
             try:
-                result = subprocess.run(["wl-paste", "--no-newline"], capture_output=True, timeout=2)
-                if result.returncode == 0:
-                    return result.stdout
+                # Read one type and remember it, so restore offers the same type.
+                listed = subprocess.run(["wl-paste", "--list-types"], capture_output=True, timeout=2)
+                offered = listed.stdout.decode("utf-8", "replace").split() if listed.returncode == 0 else []
+                mime_type = next((t for t in _PLAIN_TEXT_TYPES if t in offered), offered[0] if offered else None)
+                if mime_type:
+                    result = subprocess.run(
+                        ["wl-paste", "--no-newline", "--type", mime_type], capture_output=True, timeout=2
+                    )
+                    if result.returncode == 0:
+                        return ClipboardData(result.stdout, mime_type)
             except Exception:
                 pass
         # Fallback: pyperclip (X11 or non-standard Wayland setups)
@@ -1306,22 +1326,21 @@ except Exception:
             pass
         return None
 
-    def _try_wl_copy(self, data: bytes) -> Tuple[bool, Optional[str]]:
-        """Try the Wayland clipboard writer and retain a useful failure detail.
-
-        UTF-8 data is offered as plain text. Left to infer the type, wl-copy
-        sniffs the content, and ordinary prose can sniff as something else -- a
-        sentence starting with "From " is application/mbox -- leaving no text
-        type for a terminal or text field to paste.
-        """
+    def _try_wl_copy(self, data: bytes, mime_type: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+        """Try the Wayland clipboard writer and retain a useful failure detail."""
         if self._is_x11_session() or not shutil.which("wl-copy"):
             return False, None
         command = ["wl-copy"]
-        try:
-            data.decode("utf-8")
-            command += ["--type", "text/plain;charset=utf-8"]
-        except UnicodeDecodeError:
-            pass  # Binary clipboard contents (images, etc.): let wl-copy infer the type
+        if mime_type and mime_type not in _PLAIN_TEXT_TYPES:
+            command += ["--type", mime_type]
+        else:
+            # Name text explicitly: wl-copy's content sniffing reads prose
+            # starting "From " as application/mbox and then offers no text type.
+            try:
+                data.decode("utf-8")
+                command += ["--type", "text/plain;charset=utf-8"]
+            except UnicodeDecodeError:
+                pass  # Binary of unknown type (images, etc.): let wl-copy infer it
         try:
             result = subprocess.run(command, input=data, timeout=2)
             if result.returncode == 0:
@@ -1372,7 +1391,7 @@ except Exception:
                         if current != injected:
                             return
 
-                    restored, wayland_error = self._try_wl_copy(saved)
+                    restored, wayland_error = self._try_wl_copy(saved, getattr(saved, "mime_type", None))
                     if not restored:
                         # Fallback: pyperclip (X11, or wl-copy present but no compositor to
                         # reach). It's text-only; only restore if the saved bytes are valid
