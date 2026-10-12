@@ -19,6 +19,7 @@ from text_injector import (
     preprocess_text,
     _LazyPyperclip,
     _PostTranscriptionHookOutcome,
+    ClipboardData,
 )
 
 
@@ -26,6 +27,16 @@ import keyboard_layout
 import text_injector
 
 from tests.text_injector_helpers import ConfigStub, make_injector
+
+
+class ImmediateThread:
+    """Run a restore thread's target inline."""
+
+    def __init__(self, target, daemon):
+        self.target = target
+
+    def start(self):
+        self.target()
 
 
 class TextInjectorInjectionTests(unittest.TestCase):
@@ -100,13 +111,6 @@ class TextInjectorInjectionTests(unittest.TestCase):
     def test_restore_fallback_restores_utf8_but_skips_binary(self):
         injector = self._injector()
 
-        class ImmediateThread:
-            def __init__(self, target, daemon):
-                self.target = target
-
-            def start(self):
-                self.target()
-
         with (
             mock.patch("text_injector.time.sleep"),
             mock.patch("text_injector.threading.Thread", ImmediateThread),
@@ -117,6 +121,88 @@ class TextInjectorInjectionTests(unittest.TestCase):
             injector._restore_clipboard(b"\xff\x00", delay=0)
 
         fallback.assert_called_once_with("café")
+
+    def test_wayland_clipboard_offers_text_as_plain_text(self):
+        # Sniffed by content, this sentence is application/mbox, which a
+        # terminal will not paste.
+        text = "From what I remember, that was not the right word."
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0)
+        with (
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-copy"),
+            mock.patch("text_injector.subprocess.run", return_value=completed) as run,
+        ):
+            self.assertTrue(injector._copy_text_to_clipboard(text))
+
+        run.assert_called_once_with(
+            ["wl-copy", "--type", "text/plain;charset=utf-8"],
+            input=text.encode(),
+            timeout=2,
+        )
+
+    def test_wayland_restore_offers_utf8_as_text_and_leaves_binary_type_inferred(self):
+        injector = self._injector()
+
+        completed = types.SimpleNamespace(returncode=0)
+        with (
+            mock.patch("text_injector.time.sleep"),
+            mock.patch("text_injector.threading.Thread", ImmediateThread),
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-copy"),
+            mock.patch("text_injector.subprocess.run", return_value=completed) as run,
+        ):
+            injector._restore_clipboard(b"From the saved clipboard", delay=0)
+            injector._restore_clipboard(b"\x89PNG\r\n\x1a\n\x00\xff", delay=0)
+
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["wl-copy", "--type", "text/plain;charset=utf-8"], ["wl-copy"]],
+        )
+
+    def _save_with_offered_types(self, offered):
+        injector = self._injector()
+
+        def run(argv, **kwargs):
+            if argv == ["wl-paste", "--list-types"]:
+                return types.SimpleNamespace(returncode=0, stdout=offered.encode())
+            return types.SimpleNamespace(returncode=0, stdout=b"<svg/>")
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-paste"),
+            mock.patch("text_injector.subprocess.run", side_effect=run) as run_mock,
+        ):
+            saved = injector._save_clipboard()
+        return saved, run_mock.call_args_list[-1].args[0]
+
+    def test_clipboard_save_prefers_plain_text_when_offered(self):
+        saved, read = self._save_with_offered_types("text/html\ntext/plain;charset=utf-8\nUTF8_STRING\n")
+
+        self.assertEqual(read, ["wl-paste", "--no-newline", "--type", "text/plain;charset=utf-8"])
+        self.assertEqual(saved.mime_type, "text/plain;charset=utf-8")
+
+    def test_clipboard_save_records_non_text_type(self):
+        saved, read = self._save_with_offered_types("image/svg+xml\n")
+
+        self.assertEqual(read, ["wl-paste", "--no-newline", "--type", "image/svg+xml"])
+        self.assertEqual(saved, b"<svg/>")
+        self.assertEqual(saved.mime_type, "image/svg+xml")
+
+    def test_wayland_restore_reoffers_saved_type(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0)
+        with (
+            mock.patch("text_injector.time.sleep"),
+            mock.patch("text_injector.threading.Thread", ImmediateThread),
+            mock.patch("text_injector.shutil.which", return_value="/usr/bin/wl-copy"),
+            mock.patch("text_injector.subprocess.run", return_value=completed) as run,
+        ):
+            # UTF-8, but not text: must not be flattened to text/plain.
+            injector._restore_clipboard(ClipboardData(b"<svg/>", "image/svg+xml"), delay=0)
+            injector._restore_clipboard(ClipboardData(b"From the saved clipboard", "text/plain"), delay=0)
+
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["wl-copy", "--type", "image/svg+xml"], ["wl-copy", "--type", "text/plain;charset=utf-8"]],
+        )
 
     def test_x11_skips_wayland_clipboard_tools_and_uses_xdotool_chord(self):
         injector = self._injector()
