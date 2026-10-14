@@ -49,7 +49,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ### Prerequisites
 
-- **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, etc.)
+- **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, NixOS etc.)
 - **Python 3.11-3.14**
 - **Wayland or X11 session** (GNOME, KDE Plasma, Sway, Hyprland, Niri, etc.).
 - **Clipboard/window tools:**
