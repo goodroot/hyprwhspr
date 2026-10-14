@@ -352,14 +352,14 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             log("[ERROR] Audio capture not available!")
             return False
 
-        # Start global shortcuts (unless using Hyprland compositor bindings)
-        use_hypr_bindings = self.config.get_setting("use_hypr_bindings", False)
+        # Start global shortcuts (unless an external binding drives recording)
+        external_bindings = self.config.get_setting("external_bindings", False)
         if self.global_shortcuts:
             if not self.global_shortcuts.start():
                 log("[ERROR] Failed to start global shortcuts!")
                 log("[ERROR] Check permissions: you may need to be in 'input' group")
                 return False
-        elif not use_hypr_bindings:
+        elif not external_bindings:
             log("[ERROR] Global shortcuts not initialized!")
             return False
 
@@ -380,8 +380,8 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                 log("[ERROR] Failed to initialize backend - will retry on next record attempt")
                 self._backend_init_failed = True
 
-        if use_hypr_bindings:
-            log("\n[READY] hyprwhspr ready - using Hyprland compositor bindings")
+        if external_bindings:
+            log("\n[READY] hyprwhspr ready - using external bindings")
         else:
             log("\n[READY] hyprwhspr ready - press shortcut to start dictation")
 

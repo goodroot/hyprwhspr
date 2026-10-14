@@ -4,6 +4,7 @@ import threading
 import time
 
 from global_shortcuts import GlobalShortcuts
+from paths import RECORDING_CONTROL_FILE
 from service_log import log
 
 
@@ -12,12 +13,10 @@ class ShortcutsMixin:
 
     def _setup_global_shortcuts(self):
         """Initialize global keyboard shortcuts"""
-        # Check if using Hyprland compositor bindings instead
-        use_hypr_bindings = self.config.get_setting("use_hypr_bindings", False)
-        if use_hypr_bindings:
-            log("[INFO] Using Hyprland compositor bindings (evdev shortcuts disabled)")
-            log("[INFO] Configure bindings in ~/.config/hypr/hyprland.conf")
-            log("[INFO] Use ~/.config/hyprwhspr/recording_control file API for control")
+        # A compositor or hotkey daemon binding drives recording instead
+        if self.config.get_setting("external_bindings", False):
+            log("[INFO] Using external bindings (evdev shortcuts disabled)")
+            log(f"[INFO] Bind your shortcut to: hyprwhspr record toggle (or write to {RECORDING_CONTROL_FILE})")
             self.global_shortcuts = None
             return
 

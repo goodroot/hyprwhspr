@@ -81,7 +81,7 @@ Extended recording with pause/resume support:
     "long_form_submit_shortcut": "SUPER+ALT+E",  // Required: no default, must be set
     "long_form_temp_limit_mb": 500,              // Optional: max temp storage (default: 500 MB)
     "long_form_auto_save_interval": 300,         // Optional: auto-save interval in seconds (default: 300 = 5 minutes)
-    "use_hypr_bindings": false                   // Optional: set true to use Hyprland compositor bindings
+    "external_bindings": false                   // Optional: set true when compositor bindings drive recording
 }
 ```
 

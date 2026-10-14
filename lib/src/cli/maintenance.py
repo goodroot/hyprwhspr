@@ -831,14 +831,14 @@ def validate_command():
     # re-import here used to fail silently and skip this whole check)
     try:
         config = ConfigManager()
-        use_hypr_bindings = config.get_setting('use_hypr_bindings', False)
+        external_bindings = config.get_setting('external_bindings', False)
         grab_keys = config.get_setting('grab_keys', False)
 
-        if use_hypr_bindings:
-            log_info("ℹ Using Hyprland compositor bindings (evdev disabled)")
+        if external_bindings:
+            log_info("ℹ Using external bindings (evdev disabled)")
             if grab_keys:
-                log_warning("⚠ Warning: use_hypr_bindings=true but grab_keys=true")
-                log_warning("  Recommendation: Set grab_keys=false when using compositor bindings")
+                log_warning("⚠ Warning: external_bindings=true but grab_keys=true")
+                log_warning("  Recommendation: Set grab_keys=false when using external bindings")
     except Exception:
         pass  # Config validation is optional, don't fail if it errors
 

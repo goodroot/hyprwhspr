@@ -17,6 +17,19 @@ from recording_control_server import RecordingControlServer
 SECRET = 'SECRET-private-label-token-user-path'
 
 
+class LegacyConfigTests(unittest.TestCase):
+    def test_hyprland_bindings_key_migrates_to_neutral_name(self):
+        normalized, migrations = diag.normalize_legacy_config({'use_hypr_bindings': True})
+        self.assertEqual(normalized, {'external_bindings': True})
+        self.assertIn("'use_hypr_bindings' -> 'external_bindings'", migrations)
+        # The new key wins; only a disagreement is a migration (saves mirror the alias).
+        normalized, migrations = diag.normalize_legacy_config({'use_hypr_bindings': True, 'external_bindings': False})
+        self.assertEqual(normalized, {'external_bindings': False})
+        self.assertEqual(len(migrations), 1)
+        normalized, migrations = diag.normalize_legacy_config({'use_hypr_bindings': True, 'external_bindings': True})
+        self.assertEqual((normalized, migrations), ({'external_bindings': True}, []))
+
+
 @unittest.skipUnless(importlib.util.find_spec("jsonschema") is not None, "jsonschema is required for schema validation tests")
 class ValidationTests(unittest.TestCase):
     def setUp(self):
@@ -71,7 +84,8 @@ class ValidationTests(unittest.TestCase):
                       {'threads': True}, {'recording_mode': 'invalid'},
                       {'applications': {SECRET: {'auto_paste': 12}}},
                       {'audio_volume': float('nan')}, {'rest_timeout': float('inf')},
-                      {'push_to_talk': 'false'}, {'audio_device': []}):
+                      {'push_to_talk': 'false'}, {'audio_device': []},
+                      {'use_hypr_bindings': 'true'}):
             with self.subTest(value=value):
                 _, findings, _ = self.validate(value)
                 self.assertTrue(any(f['severity'] == 'error' for f in findings))
@@ -79,12 +93,34 @@ class ValidationTests(unittest.TestCase):
 
     def test_legacy_aliases_and_prompts(self):
         config, findings, _ = self.validate({'push_to_talk': True, 'audio_device': 2,
-            'whisper_prompt_de': SECRET, SECRET: SECRET})
+            'use_hypr_bindings': True, 'whisper_prompt_de': SECRET, SECRET: SECRET})
         self.assertEqual(config['recording_mode'], 'push_to_talk')
         self.assertEqual(config['audio_device_id'], 2)
+        self.assertTrue(config['external_bindings'])
+        self.assertNotIn('use_hypr_bindings', config)
         self.assertEqual(sum(f['check_id'] == 'config.unknown' for f in findings), 1)
         self.assertFalse(any(f['severity'] == 'error' for f in findings))
         self.assertNotIn(SECRET, json.dumps(findings))
+
+    def test_ignored_legacy_bindings_key_is_not_an_error(self):
+        config, findings, _ = self.validate({'use_hypr_bindings': 'true', 'external_bindings': False})
+        self.assertFalse(config['external_bindings'])
+        self.assertFalse(any(f['severity'] == 'error' for f in findings))
+
+    def test_conflicting_bindings_keys_warn_without_rewriting(self):
+        for old, new in ((False, True), (True, False)):
+            with self.subTest(old=old, new=new):
+                config, findings, _ = self.validate({
+                    'use_hypr_bindings': old, 'external_bindings': new})
+                self.assertEqual(config['external_bindings'], new)
+                conflicts = [f for f in findings if f['check_id'] == 'config.bindings_conflict']
+                self.assertEqual(len(conflicts), 1)
+                self.assertEqual(conflicts[0]['severity'], 'warning')
+                self.assertIn('takes precedence', conflicts[0]['explanation'])
+        for value in (False, True):
+            _, findings, _ = self.validate({
+                'use_hypr_bindings': value, 'external_bindings': value})
+            self.assertFalse(any(f['check_id'] == 'config.bindings_conflict' for f in findings))
 
     def test_inherited_prompt_finding_survives_other_aliases(self):
         from config_manager import ENGLISH_PROMPT
@@ -145,7 +181,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_compatibility(self):
         _, findings, _ = self.validate({'secondary_language': 'fr', 'grab_keys': True,
-            'use_hypr_bindings': True, 'transcription_backend': 'realtime-ws',
+            'external_bindings': True, 'transcription_backend': 'realtime-ws',
             'websocket_provider': 'openai', 'websocket_model': 'gpt-transcribe',
             'recording_mode': 'continuous', 'realtime_mode': 'converse'})
         ids = {f['check_id'] for f in findings}

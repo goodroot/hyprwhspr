@@ -507,7 +507,7 @@ class GlobalShortcuts:
                         log("[ERROR]   2. Disable key grabbing in config (grab_keys: false)")
                         log(f"[ERROR]   3. Check that your shortcut '{self.primary_key}' uses keys available on your keyboard")
                     else:
-                        log("[ERROR]   2. Or use compositor bindings: set use_hypr_bindings: true and bind the shortcut in Hyprland to write to recording_control (see docs)")
+                        log("[ERROR]   2. Or use compositor bindings: set external_bindings: true and bind the shortcut in your compositor to write to recording_control (see docs)")
                         log(f"[ERROR]   3. Check that your shortcut '{self.primary_key}' uses keys available on your keyboard")
     
     def _parse_key_combination(self, key_string: str) -> Set[int]:
@@ -916,7 +916,7 @@ class GlobalShortcuts:
                 log("No keyboard devices available")
                 return False
             # With grab_keys false, allow starting without any keyboard: shortcut won't work
-            # but recording_control and compositor bindings (use_hypr_bindings) still work
+            # but recording_control and compositor bindings (external_bindings) still work
             log("[INFO] No keyboard access. Shortcut disabled; control recording via CLI (e.g. hyprwhspr record toggle) or recording_control file.")
             self.stop_event.clear()
             self.listener_thread = threading.Thread(target=self._event_loop, daemon=True)

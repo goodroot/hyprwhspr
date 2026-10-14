@@ -1283,13 +1283,13 @@ def setup_command(python_path: Optional[str] = None):
 
         if is_hyprland_session:
             print("\nHyprland session detected.")
-            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=_bool_default(existing_cfg, 'use_hypr_bindings', True))
+            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=_bool_default(existing_cfg, 'external_bindings', True))
         elif hypr_config_exists:
             print(f"\nHyprland configuration detected at: {hypr_config_dir}")
-            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=_bool_default(existing_cfg, 'use_hypr_bindings', True))
+            setup_hyprland_choice = Confirm.ask("Configure Hyprland compositor bindings?", default=_bool_default(existing_cfg, 'external_bindings', True))
         else:
             print("\nHyprland configuration not found.")
-            setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=_bool_default(existing_cfg, 'use_hypr_bindings', False))
+            setup_hyprland_choice = Confirm.ask("Set up Hyprland compositor bindings anyway?", default=_bool_default(existing_cfg, 'external_bindings', False))
     else:
         # Not a Hyprland system - skip this section entirely
         setup_hyprland_choice = False
@@ -1488,7 +1488,7 @@ def setup_command(python_path: Optional[str] = None):
             print("="*60)
             # Update config to use Hyprland bindings
             config = ConfigManager()
-            config.set_setting('use_hypr_bindings', True)
+            config.set_setting('external_bindings', True)
             config.set_setting('grab_keys', False)
             config.save_config()
             log_success("Configuration updated for Hyprland compositor bindings")

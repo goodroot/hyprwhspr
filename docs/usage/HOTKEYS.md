@@ -78,23 +78,23 @@ You can also cancel without a dedicated shortcut:
 # Via CLI
 hyprwhspr record cancel
 
-# Via FIFO directly (useful for Hyprland binds or sxhkd)
+# Via FIFO directly (useful for compositor binds or sxhkd)
 echo cancel > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
-## Hyprland native bindings
+## Compositor bindings
 
-Use Hyprland's compositor bindings instead of evdev keyboard grabbing — sometimes better compatibility with keyboard remappers.
+Let your compositor own the shortcut instead of evdev keyboard grabbing — sometimes better compatibility with keyboard remappers. Works with Hyprland, niri, Sway or any hotkey daemon.
 
 Enable in config (`~/.config/hyprwhspr/config.json`):
 
 ```jsonc
 {
-  "use_hypr_bindings": true
+  "external_bindings": true  // formerly use_hypr_bindings, still read
 }
 ```
 
-Then add bindings to `~/.config/hypr/hyprland.conf`.
+Then bind your keys. The examples below use Hyprland's `~/.config/hypr/hyprland.conf`; elsewhere, bind the same commands.
 
 ### Toggle mode
 

@@ -64,10 +64,10 @@
       "default": false,
       "description": "Exclusive keyboard grab. False is safer; true suppresses shortcut from other apps. Disable for compatibility with keyboard remappers (keyd, kmonad)."
     },
-    "use_hypr_bindings": {
+    "external_bindings": {
       "type": "boolean",
       "default": false,
-      "description": "Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)"
+      "description": "Disable hyprwhspr's keyboard shortcuts; a compositor or hotkey daemon bound to `hyprwhspr record toggle` drives recording instead. Formerly use_hypr_bindings."
     },
     "selected_device_path": {
       "type": ["string", "null"],

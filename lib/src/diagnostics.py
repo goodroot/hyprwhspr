@@ -10,7 +10,8 @@ import subprocess
 import sys
 import time
 
-from config_manager import build_default_config, normalize_legacy_config, expand_env, _ENV_PATTERN
+from config_manager import (build_default_config, normalize_legacy_config, expand_env, _ENV_PATTERN,
+                            LEGACY_BINDINGS_KEY)
 from paths import CONFIG_FILE, DATA_DIR, SOCKET_FILE
 from backend_utils import normalize_backend
 from dependency_plan import PLAN_SPECS, plan_key
@@ -60,7 +61,9 @@ def validate_config(path=None):
     known = schema['properties']
     aliases = {'push_to_talk', 'audio_device', 'shift_paste', 'rest_api_key'}
     for key in raw:
-        if key in aliases:
+        if key == LEGACY_BINDINGS_KEY:
+            pass  # saves mirror it for older releases; not a user error
+        elif key in aliases:
             findings.append(finding('config.deprecated', 'warning', 'A deprecated configuration alias is present.',
                 'Review legacy settings at https://hyprwhspr.com/docs/.'))
         elif key not in known and not re.fullmatch(r'whisper_prompt_[a-z]{2}', key):
@@ -70,6 +73,15 @@ def validate_config(path=None):
         findings.append(finding('config.alias_type', 'error', 'push_to_talk must be a boolean.'))
     if 'audio_device' in raw and not (raw['audio_device'] is None or type(raw['audio_device']) in (str, int)):
         findings.append(finding('config.alias_type', 'error', 'audio_device must be a string, integer or null.'))
+    # Only checked when it is migrated; beside external_bindings it is ignored.
+    if (LEGACY_BINDINGS_KEY in raw and 'external_bindings' not in raw
+            and type(raw[LEGACY_BINDINGS_KEY]) is not bool):
+        findings.append(finding('config.alias_type', 'error', f'{LEGACY_BINDINGS_KEY} must be a boolean.'))
+    if (LEGACY_BINDINGS_KEY in raw and 'external_bindings' in raw
+            and raw[LEGACY_BINDINGS_KEY] != raw['external_bindings']):
+        findings.append(finding('config.bindings_conflict', 'warning',
+            'use_hypr_bindings and external_bindings disagree; external_bindings takes precedence.',
+            'Edit external_bindings and remove use_hypr_bindings. Saving configuration mirrors the new value to the old key.'))
     normalized, migrations = normalize_legacy_config(raw)
     if "'whisper_prompt' -> 'whisper_prompt_en'" in migrations:
         findings.append(finding('config.deprecated_prompt', 'warning',
@@ -105,7 +117,7 @@ def validate_config(path=None):
         return config, findings, False
     if config['secondary_language'] and not config['secondary_shortcut']:
         findings.append(finding('config.secondary_shortcut', 'warning', 'Secondary language has no shortcut.'))
-    if config['use_hypr_bindings'] and config['grab_keys']:
+    if config['external_bindings'] and config['grab_keys']:
         findings.append(finding('config.keyboard', 'warning', 'Compositor bindings bypass keyboard grabbing.'))
     if normalize_backend(config['transcription_backend']) == 'realtime-ws':
         provider, model = config['websocket_provider'], config['websocket_model']
@@ -330,7 +342,7 @@ def build_report():
     available = {name: bool(shutil.which(name)) for name in names}
     for name, present in available.items():
         add('tool.' + name, 'info' if present else 'warning', name + (': executable available.' if present else ': executable absent.'))
-    if not config.get('use_hypr_bindings'):
+    if not config.get('external_bindings'):
         devices = list(Path('/dev/input').glob('event*'))
         add('permissions.keyboard', 'info' if any(os.access(p, os.R_OK) for p in devices) else 'warning',
             'Keyboard input access available.' if any(os.access(p, os.R_OK) for p in devices) else 'Keyboard input access unavailable; compositor shortcuts may still work.')

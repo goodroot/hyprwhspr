@@ -483,7 +483,7 @@ def omarchy_command(args=None):
 
     # Configure Hyprland bindings if requested
     if enable_hypr_bindings:
-        config.set_setting('use_hypr_bindings', True)
+        config.set_setting('external_bindings', True)
         config.set_setting('grab_keys', False)
         log_info("Hyprland compositor bindings enabled")
 

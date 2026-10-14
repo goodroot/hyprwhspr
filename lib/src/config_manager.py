@@ -60,7 +60,7 @@ def build_default_config():
         'silence_timeout': 0,   # Auto-stop after N seconds of silence in toggle/auto/continuous modes; 0 = disabled (arms only after speech)
         'push_to_talk_lock_seconds': 0.0,  # Push-to-talk hold-to-lock: seconds of hold before the recording latches on (hands-free); 0 = disabled
         'grab_keys': False,     # Exclusive keyboard grab (false = safer, true = suppress shortcut from other apps)
-        'use_hypr_bindings': False,  # Use Hyprland compositor bindings instead of evdev (disables GlobalShortcuts)
+        'external_bindings': False,  # A compositor or hotkey daemon drives recording; disables GlobalShortcuts
         'selected_device_path': None,  # Specific keyboard device path (e.g., '/dev/input/event3')
         'selected_device_name': None,  # Specific keyboard device name (e.g., 'USB Keyboard') - takes priority over path if both set
         # Watch for keyboards plugged in after startup (pyudev) and attach
@@ -224,6 +224,12 @@ def build_default_config():
     }
 
 
+# Mirrored on save for one release cycle: older releases read only this key and
+# would otherwise re-enable evdev shortcuts next to compositor bindings after a
+# downgrade. Remove the mirror once that release is out of support.
+LEGACY_BINDINGS_KEY = 'use_hypr_bindings'
+
+
 def normalize_legacy_config(config):
     """Return a normalized copy and migration descriptions; never persist."""
     loaded_config = copy.deepcopy(config)
@@ -247,6 +253,16 @@ def normalize_legacy_config(config):
         loaded_config['audio_device_id'] = loaded_config['audio_device']
         del loaded_config['audio_device']
         migrations.append("'audio_device' -> 'audio_device_id'")
+
+    # The setting predates support for compositors other than Hyprland. Saves
+    # mirror it back (see save_config), so only a disagreement is a migration.
+    if LEGACY_BINDINGS_KEY in loaded_config:
+        legacy = loaded_config.pop(LEGACY_BINDINGS_KEY)
+        if 'external_bindings' not in loaded_config:
+            loaded_config['external_bindings'] = legacy
+            migrations.append(f"'{LEGACY_BINDINGS_KEY}' -> 'external_bindings'")
+        elif loaded_config['external_bindings'] != legacy:
+            migrations.append(f"'{LEGACY_BINDINGS_KEY}' dropped; 'external_bindings' wins")
 
     # Drop an inherited copy of the old English default so it stops
     # being read as a deliberate all-languages prompt
@@ -328,6 +344,8 @@ class ConfigManager:
             for key, value in self.config.items():
                 if key not in self.default_config or self.default_config[key] != value:
                     sparse[key] = value
+            if 'external_bindings' in sparse:
+                sparse[LEGACY_BINDINGS_KEY] = sparse['external_bindings']
             # Serialize beside the destination, then atomically replace it. Writing
             # directly to config.json can truncate the user's only configuration if
             # serialization, disk I/O, or the process fails partway through.
