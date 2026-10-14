@@ -1,7 +1,16 @@
 { lib, python3Packages, fetchFromGitHub, cmake, ninja }:
 let
   installer = builtins.readFile ../lib/src/backend_installer.py;
-  constant = name: builtins.head (builtins.match ".*\n${name} = \"([^\"]+)\".*" installer);
+  # Matching .* over the whole installer exhausts the regex engine's stack
+  # on runners with an 8 MiB limit. Match only the selected assignment line.
+  constant = name:
+    let
+      lines = builtins.filter (lib.hasPrefix "${name} = ") (lib.splitString "\n" installer);
+      value = if builtins.length lines == 1
+        then builtins.match ''${name} = "([^"]+)"'' (builtins.head lines)
+        else null;
+    in if value == null then throw "Expected one quoted ${name} assignment in backend_installer.py"
+      else builtins.head value;
   version = constant "PYWHISPERCPP_VERSION";
   revision = constant "PYWHISPERCPP_PINNED_COMMIT";
 in

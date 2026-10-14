@@ -22,5 +22,8 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - run: nix flake check --no-update-lock-file --print-build-logs
+      - name: Check flake with an 8 MiB stack
+        run: |
+          ulimit -s 8192
+          nix flake check --no-update-lock-file --print-build-logs
       - run: nix build --no-update-lock-file --no-link
