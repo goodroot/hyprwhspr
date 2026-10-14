@@ -268,6 +268,38 @@ class SnapshotTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_nix_checks_packaged_python_and_reports_unsupported_backend(self):
+        config = diag.build_default_config()
+        config['transcription_backend'] = 'nvidia'
+        calls = []
+
+        def probe(args):
+            calls.append(args)
+            if '-c' in args:
+                modules = args[3:]
+                return SimpleNamespace(stdout=json.dumps({'python': [3, 13, 0],
+                    'modules': {name: True for name in modules},
+                    'metadata': {name: True for name in modules}}), returncode=0)
+            return SimpleNamespace(stdout='', stderr='', returncode=1)
+
+        with mock.patch.dict('os.environ', {'HYPRWHSPR_INSTALL_METHOD': 'nix',
+                                          'HYPRWHSPR_BACKEND_ENV': '/nix/store/test-python'}), \
+                mock.patch.object(diag, 'validate_config', return_value=(config, [], False)), \
+                mock.patch.object(diag.Probes, 'run', side_effect=probe), \
+                mock.patch.object(diag.Probes, 'live', return_value=None), \
+                mock.patch.object(diag.shutil, 'which', return_value=None), \
+                mock.patch.object(diag.Path, 'glob', return_value=[]):
+            report, _ = diag.build_report()
+        self.assertEqual(calls[0][0], '/nix/store/test-python/bin/python')
+        errors = [f for f in report['findings'] if f['check_id'] == 'dependency.backend']
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]['severity'], 'error')
+        self.assertIn('config edit', errors[0]['next_step'])
+        # A rebuild cannot add an unsupported backend's modules; none are probed.
+        self.assertEqual(calls[0][3:], [])
+        self.assertFalse([f for f in report['findings'] if f['check_id'].startswith('dependency.')
+                          and f['check_id'] != 'dependency.backend'])
+
     def test_cloud_report_privacy_in_both_formats(self):
         config = diag.build_default_config()
         config.update(transcription_backend='rest-api', rest_api_key=SECRET,

@@ -17,6 +17,11 @@ except ImportError:
     from config_manager import ConfigManager
 
 try:
+    from ..installation import tray_command as stable_tray_command
+except ImportError:
+    from installation import tray_command as stable_tray_command
+
+try:
     from ..paths import CONFIG_FILE
 except ImportError:
     from paths import CONFIG_FILE
@@ -94,12 +99,13 @@ def _edit_hyprland_bindings() -> bool:
         True if bindings were added successfully, False otherwise
     """
     hypr_config_dir = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config')) / 'hypr'
-    tray_command = shlex.quote(str(Path(HYPRWHSPR_ROOT) / 'config/hyprland/hyprwhspr-tray.sh'))
+    tray_command = stable_tray_command(HYPRWHSPR_ROOT)
+    if tray_command is None:
+        return False
     if os.environ.get('HYPRWHSPR_GENERATION'):
         from managed_install import Installation
         from managed_integrations import stable_hyprland_content
         data = Installation().data
-        tray_command = shlex.quote(str(data / 'launcher')) + ' --managed-tray'
     bindings_file = hypr_config_dir / 'bindings.conf'
     hyprland_conf = hypr_config_dir / 'hyprland.conf'
     
@@ -153,7 +159,7 @@ def _edit_hyprland_bindings() -> bool:
                         if command == expected:
                             bindings_exist = True
                         elif command and command[-1] == 'record' and (
-                                'hyprwhspr-tray.sh' in match.group(1) or '--managed-tray' in match.group(1)):
+                                'hyprwhspr-tray' in match.group(1) or '--managed-tray' in match.group(1)):
                             # Only a competing *record* binding conflicts. Other tray
                             # actions (restart, status) legitimately coexist.
                             stale = True

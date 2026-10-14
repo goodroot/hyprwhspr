@@ -15,6 +15,13 @@
 
 ## Install
 
+### Nix and NixOS (beta)
+
+Use the [Nix flake and NixOS module](integrations/NIX.md) for a packaged
+Whisper.cpp CPU runtime. Nix installations use configuration and model commands
+instead of the interactive installer. We'd appreciate
+[issue reports](https://github.com/goodroot/hyprwhspr/issues).
+
 ### Arch Linux
 
 On the AUR:

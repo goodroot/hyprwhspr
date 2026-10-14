@@ -10,7 +10,12 @@ unset PYTHONHOME
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname $(readlink -f "$0"))" && pwd)"
 PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
-if [[ -f "$PACKAGE_ROOT/release.json" && -x "${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/launcher" ]]; then
+# The Nix wrapper's variables reach every child process, such as the editor
+# from config edit; honor them only in the package that set them.
+if [[ "${HYPRWHSPR_INSTALL_METHOD:-}" == nix && "$(readlink -f "${HYPRWHSPR_NIX_ROOT:-/nonexistent}")" != "$(readlink -f "$PACKAGE_ROOT")" ]]; then
+    unset HYPRWHSPR_INSTALL_METHOD HYPRWHSPR_BACKEND_ENV HYPRWHSPR_NIX_ROOT PYTHONNOUSERSITE
+fi
+if [[ "${HYPRWHSPR_INSTALL_METHOD:-}" != nix && -f "$PACKAGE_ROOT/release.json" && -x "${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/launcher" ]]; then
     exec "${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/launcher" "$@"
 fi
 
@@ -77,7 +82,12 @@ get_system_python() {
 # Always use system Python for CLI commands
 # Dependencies (python-rich, etc.) are installed via package manager to system site-packages
 # This avoids issues with mise/pyenv/asdf hijacking python3 to a version without those deps
-CLI_PYTHON="$(get_system_python)"
+if [[ "${HYPRWHSPR_INSTALL_METHOD:-}" == nix ]]; then
+    CLI_PYTHON="${HYPRWHSPR_BACKEND_ENV:?Nix Python environment is missing}/bin/python"
+    export PYTHONNOUSERSITE=1
+else
+    CLI_PYTHON="$(get_system_python)"
+fi
 if [[ -z "$CLI_PYTHON" ]]; then
     echo "Error: No supported system Python found (need 3.11-3.14)." >&2
     echo "hyprwhspr requires system Python with distro packages (python-rich, etc.)." >&2
@@ -88,6 +98,9 @@ fi
 
 # Find venv Python (for main app execution)
 VENV_PYTHON="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
+if [[ "${HYPRWHSPR_INSTALL_METHOD:-}" == nix ]]; then
+    VENV_PYTHON="$CLI_PYTHON"
+fi
 PYTHON_CMD="$VENV_PYTHON"
 
 require_app_venv() {
@@ -128,6 +141,11 @@ fi
 # The service always runs in the environment created by setup. Falling back to
 # system Python turns an incomplete installation into misleading import errors.
 require_app_venv
+
+# The Nix wrapper supplies the complete CPU runtime and library environment.
+if [[ "${HYPRWHSPR_INSTALL_METHOD:-}" == nix ]]; then
+    exec "$PYTHON_CMD" -B "$LIB_DIR/main.py" "$@"
+fi
 
 # Set up CUDA library path if CUDA is installed
 if [ -d "/opt/cuda" ]; then

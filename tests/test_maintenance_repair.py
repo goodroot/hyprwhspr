@@ -122,6 +122,25 @@ class MaintenanceUinputValidationTests(unittest.TestCase):
             self.assertTrue(maintenance._validate_uinput_access(True))
         success.assert_called_once_with("✓ /dev/uinput is readable and writable")
 
+    def test_nix_uinput_advice_uses_host_specific_hint(self):
+        for nixos in (False, True):
+            output = io.StringIO()
+            with (
+                mock.patch.object(maintenance, 'Path', return_value=self._path(False)),
+                mock.patch.object(maintenance.os, 'geteuid', return_value=1000),
+                mock.patch.object(maintenance, '_has_non_ydotool_injection_path', return_value=False),
+                mock.patch.object(maintenance, 'is_nix_install', return_value=True),
+                mock.patch('installation.is_nixos', return_value=nixos),
+                redirect_stdout(output),
+            ):
+                self.assertFalse(maintenance._validate_uinput_access(True))
+            if nixos:
+                self.assertIn('services.hyprwhspr.users', output.getvalue())
+                self.assertNotIn('usermod', output.getvalue())
+            else:
+                self.assertIn('sudo usermod -aG input $USER', output.getvalue())
+                self.assertNotIn('services.hyprwhspr.users', output.getvalue())
+
     def test_missing_uinput_is_error_when_ydotool_is_only_path(self):
         output = io.StringIO()
         with (

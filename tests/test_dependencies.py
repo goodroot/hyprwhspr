@@ -39,6 +39,13 @@ class DependencyErrorTests(unittest.TestCase):
         self.assertIn("Use the custom repair command", output)
         self.assertNotIn("hyprwhspr setup", output)
 
+    def test_nix_error_recommends_rebuilding_even_with_distro_hint(self):
+        with mock.patch.dict('os.environ', {'HYPRWHSPR_INSTALL_METHOD': 'nix'}):
+            output = self.require_missing('Install a distro package')
+        self.assertIn('Rebuild the hyprwhspr Nix package', output)
+        self.assertNotIn('hyprwhspr setup', output)
+        self.assertNotIn('Install a distro package', output)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,3 +44,7 @@ CLAUDE.md
 
 # Local agent worktree / tooling state
 .claude/
+
+# nix build output links
+/result
+/result-*

@@ -19,6 +19,11 @@ except ImportError:
     from service_log import log
 
 try:
+    from .installation import input_group_hint
+except ImportError:
+    from installation import input_group_hint
+
+try:
     from .dependencies import require_package
 except ImportError:
     from dependencies import require_package
@@ -448,7 +453,7 @@ class GlobalShortcuts:
                                 if self.selected_device_name or self.selected_device_path:
                                     log(f"[ERROR] Cannot access selected device '{device.name}' ({device.path}): {e}")
                                     log("[ERROR] This usually means you need root or input group membership")
-                                    log("[ERROR]   Run: sudo usermod -aG input $USER (then log out and back in)")
+                                    log(f"[ERROR]   Run: {input_group_hint()} (then log out and back in)")
                                     device.close()
                                     return
                                 log(f"[WARN] Cannot access device {device.name}: {e}")
@@ -469,7 +474,7 @@ class GlobalShortcuts:
                             if self.selected_device_name or self.selected_device_path:
                                 log(f"[ERROR] Cannot access selected device '{device.name}' ({device.path}): {e}")
                                 log("[ERROR] This usually means you need root or input group membership")
-                                log("[ERROR]   Run: sudo usermod -aG input $USER (then log out and back in)")
+                                log(f"[ERROR]   Run: {input_group_hint()} (then log out and back in)")
                                 device.close()
                                 return
                             log(f"[WARN] Cannot access device {device.name}: {e}")
@@ -502,7 +507,7 @@ class GlobalShortcuts:
                 else:
                     log("[ERROR] No accessible devices found that can emit the configured shortcut!")
                     log("[ERROR] Solutions:")
-                    log("[ERROR]   1. Add yourself to 'input' group: sudo usermod -aG input $USER (then log out and back in)")
+                    log(f"[ERROR]   1. Add yourself to 'input' group: {input_group_hint()} (then log out and back in)")
                     if self.grab_keys:
                         log("[ERROR]   2. Disable key grabbing in config (grab_keys: false)")
                         log(f"[ERROR]   3. Check that your shortcut '{self.primary_key}' uses keys available on your keyboard")
@@ -1054,7 +1059,7 @@ class GlobalShortcuts:
                 log("[ERROR] Solutions:")
                 log("[ERROR]   - Run 'hyprwhspr keyboard list' to see available devices")
                 log("[ERROR]   - Set 'selected_device_name' in config to use a different keyboard")
-                log("[ERROR]   - Add yourself to 'input' group: sudo usermod -aG input $USER")
+                log(f"[ERROR]   - Add yourself to 'input' group: {input_group_hint()}")
                 log("[ERROR]   - Check for conflicting tools: sudo fuser /dev/input/event*")
                 # Clean up UInput since we can't use it
                 if self.uinput:

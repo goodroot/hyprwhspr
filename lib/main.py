@@ -17,6 +17,10 @@ from pathlib import Path
 # Recovery dispatch must precede optional runtime imports.
 if __name__ == '__main__' and (sys.argv[1:2] == ['update'] or sys.argv[1:3] in (['install', 'repair'], ['install', 'status'])):
     sys.path.insert(0, str(Path(__file__).parent / 'src'))
+    # Recovery must still work in an incomplete payload with only this entry
+    # point and managed_install.py present; do not import runtime helpers here.
+    if os.environ.get('HYPRWHSPR_INSTALL_METHOD') == 'nix':
+        os.execv(sys.executable, [sys.executable, str(Path(__file__).parent / 'cli.py')] + sys.argv[1:])
     from managed_install import main as lifecycle_main
     raise SystemExit(lifecycle_main(sys.argv[1:]))
 

@@ -268,6 +268,24 @@ def main():
     
     # Route to appropriate command handler
     try:
+        from installation import is_nix_install, nix_command_error, require_supported_backend
+        ownership_error = nix_command_error(args)
+        if ownership_error:
+            parser.exit(1, ownership_error + '\n')
+        if is_nix_install():
+            if args.command == 'install' and args.install_action == 'status':
+                print('Installation: Nix-managed (beta, Whisper.cpp CPU). Update through your Nix configuration or profile.')
+                return
+            # Transcribe and test fail through WhisperManager; only a download
+            # would fetch a model the package cannot run.
+            if args.command == 'model' and args.model_action == 'download':
+                import json
+                from paths import CONFIG_FILE
+                if CONFIG_FILE.exists():
+                    config = json.loads(CONFIG_FILE.read_text(encoding='utf-8'))
+                    if not isinstance(config, dict):
+                        raise ValueError('Configuration must be a JSON object.')
+                    require_supported_backend(config.get('transcription_backend', 'pywhispercpp'))
         if args.command == 'update' or (args.command == 'install' and args.install_action in ('repair', 'status')):
             from managed_install import main as lifecycle_main
             command = [args.command]

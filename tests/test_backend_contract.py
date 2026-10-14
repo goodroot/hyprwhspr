@@ -3,6 +3,7 @@ import ast
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
@@ -24,6 +25,17 @@ class FakeConfig:
 
 
 class BackendContractTests(unittest.TestCase):
+    def test_nix_rejects_backend_switch_before_constructing_backend(self):
+        config = mock.Mock()
+        config.get_setting.return_value = 'nvidia'
+        manager = WhisperManager(config_manager=config)
+        with mock.patch.dict('os.environ', {'HYPRWHSPR_INSTALL_METHOD': 'nix'}), \
+                mock.patch('whisper_manager.PywhispercppBackend') as backend, \
+                mock.patch('whisper_manager.log') as log:
+            self.assertFalse(manager.initialize())
+        backend.assert_not_called()
+        self.assertIn('CPU transcription', log.call_args.args[0])
+
     def test_every_backend_implements_the_contract(self):
         for name, cls in BACKENDS.items():
             self.assertTrue(issubclass(cls, TranscriptionBackend), name)

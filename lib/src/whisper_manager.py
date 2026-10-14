@@ -10,6 +10,11 @@ import time
 from typing import Optional, Callable
 
 try:
+    from .installation import require_supported_backend
+except ImportError:
+    from installation import require_supported_backend
+
+try:
     from .service_log import log
 except ImportError:
     from service_log import log
@@ -115,6 +120,7 @@ class WhisperManager:
             self.temp_dir = self.config.get_temp_directory()
 
             backend = self._current_backend_name()
+            require_supported_backend(backend)
 
             # pywhispercpp hardware variants (cpu/nvidia/vulkan) and unknown
             # names fall back to the default pywhispercpp backend

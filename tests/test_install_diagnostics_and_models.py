@@ -227,6 +227,24 @@ class CohereAndModelCommandTests(unittest.TestCase):
 
 
 class InstallationStatusTests(unittest.TestCase):
+    def test_nix_status_ignores_managed_installation_errors(self):
+        output = io.StringIO()
+        with (
+            mock.patch.dict('os.environ', {'HYPRWHSPR_INSTALL_METHOD': 'nix'}),
+            mock.patch.object(status, 'get_install_state', side_effect=AssertionError('stale state')),
+            mock.patch.object(status, 'run_command', return_value=types.SimpleNamespace(returncode=1)),
+            mock.patch.object(status, 'waybar_status'),
+            mock.patch.object(status, '_noctalia_detected', return_value=False),
+            mock.patch.object(status.paths, 'CONFIG_FILE', Path('/does/not/exist')),
+            mock.patch.object(status, 'model_status'),
+            mock.patch.object(status, 'check_permissions'),
+            mock.patch.object(status, 'ConfigManager', side_effect=RuntimeError),
+            contextlib.redirect_stdout(output),
+        ):
+            status.status_command()
+        self.assertIn('Nix-managed', output.getvalue())
+        self.assertNotIn('stale state', output.getvalue())
+
     def test_persisted_diagnostic_appears_in_status(self):
         inactive = types.SimpleNamespace(returncode=1)
         output = io.StringIO()

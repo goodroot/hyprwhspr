@@ -15,6 +15,7 @@ from config_manager import (build_default_config, normalize_legacy_config, expan
 from paths import CONFIG_FILE, DATA_DIR, SOCKET_FILE
 from backend_utils import normalize_backend
 from dependency_plan import PLAN_SPECS, plan_key
+from installation import is_nix_install, is_supported_backend, repair_hint
 from provider_registry import get_models_for_backend, get_realtime_capabilities, get_realtime_mode
 from realtime_protocols import PROTOCOLS, live_typing_conflict
 from session_environment import classify_display_environment
@@ -273,7 +274,12 @@ def build_report():
     if not any(f['severity'] == 'error' for f in findings):
         backend = normalize_backend(config['transcription_backend'])
         report['configured'] = {'backend': backend, 'recording_mode': config['recording_mode']}
-        modules = PLAN_SPECS[plan_key(backend, config['websocket_provider'], None, ValueError)][1]
+        if not is_supported_backend(backend):
+            # A rebuild cannot add this backend's modules; do not probe for them.
+            add('dependency.backend', 'error', 'The Nix package supports only Whisper.cpp CPU transcription.',
+                'Set transcription_backend to "cpu" with hyprwhspr config edit.')
+        else:
+            modules = PLAN_SPECS[plan_key(backend, config['websocket_provider'], None, ValueError)][1]
     environment = Path(os.environ['HYPRWHSPR_BACKEND_ENV']) if os.environ.get('HYPRWHSPR_BACKEND_ENV') else DATA_DIR / 'venv'
     interpreter = environment / 'bin' / 'python'
     script = "import importlib.util as u, importlib.metadata as m, json, sys; distributions = m.packages_distributions(); print(json.dumps({'python': list(sys.version_info[:3]), 'modules': {n: u.find_spec(n) is not None for n in sys.argv[1:]}, 'metadata': {n: bool(distributions.get(n)) for n in sys.argv[1:]}}))"
@@ -302,14 +308,17 @@ def build_report():
             add('dependency.' + module, 'info' if available else 'error',
                 module + (': module discoverable' if available else ': module unavailable') +
                 ('; package metadata present.' if metadata else '; package metadata absent.'),
-                None if available else 'Install the selected backend dependencies.')
+                None if available else repair_hint('Install the selected backend dependencies.'))
     except FileNotFoundError:
-        add('dependencies.interpreter', 'error', 'Application virtual environment interpreter is missing.', 'Install the application environment.')
+        add('dependencies.interpreter', 'error',
+            'Packaged Python interpreter is missing.' if is_nix_install()
+            else 'Application virtual environment interpreter is missing.',
+            repair_hint('Install the application environment.'))
     except (subprocess.TimeoutExpired, TimeoutError):
         add('dependencies.probe', 'warning', 'Selected interpreter probe timed out.', 'Retry the report when the system is idle.')
     except (OSError, ValueError, KeyError, TypeError):
         add('dependencies.probe', 'error', 'Selected interpreter could not complete the Python and dependency checks.',
-            'Repair or recreate the application virtual environment.')
+            repair_hint('Repair or recreate the application virtual environment.'))
     try:
         metadata = ROOT / 'release.json'
         if metadata.is_file():
@@ -319,7 +328,10 @@ def build_report():
             output = probes.run(['git', '-C', str(ROOT), 'describe', '--tags', '--abbrev=7'])
             version = output.stdout.strip()
             valid = output.returncode == 0
-        if valid and re.fullmatch(r'v?\d+\.\d+\.\d+(?:-\d+-g[0-9a-f]+)?', version):
+        version_pattern = r'v?\d+\.\d+\.\d+(?:-\d+-g[0-9a-f]+)?'
+        if is_nix_install():
+            version_pattern += r'|0-unstable-(?:[0-9a-f]{7,40}(?:-dirty)?|local)'
+        if valid and re.fullmatch(version_pattern, version):
             report['application_version'] = version
             add('application.version', 'info', 'Application version identified.')
         else:

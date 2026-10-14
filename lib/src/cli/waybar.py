@@ -4,13 +4,17 @@ Waybar integration commands for hyprwhspr
 
 import json
 import os
-import shlex
 from pathlib import Path
 
 try:
     from ..output_control import log_info, log_success, log_warning, log_error
 except ImportError:
     from output_control import log_info, log_success, log_warning, log_error
+
+try:
+    from ..installation import is_nix_install, tray_command as stable_tray_command
+except ImportError:
+    from installation import is_nix_install, tray_command as stable_tray_command
 
 from ._shared import (HYPRWHSPR_ROOT, USER_HOME, _load_jsonc,
                       _validate_hyprwhspr_root)
@@ -60,17 +64,21 @@ def _setup_waybar(mode: str = 'install'):
     waybar_style = config_home / 'waybar' / 'style.css'
     user_module_config = config_home / 'waybar' / 'hyprwhspr-module.jsonc'
     
-    if os.environ.get('HYPRWHSPR_GENERATION'):
-        from managed_install import Installation
-        tray_command = shlex.quote(str(Installation().data / 'launcher')) + ' --managed-tray'
+    if mode == 'install':
+        tray_command = stable_tray_command(HYPRWHSPR_ROOT)
+        if tray_command is None:
+            return False
+    if os.environ.get('HYPRWHSPR_GENERATION') or is_nix_install():
+        # Release and store paths change on update; import a copy instead.
         css_target = user_module_config.parent / 'hyprwhspr-style.css'
         if mode == 'install':
             css_target.parent.mkdir(parents=True, exist_ok=True)
             from managed_install import atomic_text
             atomic_text(css_target, css_file.read_text(encoding='utf-8'))
+        elif is_nix_install():
+            # Managed installs remove it through edit_files ownership.
+            css_target.unlink(missing_ok=True)
         css_file = css_target
-    else:
-        tray_command = shlex.quote(str(tray_script))
 
     if mode == 'install':
         # Create waybar config directory

@@ -46,6 +46,11 @@ try:
 except ImportError:
     from session_environment import classify_display_environment
 
+try:
+    from ..installation import input_group_hint, is_nix_install, repair_hint
+except ImportError:
+    from installation import input_group_hint, is_nix_install, repair_hint
+
 from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, _check_ydotool_version,
                       _is_niri_session, _validate_hyprwhspr_root)
 
@@ -99,7 +104,10 @@ def _validate_uinput_access(ydotool_available: bool) -> bool:
         log_warning(f"⚠ {message} Other detected injection paths remain available.")
     else:
         log_warning(f"⚠ {message} No other injection path was detected.")
-    print("  Run 'hyprwhspr setup' to configure uinput permissions.")
+    if is_nix_install():
+        print(f"  Add your user to the input group: {input_group_hint()}")
+    else:
+        print("  Run 'hyprwhspr setup' to configure uinput permissions.")
     print("  If you were just added to the input group, log out and back in (or reboot) so membership becomes active.")
     return not required
 
@@ -794,9 +802,10 @@ def validate_command():
         else:
             log_warning("⚠ pywhispercpp not available")
             print("")
-            print("To use local transcription, run: hyprwhspr setup")
-            print("This will install the backend (CPU/NVIDIA/AMD) of your choice.")
-            print("(or use REST API backend by setting 'transcription_backend': 'rest-api' in config.json)")
+            print(repair_hint(
+                "To use local transcription, run: hyprwhspr setup\n"
+                "This will install the backend (CPU/NVIDIA/AMD) of your choice.\n"
+                "(or use REST API backend by setting 'transcription_backend': 'rest-api' in config.json)"))
             print("")
         
         # Check base model (only for pywhispercpp backends)

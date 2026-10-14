@@ -8,6 +8,7 @@ import time
 from backend_installer import get_state, resolve_dependency_plan
 from backend_utils import normalize_backend
 from dependency_plan import missing_imports
+from installation import is_nix_install, repair_hint, require_supported_backend
 from paths import (
     AUDIO_LEVEL_FILE, CONFIG_DIR, LONGFORM_STATE_FILE, MIC_ZERO_VOLUME_FILE, MODEL_UNLOADED_FILE,
     RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, RECOVERY_REQUESTED_FILE, RECOVERY_RESULT_FILE,
@@ -36,17 +37,26 @@ class FeedbackMixin:
     def _report_missing_dependencies(self):
         """Log and notify about Python modules the configured backend cannot import.
 
-        Returns the missing module names.
+        Returns the missing module names; none for a backend this installation
+        does not support, which is reported instead (WhisperManager logs it).
         """
-        backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
+        configured = self.config.get_setting('transcription_backend', 'pywhispercpp')
+        try:
+            require_supported_backend(configured)
+        except ValueError as e:
+            # Its modules were never packaged; the backend, not a rebuild, needs changing.
+            self._notify_user('hyprwhspr', str(e), urgency='critical')
+            return []
+        backend = normalize_backend(configured)
         provider = self.config.get_setting('websocket_provider', None) if backend == 'realtime-ws' else None
         missing = missing_imports(backend, provider)
         if missing:
             names = ', '.join(missing)
-            log(f"[ERROR] Missing Python modules: {names} - run: hyprwhspr setup (Reinstall backend: yes)")
+            log(f"[ERROR] Missing Python modules: {names} - "
+                + repair_hint('run: hyprwhspr setup (Reinstall backend: yes)'))
             self._notify_user(
                 "hyprwhspr", f"Missing Python modules: {names}\n"
-                "Run: hyprwhspr setup and reinstall the backend",
+                + repair_hint("Run: hyprwhspr setup and reinstall the backend"),
                 urgency="critical")
         elif self._dependencies_changed_since_setup(backend, provider):
             # Everything imports, but an update changed the requirements (a new
@@ -57,7 +67,7 @@ class FeedbackMixin:
     @staticmethod
     def _dependencies_changed_since_setup(backend: str, provider) -> bool:
         """True when setup recorded a dependency plan for this backend that no longer matches its manifests."""
-        if os.environ.get('HYPRWHSPR_GENERATION'):
+        if is_nix_install() or os.environ.get('HYPRWHSPR_GENERATION'):
             return False  # managed releases install a venv per release
         stored = get_state('dependency_plan_fingerprint')
         if not stored:
@@ -77,6 +87,8 @@ class FeedbackMixin:
 
         Returns True when the mismatch was reported.
         """
+        if is_nix_install():
+            return False  # an unsupported backend is reported by _report_missing_dependencies
         backend = normalize_backend(self.config.get_setting('transcription_backend', 'pywhispercpp'))
         if backend not in ('nvidia', 'vulkan') or get_state('installed_backend') != 'cpu':
             return False

@@ -35,6 +35,11 @@ except ImportError:
     from output_control import (log_info, log_success, log_warning, log_error,
                                 run_command)
 
+try:
+    from ..installation import is_nix_install
+except ImportError:
+    from installation import is_nix_install
+
 from ._shared import SERVICE_NAME
 from .models import (model_status, onnx_asr_model_status,
                      faster_whisper_model_status, cohere_transcribe_model_status,
@@ -51,8 +56,10 @@ def status_command():
     log_info("Checking hyprwhspr status...")
 
     print("\n[Installation]")
-    state, error = get_install_state()
-    if state == 'completed':
+    state, error = ('nix', None) if is_nix_install() else get_install_state()
+    if state == 'nix':
+        log_success('Installation: Nix-managed (beta, Whisper.cpp CPU)')
+    elif state == 'completed':
         log_success("Installation state: completed")
     elif state == 'failed':
         log_error("Installation state: failed")
@@ -146,7 +153,7 @@ def check_permissions():
     user_groups = [g.gr_name for g in grp.getgrall() if username in g.gr_mem]
     user_groups.append(grp.getgrgid(os.getgid()).gr_name)
     
-    required_groups = ['input', 'audio', 'tty']
+    required_groups = ['input'] if is_nix_install() else ['input', 'audio', 'tty']
     for group in required_groups:
         if group in user_groups:
             log_success(f"User in '{group}' group")

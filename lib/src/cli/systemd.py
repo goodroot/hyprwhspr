@@ -13,6 +13,11 @@ except ImportError:
     from output_control import (log_info, log_success, log_warning, log_error,
                                 log_debug, run_command)
 
+try:
+    from ..installation import is_nix_install, nix_profile_command
+except ImportError:
+    from installation import is_nix_install, nix_profile_command
+
 from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, RESUME_SERVICE_NAME,
                       YDOTOOL_UNIT, _YDOTOOL_MARKERS, USER_SYSTEMD_DIR,
                       _validate_hyprwhspr_root)
@@ -71,6 +76,32 @@ def _is_hyprwhspr_managed_ydotool_unit(target: Path) -> bool:
     return any(marker in text for marker in _YDOTOOL_MARKERS)
 
 
+def _nix_service_content(template: str):
+    """Render the unit for a Nix profile launcher, or None when none is on PATH.
+
+    The profile path survives updates; the store path it resolves to does not.
+    The launcher wrapper sets HYPRWHSPR_ROOT itself.
+    """
+    launcher = nix_profile_command('hyprwhspr', HYPRWHSPR_ROOT)
+    if not launcher:
+        log_error('This hyprwhspr is not on PATH through a Nix profile. Install it with nix profile install, then retry.')
+        return None
+    # The ':' prefix disables argv environment expansion. Doubling '$' would
+    # alter the executable filename, which systemd resolves separately from argv.
+    escaped = (launcher.replace('\\', '\\\\')
+               .replace('"', '\\"').replace('%', '%%')
+               .replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t'))
+    quoted = f'"{escaped}"'
+    lines = []
+    for line in template.splitlines(keepends=True):
+        if line.startswith('ExecStart='):
+            line = f'ExecStart=:{quoted}\n'
+        elif line.startswith('Environment=HYPRWHSPR_ROOT='):
+            continue
+        lines.append(line)
+    return ''.join(lines)
+
+
 def setup_systemd(mode: str = 'install'):
     """Setup systemd user service"""
     log_info("Configuring systemd user services...")
@@ -109,6 +140,12 @@ def setup_systemd(mode: str = 'install'):
                 from managed_install import Installation, write_owned, service_content as render_unit
                 service_content = render_unit(HYPRWHSPR_ROOT, Installation().data / 'launcher')
                 write_owned(service_dest, service_content)
+            elif is_nix_install():
+                service_content = _nix_service_content(service_content)
+                if service_content is None:
+                    return False
+                with open(service_dest, 'w', encoding='utf-8') as f:
+                    f.write(service_content)
             else:
                 service_content = service_content.replace('/usr/lib/hyprwhspr', HYPRWHSPR_ROOT)
                 with open(service_dest, 'w', encoding='utf-8') as f:

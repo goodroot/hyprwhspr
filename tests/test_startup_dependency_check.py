@@ -51,6 +51,22 @@ class StartupDependencyCheckTests(unittest.TestCase):
         self.assertEqual(logged, '')
         self.assertFalse(app._notify_user.called)
 
+    def test_nix_missing_dependencies_recommend_rebuilding(self):
+        with mock.patch.dict(os.environ, {'HYPRWHSPR_INSTALL_METHOD': 'nix'}):
+            app, _finder, logged, result = self._report(('soxr',), {'transcription_backend': 'cpu'})
+        self.assertEqual(result, ('soxr',))
+        self.assertIn('Nix package', logged)
+        self.assertNotIn('hyprwhspr setup', logged)
+        self.assertIn('Nix package', app._notify_user.call_args.args[1])
+
+    def test_nix_ignores_previous_installation_state(self):
+        state = mock.Mock(side_effect=AssertionError('Nix must not read installer state'))
+        with mock.patch.dict(os.environ, {'HYPRWHSPR_INSTALL_METHOD': 'nix'}), \
+                patch_app_global(self.main.hyprwhsprApp, 'get_state', state):
+            self.assertFalse(self.main.hyprwhsprApp._dependencies_changed_since_setup('cpu', None))
+            app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+            self.assertFalse(app._report_cpu_only_build())
+
     def test_checks_the_configured_backend_and_provider(self):
         _app, finder, _logged, _result = self._report((), {
             'transcription_backend': 'realtime-ws', 'websocket_provider': 'elevenlabs'})

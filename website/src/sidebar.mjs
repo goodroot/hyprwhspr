@@ -32,7 +32,7 @@ export const sidebar = [
   },
   {
     label: 'Integrations',
-    items: ['docs/integrations/waybar', 'docs/integrations/noctalia', 'docs/integrations/desktops'],
+    items: ['docs/integrations/waybar', 'docs/integrations/noctalia', 'docs/integrations/desktops', { slug: 'docs/integrations/nix', badge: 'beta' }],
   },
   {
     label: 'Maintain',

@@ -27,6 +27,11 @@ except ImportError:
     from output_control import (log_info, log_success, log_warning, log_error,
                                 run_command)
 
+try:
+    from ..installation import input_group_hint
+except ImportError:
+    from installation import input_group_hint
+
 from ._shared import SERVICE_NAME
 from .systemd import _is_service_running_via_systemd
 
@@ -245,7 +250,7 @@ def _run_keyboard_selection(existing_cfg: Optional[dict] = None):
     candidates = _gather_keyboard_candidates(shortcut)
     if not candidates:
         log_warning("No accessible keyboard devices found.")
-        log_info("Make sure you're in the 'input' group: sudo usermod -aG input $USER")
+        log_info(f"Make sure you're in the 'input' group: {input_group_hint()}")
         return None
 
     # Seed synthetic rows for allowlist names not currently present, so a re-run
@@ -348,7 +353,7 @@ def detect_keyboard():
     candidates = _gather_keyboard_candidates(shortcut)
     if not candidates:
         log_warning("No accessible keyboard devices found.")
-        log_info("Make sure you're in the 'input' group: sudo usermod -aG input $USER")
+        log_info(f"Make sure you're in the 'input' group: {input_group_hint()}")
         return
 
     print("\nPress a key on the keyboard you use for the shortcut (5s timeout)...")
@@ -425,7 +430,7 @@ def list_keyboards():
         
         if not keyboards:
             log_warning("No accessible keyboard devices found")
-            log_info("Make sure you're in the 'input' group: sudo usermod -aG input $USER")
+            log_info(f"Make sure you're in the 'input' group: {input_group_hint()}")
             return
         
         print("\nAvailable keyboard devices:")
@@ -544,7 +549,7 @@ def test_keyboard_access():
         if not results['accessible_devices']:
             print("\n⚠ No accessible devices found!")
             print("Solutions:")
-            print("  1. Add yourself to 'input' group: sudo usermod -aG input $USER")
+            print(f"  1. Add yourself to 'input' group: {input_group_hint()}")
             print("     (then log out and back in)")
             print("  2. Check if devices are grabbed by other tools:")
             print("     sudo fuser /dev/input/event*")

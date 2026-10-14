@@ -21,9 +21,11 @@ except ImportError:
 
 try:
     from ..dependencies import require_package
+    from ..installation import is_nix_install, repair_hint
     from ..text_script import join_segments
 except ImportError:
     from dependencies import require_package
+    from installation import is_nix_install, repair_hint
     from text_script import join_segments
 
 np = require_package('numpy')
@@ -80,7 +82,7 @@ class PywhispercppBackend(TranscriptionBackend):
             log("")
             log("ERROR: pywhispercpp is not installed or incompatible.")
             log(f"Import error: {e}")
-            log("Run: hyprwhspr setup to configure a backend.")
+            log(repair_hint("Run: hyprwhspr setup to configure a backend."))
 
             log("")
             return False
@@ -140,6 +142,8 @@ class PywhispercppBackend(TranscriptionBackend):
         then verifies hardware availability. Falls back to hardware-only
         detection if package detection fails.
         """
+        if is_nix_install():
+            return "CPU"
         import subprocess
 
         # First, check which pywhispercpp package is actually installed

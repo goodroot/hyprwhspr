@@ -4,7 +4,6 @@ Noctalia shell integration commands for hyprwhspr
 
 import os
 import json
-import shlex
 import re
 import shutil
 import subprocess
@@ -14,6 +13,16 @@ try:
     from ..output_control import log_info, log_success, log_warning, log_error
 except ImportError:
     from output_control import log_info, log_success, log_warning, log_error
+
+try:
+    from ..installation import is_nix_install, tray_command as stable_tray_command
+except ImportError:
+    from installation import is_nix_install, tray_command as stable_tray_command
+
+try:
+    from ..paths import DATA_DIR
+except ImportError:
+    from paths import DATA_DIR
 
 from ._shared import HYPRWHSPR_ROOT, USER_HOME, _validate_hyprwhspr_root
 
@@ -179,7 +188,7 @@ def noctalia_command(action: str):
         log_error(f"Unknown noctalia action: {action}")
 
 
-def _setup_noctalia(mode: str = 'install'):
+def _setup_noctalia(mode: str = 'install', *, widget_content=None, tray=None):
     """Install or remove the Noctalia shell integration.
 
     Two independent pieces:
@@ -201,12 +210,27 @@ def _setup_noctalia(mode: str = 'install'):
             log_error(f"Noctalia assets not found under {HYPRWHSPR_ROOT}/config/noctalia")
             return False
 
+        # Validate first: a failed reinstall must leave the working shim intact.
+        # Publish the shim and patched widget before enabling the plugin.
+        if tray is not None:
+            command = stable_tray_command(HYPRWHSPR_ROOT)
+            if command is None:
+                return False
+            from managed_install import atomic_text
+            atomic_text(tray, f'#!/bin/sh\nexec {command} "$@"\n', 0o755)
+
         # 1. Bar widget plugin
-        dst['plugin_dir'].mkdir(parents=True, exist_ok=True)
-        for name in ('plugin.toml', 'widget.luau'):
-            shutil.copy2(src_plugin / name, dst['plugin_dir'] / name)
-        shutil.copytree(src_plugin / 'translations',
-                        dst['plugin_dir'] / 'translations', dirs_exist_ok=True)
+        # copyfile, not copy2: read-only package modes (the Nix store) would
+        # block the next reinstall.
+        (dst['plugin_dir'] / 'translations').mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src_plugin / 'plugin.toml', dst['plugin_dir'] / 'plugin.toml')
+        if widget_content is None:
+            shutil.copyfile(src_plugin / 'widget.luau', dst['plugin_dir'] / 'widget.luau')
+        else:
+            from managed_install import atomic_text
+            atomic_text(dst['plugin_dir'] / 'widget.luau', widget_content)
+        for translation in (src_plugin / 'translations').iterdir():
+            shutil.copyfile(translation, dst['plugin_dir'] / 'translations' / translation.name)
         log_success(f"Plugin installed to {dst['plugin_dir']}")
         if dst['legacy_plugin_dir'].is_dir() and not os.environ.get('HYPRWHSPR_GENERATION'):
             shutil.rmtree(dst['legacy_plugin_dir'], ignore_errors=True)
@@ -221,7 +245,7 @@ def _setup_noctalia(mode: str = 'install'):
 
         # 2. Mic-OSD palette template
         dst['template_input'].parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_template, dst['template_input'])
+        shutil.copyfile(src_template, dst['template_input'])
         log_success(f"Theme template installed to {dst['template_input']}")
         if dst['legacy_template_input'].exists() and not os.environ.get('HYPRWHSPR_GENERATION'):
             dst['legacy_template_input'].unlink()
@@ -347,26 +371,60 @@ def noctalia_status():
     return ok
 
 
+def _prepare_widget(tray):
+    """The widget patched to prefer the tray shim, or None with a warning."""
+    from managed_integrations import managed_widget_content
+    try:
+        source = Path(HYPRWHSPR_ROOT) / 'config/noctalia/plugin/widget.luau'
+        return managed_widget_content(source.read_text(encoding='utf-8'), tray)
+    except (OSError, UnicodeError, RuntimeError) as exc:
+        log_warning(f'Noctalia installation incomplete; cannot prepare the widget: {exc}')
+        return None
+
+
+def _plugin_disabled_for_removal() -> bool:
+    """Disable a running plugin first; removing its files under it would strand it."""
+    if shutil.which('noctalia') and not _noctalia_msg('plugins', 'disable', NOCTALIA_PLUGIN_ID):
+        log_warning('Could not disable the Noctalia plugin; plugin files were preserved. Start Noctalia and retry removal.')
+        _noctalia_removal_guidance()
+        return False
+    return True
+
+
+def _setup_nix_noctalia(mode: str):
+    """Point the widget at a shim; store paths vanish after garbage collection."""
+    # Not noctalia-tray: the managed installer owns that file.
+    tray = DATA_DIR / 'integrations' / 'nix-noctalia-tray'
+    if mode == 'install':
+        widget_content = _prepare_widget(tray)
+        if widget_content is None:
+            return False
+        return _setup_noctalia('install', widget_content=widget_content, tray=tray)
+    if mode == 'remove' and not _plugin_disabled_for_removal():
+        return False
+    result = _setup_noctalia(mode)
+    if mode == 'remove':
+        tray.unlink(missing_ok=True)
+    return result
+
+
 def setup_noctalia(mode: str = 'install'):
+    if is_nix_install():
+        return _setup_nix_noctalia(mode)
     if not os.environ.get('HYPRWHSPR_GENERATION'):
         return _setup_noctalia(mode)
-    from managed_integrations import edit_files, managed_widget_content
-    from managed_install import Installation, atomic_text
+    from managed_integrations import edit_files
+    from managed_install import Installation
     dst = _noctalia_paths()
     source = Path(HYPRWHSPR_ROOT) / 'config/noctalia/plugin'
     paths = [dst['plugin_dir'] / p.relative_to(source) for p in source.rglob('*') if p.is_file()]
     tray = Installation().data / 'integrations/noctalia-tray'
     paths.extend([dst['settings'], dst['template_input'], dst['template_output'], tray])
-    if mode == 'remove':
-        if shutil.which('noctalia') and not _noctalia_msg('plugins', 'disable', NOCTALIA_PLUGIN_ID):
-            log_warning('Could not disable the Noctalia plugin; plugin files were preserved. Start Noctalia and retry removal.')
-            _noctalia_removal_guidance()
-            return False
+    if mode == 'remove' and not _plugin_disabled_for_removal():
+        return False
     if mode == 'install':
-        try:
-            widget_content = managed_widget_content((source / 'widget.luau').read_text(encoding='utf-8'), tray)
-        except (OSError, UnicodeError, RuntimeError) as exc:
-            log_warning(f'Noctalia installation incomplete; cannot prepare managed widget: {exc}')
+        widget_content = _prepare_widget(tray)
+        if widget_content is None:
             return False
     removal = {}
     with edit_files(paths, [dst['settings'], dst['template_output']], mode, removal=removal, allow_shared_preservation=True) as proceed:
@@ -374,12 +432,6 @@ def setup_noctalia(mode: str = 'install'):
             if mode == 'remove':
                 _noctalia_removal_guidance()
             return removal.get('complete', False) if mode == 'remove' else False
-        result = _setup_noctalia(mode)
-        # widget_content is only computed for an install; the tail must never run
-        # for any other mode, which would also re-create the shim just removed.
-        if mode == 'install' and result is not False:
-            tray.parent.mkdir(parents=True, exist_ok=True)
-            atomic_text(tray, '#!/bin/sh\nexec ' + shlex.quote(str(Installation().data / 'launcher')) + ' --managed-tray "$@"\n', 0o755)
-            widget = dst['plugin_dir'] / 'widget.luau'
-            atomic_text(widget, widget_content)
-        return result
+        if mode == 'install':
+            return _setup_noctalia('install', widget_content=widget_content, tray=tray)
+        return _setup_noctalia(mode)

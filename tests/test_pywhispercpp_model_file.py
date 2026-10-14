@@ -45,6 +45,11 @@ class PywhispercppModelFileTests(unittest.TestCase):
         english.write_bytes(b'x')
         self.assertEqual(self._model_arg('base'), str(english))
 
+    def test_nix_reports_packaged_cpu_without_probing_host_gpu(self):
+        with mock.patch.dict('os.environ', {'HYPRWHSPR_INSTALL_METHOD': 'nix'}), \
+                mock.patch('subprocess.run', side_effect=AssertionError('must not probe host packages')):
+            self.assertEqual(self.backend._detect_gpu_backend(), 'CPU')
+
     def test_other_languages_never_get_the_english_only_file(self):
         # .en models force English: German or auto-detect still needs the download.
         (self.models / 'ggml-base.en.bin').write_bytes(b'x')
