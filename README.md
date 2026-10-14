@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
-- **Built for Linux** - Native AUR package for Arch, or use Debian/Ubuntu/Fedora/openSUSE
+- **Built for Linux** - Native AUR package for Arch, or use Debian/Ubuntu/Fedora/openSUSE/NixOS
 - **Very fast defaults** - Nearly instant and accurate performance via in-memory models
 - **Offline and private** - Transcription never leaves your machine. Cloud APIs are fully optional. 
 - **Latest models** - Cohere Transcribe? Orukeet? Parakeet TDT V3? Qwen3-ASR? Latest and greatest
