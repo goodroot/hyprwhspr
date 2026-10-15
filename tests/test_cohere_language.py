@@ -64,6 +64,11 @@ def fake_torch_and_transformers(model):
 class CohereLanguageTests(unittest.TestCase):
     """The model cannot detect a language, so both gaps must be visible (#233 follow-up)."""
 
+    def setUp(self):
+        patcher = mock.patch('backends.cohere_backend._cached_model_path', return_value='/cached/cohere')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _backend(self, values=None):
         backend = CohereBackend(FakeManager(FakeConfig(values)))
         backend._cohere_model = FakeCohereModel()

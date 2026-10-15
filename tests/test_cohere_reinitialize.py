@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
-from backends.cohere_backend import CohereBackend
+from backends.cohere_backend import CohereBackend, _cached_model_path
 from service_log import log
 
 
@@ -30,7 +30,22 @@ class FakeManager:
         self._last_use_time = 0.0
 
 
+class CohereCachedSnapshotTests(unittest.TestCase):
+    def test_snapshot_resolution_is_local_only(self):
+        hub = mock.MagicMock()
+        hub.snapshot_download.return_value = '/cached/cohere'
+        with mock.patch.dict(sys.modules, {'huggingface_hub': hub}):
+            self.assertEqual(_cached_model_path(), '/cached/cohere')
+        hub.snapshot_download.assert_called_once_with(
+            'CohereLabs/cohere-transcribe-03-2026', local_files_only=True)
+
+
 class CohereReinitializeTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch('backends.cohere_backend._cached_model_path', return_value='/cached/cohere')
+        self.cached_path = patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_loading_preserves_other_threads_output(self):
         for method in ('initialize', 'reinitialize'):
             with self.subTest(method=method):
@@ -55,11 +70,27 @@ class CohereReinitializeTests(unittest.TestCase):
                         mock.patch('backends.cohere_backend.release_memory'), \
                         contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                     self.assertTrue(getattr(self._backend('cpu'), method)())
+                    for loader in (transformers.AutoProcessor, transformers.AutoModelForSpeechSeq2Seq):
+                        self.assertEqual(loader.from_pretrained.call_args.args[0], '/cached/cohere')
+                        self.assertTrue(loader.from_pretrained.call_args.kwargs['local_files_only'])
                     self.assertIs(sys.stdout, output)
                     self.assertIs(sys.stderr, errors)
                 self.assertIn('Recording blocked: model is still initializing', output.getvalue())
                 self.assertIn('other thread error', errors.getvalue())
                 self.assertNotIn('noisy loader', output.getvalue() + errors.getvalue())
+
+    def test_missing_snapshot_fails_without_fetching_or_loading(self):
+        for method in ('initialize', 'reinitialize'):
+            with self.subTest(method=method):
+                self.cached_path.side_effect = FileNotFoundError('No cached snapshot')
+                torch, transformers, _, _ = self._modules(False, [])
+                with mock.patch.dict(sys.modules, {'torch': torch, 'transformers': transformers}), \
+                        mock.patch('backends.cohere_backend.get_credential', return_value=None), \
+                        mock.patch('backends.cohere_backend.release_memory'), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertFalse(getattr(self._backend('cpu'), method)())
+                transformers.AutoProcessor.from_pretrained.assert_not_called()
+                transformers.AutoModelForSpeechSeq2Seq.from_pretrained.assert_not_called()
 
     def _modules(self, cuda_available, events, load_model=None,
                  before_processor=None, before_model=None):

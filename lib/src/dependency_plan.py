@@ -24,7 +24,7 @@ PLAN_SPECS = {
     'realtime': ('requirements-realtime.txt', CORE_IMPORTS + ('websocket',), 'realtime'),
     'elevenlabs': ('requirements-realtime-elevenlabs.txt', CORE_IMPORTS + ('elevenlabs',), 'elevenlabs'),
     'cohere': ('requirements-cohere-transcribe.txt', CORE_IMPORTS + (
-        'pandas', 'scipy', 'numba', 'sklearn', 'transformers', 'torch', 'librosa'), 'cohere'),
+        'pandas', 'scipy', 'numba', 'sklearn', 'transformers', 'torch', 'librosa', 'huggingface_hub'), 'cohere'),
     'onnx-cpu': ('requirements-onnx-asr.txt', CORE_IMPORTS + ('onnx_asr',), 'onnx'),
     'onnx-gpu': ('requirements-onnx-asr-gpu.txt', CORE_IMPORTS + ('onnx_asr',), 'onnx'),
     'faster-cpu': ('requirements-faster-whisper.txt', CORE_IMPORTS + ('faster_whisper',), 'faster-whisper'),

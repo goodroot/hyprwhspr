@@ -36,6 +36,14 @@ except ImportError:
 from .base import TranscriptionBackend
 
 
+def _cached_model_path():
+    from huggingface_hub import snapshot_download
+
+    # Some processor/tokenizer loaders drop local_files_only on nested calls.
+    # A filesystem path avoids Hub metadata requests even in those code paths.
+    return snapshot_download('CohereLabs/cohere-transcribe-03-2026', local_files_only=True)
+
+
 @contextlib.contextmanager
 def _quiet_loader_output():
     """Suppress loader noise while preserving output from service threads.
@@ -119,14 +127,15 @@ class CohereBackend(TranscriptionBackend):
 
         try:
             log(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})')
+            model_path = _cached_model_path()
             # Cohere's trust_remote_code path prints large ANSI-laden blobs that
             # journald records as "[NNK blob data]". Redirect during from_pretrained.
             with _quiet_loader_output():
                 self._cohere_processor = AutoProcessor.from_pretrained(
-                    model_id, trust_remote_code=True, token=hf_token,
+                    model_path, trust_remote_code=True, token=hf_token,
                     local_files_only=True)
                 self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                    model_id,
+                    model_path,
                     trust_remote_code=True,
                     dtype=torch_dtype,
                     token=hf_token,
@@ -270,12 +279,13 @@ class CohereBackend(TranscriptionBackend):
                 pass
 
             log(f'[MODEL] Reinitializing Cohere Transcribe (device={device})')
+            model_path = _cached_model_path()
             with _quiet_loader_output():
                 self._cohere_processor = AutoProcessor.from_pretrained(
-                    model_id, trust_remote_code=True, token=hf_token,
+                    model_path, trust_remote_code=True, token=hf_token,
                     local_files_only=True)
                 self._cohere_model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                    model_id,
+                    model_path,
                     trust_remote_code=True,
                     dtype=torch_dtype,
                     token=hf_token,
