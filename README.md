@@ -62,6 +62,8 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ### Install
 
+---
+
 #### Arch Linux
 
 On the AUR:
@@ -111,6 +113,8 @@ Use the [Nix flake and NixOS module](docs/integrations/NIX.md) for x86_64 Linux
 with Whisper.cpp CPU transcription. 
 
 We'd appreciate [issue reports and requests](https://github.com/goodroot/hyprwhspr/issues)!
+
+---
 
 **Setup then walks you through:**
 
