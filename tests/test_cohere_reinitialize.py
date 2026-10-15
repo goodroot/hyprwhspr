@@ -1,4 +1,7 @@
+import contextlib
+import io
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -8,6 +11,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
 from backends.cohere_backend import CohereBackend
+from service_log import log
 
 
 class FakeConfig:
@@ -27,6 +31,36 @@ class FakeManager:
 
 
 class CohereReinitializeTests(unittest.TestCase):
+    def test_loading_preserves_other_threads_output(self):
+        for method in ('initialize', 'reinitialize'):
+            with self.subTest(method=method):
+                output, errors = io.StringIO(), io.StringIO()
+
+                def loading():
+                    print('noisy loader output')
+                    print('noisy loader error', file=sys.stderr)
+
+                    def control_thread():
+                        log('Recording blocked: model is still initializing')
+                        print('other thread error', file=sys.stderr, flush=True)
+
+                    thread = threading.Thread(target=control_thread)
+                    thread.start()
+                    thread.join(timeout=2)
+                    self.assertFalse(thread.is_alive())
+
+                torch, transformers, _, _ = self._modules(False, [], before_processor=loading)
+                with mock.patch.dict(sys.modules, {'torch': torch, 'transformers': transformers}), \
+                        mock.patch('backends.cohere_backend.get_credential', return_value=None), \
+                        mock.patch('backends.cohere_backend.release_memory'), \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertTrue(getattr(self._backend('cpu'), method)())
+                    self.assertIs(sys.stdout, output)
+                    self.assertIs(sys.stderr, errors)
+                self.assertIn('Recording blocked: model is still initializing', output.getvalue())
+                self.assertIn('other thread error', errors.getvalue())
+                self.assertNotIn('noisy loader', output.getvalue() + errors.getvalue())
+
     def _modules(self, cuda_available, events, load_model=None,
                  before_processor=None, before_model=None):
         torch = mock.MagicMock()

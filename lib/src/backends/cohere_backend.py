@@ -5,6 +5,9 @@ Runs CohereLabs/cohere-transcribe via HuggingFace transformers with
 trust_remote_code, on CUDA (bfloat16) or CPU (float32).
 """
 
+import contextlib
+import sys
+import threading
 import time
 from typing import Optional
 
@@ -31,6 +34,37 @@ except ImportError:
     from backend_utils import COHERE_LANGUAGES, release_memory
 
 from .base import TranscriptionBackend
+
+
+@contextlib.contextmanager
+def _quiet_loader_output():
+    """Suppress loader noise while preserving output from service threads.
+
+    redirect_stdout/stderr alone affect the entire process, including shortcut
+    messages explaining that recording is waiting for background model loading.
+    Model initialization and reinitialization are serialized by WhisperManager.
+    """
+    owner = threading.get_ident()
+
+    class LoaderOutput:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def write(self, text):
+            if threading.get_ident() == owner:
+                return len(text)
+            return self.stream.write(text)
+
+        def flush(self):
+            if threading.get_ident() != owner:
+                self.stream.flush()
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+    with contextlib.redirect_stdout(LoaderOutput(sys.stdout)), \
+            contextlib.redirect_stderr(LoaderOutput(sys.stderr)):
+        yield
 
 
 class CohereBackend(TranscriptionBackend):
@@ -84,13 +118,10 @@ class CohereBackend(TranscriptionBackend):
             pass
 
         try:
-            import contextlib, os as _os
             log(f'[BACKEND] Loading Cohere Transcribe model (device={device}, dtype={torch_dtype})')
             # Cohere's trust_remote_code path prints large ANSI-laden blobs that
             # journald records as "[NNK blob data]". Redirect during from_pretrained.
-            with open(_os.devnull, 'w') as _devnull, \
-                    contextlib.redirect_stdout(_devnull), \
-                    contextlib.redirect_stderr(_devnull):
+            with _quiet_loader_output():
                 self._cohere_processor = AutoProcessor.from_pretrained(
                     model_id, trust_remote_code=True, token=hf_token,
                     local_files_only=True)
@@ -239,10 +270,7 @@ class CohereBackend(TranscriptionBackend):
                 pass
 
             log(f'[MODEL] Reinitializing Cohere Transcribe (device={device})')
-            import contextlib, os as _os
-            with open(_os.devnull, 'w') as _devnull, \
-                    contextlib.redirect_stdout(_devnull), \
-                    contextlib.redirect_stderr(_devnull):
+            with _quiet_loader_output():
                 self._cohere_processor = AutoProcessor.from_pretrained(
                     model_id, trust_remote_code=True, token=hf_token,
                     local_files_only=True)
