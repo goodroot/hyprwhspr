@@ -450,8 +450,8 @@ class AudioDeviceRefreshTests(unittest.TestCase):
 
         `_initialize_sounddevice` rebinds the device and opens a keepalive stream;
         running it ahead of the `is_recording` early return would do that on top of
-        a live recording stream, and ahead of the recovery wait would race
-        `_reset_portaudio_state()` (#209).
+        a live recording stream, and ahead of the recovery wait would race the
+        recovery's device re-init (#209).
         """
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)

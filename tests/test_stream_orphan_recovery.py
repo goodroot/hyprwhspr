@@ -239,11 +239,11 @@ class StreamOrphanRecoveryTests(unittest.TestCase):
         capture._cleanup_stream()
         self.assertTrue(stream.closed)
 
-    def test_recovery_resets_portaudio_when_stream_is_wedged(self):
+    def test_recovery_waits_out_a_slow_teardown(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)
         capture = self._start_recording(module, fake_sd)
-        capture.stream.wedge_seconds = 3  # close() returns after the reset
+        capture.stream.wedge_seconds = 1.5  # abort()+close() finish within the grace join
         unrecoverable = []
         capture.on_unrecoverable_stream = lambda: unrecoverable.append(True)
 
@@ -251,17 +251,16 @@ class StreamOrphanRecoveryTests(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=run):
             self.assertTrue(capture.recover_audio_capture("pulse_server_restart"))
 
-        self.assertTrue(fake_sd.terminated)
-        self.assertTrue(fake_sd.initialized)
+        self.assertFalse(fake_sd.terminated)
         self.assertEqual(unrecoverable, [])
         self.assertIsNone(capture.stream)
         self._stop_and_join(capture)
 
-    def test_recovery_reports_stream_that_survives_portaudio_reset(self):
+    def test_recovery_reports_wedged_stream_without_terminating_portaudio(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)
         capture = self._start_recording(module, fake_sd)
-        capture.stream.wedge_seconds = 10  # close() outlives reset + recheck
+        capture.stream.wedge_seconds = 10  # abort() outlives the grace join
         unrecoverable = []
         capture.on_unrecoverable_stream = lambda: unrecoverable.append(True)
 
@@ -269,9 +268,34 @@ class StreamOrphanRecoveryTests(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=run):
             capture.recover_audio_capture("pulse_server_restart")
 
-        self.assertTrue(fake_sd.terminated)
+        # Pa_Terminate deadlocks behind the stuck abort (#282)
+        self.assertFalse(fake_sd.terminated)
         self.assertEqual(unrecoverable, [True])
         self._stop_and_join(capture)
+
+    def test_close_waits_for_a_stalled_stop(self):
+        # Closing mid-stop segfaults (#282)
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        capture = module.AudioCapture(config_manager=FakeConfig())
+        events = []
+
+        class SlowStopStream:
+            def stop(self):
+                events.append("stop begin")
+                time.sleep(1.3)
+                events.append("stop end")
+
+            def close(self):
+                events.append("close")
+
+        stream = SlowStopStream()
+        with mock.patch.object(module, "log") as log:
+            stuck = capture._teardown_stream_with_timeout(stream, "thread cleanup")
+
+        self.assertIsNone(stuck)
+        self.assertEqual(events, ["stop begin", "stop end", "close"])
+        log.assert_called_once_with("[RECOVERY] Warning: stream.stop() timed out in thread cleanup")
 
     def test_stale_stream_callback_stops_writing_shared_state(self):
         fake_sd = FakeSoundDevice()

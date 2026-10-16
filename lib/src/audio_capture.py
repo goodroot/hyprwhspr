@@ -1082,7 +1082,7 @@ class AudioCapture:
         # after a stream fails, which cannot happen while we refuse to open one).
         # Placed after the is_recording return and the recovery/cleanup wait: for a
         # configured device this re-enters PortAudio via `_initialize_sounddevice`,
-        # which must not race a recovery's `_reset_portaudio_state()` (#209) or open
+        # which must not race a recovery's device re-init (#209) or open
         # a keepalive stream alongside a live recording.
         if self._input_selection_error is not None:
             self._retry_input_selection()
@@ -1297,13 +1297,16 @@ class AudioCapture:
         that may be wedged: abort() discards pending buffers instead of
         waiting for them to drain.
 
-        Returns None on success, or the still-blocked close thread when the
+        Halt then close on one thread: closing mid-halt segfaults (#282).
+
+        Returns None on success, or the still-blocked teardown thread when the
         stream is wedged at the C level (caller may escalate to
-        _reset_portaudio_state and re-check the thread).
+        on_unrecoverable_stream).
         """
         halt_name = 'abort' if abort else 'stop'
+        halted = threading.Event()
 
-        def halt_stream():
+        def teardown():
             try:
                 if abort:
                     stream.abort()
@@ -1311,25 +1314,24 @@ class AudioCapture:
                     stream.stop()
             except Exception:
                 pass
-
-        def close_stream():
+            halted.set()
             try:
                 stream.close()
             except Exception:
                 pass
 
-        halt_thread = threading.Thread(target=halt_stream, daemon=True)
-        halt_thread.start()
-        halt_thread.join(timeout=1.0)
-        if halt_thread.is_alive():
+        teardown_thread = threading.Thread(target=teardown, daemon=True)
+        teardown_thread.start()
+        if not halted.wait(timeout=1.0):
             log(f"[RECOVERY] Warning: stream.{halt_name}() timed out in {context}")
 
-        close_thread = threading.Thread(target=close_stream, daemon=True)
-        close_thread.start()
-        close_thread.join(timeout=1.0)
-        if close_thread.is_alive():
-            log(f"[RECOVERY] Warning: stream.close() timed out in {context}")
-            return close_thread
+        teardown_thread.join(timeout=1.0)
+        if teardown_thread.is_alive():
+            if halted.is_set():
+                log(f"[RECOVERY] Warning: stream.close() timed out in {context}")
+            else:
+                log(f"[RECOVERY] Warning: stream.{halt_name}() still blocked, close deferred in {context}")
+            return teardown_thread
         return None
 
     def _teardown_stream_async(self, stream, context: str):
@@ -1677,23 +1679,6 @@ class AudioCapture:
 
         return False
     
-    def _reset_portaudio_state(self):
-        """
-        Reset PortAudio library state as last resort when threads are stuck.
-        This should only be called when a thread is truly stuck and cannot be recovered.
-        """
-        try:
-            log("[RECOVERY] Resetting PortAudio state...")
-            # Terminate and reinitialize PortAudio to clear stuck state
-            # This is a last resort - it will affect all PortAudio operations
-            sd._terminate()
-            time.sleep(0.1)  # Brief pause
-            sd._initialize()
-            log("[RECOVERY] PortAudio state reset complete")
-        except Exception as e:
-            log(f"[RECOVERY] ERROR: Failed to reset PortAudio state: {e}")
-            # Continue anyway - recovery will attempt to proceed
-    
     def recover_audio_capture(self, reason: str, streaming_callback: Optional[Callable[[np.ndarray], None]] = None) -> bool:
         """
         Recover audio capture by tearing down and rebuilding the stream.
@@ -1758,14 +1743,12 @@ class AudioCapture:
             if stream is not None:
                 wedged_close = self._teardown_stream_with_timeout(stream, "recovery teardown", abort=True)
                 if wedged_close is not None:
-                    # Wedged at the C level: its callback thread busy-loops and
-                    # spams stderr until PortAudio itself is reset
-                    self._reset_portaudio_state()
                     wedged_close.join(timeout=2.0)
                     if wedged_close.is_alive():
-                        # Even Pa_Terminate couldn't reclaim it; the native
-                        # thread burns a core until the process exits (#209)
-                        log("[RECOVERY] ERROR: stream unrecoverable after PortAudio reset")
+                        # Wedged at the C level: the native thread burns a core
+                        # until the process exits (#209). Pa_Terminate can't
+                        # reclaim it and deadlocks behind the stuck abort (#282).
+                        log("[RECOVERY] ERROR: stream unrecoverable")
                         if self.on_unrecoverable_stream is not None:
                             self.on_unrecoverable_stream()
 
@@ -1782,12 +1765,9 @@ class AudioCapture:
                         self.record_thread.join(timeout=5.0)
 
                         if self.record_thread.is_alive():
-                            # Still stuck after 10s - reset PortAudio and abandon thread
-                            log("[RECOVERY] Thread stuck after 10s - abandoning and resetting PortAudio")
-                            self._reset_portaudio_state()
-                            self.record_thread.join(timeout=1.0)
-                            if self.record_thread.is_alive():
-                                self.record_thread = None  # Abandon zombie thread
+                            # Abandon it; it tears down only its own stream (#209)
+                            log("[RECOVERY] Thread stuck after 10s - abandoning")
+                            self.record_thread = None
 
             # Abort check after teardown
             if self._abort_recovery.is_set():
