@@ -525,7 +525,13 @@ def main():
         daemon=args.daemon
     )
     _app.run()
-    
+
+    if 'sounddevice' in sys.modules:
+        # Skip sounddevice's exit-time Pa_Terminate: it aborts on a broken stream (#282)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
     return 0
 
 

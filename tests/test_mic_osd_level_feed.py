@@ -19,8 +19,6 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from unittest import mock
 
-# Keep this dependency-free suite from probing PortAudio during module import.
-sys.modules.setdefault("sounddevice", mock.Mock())
 from mic_osd.audio import FeedLevelSource, AudioMonitor
 from mic_osd.runner import MicOSDRunner
 import mic_osd.runner as runner_module
@@ -245,6 +243,47 @@ class AudioMonitorSampleRateTests(unittest.TestCase):
         with mock.patch.object(audio_module, "sd", fake_sd):
             AudioMonitor(samplerate=44100).start()
         self.assertEqual(opened["samplerate"], 44100)
+
+
+class AudioMonitorPortAudioLifecycleTests(unittest.TestCase):
+    """PortAudio stream teardown and shutdown must not crash the helper (#282)."""
+
+    def test_feed_only_import_does_not_load_portaudio(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_lazy_sd_audio", ROOT / "lib" / "mic_osd" / "audio.py")
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules):
+            sys.modules.pop("sounddevice", None)
+            spec.loader.exec_module(module)
+            self.assertNotIn("sounddevice", sys.modules)
+        self.assertIsNone(module.sd)
+
+    def test_stop_closes_only_after_stop_returns(self):
+        events = []
+
+        class SlowStopStream:
+            def start(self_):
+                pass
+
+            def stop(self_):
+                events.append("stop begin")
+                time.sleep(0.2)
+                events.append("stop end")
+
+            def close(self_):
+                events.append("close")
+
+        fake_sd = mock.Mock(
+            query_devices=lambda device=None, kind=None: {"default_samplerate": 48000},
+            InputStream=lambda **kwargs: SlowStopStream(),
+        )
+        with mock.patch.object(audio_module, "sd", fake_sd):
+            monitor = AudioMonitor()
+            monitor.start()
+            monitor.stop()
+        self.assertEqual(events, ["stop begin", "stop end", "close"])
+        self.assertIsNone(monitor.stream)
 
 
 if __name__ == "__main__":
