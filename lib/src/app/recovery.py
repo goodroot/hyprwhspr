@@ -215,6 +215,11 @@ class RecoveryMixin:
         try:
             log("[PULSE] Audio server restarted - recovering audio capture")
 
+            # Save long-form audio before recovery clears the capture buffer
+            longform = getattr(self, '_longform', None)
+            if longform is not None and longform.interrupt():
+                self._notify_user("hyprwhspr", "Audio server restarted - long-form interrupted", "normal")
+
             # Give audio server time to fully initialize
             time.sleep(1)
 

@@ -207,6 +207,25 @@ class LongFormController:
         self._set_state('PAUSED', visualizer='paused')
         self.audio_manager.play_stop_sound()
 
+    def interrupt(self):
+        """Pause on audio server loss, saving the buffer before recovery clears it (#282).
+
+        Returns True when a recording session was interrupted.
+        """
+        with self.lock:
+            if self.state != 'RECORDING':
+                return False
+            print("[LONGFORM] Audio server restarted - pausing session", flush=True)
+            self.stop_auto_save_timer()
+            audio_data = self.audio_capture.pause_recording()
+            if audio_data is not None and len(audio_data) > 0:
+                if self.segment_manager.save_segment(audio_data) is None:
+                    self.persistence_failed(audio_data)
+                    return True
+            self._set_state('PAUSED', visualizer='paused')
+            self.audio_manager.play_error_sound()
+            return True
+
     def resume_recording(self):
         print("[LONGFORM] Resuming recording")
         # PAUSED released the claim, so capturing again has to re-take it

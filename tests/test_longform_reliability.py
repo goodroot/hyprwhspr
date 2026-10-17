@@ -221,6 +221,44 @@ class LongformReliabilityTests(unittest.TestCase):
             controller.start_recording()
         controller.release_recording.assert_called_once_with()
 
+    def test_interrupt_saves_buffer_pauses_and_releases_the_claim(self):
+        # The audio server died; recovery clears the buffer next (#282)
+        controller, _ = self._controller(timer_factory=mock.Mock())
+        controller.release_recording = mock.Mock()
+        buffered = np.array([0.3, 0.4], dtype=np.float32)
+        controller.audio_capture.pause_recording.return_value = buffered
+        controller.segment_manager.save_segment.return_value = Path("segment.wav")
+
+        self.assertTrue(controller.interrupt())
+
+        controller.segment_manager.save_segment.assert_called_once_with(buffered)
+        self.assertEqual(controller.state, 'PAUSED')
+        controller.release_recording.assert_called_once_with()
+        controller.audio_manager.play_error_sound.assert_called_once_with()
+        controller.audio_manager.play_stop_sound.assert_not_called()
+
+    def test_interrupt_is_a_noop_outside_recording(self):
+        for state in ('IDLE', 'PAUSED', 'ERROR', 'PROCESSING'):
+            with self.subTest(state=state):
+                controller, _ = self._controller(timer_factory=mock.Mock())
+                controller.state = state
+
+                self.assertFalse(controller.interrupt())
+
+                self.assertEqual(controller.state, state)
+                controller.audio_capture.pause_recording.assert_not_called()
+                controller.audio_manager.play_error_sound.assert_not_called()
+
+    def test_interrupt_persistence_failure_keeps_audio_in_error(self):
+        controller, persisted = self._controller(timer_factory=mock.Mock())
+        unsaved = np.array([0.3, 0.4], dtype=np.float32)
+        controller.audio_capture.pause_recording.return_value = unsaved
+
+        self.assertTrue(controller.interrupt())
+
+        np.testing.assert_array_equal(controller.error_audio, np.concatenate([persisted, unsaved]))
+        self.assertEqual(controller.state, 'ERROR')
+
     def test_pause_persistence_failure_preserves_complete_audio_and_errors(self):
         controller, persisted = self._controller()
         unsaved = np.array([0.3, 0.4], dtype=np.float32)

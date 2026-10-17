@@ -187,6 +187,32 @@ class MidRecordingWedgeTests(unittest.TestCase):
         self.exit.assert_called_once_with(1)
         self.assertFalse(self.sd.terminated)
 
+    def test_longform_is_interrupted_before_recovery_clears_the_buffer(self):
+        self.app.is_recording = False
+        order = mock.Mock()
+        self.app._longform = mock.Mock()
+        self.app._longform.interrupt.return_value = True
+        order.attach_mock(self.app._longform.interrupt, 'interrupt')
+        recover = mock.patch.object(self.capture, 'recover_audio_capture',
+                                    wraps=self.capture.recover_audio_capture).start()
+        self.addCleanup(mock.patch.stopall)
+        order.attach_mock(recover, 'recover')
+
+        self.app._on_pulse_server_restarted()
+
+        self.assertEqual([c[0] for c in order.mock_calls], ['interrupt', 'recover'])
+        self.app._notify_user.assert_called_once_with(
+            "hyprwhspr", "Audio server restarted - long-form interrupted", "normal")
+
+    def test_no_longform_notice_when_nothing_was_interrupted(self):
+        self.app.is_recording = False
+        self.app._longform = mock.Mock()
+        self.app._longform.interrupt.return_value = False
+
+        self.app._on_pulse_server_restarted()
+
+        self.app._notify_user.assert_not_called()
+
     def test_recovered_server_still_ends_the_orphaned_session(self):
         self.app._on_pulse_server_restarted()
 
