@@ -107,6 +107,9 @@ class FeedbackMixin:
         from "device wedged" (stream opened but delivers no callbacks) using the
         open outcome recorded by the capture thread; fallback covers the latter.
         """
+        pending = getattr(self.audio_capture, '_has_pending_teardowns', None)
+        if callable(pending) and pending() is True:
+            return "Still releasing the microphone - try again in a moment"
         with self._mic_state_lock:
             if self._mic_disconnected:
                 return "Microphone disconnected - please replug USB microphone"

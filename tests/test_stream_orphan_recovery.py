@@ -7,6 +7,7 @@ kept appending to the unbounded audio_data buffer.
 
 import importlib
 import sys
+import threading
 import time
 import types
 import unittest
@@ -29,6 +30,10 @@ class FakeCompleted:
 
 
 class FakeChunk(list):
+    ndim = 1
+    dtype = "float32"
+    flags = {'C_CONTIGUOUS': True}
+
     def copy(self):
         return FakeChunk(self)
 
@@ -128,7 +133,7 @@ class FakeNumpy(types.ModuleType):
         self.ndarray = object
 
     def concatenate(self, arrays, axis=0):
-        result = []
+        result = FakeChunk()
         for array in arrays:
             result.extend(array)
         return result
@@ -209,6 +214,29 @@ class StreamOrphanRecoveryTests(unittest.TestCase):
         if capture.record_thread is not None:
             capture.record_thread.join(timeout=3.0)
 
+    def _fast_teardowns(self, capture):
+        """Use real workers/events but skip bounded joins in lifecycle tests."""
+        started = threading.Event()
+        teardown = capture._teardown_stream_with_timeout
+
+        def begin(stream, context, abort=False, wait=True, **kwargs):
+            worker = teardown(stream, context, abort=abort, wait=False, **kwargs)
+            join = worker.join
+            worker.join = lambda timeout=None: join(None if timeout is None else 0)
+            started.set()
+            return worker
+
+        patcher = mock.patch.object(capture, "_teardown_stream_with_timeout", side_effect=begin)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return started
+
+    def _stop_while_teardown_pending(self, capture, started):
+        capture._record_stop_event.set()
+        self.assertTrue(started.wait(2.0))
+        with mock.patch.object(capture.record_thread, "join"):
+            return capture.stop_recording()
+
     def test_recovery_closes_stream_even_when_abort_raises(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)
@@ -243,59 +271,223 @@ class StreamOrphanRecoveryTests(unittest.TestCase):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)
         capture = self._start_recording(module, fake_sd)
-        capture.stream.wedge_seconds = 1.5  # abort()+close() finish within the grace join
-        unrecoverable = []
-        capture.on_unrecoverable_stream = lambda: unrecoverable.append(True)
+        stream = capture.stream
+        release = threading.Event()
+        stream.abort = release.wait
+        teardown = capture._teardown_stream_with_timeout
 
+        def begin(*args, **kwargs):
+            worker = teardown(*args, **kwargs, wait=False)
+            join = worker.join
+
+            def finish(timeout=None):
+                release.set()
+                join(timeout=2.0)
+
+            worker.join = finish
+            return worker
+
+        capture.on_unrecoverable_stream = mock.Mock()
         run = lambda *args, **kwargs: FakeCompleted("alsa_input.test mic")
-        with mock.patch("subprocess.run", side_effect=run):
-            self.assertTrue(capture.recover_audio_capture("pulse_server_restart"))
+        try:
+            with mock.patch("subprocess.run", side_effect=run), \
+                    mock.patch.object(capture, "_teardown_stream_with_timeout", side_effect=begin):
+                self.assertTrue(capture.recover_audio_capture("pulse_server_restart"))
+            self.assertTrue(stream.closed)
+            self.assertFalse(fake_sd.terminated)
+            capture.on_unrecoverable_stream.assert_not_called()
+        finally:
+            release.set()
+            self._stop_and_join(capture)
 
-        self.assertFalse(fake_sd.terminated)
-        self.assertEqual(unrecoverable, [])
-        self.assertIsNone(capture.stream)
-        self._stop_and_join(capture)
-
-    def test_recovery_reports_wedged_stream_without_terminating_portaudio(self):
+    def test_recovery_wedge_reports_at_once_and_allows_recording_after_late_close(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)
         capture = self._start_recording(module, fake_sd)
-        capture.stream.wedge_seconds = 10  # abort() outlives the grace join
-        unrecoverable = []
-        capture.on_unrecoverable_stream = lambda: unrecoverable.append(True)
+        stream = capture.stream
+        release = threading.Event()
+        stream.abort = lambda: release.wait()
+        reported = mock.Mock()
+        capture.on_unrecoverable_stream = reported
+        self._fast_teardowns(capture)
 
         run = lambda *args, **kwargs: FakeCompleted("alsa_input.test mic")
-        with mock.patch("subprocess.run", side_effect=run):
-            capture.recover_audio_capture("pulse_server_restart")
+        try:
+            with mock.patch("subprocess.run", side_effect=run):
+                self.assertFalse(capture.recover_audio_capture("pulse_server_restart"))
+            self.assertFalse(fake_sd.terminated)
+            # Server already gone: no 30s wait before escalating (#209)
+            reported.assert_called_once_with()
+            capture.check_pending_teardowns()
+            reported.assert_called_once_with()
+            self.assertFalse(capture.start_recording())
+            self.assertFalse(capture.recover_audio_capture("pulse_server_restart"))
+            reported.assert_called_once_with()
 
-        # Pa_Terminate deadlocks behind the stuck abort (#282)
-        self.assertFalse(fake_sd.terminated)
-        self.assertEqual(unrecoverable, [True])
-        self._stop_and_join(capture)
+            release.set()
+            self.assertTrue(self._wait_for(lambda: not capture._has_pending_teardowns()))
+            self.assertTrue(stream.closed)
+            with mock.patch("subprocess.run", side_effect=run):
+                self.assertTrue(capture.start_recording())
+            self.assertTrue(self._wait_for(lambda: capture.stream is not None and capture.stream.started))
+        finally:
+            release.set()
+            self._stop_and_join(capture)
 
-    def test_close_waits_for_a_stalled_stop(self):
-        # Closing mid-stop segfaults (#282)
+    def test_normal_stop_preserves_audio_and_resumes_after_late_close(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        capture = self._start_recording(module, fake_sd)
+        stream = capture.stream
+        stream.callback(FakeIndata([0.1, 0.2]), 2, None, None)
+        release = threading.Event()
+        stream.stop = lambda: release.wait()
+        reported = threading.Event()
+        capture.on_unrecoverable_stream = reported.set
+        started = self._fast_teardowns(capture)
+
+        try:
+            with mock.patch.object(module, "log") as log:
+                self.assertEqual(self._stop_while_teardown_pending(capture, started), [0.1, 0.2])
+                with capture.lock:
+                    before_deadline = max(capture._pending_teardowns.values()) - 1.0
+                with mock.patch.object(module.time, "monotonic", return_value=before_deadline):
+                    capture.check_pending_teardowns()
+                self.assertFalse(reported.is_set())
+            self.assertNotIn(
+                mock.call("[WARN] Recording thread did not exit cleanly after 3 seconds"),
+                log.call_args_list)
+            self.assertFalse(stream.closed)
+            self.assertFalse(capture._cleanup_complete.is_set())
+            self.assertFalse(capture.start_recording())
+            self.assertFalse(capture.recover_audio_capture("pulse_server_restart"))
+            self.assertFalse(fake_sd.terminated)
+            self.assertEqual(len(fake_sd.streams), 1)
+
+            release.set()
+            capture.record_thread.join(timeout=2.0)
+            self.assertFalse(capture.record_thread.is_alive())
+            self.assertTrue(stream.closed)
+            self.assertTrue(capture._cleanup_complete.is_set())
+            self.assertFalse(capture._has_pending_teardowns())
+            self.assertFalse(reported.is_set())
+            run = lambda *args, **kwargs: FakeCompleted("alsa_input.test mic")
+            with mock.patch("subprocess.run", side_effect=run):
+                self.assertTrue(capture.start_recording())
+            self.assertTrue(self._wait_for(lambda: capture.stream is not None and capture.stream.started))
+        finally:
+            release.set()
+            self._stop_and_join(capture)
+
+    def test_late_cleanup_does_not_complete_a_newer_recording(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        capture = self._start_recording(module, fake_sd)
+        stream = capture.stream
+        release = threading.Event()
+        stream.stop = lambda: release.wait()
+        old_worker = capture.record_thread
+        started = self._fast_teardowns(capture)
+        try:
+            self._stop_while_teardown_pending(capture, started)
+            with capture.lock:
+                capture._record_stop_event = threading.Event()
+                capture._cleanup_complete.clear()
+            with mock.patch.object(capture, "_start_keepalive") as keepalive:
+                release.set()
+                old_worker.join(timeout=2.0)
+                self.assertFalse(old_worker.is_alive())
+                self.assertTrue(stream.closed)
+                self.assertFalse(capture._cleanup_complete.is_set())
+                keepalive.assert_not_called()
+        finally:
+            release.set()
+            old_worker.join(timeout=2.0)
+
+    def test_async_cleanup_blocks_until_all_streams_close_without_escalating(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)
         capture = module.AudioCapture(config_manager=FakeConfig())
-        events = []
+        releases = [threading.Event(), threading.Event()]
+        streams = [FakeStream(fake_sd, 0), FakeStream(fake_sd, 0)]
+        reported = mock.Mock()
+        capture.on_unrecoverable_stream = reported
+        try:
+            for stream, release in zip(streams, releases):
+                stream.abort = release.wait
+                capture._teardown_stream_async(stream, "post-thread cleanup")
+            self.assertTrue(capture._has_pending_teardowns())
+            self.assertFalse(capture.start_recording())
 
-        class SlowStopStream:
-            def stop(self):
-                events.append("stop begin")
-                time.sleep(1.3)
-                events.append("stop end")
+            releases[0].set()
+            self.assertTrue(self._wait_for(lambda: streams[0].closed))
+            self.assertTrue(capture._has_pending_teardowns())
+            self.assertFalse(capture.recover_audio_capture("pulse_server_restart"))
+            self.assertFalse(capture.start_recording())
+            reported.assert_not_called()
+        finally:
+            for release in releases:
+                release.set()
+            self.assertTrue(self._wait_for(lambda: not capture._has_pending_teardowns()))
+        self.assertTrue(all(stream.closed for stream in streams))
 
-            def close(self):
-                events.append("close")
+    def test_start_retry_does_not_open_another_stream_during_teardown(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        capture = module.AudioCapture(config_manager=FakeConfig({"stream_start_retry_delay": 0}))
+        stream = fake_sd.InputStream(device=0)
+        release = threading.Event()
+        stopping = threading.Event()
+        stream.start = mock.Mock(side_effect=RuntimeError("Unanticipated host error"))
 
-        stream = SlowStopStream()
-        with mock.patch.object(module, "log") as log:
-            stuck = capture._teardown_stream_with_timeout(stream, "thread cleanup")
+        def stop():
+            stopping.set()
+            release.wait()
 
-        self.assertIsNone(stuck)
-        self.assertEqual(events, ["stop begin", "stop end", "close"])
-        log.assert_called_once_with("[RECOVERY] Warning: stream.stop() timed out in thread cleanup")
+        stream.stop = stop
+        self._fast_teardowns(capture)
+        run = lambda *args, **kwargs: FakeCompleted("alsa_input.test mic")
+        try:
+            with mock.patch("subprocess.run", side_effect=run), \
+                    mock.patch.object(fake_sd, "InputStream", return_value=stream) as open_stream:
+                self.assertTrue(capture.start_recording())
+                self.assertTrue(stopping.wait(2.0))
+                with mock.patch.object(capture.record_thread, "join"):
+                    capture.stop_recording()
+                open_stream.assert_called_once()
+                self.assertFalse(capture._cleanup_complete.is_set())
+                self.assertFalse(capture.start_recording())
+                release.set()
+                capture.record_thread.join(timeout=2.0)
+                self.assertFalse(capture.record_thread.is_alive())
+                self.assertTrue(stream.closed)
+                self.assertTrue(capture._cleanup_complete.is_set())
+        finally:
+            release.set()
+            self._stop_and_join(capture)
+
+    def test_close_waits_for_a_stalled_stop(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        capture = module.AudioCapture(config_manager=FakeConfig())
+        entered = threading.Event()
+        release = threading.Event()
+        stream = mock.Mock()
+
+        def stop():
+            entered.set()
+            release.wait()
+
+        stream.stop.side_effect = stop
+        worker = capture._teardown_stream_with_timeout(stream, "thread cleanup", wait=False)
+        try:
+            self.assertTrue(entered.wait(2.0))
+            stream.close.assert_not_called()
+        finally:
+            release.set()
+            worker.join(timeout=2.0)
+        self.assertFalse(worker.is_alive())
+        stream.close.assert_called_once_with()
 
     def test_stale_stream_callback_stops_writing_shared_state(self):
         fake_sd = FakeSoundDevice()

@@ -30,6 +30,7 @@ np = require_package('numpy')
 # Ceiling on buffered recording audio, so a runaway callback (e.g. an
 # orphaned stream busy-looping on a dead device, #209) can't grow unbounded.
 _MAX_BUFFER_SECONDS = 3600
+_TEARDOWN_DEADLINE_SECONDS = 30.0
 
 
 @contextmanager
@@ -103,9 +104,11 @@ class AudioCapture:
         self.stream_opened = False
         self.stream_open_error = None
 
-        # Invoked when a wedged stream survives even a PortAudio reset;
+        # Invoked when teardown exceeds its deadline; False defers while busy.
         # the app layer decides what to do (e.g. exit for a systemd restart)
         self.on_unrecoverable_stream = None
+        self._pending_teardowns = {}  # Thread -> escalation deadline; protected by self.lock
+        self._reported_teardowns = set()
 
         # Recovery state tracking
         self.recovery_in_progress = False
@@ -1056,6 +1059,11 @@ class AudioCapture:
         if self.is_recording:
             return True
 
+        if self._has_pending_teardowns():
+            self.check_pending_teardowns()
+            log("[RECOVERY] Stream teardown still pending; recording refused")
+            return False
+
         # If a recovery is in progress, wait briefly for cleanup to complete
         recovery_waited = False
         if getattr(self, "recovery_in_progress", False):
@@ -1114,6 +1122,9 @@ class AudioCapture:
                 self._cleanup_stream()
             except Exception:
                 pass  # Ignore cleanup errors
+
+        if self._has_pending_teardowns():
+            return False
         
         try:
             # Clear previous audio data
@@ -1171,9 +1182,8 @@ class AudioCapture:
 
             # Check if thread actually exited
             if self.record_thread.is_alive():
-                # Only warn if this is a normal stop (not during recovery)
-                # During recovery, it's expected that the thread may not exit cleanly when device is dead
-                if not (hasattr(self, 'recovery_in_progress') and self.recovery_in_progress):
+                # Recovery and pending native teardown already report their stalls.
+                if not self.recovery_in_progress and not self._has_pending_teardowns():
                     log("[WARN] Recording thread did not exit cleanly after 3 seconds")
 
         # Thread's finally block handles cleanup - verify it completed
@@ -1288,7 +1298,39 @@ class AudioCapture:
         # Just call start_recording - it handles everything
         return self.start_recording(streaming_callback=streaming_callback)
 
-    def _teardown_stream_with_timeout(self, stream, context: str, abort: bool = False):
+    def _has_pending_teardowns(self):
+        with self.lock:
+            return bool(self._pending_teardowns)
+
+    def expire_pending_teardowns(self):
+        """Treat every pending teardown as wedged: its server is gone (#209)."""
+        now = time.monotonic()
+        with self.lock:
+            for thread in self._pending_teardowns:
+                self._pending_teardowns[thread] = min(self._pending_teardowns[thread], now)
+
+    def check_pending_teardowns(self):
+        """Report expired teardowns once; a busy app returns False to defer."""
+        if self.on_unrecoverable_stream is None:
+            return
+        now = time.monotonic()
+        with self.lock:
+            expired = {thread for thread, deadline in self._pending_teardowns.items()
+                       if now >= deadline
+                       and thread not in self._reported_teardowns}
+            if not expired:
+                return
+            self._reported_teardowns.update(expired)
+        handled = False
+        try:
+            handled = self.on_unrecoverable_stream() is not False
+        finally:
+            if not handled:
+                with self.lock:
+                    self._reported_teardowns.difference_update(expired)
+
+    def _teardown_stream_with_timeout(self, stream, context: str, abort: bool = False, wait: bool = True,
+                                      deadline: float = _TEARDOWN_DEADLINE_SECONDS):
         """Stop and close a stream with timeout protection.
 
         PortAudio stop()/close() can block forever if the device vanished
@@ -1300,28 +1342,43 @@ class AudioCapture:
         Halt then close on one thread: closing mid-halt segfaults (#282).
 
         Returns None on success, or the still-blocked teardown thread when the
-        stream is wedged at the C level (caller may escalate to
-        on_unrecoverable_stream).
+        stream is still blocked. Deadline checks handle escalation separately.
+        With wait=False, register and start teardown without waiting for it.
+        deadline: seconds until a still-pending teardown counts as wedged.
         """
         halt_name = 'abort' if abort else 'stop'
         halted = threading.Event()
 
         def teardown():
             try:
-                if abort:
-                    stream.abort()
-                else:
-                    stream.stop()
-            except Exception:
-                pass
-            halted.set()
-            try:
-                stream.close()
-            except Exception:
-                pass
+                try:
+                    if abort:
+                        stream.abort()
+                    else:
+                        stream.stop()
+                except Exception:
+                    pass
+                halted.set()
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            finally:
+                with self.lock:
+                    self._pending_teardowns.pop(threading.current_thread(), None)
+                    self._reported_teardowns.discard(threading.current_thread())
 
         teardown_thread = threading.Thread(target=teardown, daemon=True)
-        teardown_thread.start()
+        with self.lock:
+            self._pending_teardowns[teardown_thread] = time.monotonic() + deadline
+        try:
+            teardown_thread.start()
+        except Exception:
+            with self.lock:
+                self._pending_teardowns.pop(teardown_thread, None)
+            raise
+        if not wait:
+            return teardown_thread
         if not halted.wait(timeout=1.0):
             log(f"[RECOVERY] Warning: stream.{halt_name}() timed out in {context}")
 
@@ -1337,14 +1394,9 @@ class AudioCapture:
     def _teardown_stream_async(self, stream, context: str):
         """Tear down a possibly-wedged stream without blocking the caller.
 
-        Worst case a stuck stream costs a parked daemon thread, not a live
-        orphan capture (#209).
+        The pending teardown blocks new streams until it finishes.
         """
-        threading.Thread(
-            target=self._teardown_stream_with_timeout,
-            args=(stream, context, True),
-            daemon=True,
-        ).start()
+        self._teardown_stream_with_timeout(stream, context, abort=True, wait=False)
 
     def _record_audio(self, stop_event):
         """Internal method to record audio in a separate thread"""
@@ -1464,10 +1516,14 @@ class AudioCapture:
                             stream = stream_box[0] if not published or self.stream is stream_box[0] else None
                             if self.stream is stream_box[0]:
                                 self.stream = None
+                        pending_teardown = None
                         if stream is not None:
-                            self._teardown_stream_with_timeout(stream, 'start retry')
+                            pending_teardown = self._teardown_stream_with_timeout(stream, 'start retry')
                         stream_box[0] = None
                         published = False
+                        if pending_teardown is not None:
+                            pending_teardown.join()
+                            return
                         if stop_event.is_set():
                             return
                         if not refreshed_after_failure and not self._has_configured_audio_device():
@@ -1514,12 +1570,17 @@ class AudioCapture:
                     stream = self.stream
                     self.stream = None
             if stream is not None:
-                self._teardown_stream_with_timeout(stream, "thread cleanup")
+                pending_teardown = self._teardown_stream_with_timeout(stream, "thread cleanup")
+                if pending_teardown is not None:
+                    # stop_recording returns the audio after its bounded join.
+                    # Keep cleanup ownership here until native teardown finishes.
+                    pending_teardown.join()
             stop_event.set()
             if self._record_stop_event is stop_event and not self.recovery_in_progress:
                 # Publish completion only after all worker-owned cleanup finishes.
-                self._stop_keepalive()
-                self._start_keepalive()
+                if not self._has_pending_teardowns():
+                    self._stop_keepalive()
+                    self._start_keepalive()
                 self._cleanup_complete.set()
 
     def start_monitoring(self, level_callback: Optional[Callable[[float], None]] = None):
@@ -1695,6 +1756,11 @@ class AudioCapture:
         Returns:
             True if recovery successful, False otherwise
         """
+        if self._has_pending_teardowns():
+            self.check_pending_teardowns()
+            log("[RECOVERY] Stream teardown still pending; recovery deferred")
+            return False
+
         # Check if recovery is already in progress (serialization)
         with self.recovery_lock:
             if self.recovery_in_progress:
@@ -1741,16 +1807,14 @@ class AudioCapture:
                 stream = self.stream
                 self.stream = None
             if stream is not None:
-                wedged_close = self._teardown_stream_with_timeout(stream, "recovery teardown", abort=True)
+                # Server already gone: a stuck abort is a wedge, not a slow stop (#209)
+                wedged_close = self._teardown_stream_with_timeout(
+                    stream, "recovery teardown", abort=True, deadline=0.0)
                 if wedged_close is not None:
                     wedged_close.join(timeout=2.0)
                     if wedged_close.is_alive():
-                        # Wedged at the C level: the native thread burns a core
-                        # until the process exits (#209). Pa_Terminate can't
-                        # reclaim it and deadlocks behind the stuck abort (#282).
-                        log("[RECOVERY] ERROR: stream unrecoverable")
-                        if self.on_unrecoverable_stream is not None:
-                            self.on_unrecoverable_stream()
+                        self.check_pending_teardowns()
+                        return False
 
             # Join record thread with timeout and verify cleanup completion
             if self.record_thread and self.record_thread.is_alive():
@@ -1768,6 +1832,9 @@ class AudioCapture:
                             # Abandon it; it tears down only its own stream (#209)
                             log("[RECOVERY] Thread stuck after 10s - abandoning")
                             self.record_thread = None
+
+            if self._has_pending_teardowns():
+                return False
 
             # Abort check after teardown
             if self._abort_recovery.is_set():

@@ -183,22 +183,32 @@ class RecoveryMixin:
             log(f"[PULSE] Error handling default source change: {e}")
 
     def _on_unrecoverable_audio_stream(self):
-        """A wedged PortAudio stream survived every reclamation attempt (#209).
+        """Restart an idle service after a teardown exceeds its deadline (#209).
 
         Its native thread burns a core and floods stderr until the process
         dies, so under systemd (Restart=on-failure) exit and let it bring us
-        back clean. Outside systemd, log and limp on.
+        back clean. Return False while busy so the next service tick retries.
+        Outside systemd, log once and allow late teardown completion.
         """
         from instance_detection import is_running_under_systemd
-        if not is_running_under_systemd():
-            log("[RECOVERY] ERROR: wedged audio stream cannot be reclaimed - "
-                  "restart hyprwhspr to stop the CPU/log churn")
-            return
-        log("[RECOVERY] Wedged audio stream cannot be reclaimed - exiting for systemd restart")
-        self._notify_user("hyprwhspr", "Audio system wedged - restarting service", "critical")
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(1)
+        with self._recording_lock:
+            # Include the handoff before _process_audio claims is_processing.
+            if (self.is_recording or self.is_processing
+                    or self._recording_finalizing.is_set()
+                    or self._recording_starting or self._file_transcription_active
+                    or self._longform_active or self._model_operation_active):
+                return False
+            if not self.audio_capture._has_pending_teardowns():
+                return True
+            if not is_running_under_systemd():
+                log("[RECOVERY] ERROR: wedged audio stream cannot be reclaimed - "
+                    "restart hyprwhspr to stop the CPU/log churn")
+                return True
+            log("[RECOVERY] Wedged audio stream cannot be reclaimed - exiting for systemd restart")
+            self._notify_user("hyprwhspr", "Audio system wedged - restarting service", "critical")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(1)
 
     def _on_pulse_server_restarted(self):
         """Called when PulseAudio/PipeWire server restarts"""
@@ -208,7 +218,15 @@ class RecoveryMixin:
             # Give audio server time to fully initialize
             time.sleep(1)
 
-            if self.audio_capture.recover_audio_capture('pulse_server_restart'):
+            recovered = self.audio_capture.recover_audio_capture('pulse_server_restart')
+            # Recovery stopped capture under any live session; end it so the
+            # app isn't left recording nothing (#209)
+            self._end_orphaned_recording()
+            # Teardowns still pending began on the dead server, so they're
+            # wedged; escalate now rather than at their deadline
+            self.audio_capture.expire_pending_teardowns()
+            self.audio_capture.check_pending_teardowns()
+            if recovered:
                 log("[PULSE] Recovery successful after server restart")
                 self._write_recovery_result(True, 'pulse_restart')
             else:
@@ -267,6 +285,9 @@ class RecoveryMixin:
         This is called periodically (e.g., in main loop) to check if recovery is needed.
         Only attempts recovery once per error state to avoid infinite retry loops.
         """
+        # Pulse recovery may run only once, before a stuck teardown's deadline.
+        self.audio_capture.check_pending_teardowns()
+
         # Check if recovery file exists
         if not RECOVERY_REQUESTED_FILE.exists():
             # No recovery requested - mic is working, reset flag

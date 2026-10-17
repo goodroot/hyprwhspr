@@ -525,6 +525,29 @@ class RecordingMixin:
         except Exception as e:
             log(f"[ERROR] Error canceling recording: {e}")
 
+    def _end_orphaned_recording(self):
+        """Discard a session whose capture recovery already stopped (#209)."""
+        with self._recording_lock:
+            if (not self.is_recording or self._recording_starting
+                    or self.audio_capture.is_recording):
+                return
+            session = self._recording_session
+            self.is_recording = False
+            self._current_language_override = None
+            self._ptt_reset()
+
+        log("[RECOVERY] Recording discarded - audio server restarted")
+
+        self._cleanup_recording_state(session)
+        try:
+            self._wait_for_start_settled()
+            self.audio_capture.stop_recording()
+            self.whisper_manager.discard_realtime_audio()
+            self.audio_manager.play_error_sound()
+            self._notify_user("hyprwhspr", "Audio server restarted - recording discarded", "normal")
+        except Exception as e:
+            log(f"[ERROR] Error ending orphaned recording: {e}")
+
     def _cancel_recording(self):
         """Cancel recording and discard audio without transcribing or injecting text"""
         with self._recording_lock:
