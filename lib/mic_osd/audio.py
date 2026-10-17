@@ -210,6 +210,9 @@ class AudioMonitor:
             def teardown():
                 try:
                     stream.stop()
+                except Exception:
+                    pass
+                try:
                     stream.close()
                 except Exception:
                     pass

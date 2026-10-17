@@ -153,7 +153,12 @@ class GetVizFrameTests(unittest.TestCase):
 
     def _make_capture(self):
         sys.path.insert(0, str(ROOT / "lib" / "src"))
-        import audio_capture
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_viz_audio_capture", ROOT / "lib" / "src" / "audio_capture.py")
+        audio_capture = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {"sounddevice": mock.Mock()}):
+            spec.loader.exec_module(audio_capture)
         capture = object.__new__(audio_capture.AudioCapture)
         capture.lock = threading.Lock()
         capture._viz_chunk = None
@@ -258,6 +263,19 @@ class AudioMonitorPortAudioLifecycleTests(unittest.TestCase):
             spec.loader.exec_module(module)
             self.assertNotIn("sounddevice", sys.modules)
         self.assertIsNone(module.sd)
+
+    def test_stop_closes_even_when_stop_raises(self):
+        stream = mock.Mock()
+        stream.stop.side_effect = RuntimeError("device disconnected")
+        monitor = AudioMonitor()
+        monitor.stream = stream
+        monitor.running = True
+
+        monitor.stop()
+
+        stream.close.assert_called_once_with()
+        self.assertIsNone(monitor.stream)
+        self.assertFalse(monitor.running)
 
     def test_stop_closes_only_after_stop_returns(self):
         events = []
