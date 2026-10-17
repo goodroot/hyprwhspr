@@ -261,15 +261,7 @@ class AudioCapture:
             
             # Get device information
             try:
-                # Extract input device ID (sd.default.device is tuple (input, output) or None)
-                if sd.default.device is None:
-                    current_device_id = None
-                elif isinstance(sd.default.device, (tuple, list)):
-                    current_device_id = sd.default.device[0]
-                else:
-                    # Legacy: single integer
-                    current_device_id = sd.default.device
-                
+                current_device_id = self._current_sd_default_input()
                 if current_device_id is not None:
                     device_info = sd.query_devices(device=current_device_id, kind='input')
                     if device_info['max_input_channels'] > 0:
@@ -309,23 +301,24 @@ class AudioCapture:
         )
 
     def _current_sd_default_input(self):
-        """Return sounddevice's current default input device id."""
-        if sd.default.device is None:
-            return None
-        if isinstance(sd.default.device, (tuple, list)):
-            return sd.default.device[0]
-        return sd.default.device
+        """Return the pinned default input device id, or None when unpinned."""
+        device = sd.default.device
+        if device is None or isinstance(device, (int, str)):
+            return device
+        # sounddevice's _InputOutputPair is neither tuple nor list, and indexing
+        # an unpinned slot reads through to PortAudio's default; read the pin.
+        pair = getattr(device, '_pair', None)
+        return pair[0] if pair is not None else device[0]
 
     def _set_sd_default_input(self, device_id):
         """Set sounddevice's default input device without touching output."""
-        if sd.default.device is None:
+        device = sd.default.device
+        if device is None or isinstance(device, (int, str)):
             sd.default.device = (device_id, None)
-        elif isinstance(sd.default.device, tuple):
-            sd.default.device = (device_id, sd.default.device[1])
-        elif isinstance(sd.default.device, list):
-            sd.default.device[0] = device_id
-        else:
-            sd.default.device = (device_id, None)
+        elif isinstance(device, tuple):
+            sd.default.device = (device_id, device[1])
+        else:  # list or sounddevice's _InputOutputPair
+            device[0] = device_id
 
     def _clear_sd_default_input(self):
         """Let PortAudio resolve the current default input at stream-open time."""
@@ -569,12 +562,17 @@ class AudioCapture:
     def _set_system_default_device(self):
         """Set system default device when no specific device is configured"""
         try:
-            # Ensure we have a valid default input device
-            # sd.default.device is tuple (input, output) or None
-            if sd.default.device is None or (isinstance(sd.default.device, (tuple, list)) and sd.default.device[0] is None):
-                # Find first available input device
-                devices = sd.query_devices()
-                for i, device in enumerate(devices):
+            if self._current_sd_default_input() is None:
+                # Pin PortAudio's own default input (usually the sound server),
+                # never the first device: that is often an exclusive raw hw: mic
+                try:
+                    default_input = sd.query_devices(kind='input')
+                    if default_input['max_input_channels'] > 0:
+                        self._set_sd_default_input(default_input['index'])
+                        return
+                except Exception:
+                    pass  # No PortAudio default; fall back to the first input
+                for i, device in enumerate(sd.query_devices()):
                     if device['max_input_channels'] > 0:
                         self._set_sd_default_input(i)
                         break

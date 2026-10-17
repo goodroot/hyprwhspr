@@ -105,6 +105,22 @@ class FakeSoundDevice(types.ModuleType):
         return stream
 
 
+class FakeInputOutputPair:
+    """Mirrors sounddevice._InputOutputPair: neither tuple nor list, and an
+    unpinned slot reads through to PortAudio's default."""
+
+    def __init__(self, portaudio_default):
+        self._pair = [None, None]
+        self._portaudio_default = portaudio_default
+
+    def __getitem__(self, index):
+        value = self._pair[index]
+        return self._portaudio_default[index] if value is None else value
+
+    def __setitem__(self, index, value):
+        self._pair[index] = value
+
+
 class FakeNumpy(types.ModuleType):
     def __init__(self):
         super().__init__("numpy")
@@ -796,6 +812,108 @@ class AudioDeviceRefreshTests(unittest.TestCase):
             capture = module.AudioCapture(config_manager=FakeConfig({"audio_device_name": source}))
 
         self.assertEqual(capture.device_id, 4)
+
+
+
+class SoundDevicePairTests(unittest.TestCase):
+    """The real sd.default.device is an _InputOutputPair, which the list-based
+    fakes above never exercised: init bound the whole pair as device_id, so
+    the keepalive never started."""
+
+    _load_audio_capture = AudioDeviceRefreshTests._load_audio_capture
+    tearDown = AudioDeviceRefreshTests.tearDown
+    _run_sources = AudioDeviceRefreshTests._run_sources
+
+    def _pair_sd(self):
+        fake_sd = FakeSoundDevice()
+        pair = FakeInputOutputPair(portaudio_default=[2, 3])
+
+        class Default(types.SimpleNamespace):
+            # Like sounddevice: assigning stores into the same pair object
+            device = property(lambda self: pair,
+                              lambda self, value: pair._pair.__setitem__(
+                                  slice(None), [None, None] if value is None else list(value)))
+
+        fake_sd.default = Default(samplerate=None, channels=None, dtype=None)
+        devices = fake_sd.query_devices
+
+        def query_devices(device=None, kind=None):
+            # Like sounddevice: a pair resolves by kind, and is ambiguous without one
+            if isinstance(device, FakeInputOutputPair):
+                if kind is None:
+                    raise ValueError("No input/output device matching pair")
+                device = device[0 if kind == 'input' else 1]
+            return devices(device, kind)
+
+        fake_sd.query_devices = query_devices
+        return fake_sd
+
+    def test_init_binds_an_integer_device_and_starts_keepalive(self):
+        fake_sd = self._pair_sd()
+        module = self._load_audio_capture(fake_sd)
+
+        with mock.patch("subprocess.run", side_effect=self._run_sources(["alsa_input.old mic"])):
+            capture = module.AudioCapture(config_manager=FakeConfig({"keepalive_stream": True}))
+
+        self.assertEqual(capture.device_id, 0)
+        self.assertIsNotNone(capture._keepalive_stream)
+        self.assertEqual(capture._keepalive_stream.device, 0)
+
+    def test_unpinned_input_reads_as_none_not_the_portaudio_default(self):
+        fake_sd = self._pair_sd()
+        module = self._load_audio_capture(fake_sd)
+        capture = object.__new__(module.AudioCapture)
+
+        self.assertIsNone(capture._current_sd_default_input())
+        capture._set_sd_default_input(1)
+        self.assertEqual(capture._current_sd_default_input(), 1)
+
+    def test_pinning_input_keeps_the_output_pin(self):
+        fake_sd = self._pair_sd()
+        fake_sd.default.device[1] = 7
+        module = self._load_audio_capture(fake_sd)
+        capture = object.__new__(module.AudioCapture)
+
+        capture._set_sd_default_input(1)
+
+        self.assertEqual(fake_sd.default.device._pair, [1, 7])
+
+    def test_system_default_pins_portaudio_default_not_first_raw_device(self):
+        fake_sd = self._pair_sd()
+        fake_sd.devices.insert(0, {
+            "name": "Scarlett Solo: USB Audio (hw:0,0)",
+            "max_input_channels": 2,
+            "default_samplerate": 48000,
+            "hostapi": 0,
+        })
+        portaudio_default = {"index": 2, "name": "default", "max_input_channels": 32}
+        devices = fake_sd.query_devices
+        fake_sd.query_devices = lambda device=None, kind=None: (
+            portaudio_default if device is None and kind == 'input' else devices(device, kind))
+        module = self._load_audio_capture(fake_sd)
+        capture = object.__new__(module.AudioCapture)
+
+        capture._set_system_default_device()
+
+        self.assertEqual(capture._current_sd_default_input(), 2)
+
+    def test_system_default_falls_back_to_first_input_without_a_portaudio_default(self):
+        fake_sd = self._pair_sd()
+        devices = fake_sd.query_devices
+
+        def query_devices(device=None, kind=None):
+            if device is None and kind == 'input':
+                raise RuntimeError("Error querying device -1")
+            return devices(device, kind)
+
+        fake_sd.query_devices = query_devices
+        module = self._load_audio_capture(fake_sd)
+        capture = object.__new__(module.AudioCapture)
+
+        capture._set_system_default_device()
+
+        self.assertEqual(capture._current_sd_default_input(), 0)
+
 
 
 if __name__ == "__main__":
