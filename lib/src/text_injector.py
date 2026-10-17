@@ -405,7 +405,10 @@ class TextInjector:
         self._atspi_unavailable = False
         self._warned_focused_window_unavailable = False
 
-        if (
+        if self._use_hyprland_ydotool() and not self.ydotool_available:
+            log("⚠️  hyprland_paste_backend='ydotool' requires both ydotool and ydotoold. "
+                "Install them or set hyprland_paste_backend='auto'; paste will fail until corrected.")
+        elif (
             not self.ydotool_available
             and not self.wtype_available
             and not self.xdotool_available
@@ -1150,7 +1153,7 @@ except Exception:
     def _send_paste_keys_slow(self, paste_chord: str) -> bool:
         """
         Send paste keystroke with delays between events via ydotool.
-        Used as fallback when wtype is unavailable.
+        Used for the explicit Hyprland backend and as a fallback.
         """
         self._last_ydotool_failure_explicit = False
         paste_chord = PASTE_MODE_CHORDS.get(paste_chord, paste_chord)
@@ -1411,6 +1414,17 @@ except Exception:
 
         threading.Thread(target=_restore, daemon=True).start()
 
+    def _use_hyprland_ydotool(self) -> bool:
+        if not self._is_hyprland_session():
+            return False
+        backend = self.config_manager.get_setting('hyprland_paste_backend', 'auto') if self.config_manager else 'auto'
+        if backend not in ('auto', 'ydotool'):
+            if not getattr(self, '_warned_invalid_hyprland_paste_backend', False):
+                log(f"Invalid hyprland_paste_backend {backend!r}; using 'auto'")
+                self._warned_invalid_hyprland_paste_backend = True
+            return False
+        return backend == 'ydotool'
+
     def _send_enter_if_auto_submit(self, cancel_event=None):
         """Send Enter key if auto_submit is enabled"""
         if not (self.config_manager and self.config_manager.get_setting('auto_submit', False)):
@@ -1418,6 +1432,12 @@ except Exception:
         if cancel_event is not None and cancel_event.is_set():
             return
         try:
+            if self._use_hyprland_ydotool():
+                enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1) if self.ydotool_available else None
+                if enter_result is None or enter_result.returncode != 0:
+                    stderr = (enter_result.stderr or b'').decode('utf-8', 'ignore') if enter_result else 'ydotool unavailable'
+                    log(f"  ydotool auto_submit Enter failed: {stderr}; not retrying")
+                return
             if self._is_x11_session() and getattr(self, 'xdotool_available', False):
                 enter_result = subprocess.run(
                     ['xdotool', 'key', '--clearmodifiers', 'Return'],
@@ -1889,7 +1909,7 @@ except Exception:
             if delay:
                 time.sleep(delay)
 
-            # Send paste hotkey through the session-native path first: xdotool on
+            # Unless ydotool is explicitly selected, prefer the native path: xdotool on
             # X11, Hyprland's dispatcher there, or wtype on other Wayland sessions.
             # Fall back to wtype and then ydotool if native Hyprland dispatch fails.
             # ydotool key chords DO reach Mutter (uinput
@@ -1899,7 +1919,15 @@ except Exception:
             if stream is not None and stream.cancelled.is_set():
                 return False
             pasted = False
-            if self._is_x11_session() and getattr(self, 'xdotool_available', False):
+            hyprland_ydotool = self._use_hyprland_ydotool()
+            if hyprland_ydotool:
+                pasted = self.ydotool_available and self._send_paste_keys_slow(paste_chord)
+                if not pasted:
+                    log("Hyprland ydotool paste failed; text is on the clipboard. Not trying another backend.")
+                    if stream is not None:
+                        stream.not_pasted = True
+                    return False
+            elif self._is_x11_session() and getattr(self, 'xdotool_available', False):
                 pasted = self._send_paste_keys_xdotool(paste_chord)
             elif self._is_hyprland_session():
                 pasted = self._send_shortcut_hyprland(paste_chord)

@@ -1,6 +1,6 @@
 # Paste and clipboard
 
-hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. Wayland prefers `wl-clipboard` plus `wtype` (falling back to `ydotool key`). X11 uses `python-pyperclip` with `xclip`, and `xdotool`/`xprop` for focused-window and terminal detection. `xsel` is also accepted as a clipboard fallback when installed. Most setups need no configuration. GNOME/Mutter and KDE Plasma need the AT-SPI bridge for window detection — see [GNOME and KDE](../integrations/DESKTOPS.md).
+hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. Wayland uses `wl-clipboard`; Hyprland prefers its native shortcut dispatcher, while other Wayland sessions prefer `wtype`, with `ydotool key` as a fallback. X11 uses `python-pyperclip` with `xclip`, and `xdotool`/`xprop` for focused-window and terminal detection. `xsel` is also accepted as a clipboard fallback when installed. Most setups need no configuration. GNOME/Mutter and KDE Plasma need the AT-SPI bridge for window detection — see [GNOME and KDE](../integrations/DESKTOPS.md).
 
 ## Paste mode
 
@@ -46,6 +46,38 @@ Prefer stable app classes over window titles, which change with the open documen
 
 > **Terminal Emacs** (`emacs -nw`, `emacsclient -t`): hyprwhspr sees the terminal, not Emacs, so terminal paste (Ctrl+Shift+V) is normally correct.
 
+## Hyprland NumLock workaround
+
+If pasting makes the focused app treat NumLock as off, try the optional ydotool
+backend for [issue #283](https://github.com/goodroot/hyprwhspr/issues/283):
+
+```json
+{
+    "hyprland_paste_backend": "ydotool"
+}
+```
+
+This sends paste shortcuts and auto-submit Enter through ydotool exclusively.
+The default, `"auto"`, keeps Hyprland's native shortcut dispatcher and its existing
+fallbacks. The setting is ignored outside Hyprland. Restart hyprwhspr after changing
+configuration; set it back to `"auto"` to revert. Invalid values warn and use `"auto"`.
+
+Both `ydotool` and `ydotoold` must be installed, with access to `/dev/uinput` as
+configured by setup. hyprwhspr starts its own private daemon lazily, so the first
+paste can take a few extra seconds. See [ydotool troubleshooting](../TROUBLESHOOTING.md).
+
+If ydotool reports a paste failure, hyprwhspr reports failed delivery, leaves the
+text on the clipboard, and skips both fallback and auto-submit. In live typing,
+the clipboard may contain only the failed chunk; use `hyprwhspr record copy-last`
+to recover the retained dictation. A failed auto-submit Enter is logged without
+retrying the paste or Enter.
+
+This is a workaround, not a keyboard-state repair. Test NumLock and CapsLock in
+your target apps, including the first paste after starting hyprwhspr. ydotool sends
+physical keycodes: non-QWERTY layouts and modifier remaps may require the overrides
+below. Non-Latin layouts are not automatically switched on Hyprland. A successful
+command cannot guarantee that the focused app accepted the shortcut.
+
 ## Non-QWERTY layouts
 
 `ydotool` sends physical Linux keycodes, so `Ctrl+KEY_V` may not be `Ctrl+v` on layouts like bepo or dvorak. To fix on Wayland: run `wev`, press the key that types `v`, and copy the printed keycode into `paste_keycode_wev`:
@@ -74,7 +106,8 @@ generated paste shortcut. For example, with Ctrl and Caps Lock swapped:
 Supported modifiers are `ctrl`, `shift`, `alt`, and `super`. Key names are
 case-insensitive and may include the `KEY_` prefix; Linux evdev keycodes are
 also accepted. The usual `control`, `meta`, `cmd`, and `logo` aliases work here
-as they do in paste chords. This setting affects only the `ydotool` fallback.
+as they do in paste chords. This setting affects ydotool, whether selected
+explicitly or used as a fallback.
 
 ## Auto-submit
 

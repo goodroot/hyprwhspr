@@ -239,6 +239,12 @@
       "default": null,
       "description": "Paste key combination, or null to auto-detect from the focused application."
     },
+    "hyprland_paste_backend": {
+      "type": "string",
+      "enum": ["auto", "ydotool"],
+      "default": "auto",
+      "description": "Hyprland paste and auto-submit backend. auto uses native dispatch with fallbacks; ydotool uses only ydotool and reports failures without fallback. Ignored on other desktops."
+    },
     "paste_keycode_wev": {
       "type": ["integer", "null"],
       "default": null,
@@ -252,7 +258,7 @@
     "ydotool_modifier_overrides": {
       "type": "object",
       "default": {},
-      "description": "Physical key overrides for logical modifiers sent by the ydotool fallback. Named keys are recommended; positive Linux evdev keycodes are accepted for advanced configurations.",
+      "description": "Physical key overrides for logical modifiers sent by ydotool, whether selected explicitly or used as a fallback. Named keys are recommended; positive Linux evdev keycodes are accepted for advanced configurations.",
       "properties": {
         "ctrl": { "$ref": "#/$defs/ydotoolModifierKey" },
         "control": { "$ref": "#/$defs/ydotoolModifierKey" },

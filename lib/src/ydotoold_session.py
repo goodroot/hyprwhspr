@@ -1,15 +1,16 @@
 """Private ydotoold instance owned by hyprwhspr.
 
-hyprwhspr's paste fallback on GNOME/Mutter uses ydotool, whose client talks to the
+hyprwhspr's ydotool paste backend and fallback use a client that talks to the
 ``ydotoold`` daemon over a socket. Instead of relying on a *shared* system ydotoold
 (and a hyprwhspr-managed systemd unit), we run our **own** ydotoold child on a
 *private* socket and point the client at it via ``YDOTOOL_SOCKET``. That removes the
 managed unit and stops hyprwhspr from touching a daemon other tools also use.
 
-The daemon is started lazily (on first uinput-fallback use, so wlroots/wtype sessions
-never spawn it), restarted once if it dies, and torn down on shutdown. ydotoold's
-device is named ``ydotoold virtual device`` — the existing virtual-keyboard filters
-(``_VIRTUAL_KEYBOARD_TOKENS``) already exclude it, so the hotkey listener won't grab it.
+The daemon is started lazily (on first uinput use, so sessions that only use native
+dispatch or wtype never spawn it), restarted once if it dies, and torn down on
+shutdown. ydotoold's device is named ``ydotoold virtual device`` — the existing
+virtual-keyboard filters (``_VIRTUAL_KEYBOARD_TOKENS``) already exclude it, so the
+hotkey listener won't grab it.
 """
 
 import os

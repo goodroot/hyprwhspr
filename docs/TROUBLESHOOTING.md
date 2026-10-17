@@ -72,7 +72,8 @@ pgrep -af 'ydotoold .*hyprwhspr-ydotool.sock'
 virtual-keyboard protocol (notably GNOME/Mutter), hyprwhspr falls back to its
 **own private `ydotoold`** — a child process on a dedicated socket
 (`$XDG_RUNTIME_DIR/hyprwhspr-ydotool.sock`), launched lazily and torn down with the
-service. It runs rootless via the `uaccess` ACL on `/dev/uinput`; the `input`
+service. The optional Hyprland ydotool backend uses the same private daemon.
+It runs rootless via the `uaccess` ACL on `/dev/uinput`; the `input`
 group and udev rule from setup are the fallback, and mainly serve the global
 hotkey (evdev reads of `/dev/input/event*`).
 
@@ -256,6 +257,16 @@ systemctl --user restart hyprwhspr.service
 # Check service status
 systemctl --user status hyprwhspr.service
 ```
+
+### NumLock stops working in the focused app after paste (Hyprland)
+
+Hyprland's native shortcut dispatcher can clear the lock state seen by the focused
+app ([#283](https://github.com/goodroot/hyprwhspr/issues/283)). Try
+`"hyprland_paste_backend": "ydotool"` in your configuration, then restart hyprwhspr.
+This optional workaround uses ydotool for paste and auto-submit, without fallback
+on failure. It does not toggle lock keys or repair keyboard state. See the
+[paste guide](usage/PASTE.md#hyprland-numlock-workaround) for prerequisites,
+layout limitations, and recovery behavior. Set `"auto"` to restore the default.
 
 ### This sucks
 

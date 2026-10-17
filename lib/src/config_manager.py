@@ -109,6 +109,8 @@ def build_default_config():
         # Values: "super" | "ctrl_shift" | "ctrl" | null (auto-detect)
         # null = auto-detect: terminals get Ctrl+Shift+V, other apps get Ctrl+V
         'paste_mode': None,
+        # Hyprland only: auto keeps native dispatch and fallbacks; ydotool is exclusive.
+        'hyprland_paste_backend': 'auto',
         # Wayland/XKB keycode as printed by `wev` for the key that types 'v'.
         # If set, hyprwhspr will convert it to Linux evdev by subtracting 8.
         # This avoids users having to do the math themselves.
@@ -118,7 +120,7 @@ def build_default_config():
         # for the physical key that produces 'v' on your layout).
         'paste_keycode': 47,
         # Override the physical evdev keys used for logical modifiers by the
-        # ydotool fallback, e.g. {"ctrl": "capslock"} for an XKB Ctrl/Caps swap.
+        # ydotool backend, e.g. {"ctrl": "capslock"} for an XKB Ctrl/Caps swap.
         'ydotool_modifier_overrides': {},
         # Per-application injection behavior. Keys match normalized focused
         # window identifiers. Example: {"emacs": {"auto_paste": "ctrl+y"}}
