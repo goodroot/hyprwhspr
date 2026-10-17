@@ -164,6 +164,12 @@ pactl list short sources
 systemctl --user restart pipewire
 ```
 
+A stuck audio stream heals itself: under systemd the service restarts once idle. "Still releasing the microphone" clears on its own. If the mic stays dead after that:
+
+```bash
+systemctl --user restart pipewire pipewire-pulse wireplumber
+```
+
 ### Microphone indicator shows on while idle
 
 If your desktop (GNOME, Ubuntu, etc.) shows the microphone as active whenever the hyprwhspr service is running, you likely have `keepalive_stream` enabled. Disable it:
