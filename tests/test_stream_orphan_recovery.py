@@ -466,6 +466,45 @@ class StreamOrphanRecoveryTests(unittest.TestCase):
             release.set()
             self._stop_and_join(capture)
 
+    def test_keepalive_teardown_is_serialized_and_timeout_protected(self):
+        # Inline stop()/close() could hang the record thread or recovery (#282)
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        capture = module.AudioCapture(config_manager=FakeConfig())
+        keepalive = FakeStream(fake_sd, 0)
+        capture._keepalive_stream = keepalive
+
+        with mock.patch.object(capture, "_teardown_stream_with_timeout") as teardown:
+            capture._stop_keepalive()
+
+        teardown.assert_called_once_with(keepalive, "keepalive")
+        self.assertIsNone(capture._keepalive_stream)
+        self.assertFalse(keepalive.stopped)
+
+    def test_losing_keepalive_race_discards_through_protected_teardown(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        capture = module.AudioCapture(config_manager=FakeConfig({"keepalive_stream": True}))
+        winner = FakeStream(fake_sd, 0)
+        capture.device_id = 0
+        capture._keepalive_stream = None  # init may have opened one
+
+        def open_stream(**kwargs):
+            # Another thread installs its keepalive while ours is starting
+            capture._keepalive_stream = winner
+            return FakeStream(fake_sd, 0)
+
+        with mock.patch.object(capture, "_is_multiplexed_audio_server", return_value=True), \
+                mock.patch.object(fake_sd, "InputStream", side_effect=open_stream), \
+                mock.patch.object(capture, "_teardown_stream_with_timeout") as teardown:
+            capture._start_keepalive()
+
+        self.assertIs(capture._keepalive_stream, winner)
+        teardown.assert_called_once()
+        discarded, context = teardown.call_args.args
+        self.assertIsNot(discarded, winner)
+        self.assertEqual(context, "keepalive")
+
     def test_close_waits_for_a_stalled_stop(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)

@@ -535,12 +535,13 @@ class AudioCapture:
             )
             stream.start()
             with self._keepalive_lock:
-                if self._keepalive_stream is None:
+                ours = self._keepalive_stream is None
+                if ours:
                     self._keepalive_stream = stream
-                else:
-                    # Another thread started one while we were creating ours; discard ours
-                    stream.stop()
-                    stream.close()
+            if not ours:
+                # Another thread started one while we were creating ours; discard ours
+                discard, stream = stream, None
+                self._teardown_stream_with_timeout(discard, "keepalive")
         except Exception as e:
             if stream is not None:
                 try:
@@ -562,11 +563,8 @@ class AudioCapture:
             stream = self._keepalive_stream
             self._keepalive_stream = None
         if stream is not None:
-            try:
-                stream.stop()
-                stream.close()
-            except Exception:
-                pass
+            # Serialized and timeout-protected like any stream (#282)
+            self._teardown_stream_with_timeout(stream, "keepalive")
 
     def _set_system_default_device(self):
         """Set system default device when no specific device is configured"""
