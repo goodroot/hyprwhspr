@@ -1270,7 +1270,7 @@ def setup_command(python_path: Optional[str] = None):
     is_hyprland_session = os.environ.get('HYPRLAND_INSTANCE_SIGNATURE') is not None
     current_desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
     hypr_config_dir = USER_HOME / '.config' / 'hypr'
-    hypr_config_exists = (hypr_config_dir / 'hyprland.conf').exists() or (hypr_config_dir / 'bindings.conf').exists()
+    hypr_config_exists = any((hypr_config_dir / name).exists() for name in ('hyprland.lua', 'hyprland.conf', 'bindings.conf'))
 
     # Only show Hyprland section if relevant
     if is_hyprland_session or hypr_config_exists or 'hyprland' in current_desktop:

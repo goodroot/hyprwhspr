@@ -685,6 +685,51 @@ class HyprlandBindingSetupTests(unittest.TestCase):
             self.assertIn("/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record", content)
             self.assertIn(["hyprctl", "reload"], calls)
 
+    def test_lua_config_gets_snippet_instead_of_unloaded_conf_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hypr_dir = root / ".config" / "hypr"
+            hypr_dir.mkdir(parents=True)
+            lua_config = hypr_dir / "hyprland.lua"
+            lua_config.write_text('hl.bind("SUPER + Q", hl.dsp.exec_cmd("kitty"))\n', encoding="utf-8")
+            hyprland_conf = hypr_dir / "hyprland.conf"
+            hyprland_conf.write_text("", encoding="utf-8")
+            output = io.StringIO()
+
+            with mock.patch.object(install, "USER_HOME", root), \
+                    mock.patch.object(install, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
+                    mock.patch.object(install.shutil, "which", return_value="/usr/bin/hyprctl"), \
+                    mock.patch.dict(install.os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, clear=True), \
+                    mock.patch.object(install, "run_command") as run_command, \
+                    contextlib.redirect_stdout(output):
+                self.assertFalse(install._setup_hyprland_bindings())
+
+            run_command.assert_not_called()
+            self.assertFalse((hypr_dir / "bindings.conf").exists())
+            self.assertEqual(hyprland_conf.read_text(encoding="utf-8"), "")
+            self.assertIn(
+                'hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record")',
+                output.getvalue())
+
+    def test_lua_binding_in_required_module_is_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hypr_dir = root / ".config" / "hypr"
+            (hypr_dir / "modules").mkdir(parents=True)
+            (hypr_dir / "hyprland.lua").write_text('require("modules.binds")\n', encoding="utf-8")
+            (hypr_dir / "modules" / "binds.lua").write_text(
+                'local cmd = "/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record"\n', encoding="utf-8")
+
+            with mock.patch.object(install, "USER_HOME", root), \
+                    mock.patch.object(install, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
+                    mock.patch.dict(install.os.environ, {}, clear=True), \
+                    mock.patch.object(install, "run_command") as run_command, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertTrue(install._setup_hyprland_bindings())
+
+            run_command.assert_not_called()
+            self.assertFalse((hypr_dir / "bindings.conf").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

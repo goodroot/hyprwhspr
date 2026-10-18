@@ -102,6 +102,20 @@ def _edit_hyprland_bindings() -> bool:
     tray_command = stable_tray_command(HYPRWHSPR_ROOT)
     if tray_command is None:
         return False
+    hyprland_lua = hypr_config_dir / 'hyprland.lua'
+    if hyprland_lua.exists():
+        # Hyprland loads hyprland.lua instead of any .conf file, so an appended bindd never applies.
+        lua_command = f'{tray_command} record'.replace('\\', '\\\\').replace('"', '\\"')
+        for path in hypr_config_dir.rglob('*.lua'):
+            try:
+                if lua_command in path.read_text(encoding='utf-8'):
+                    log_info(f"Hyprland binding already present in {path}, skipping")
+                    return True
+            except (OSError, UnicodeError):
+                continue
+        log_warning(f"Lua config detected: {hyprland_lua}. Add this binding to it, then run: hyprctl reload")
+        print(f'  hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("{lua_command}"), {{ description = "Speech-to-text" }})')
+        return False
     if os.environ.get('HYPRWHSPR_GENERATION'):
         from managed_install import Installation
         from managed_integrations import stable_hyprland_content
