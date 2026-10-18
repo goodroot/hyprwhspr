@@ -16,7 +16,7 @@ try:
 except ImportError:
     from installation import is_nix_install, tray_command as stable_tray_command
 
-from ._shared import (HYPRWHSPR_ROOT, USER_HOME, _load_jsonc,
+from ._shared import (HYPRWHSPR_ROOT, USER_HOME, _load_jsonc, _strip_jsonc,
                       _validate_hyprwhspr_root)
 
 
@@ -34,6 +34,14 @@ def waybar_command(action: str):
         waybar_status()
     else:
         log_error(f"Unknown waybar action: {action}")
+
+
+def _module_placed(config) -> bool:
+    """True when custom/hyprwhspr is in any bar section or group, not only modules-right."""
+    sections = [config.get(key) for key in ('modules-left', 'modules-center', 'modules-right')]
+    sections += [value.get('modules') for key, value in config.items()
+                 if key.startswith('group/') and isinstance(value, dict)]
+    return any(isinstance(section, list) and 'custom/hyprwhspr' in section for section in sections)
 
 
 def _setup_waybar(mode: str = 'install'):
@@ -119,7 +127,11 @@ def _setup_waybar(mode: str = 'install'):
         
         # Update main waybar config
         try:
-            config = _load_jsonc(waybar_config)
+            with open(waybar_config, 'r', encoding='utf-8') as f:
+                original = f.read()
+            config = json.loads(_strip_jsonc(original))
+            needs_include = str(user_module_config) not in config.get('include', [])
+            needs_module = not _module_placed(config)
             
             # Add include if not present
             if 'include' not in config:
@@ -132,7 +144,7 @@ def _setup_waybar(mode: str = 'install'):
             if 'modules-right' not in config:
                 config['modules-right'] = []
             
-            if 'custom/hyprwhspr' not in config['modules-right']:
+            if needs_module:
                 # Try to insert after group/tray-expander
                 try:
                     tray_index = config['modules-right'].index('group/tray-expander')
@@ -141,11 +153,19 @@ def _setup_waybar(mode: str = 'install'):
                     # group/tray-expander not found, append to end
                     config['modules-right'].append('custom/hyprwhspr')
             
-            # Write back
-            with open(waybar_config, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2, separators=(',', ': '))
-            
-            log_success("Waybar config updated")
+            if not needs_include and not needs_module:
+                log_info("Waybar config already includes hyprwhspr")
+            elif _strip_jsonc(original) != original:
+                # Rewriting would drop the user's comments; ask for the edit instead.
+                log_warning(f"{waybar_config} has comments, so it was left unchanged. Add:")
+                if needs_include:
+                    print(f'  "include": ["{user_module_config}"]')
+                if needs_module:
+                    print('  "custom/hyprwhspr" to "modules-right"')
+            else:
+                with open(waybar_config, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, indent=2, separators=(',', ': '), ensure_ascii=False)
+                log_success("Waybar config updated")
         except json.JSONDecodeError as e:
             log_error(f"Failed to parse waybar config.jsonc (after stripping comments): {e}")
             log_error("Please check your config.jsonc for JSON syntax errors.")
@@ -176,20 +196,31 @@ def _setup_waybar(mode: str = 'install'):
         # Remove from config
         if waybar_config.exists():
             try:
-                config = _load_jsonc(waybar_config)
+                with open(waybar_config, 'r', encoding='utf-8') as f:
+                    original = f.read()
+                config = json.loads(_strip_jsonc(original))
+                has_include = 'include' in config and str(user_module_config) in config['include']
+                has_module = 'modules-right' in config and 'custom/hyprwhspr' in config['modules-right']
                 
                 # Remove from include
-                if 'include' in config and str(user_module_config) in config['include']:
+                if has_include:
                     config['include'].remove(str(user_module_config))
                 
                 # Remove from modules-right
-                if 'modules-right' in config and 'custom/hyprwhspr' in config['modules-right']:
+                if has_module:
                     config['modules-right'].remove('custom/hyprwhspr')
                 
-                with open(waybar_config, 'w', encoding='utf-8') as f:
-                    json.dump(config, f, indent=2)
-                
-                log_success("Removed from waybar config")
+                if (has_include or has_module) and _strip_jsonc(original) != original:
+                    # Rewriting would drop the user's comments; ask for the edit instead.
+                    log_warning(f"{waybar_config} has comments, so it was left unchanged. Remove:")
+                    if has_include:
+                        print(f'  "{user_module_config}" from "include"')
+                    if has_module:
+                        print('  "custom/hyprwhspr" from "modules-right"')
+                elif has_include or has_module:
+                    with open(waybar_config, 'w', encoding='utf-8') as f:
+                        json.dump(config, f, indent=2, ensure_ascii=False)
+                    log_success("Removed from waybar config")
             except json.JSONDecodeError as e:
                 log_error(f"Failed to parse waybar config.jsonc (after stripping comments): {e}")
                 log_error("Please check your config.jsonc for JSON syntax errors.")
@@ -236,7 +267,7 @@ def waybar_status():
     try:
         config = _load_jsonc(waybar_config)
         
-        has_module = 'custom/hyprwhspr' in config.get('modules-right', [])
+        has_module = _module_placed(config)
         has_include = str(user_module_config) in config.get('include', [])
         has_module_file = user_module_config.exists()
         
@@ -246,7 +277,7 @@ def waybar_status():
         else:
             log_warning("Waybar is partially configured")
             if not has_module:
-                log_info("  - Module not in modules-right")
+                log_info("  - Module not in the bar")
             if not has_include:
                 log_info("  - Module config not in include")
             if not has_module_file:
