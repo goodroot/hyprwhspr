@@ -56,6 +56,12 @@ def _module_placements(config):
     return placements
 
 
+def _includes(config) -> list:
+    """The include list; Waybar also accepts a single path string."""
+    include = config.get('include', [])
+    return [include] if isinstance(include, str) else include
+
+
 def _module_placed(config) -> bool:
     """True when custom/hyprwhspr is reachable from a bar section."""
     return bool(_module_placements(config))
@@ -100,9 +106,6 @@ def _setup_waybar(mode: str = 'install'):
             css_target.parent.mkdir(parents=True, exist_ok=True)
             from managed_install import atomic_text
             atomic_text(css_target, css_file.read_text(encoding='utf-8'))
-        elif is_nix_install():
-            # Managed installs remove it through edit_files ownership.
-            css_target.unlink(missing_ok=True)
         css_file = css_target
 
     if mode == 'install':
@@ -147,14 +150,12 @@ def _setup_waybar(mode: str = 'install'):
             with open(waybar_config, 'r', encoding='utf-8') as f:
                 original = f.read()
             config = json.loads(_strip_jsonc(original))
-            needs_include = str(user_module_config) not in config.get('include', [])
+            needs_include = str(user_module_config) not in _includes(config)
             needs_module = not _module_placed(config)
             
             # Add include if not present
-            if 'include' not in config:
-                config['include'] = []
-            
-            if str(user_module_config) not in config['include']:
+            config['include'] = _includes(config)
+            if needs_include:
                 config['include'].append(str(user_module_config))
             
             # Add module to modules-right if not present
@@ -218,11 +219,12 @@ def _setup_waybar(mode: str = 'install'):
                 with open(waybar_config, 'r', encoding='utf-8') as f:
                     original = f.read()
                 config = json.loads(_strip_jsonc(original))
-                has_include = 'include' in config and str(user_module_config) in config['include']
+                has_include = str(user_module_config) in _includes(config)
                 placements = _module_placements(config)
                 
                 # Remove from include
                 if has_include:
+                    config['include'] = _includes(config)
                     config['include'].remove(str(user_module_config))
                     if not config['include']:
                         del config['include']
@@ -276,6 +278,11 @@ def _setup_waybar(mode: str = 'install'):
                     log_success("Removed CSS import")
             except IOError as e:
                 log_error(f"Failed to remove CSS import: {e}")
+
+        if is_nix_install() and not os.environ.get('HYPRWHSPR_GENERATION'):
+            # Last, so a removal that stops early keeps the file style.css imports.
+            # Managed installs remove it through edit_files ownership.
+            css_file.unlink(missing_ok=True)
     
     return True
 
@@ -294,7 +301,7 @@ def waybar_status():
         config = _load_jsonc(waybar_config)
         
         has_module = _module_placed(config)
-        has_include = str(user_module_config) in config.get('include', [])
+        has_include = str(user_module_config) in _includes(config)
         has_module_file = user_module_config.exists()
         
         if has_module and has_include and has_module_file:

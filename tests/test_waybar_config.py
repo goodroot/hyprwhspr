@@ -112,6 +112,17 @@ class WaybarConfigPreservationTests(unittest.TestCase):
         self.assertFalse(Path(self.module_file).exists())
         self.assertEqual(style.read_text(encoding='utf-8'), '')
 
+    def test_string_include_is_extended_and_removed(self):
+        self.config.write_text(json.dumps({'include': '/etc/xdg/waybar/base.jsonc',
+                                           'modules-right': ['clock']}), encoding='utf-8')
+        self.run_waybar('install')
+        config = json.loads(self.config.read_text(encoding='utf-8'))
+        self.assertEqual(config['include'], ['/etc/xdg/waybar/base.jsonc', self.module_file])
+        self.config.write_text(json.dumps({'include': self.module_file,
+                                           'modules-right': ['clock', 'custom/hyprwhspr']}), encoding='utf-8')
+        self.run_waybar('remove')
+        self.assertEqual(json.loads(self.config.read_text(encoding='utf-8')), {'modules-right': ['clock']})
+
     def test_remove_drops_include_left_empty(self):
         self.config.write_text(json.dumps({'include': [self.module_file],
                                            'modules-right': ['clock', 'custom/hyprwhspr']}), encoding='utf-8')

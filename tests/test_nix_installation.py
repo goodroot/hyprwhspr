@@ -1,6 +1,8 @@
 """Nix commands use packaged dependencies and preserve installation ownership."""
 
 import argparse
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -203,6 +205,22 @@ class NixIntegrationTests(unittest.TestCase):
             self.assertTrue((waybar / 'hyprwhspr-style.css').is_file())
             self.waybar.setup_waybar('remove')
         self.assertFalse((waybar / 'hyprwhspr-style.css').exists())
+
+    def test_waybar_commented_removal_keeps_imported_style_copy(self):
+        root, profile = self.make_profile()
+        waybar = self.root / 'config/waybar'
+        with mock.patch.object(self.waybar, 'HYPRWHSPR_ROOT', str(ROOT)), \
+                mock.patch.object(self.waybar, '_validate_hyprwhspr_root', return_value=True), \
+                mock.patch('installation.nix_profile_command', return_value=str(profile / 'hyprwhspr-tray')):
+            self.assertIsNot(self.waybar.setup_waybar('install'), False)
+            style = waybar / 'style.css'
+            style.write_text(f'@import "{waybar / "hyprwhspr-style.css"}";\n', encoding='utf-8')
+            config = waybar / 'config.jsonc'
+            config.write_text('// mine\n' + config.read_text(encoding='utf-8'), encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertFalse(self.waybar.setup_waybar('remove'))
+            # style.css still imports it, so deleting it would break the bar's styling.
+            self.assertTrue((waybar / 'hyprwhspr-style.css').is_file())
 
     def test_integrations_fail_without_profile_tray(self):
         from installation import tray_command
