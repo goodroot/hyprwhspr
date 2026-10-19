@@ -96,6 +96,12 @@ Enable in config (`~/.config/hyprwhspr/config.json`):
 
 Then bind your keys. The examples below use Hyprland's `~/.config/hypr/hyprland.conf`; elsewhere, bind the same commands.
 
+With `hyprland.lua`, Hyprland ignores `.conf` files. Setup prints the line; add it yourself:
+
+```lua
+hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("/usr/lib/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record"), { description = "Speech-to-text" })
+```
+
 ### Toggle mode
 
 Press once to start, press again to stop:
