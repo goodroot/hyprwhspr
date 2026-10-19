@@ -31,6 +31,9 @@ np = require_package('numpy')
 # orphaned stream busy-looping on a dead device, #209) can't grow unbounded.
 _MAX_BUFFER_SECONDS = 3600
 _TEARDOWN_DEADLINE_SECONDS = 30.0
+# Callbacks arrive every ~23ms; this long without one mid-recording means the
+# stream stalled (e.g. a shared HDA card suspended with its idle output, #282).
+_CALLBACK_STALL_SECONDS = 2.0
 
 
 @contextmanager
@@ -1650,6 +1653,19 @@ class AudioCapture:
     def get_audio_level(self) -> float:
         """Get the current audio level (0.0 to 1.0)"""
         return min(1.0, self.current_level * 10)  # Scale for better visualization
+
+    def callback_stalled(self) -> bool:
+        """True when a recording stream that was delivering audio has gone quiet (#282).
+
+        A stream that never delivered is start verification's problem, and
+        CLOCK_MONOTONIC stands still across system suspend.
+        """
+        with self.lock:
+            last = self.last_callback_monotonic
+            recording = self.is_recording
+        if not recording or last == 0.0 or self.recovery_in_progress:
+            return False
+        return time.monotonic() - last > _CALLBACK_STALL_SECONDS
 
     def get_viz_frame(self, num_buckets: int = 32):
         """Reduce the latest captured chunk to (display_level, bucket_rms_list)

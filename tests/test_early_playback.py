@@ -62,6 +62,14 @@ class EarlyPlaybackTests(unittest.TestCase):
                     self.assertEqual(app.playback_suppressor.restore.called, not stable)
                     self.assertEqual(app.is_recording, stable)
 
+    def test_new_recording_rearms_the_wedge_notice(self):
+        # An earlier stall whose teardown recovered must not mute a later wedge (#282)
+        app = self.app()
+        app._stall_notified = True
+        with mock.patch('time.sleep'):
+            app._start_recording()
+        self.assertFalse(app._stall_notified)
+
     def test_live_cleanup_blocks_start_until_worker_finishes(self):
         from live_typing import LiveTypingSession
         from tests.text_injector_helpers import make_injector

@@ -127,6 +127,7 @@ class RecordingMixin:
                 self._start_owner = threading.get_ident()
                 session = object()
                 self._recording_session = session
+                self._stall_notified = False  # an earlier stall's notice covers only its own restart
                 # Store language override for this recording session
                 self._current_language_override = language_override
                 # Push-to-talk hold is measured from this accepted press
@@ -524,6 +525,22 @@ class RecordingMixin:
             # Note: No desktop notification - tray will detect muted state via audio level monitoring
         except Exception as e:
             log(f"[ERROR] Error canceling recording: {e}")
+
+    def _stop_recording_stalled(self, session):
+        """End a recording whose stream stopped delivering audio; keep what was captured (#282)."""
+        with self._recording_lock:
+            if not (self.is_recording and self._recording_session is session):
+                return
+            # Pin this session's silence monitor now: a cancel + restart while we
+            # notify must not let us stop the next session's monitor.
+            monitor = (self._continuous_silence_stop, self._continuous_silence_thread)
+        log("[AUDIO] Capture stalled mid-recording - transcribing what was captured")
+        self._notify_user("hyprwhspr", "Microphone stalled - kept what was heard. See Troubleshooting.", "normal")
+        self._stall_notified = True
+        # Same route as a user stop (control.py)
+        if self.config.get_setting("recording_mode", "toggle") == "continuous":
+            self._continuous_stop_and_wait(monitor)
+        self._stop_recording(expected_session=session)
 
     def _end_orphaned_recording(self):
         """Discard a session whose capture recovery already stopped (#209)."""

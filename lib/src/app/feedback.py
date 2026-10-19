@@ -368,6 +368,7 @@ class FeedbackMixin:
 
         def monitor_audio_level():
             AUDIO_LEVEL_FILE.parent.mkdir(parents=True, exist_ok=True)
+            session = self._recording_session
 
             # Muted mic detection: 5e-7 threshold catches true digital silence but not quiet rooms
             zero_samples = 0
@@ -375,10 +376,18 @@ class FeedbackMixin:
             samples_to_cancel = 10  # 1 second at 100ms intervals
             grace_samples = 5  # Skip first 0.5s to let stream stabilize (avoids false mute on rapid toggle)
             total_samples = 0
+            last_frames = None
 
             try:
                 while self.is_recording and not self._audio_level_stop.is_set():
                     try:
+                        if self.audio_capture.callback_stalled():
+                            # Stop off-thread: transcription must not hold up
+                            # this monitor's level-file cleanup.
+                            threading.Thread(target=self._stop_recording_stalled,
+                                             args=(session,), daemon=True).start()
+                            return
+
                         # Get scaled level for visualization (0.0-1.0)
                         level = self.audio_capture.get_audio_level()
                         with open(AUDIO_LEVEL_FILE, 'w') as f:
@@ -390,8 +399,16 @@ class FeedbackMixin:
                         if self.config.get_setting('mute_detection', True) and total_samples > grace_samples:
                             # get_audio_level() scales by 10x, so we need raw value for accurate detection
                             raw_level = self.audio_capture.current_level
+                            # A stalled stream freezes current_level; only fresh
+                            # callbacks count, or a silent last chunk would cancel
+                            # (discarding the audio) before the stall stop keeps it.
+                            with self.audio_capture.lock:
+                                frames = self.audio_capture.frames_since_start
+                            fresh = frames != last_frames
+                            last_frames = frames
                             if raw_level < zero_threshold:
-                                zero_samples += 1
+                                if fresh:
+                                    zero_samples += 1
                                 if zero_samples >= samples_to_cancel:
                                     self._cancel_recording_muted()
                                     return

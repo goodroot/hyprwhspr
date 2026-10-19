@@ -45,6 +45,7 @@ class TeardownDeadlineTests(unittest.TestCase):
             setattr(app, name, False)
         app.recovery_attempted = threading.Event()
         app._notify_user = mock.Mock()
+        app._stall_notified = False
         app._write_recovery_result = mock.Mock()
         app._mic_state_lock = threading.Lock()
         app._mic_disconnected = False
@@ -80,6 +81,15 @@ class TeardownDeadlineTests(unittest.TestCase):
         self.exit.assert_not_called()
         self.tick(30.0)
         self.exit.assert_called_once_with(1)
+        self.app._notify_user.assert_called_once_with(
+            "hyprwhspr", "Audio system wedged - restarting service", "critical")
+
+    def test_restart_after_a_stall_notice_stays_quiet(self):
+        # The stall toast already told the user (#282); one alarm per event
+        self.app._stall_notified = True
+        self.tick(30.0)
+        self.exit.assert_called_once_with(1)
+        self.app._notify_user.assert_not_called()
 
     def test_deadline_waits_for_processing_and_the_stop_handoff(self):
         for busy in ('is_recording', 'is_processing', '_recording_starting',
@@ -162,6 +172,7 @@ class MidRecordingWedgeTests(unittest.TestCase):
         app.whisper_manager = mock.Mock()
         app.audio_manager = mock.Mock()
         app._notify_user = mock.Mock()
+        app._stall_notified = False
         app._write_recovery_result = mock.Mock()
         self.capture.on_unrecoverable_stream = app._on_unrecoverable_audio_stream
         self.exit = mock.Mock()

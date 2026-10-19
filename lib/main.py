@@ -150,6 +150,8 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._playback_session = None
         self._recording_session = None
         self._recording_starting = False
+        # A stall already told the user; the wedge restart that follows stays quiet
+        self._stall_notified = False
         self._start_settled = threading.Event()
         self._start_settled.set()
         self._start_owner = None

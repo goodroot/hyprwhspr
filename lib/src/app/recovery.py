@@ -205,7 +205,8 @@ class RecoveryMixin:
                     "restart hyprwhspr to stop the CPU/log churn")
                 return True
             log("[RECOVERY] Wedged audio stream cannot be reclaimed - exiting for systemd restart")
-            self._notify_user("hyprwhspr", "Audio system wedged - restarting service", "critical")
+            if not self._stall_notified:
+                self._notify_user("hyprwhspr", "Audio system wedged - restarting service", "critical")
             sys.stdout.flush()
             sys.stderr.flush()
             os._exit(1)

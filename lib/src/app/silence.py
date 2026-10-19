@@ -84,14 +84,16 @@ class SilenceMixin:
         self._continuous_silence_thread = threading.Thread(target=monitor, daemon=True)
         self._continuous_silence_thread.start()
 
-    def _continuous_stop_silence_monitor(self):
-        """Stop the continuous silence monitor"""
-        self._continuous_silence_stop.set()
-        thread = self._continuous_silence_thread
+    def _continuous_stop_silence_monitor(self, monitor=None):
+        """Stop the continuous silence monitor: the current one, or a pinned (stop_event, thread)"""
+        stop_event, thread = monitor or (self._continuous_silence_stop, self._continuous_silence_thread)
+        stop_event.set()
         # The monitor itself reaches here via silence_timeout's _stop_recording()
         if thread and thread.is_alive() and threading.current_thread() is not thread:
             thread.join(timeout=0.5)
-        self._continuous_silence_thread = None
+        # A newer session may have installed its own monitor meanwhile
+        if self._continuous_silence_thread is thread:
+            self._continuous_silence_thread = None
 
     def _owns_recording(self, session):
         with self._recording_lock:
@@ -187,9 +189,9 @@ class SilenceMixin:
         self._autostop_silence_thread = None
         self._autostop_silence_stop = None
 
-    def _continuous_stop_and_wait(self):
+    def _continuous_stop_and_wait(self, monitor=None):
         """Stop the silence monitor and wait for any in-progress transcription"""
-        self._continuous_stop_silence_monitor()
+        self._continuous_stop_silence_monitor(monitor)
         self._continuous_transcription_done.wait(timeout=30)
 
     def _continuous_flush_audio(self, session):
