@@ -186,6 +186,12 @@ class TextInjectorInjectionTests(unittest.TestCase):
         self.assertEqual(saved, b"<svg/>")
         self.assertEqual(saved.mime_type, "image/svg+xml")
 
+    def test_clipboard_save_skips_x11_atoms(self):
+        saved, read = self._save_with_offered_types("TARGETS\nTIMESTAMP\nimage/svg+xml\n")
+
+        self.assertEqual(read, ["wl-paste", "--no-newline", "--type", "image/svg+xml"])
+        self.assertEqual(saved.mime_type, "image/svg+xml")
+
     def test_wayland_restore_reoffers_saved_type(self):
         injector = self._injector()
         completed = types.SimpleNamespace(returncode=0)

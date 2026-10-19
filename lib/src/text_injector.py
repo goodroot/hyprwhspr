@@ -1311,7 +1311,9 @@ except Exception:
                 # Read one type and remember it, so restore offers the same type.
                 listed = subprocess.run(["wl-paste", "--list-types"], capture_output=True, timeout=2)
                 offered = listed.stdout.decode("utf-8", "replace").split() if listed.returncode == 0 else []
-                mime_type = next((t for t in _PLAIN_TEXT_TYPES if t in offered), offered[0] if offered else None)
+                # Else the first MIME type: X11 owners also list atoms such as TARGETS.
+                mime_type = next((t for t in _PLAIN_TEXT_TYPES if t in offered),
+                                 next((t for t in offered if "/" in t), None))
                 if mime_type:
                     result = subprocess.run(
                         ["wl-paste", "--no-newline", "--type", mime_type], capture_output=True, timeout=2
