@@ -171,6 +171,24 @@ A stuck audio stream heals itself: under systemd the service restarts once idle.
 systemctl --user restart pipewire pipewire-pulse wireplumber
 ```
 
+### Recording cuts off after a few seconds
+
+Some machines share one sound card between mic and speakers. When the speakers go idle, the card takes the mic down with them. hyprwhspr keeps what it heard and says "Microphone stalled". Keep the card awake:
+
+```text
+# ~/.config/wireplumber/wireplumber.conf.d/51-no-suspend.conf
+monitor.alsa.rules = [
+  {
+    matches = [ { node.name = "~alsa_output.*" }, { node.name = "~alsa_input.*" } ]
+    actions = { update-props = { session.suspend-timeout-seconds = 0 } }
+  }
+]
+```
+
+```bash
+systemctl --user restart wireplumber
+```
+
 ### Microphone indicator shows on while idle
 
 If your desktop (GNOME, Ubuntu, etc.) shows the microphone as active whenever the hyprwhspr service is running, you likely have `keepalive_stream` enabled. Disable it:
