@@ -75,7 +75,7 @@ from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, USER_HOME,
                       _is_gnome_or_mutter_session, _is_kde_plasma_session,
                       _is_x11_session)
 from .config import setup_config
-from .install import _setup_hyprland_bindings
+from .install import _hypr_config_dir, _hyprland_uses_lua, _setup_hyprland_bindings
 from .keyboard import _run_keyboard_selection
 from .maintenance import (_cleanup_backend, _detect_current_backend,
                           validate_command)
@@ -1269,8 +1269,8 @@ def setup_command(python_path: Optional[str] = None):
     # Detect if user is running Hyprland
     is_hyprland_session = os.environ.get('HYPRLAND_INSTANCE_SIGNATURE') is not None
     current_desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
-    hypr_config_dir = USER_HOME / '.config' / 'hypr'
-    hypr_config_exists = (hypr_config_dir / 'hyprland.conf').exists() or (hypr_config_dir / 'bindings.conf').exists()
+    hypr_config_dir = _hypr_config_dir()
+    hypr_config_exists = any((hypr_config_dir / name).exists() for name in ('hyprland.lua', 'hyprland.conf', 'bindings.conf'))
 
     # Only show Hyprland section if relevant
     if is_hyprland_session or hypr_config_exists or 'hyprland' in current_desktop:
@@ -1279,7 +1279,7 @@ def setup_command(python_path: Optional[str] = None):
         print("="*60)
         print("\nUse Hyprland's native compositor bindings instead of evdev keyboard grabbing.")
         print("Better compatibility with keyboard remappers.")
-        print("Requires adding bindings to ~/.config/hypr/hyprland.conf or bindings.conf")
+        print("Requires adding bindings to ~/.config/hypr/hyprland.conf, bindings.conf or hyprland.lua")
 
         if is_hyprland_session:
             print("\nHyprland session detected.")
@@ -1496,6 +1496,8 @@ def setup_command(python_path: Optional[str] = None):
             # Add bindings to Hyprland config file
             if _setup_hyprland_bindings():
                 log_success("Hyprland bindings added to config file")
+            elif _hyprland_uses_lua():
+                pass  # Manual Lua step already printed
             else:
                 log_warning("Could not add Hyprland bindings automatically")
                 log_warning("See README for manual setup instructions")

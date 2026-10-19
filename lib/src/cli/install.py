@@ -91,6 +91,15 @@ def _auto_download_model(model: str = 'base'):
         log_warning(f"Model download failed - can download later with: hyprwhspr model download {model}")
 
 
+def _hypr_config_dir() -> Path:
+    return Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config')) / 'hypr'
+
+
+def _hyprland_uses_lua() -> bool:
+    # Hyprland loads hyprland.lua instead of any .conf file.
+    return (_hypr_config_dir() / 'hyprland.lua').exists()
+
+
 def _edit_hyprland_bindings() -> bool:
     """
     Set up Hyprland compositor bindings in config file.
@@ -98,9 +107,17 @@ def _edit_hyprland_bindings() -> bool:
     Returns:
         True if bindings were added successfully, False otherwise
     """
-    hypr_config_dir = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config')) / 'hypr'
+    hypr_config_dir = _hypr_config_dir()
     tray_command = stable_tray_command(HYPRWHSPR_ROOT)
     if tray_command is None:
+        return False
+    if _hyprland_uses_lua():
+        # An appended bindd would never load. Text matches cannot establish that Lua
+        # code runs or registers a binding, so always show the manual step.
+        lua_command = f'{tray_command} record'.replace('\\', '\\\\').replace('"', '\\"')
+        log_warning(f"Lua config detected: {hypr_config_dir / 'hyprland.lua'}")
+        log_warning("The shortcut stays off until this line is in your Lua config (skip if already there), then: hyprctl reload")
+        print(f'  hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("{lua_command}"), {{ description = "Speech-to-text" }})')
         return False
     if os.environ.get('HYPRWHSPR_GENERATION'):
         from managed_install import Installation
@@ -609,7 +626,7 @@ def _setup_hyprland_bindings() -> bool:
     if not os.environ.get('HYPRWHSPR_GENERATION'):
         return _edit_hyprland_bindings()
     from managed_integrations import edit_files
-    base = Path(os.environ.get('XDG_CONFIG_HOME', USER_HOME / '.config')) / 'hypr'
+    base = _hypr_config_dir()
     paths = [base / 'bindings.conf', base / 'hyprland.conf']
     with edit_files(paths, paths) as proceed:
         return _edit_hyprland_bindings() if proceed else False
