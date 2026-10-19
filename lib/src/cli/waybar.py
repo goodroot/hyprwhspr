@@ -36,12 +36,29 @@ def waybar_command(action: str):
         log_error(f"Unknown waybar action: {action}")
 
 
+def _module_placements(config):
+    """Return (location, list) pairs containing reachable hyprwhspr placements."""
+    sections = [(key, config.get(key)) for key in ('modules-left', 'modules-center', 'modules-right')]
+    placements = []
+    visited = set()
+    while sections:
+        location, section = sections.pop()
+        if not isinstance(section, list):
+            continue
+        if 'custom/hyprwhspr' in section:
+            placements.append((location, section))
+        for module in section:
+            if isinstance(module, str) and module.startswith('group/') and module not in visited:
+                visited.add(module)
+                group = config.get(module)
+                if isinstance(group, dict):
+                    sections.append((f'{module}.modules', group.get('modules')))
+    return placements
+
+
 def _module_placed(config) -> bool:
-    """True when custom/hyprwhspr is in any bar section or group, not only modules-right."""
-    sections = [config.get(key) for key in ('modules-left', 'modules-center', 'modules-right')]
-    sections += [value.get('modules') for key, value in config.items()
-                 if key.startswith('group/') and isinstance(value, dict)]
-    return any(isinstance(section, list) and 'custom/hyprwhspr' in section for section in sections)
+    """True when custom/hyprwhspr is reachable from a bar section."""
+    return bool(_module_placements(config))
 
 
 def _setup_waybar(mode: str = 'install'):
@@ -157,6 +174,8 @@ def _setup_waybar(mode: str = 'install'):
                 log_info("Waybar config already includes hyprwhspr")
             elif _strip_jsonc(original) != original:
                 # Rewriting would drop the user's comments; ask for the edit instead.
+                # The supporting files are installed safely; status will report
+                # partial configuration until the user adds these entries.
                 log_warning(f"{waybar_config} has comments, so it was left unchanged. Add:")
                 if needs_include:
                     print(f'  "include": ["{user_module_config}"]')
@@ -200,7 +219,7 @@ def _setup_waybar(mode: str = 'install'):
                     original = f.read()
                 config = json.loads(_strip_jsonc(original))
                 has_include = 'include' in config and str(user_module_config) in config['include']
-                has_module = 'modules-right' in config and 'custom/hyprwhspr' in config['modules-right']
+                placements = _module_placements(config)
                 
                 # Remove from include
                 if has_include:
@@ -208,26 +227,31 @@ def _setup_waybar(mode: str = 'install'):
                     if not config['include']:
                         del config['include']
 
-                # Remove from modules-right
-                if has_module:
-                    config['modules-right'].remove('custom/hyprwhspr')
+                # Remove every occurrence from all reachable sections and groups.
+                for _, section in placements:
+                    section[:] = [module for module in section if module != 'custom/hyprwhspr']
                 
-                if (has_include or has_module) and _strip_jsonc(original) != original:
+                if (has_include or placements) and _strip_jsonc(original) != original:
                     # Rewriting would drop the user's comments; ask for the edit instead.
                     log_warning(f"{waybar_config} has comments, so it was left unchanged. Remove:")
                     if has_include:
                         print(f'  "{user_module_config}" from "include"')
-                    if has_module:
-                        print('  "custom/hyprwhspr" from "modules-right"')
-                elif has_include or has_module:
+                    for location, _ in placements:
+                        print(f'  "custom/hyprwhspr" from "{location}"')
+                    # Keep the referenced module and its styling until the user
+                    # removes these entries and retries removal.
+                    return False
+                elif has_include or placements:
                     with open(waybar_config, 'w', encoding='utf-8') as f:
                         json.dump(config, f, indent=2, ensure_ascii=False)
                     log_success("Removed from waybar config")
             except json.JSONDecodeError as e:
                 log_error(f"Failed to parse waybar config.jsonc (after stripping comments): {e}")
                 log_error("Please check your config.jsonc for JSON syntax errors.")
+                return False
             except IOError as e:
                 log_error(f"Failed to read/write waybar config: {e}")
+                return False
         
         # Remove module config file
         if user_module_config.exists():
