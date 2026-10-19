@@ -8,8 +8,9 @@ print(message, flush=True) would have.
 import sys
 import threading
 
-# Keeps each line's write and flush together across threads.
-_lock = threading.Lock()
+# Keeps each line's write and flush together across threads. Reentrant: a
+# finalizer or signal handler can log() on the thread already writing.
+_lock = threading.RLock()
 
 
 def log(message: object = '') -> None:

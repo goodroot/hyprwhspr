@@ -68,6 +68,29 @@ class ServiceLogTests(unittest.TestCase):
         self.assertEqual(len(out.chunks), 1600)
         self.assertTrue(all(c.endswith(' line\n') and c.count('\n') == 1 for c in out.chunks))
 
+    def test_reentrant_log_from_inside_a_write_does_not_deadlock(self):
+        # A finalizer (GC mid-write) or signal handler can log on the thread
+        # already holding the lock; a plain Lock hung the suite here.
+        class Reentrant(io.StringIO):
+            nested = False
+
+            def write(self, text):
+                if not self.nested:
+                    self.nested = True
+                    log('[DEL] inner')
+                return super().write(text)
+
+        out = Reentrant()
+
+        def outer():
+            with contextlib.redirect_stdout(out):
+                log('[T] outer')
+        thread = threading.Thread(target=outer, daemon=True)
+        thread.start()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(out.getvalue(), '[DEL] inner\n[T] outer\n')
+
     def test_detached_stdout_is_ignored(self):
         with contextlib.redirect_stdout(None):
             log('nowhere')
