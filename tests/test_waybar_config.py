@@ -73,6 +73,19 @@ class WaybarConfigPreservationTests(unittest.TestCase):
         self.assertEqual(self.config.read_text(encoding='utf-8'), configured)
         self.assertIn('"custom/hyprwhspr" from "modules-right"', output)
 
+    def test_remove_drops_include_left_empty(self):
+        self.config.write_text(json.dumps({'include': [self.module_file],
+                                           'modules-right': ['clock', 'custom/hyprwhspr']}), encoding='utf-8')
+        self.run_waybar('remove')
+        self.assertEqual(json.loads(self.config.read_text(encoding='utf-8')), {'modules-right': ['clock']})
+
+    def test_remove_keeps_other_includes(self):
+        self.config.write_text(json.dumps({'include': ['~/.config/waybar/other.jsonc', self.module_file]}),
+                               encoding='utf-8')
+        self.run_waybar('remove')
+        self.assertEqual(json.loads(self.config.read_text(encoding='utf-8')),
+                         {'include': ['~/.config/waybar/other.jsonc']})
+
 
 if __name__ == '__main__':
     unittest.main()

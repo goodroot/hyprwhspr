@@ -205,7 +205,9 @@ def _setup_waybar(mode: str = 'install'):
                 # Remove from include
                 if has_include:
                     config['include'].remove(str(user_module_config))
-                
+                    if not config['include']:
+                        del config['include']
+
                 # Remove from modules-right
                 if has_module:
                     config['modules-right'].remove('custom/hyprwhspr')
