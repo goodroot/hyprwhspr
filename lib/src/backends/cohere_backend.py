@@ -36,12 +36,15 @@ except ImportError:
 from .base import TranscriptionBackend
 
 
+MODEL_ID = 'CohereLabs/cohere-transcribe-03-2026'
+
+
 def _cached_model_path():
     from huggingface_hub import snapshot_download
 
     # Some processor/tokenizer loaders drop local_files_only on nested calls.
     # A filesystem path avoids Hub metadata requests even in those code paths.
-    return snapshot_download('CohereLabs/cohere-transcribe-03-2026', local_files_only=True)
+    return snapshot_download(MODEL_ID, local_files_only=True)
 
 
 @contextlib.contextmanager
@@ -100,7 +103,7 @@ class CohereBackend(TranscriptionBackend):
             log('ERROR: cohere-transcribe dependencies not installed. Run: hyprwhspr setup and select cohere-transcribe')
             return False
 
-        model_id = 'CohereLabs/cohere-transcribe-03-2026'
+        model_id = MODEL_ID
         device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
         dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
 
@@ -265,7 +268,7 @@ class CohereBackend(TranscriptionBackend):
             self.unload()
             release_memory()
 
-            model_id = 'CohereLabs/cohere-transcribe-03-2026'
+            model_id = MODEL_ID
             device_setting = self.config.get_setting('cohere_transcribe_device', 'auto')
             dtype_setting = self.config.get_setting('cohere_transcribe_dtype', 'bfloat16')
 
