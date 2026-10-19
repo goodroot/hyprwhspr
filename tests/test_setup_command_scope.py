@@ -711,24 +711,40 @@ class HyprlandBindingSetupTests(unittest.TestCase):
                 'hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record")',
                 output.getvalue())
 
-    def test_lua_binding_in_required_module_is_detected(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            hypr_dir = root / ".config" / "hypr"
-            (hypr_dir / "modules").mkdir(parents=True)
-            (hypr_dir / "hyprland.lua").write_text('require("modules.binds")\n', encoding="utf-8")
-            (hypr_dir / "modules" / "binds.lua").write_text(
-                'local cmd = "/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record"\n', encoding="utf-8")
+    def test_lua_command_text_does_not_suppress_manual_instructions(self):
+        command = "/opt/hyprwhspr/config/hyprland/hyprwhspr-tray.sh record"
+        binding = f'hl.bind("SUPER + ALT + D", hl.dsp.exec_cmd("{command}"))\n'
+        cases = (
+            ("commented binding", "-- " + binding, ""),
+            ("unloaded module", "-- No modules loaded\n", binding),
+            ("unused command variable", 'require("modules.binds")\n',
+             f'local cmd = "{command}"\n'),
+            ("binding requires verification", binding, ""),
+        )
+        for name, main_content, module_content in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                hypr_dir = root / ".config" / "hypr"
+                (hypr_dir / "modules").mkdir(parents=True)
+                main = hypr_dir / "hyprland.lua"
+                module = hypr_dir / "modules" / "binds.lua"
+                main.write_text(main_content, encoding="utf-8")
+                module.write_text(module_content, encoding="utf-8")
+                output = io.StringIO()
 
-            with mock.patch.object(install, "USER_HOME", root), \
-                    mock.patch.object(install, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
-                    mock.patch.dict(install.os.environ, {}, clear=True), \
-                    mock.patch.object(install, "run_command") as run_command, \
-                    contextlib.redirect_stdout(io.StringIO()):
-                self.assertTrue(install._setup_hyprland_bindings())
+                with mock.patch.object(install, "USER_HOME", root), \
+                        mock.patch.object(install, "HYPRWHSPR_ROOT", "/opt/hyprwhspr"), \
+                        mock.patch.dict(install.os.environ, {}, clear=True), \
+                        mock.patch.object(install, "run_command") as run_command, \
+                        contextlib.redirect_stdout(output):
+                    self.assertFalse(install._setup_hyprland_bindings())
 
-            run_command.assert_not_called()
-            self.assertFalse((hypr_dir / "bindings.conf").exists())
+                run_command.assert_not_called()
+                self.assertFalse((hypr_dir / "bindings.conf").exists())
+                self.assertEqual(main.read_text(encoding="utf-8"), main_content)
+                self.assertEqual(module.read_text(encoding="utf-8"), module_content)
+                self.assertIn("Verify this binding is active", output.getvalue())
+                self.assertIn(binding.strip()[:-1], output.getvalue())
 
 
 if __name__ == "__main__":
