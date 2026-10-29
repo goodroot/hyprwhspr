@@ -1768,7 +1768,7 @@ except Exception:
         Stdin = text; non-empty stdout replaces it (empty stdout preserves it).
         Exit code 77 consumes the transcription without pasting it. Other errors
         preserve the original text — a broken hook must never eat a dictation.
-        Env: HYPRWHSPR_MODEL, HYPRWHSPR_BACKEND. 5s timeout.
+        Env: HYPRWHSPR_MODEL, HYPRWHSPR_BACKEND. Configurable timeout (default 5s).
         """
         preserve = _PostTranscriptionHookResult(_PostTranscriptionHookOutcome.PRESERVE, text)
         if not (self.config_manager and text):
@@ -1776,6 +1776,11 @@ except Exception:
         cmd = self.config_manager.get_setting('post_transcription_hook', None)
         if not (isinstance(cmd, str) and cmd.strip()):
             return preserve
+
+        timeout = self.config_manager.get_setting('post_transcription_hook_timeout', 5.0)
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or timeout <= 0 or not math.isfinite(timeout)):
+            timeout = 5.0
 
         env = os.environ.copy()
         env['HYPRWHSPR_MODEL'] = str(self.config_manager.get_setting('model', '') or '')
@@ -1786,7 +1791,7 @@ except Exception:
         try:
             result = subprocess.run(
                 cmd, shell=True, input=text, capture_output=True,
-                text=True, timeout=5.0, env=env,
+                text=True, timeout=timeout, env=env,
             )
         except Exception as e:
             log(f"post_transcription_hook failed: {e}")

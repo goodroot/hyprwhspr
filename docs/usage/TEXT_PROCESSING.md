@@ -172,6 +172,17 @@ Two environment variables are exported to the hook:
 - `HYPRWHSPR_MODEL` — the active whisper model
 - `HYPRWHSPR_BACKEND` — the active transcription backend
 
-The hook runs under a 5-second timeout. Exit status `77` is reserved for an intentional consume result; stdout is ignored and the transcription is not pasted. On timeout, any other non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
+The hook runs under a 5-second timeout by default. Set `post_transcription_hook_timeout` to a positive number of seconds for slower transforms, such as local LLM cleanup:
+
+```jsonc
+{
+    "post_transcription_hook": "~/.local/bin/transcription-cleanup",
+    "post_transcription_hook_timeout": 15.0
+}
+```
+
+Fractional seconds are supported. Invalid runtime values fall back to 5 seconds. The timeout bounds how long a hook can delay pasting; if the hook makes an HTTP request, give that request a shorter timeout so it can finish before this deadline.
+
+Exit status `77` is reserved for an intentional consume result; stdout is ignored and the transcription is not pasted. On timeout, any other non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
 
 Note: the command runs under `shell=True`, so pipes, redirects, and command chaining work as expected. Treat `post_transcription_hook` as trusted config (same threat model as the rest of `config.json`).
