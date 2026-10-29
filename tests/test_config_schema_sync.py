@@ -87,6 +87,16 @@ class ConfigSchemaSyncTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertTrue(self._errors({"rest_fallback_endpoint_urls": value}), value)
 
+    def test_post_transcription_hook_timeout_accepts_positive_seconds(self):
+        for value in (0.25, 5, 15.0):
+            with self.subTest(value=value):
+                self.assertEqual(self._errors({'post_transcription_hook_timeout': value}), [])
+
+    def test_post_transcription_hook_timeout_rejects_invalid_values(self):
+        for value in (0, -1, None, '15', True, False):
+            with self.subTest(value=value):
+                self.assertTrue(self._errors({'post_transcription_hook_timeout': value}))
+
     def test_every_default_has_a_schema_entry(self):
         self.assertEqual(sorted(self.defaults - self.schema_keys), [])
 

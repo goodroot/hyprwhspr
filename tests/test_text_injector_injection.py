@@ -1542,6 +1542,52 @@ class TextInjectorInjectionTests(unittest.TestCase):
         self.assertIsNone(app)
 
 
+    def test_post_hook_timeout_configuration(self):
+        for value, expected in (
+            (5.0, 5.0), (15, 15), (0.25, 0.25),
+            (0, 5.0), (-1, 5.0), (None, 5.0), ('15', 5.0),
+            (True, 5.0), (False, 5.0), (float('inf'), 5.0),
+            (float('nan'), 5.0),
+        ):
+            with self.subTest(value=value):
+                injector = self._injector()
+                injector.config_manager = ConfigStub({
+                    "post_transcription_hook": "command",
+                    "post_transcription_hook_timeout": value,
+                })
+                completed = types.SimpleNamespace(returncode=0, stdout="cleaned", stderr="")
+                with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
+                    result = injector._run_post_transcription_hook("original")
+                self.assertEqual(run.call_args.kwargs['timeout'], expected)
+                self.assertEqual(result.text, "cleaned")
+
+    def test_post_hook_default_timeout_preserves_text_on_timeout(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({"post_transcription_hook": "command"})
+        with mock.patch(
+            "text_injector.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("command", 5.0, output="partial"),
+        ) as run:
+            result = injector._run_post_transcription_hook("original")
+        self.assertEqual(run.call_args.kwargs['timeout'], 5.0)
+        self.assertEqual(result.outcome, _PostTranscriptionHookOutcome.PRESERVE)
+        self.assertEqual(result.text, "original")
+
+    def test_post_hook_configured_timeout_preserves_text_on_timeout(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({
+            "post_transcription_hook": "command",
+            "post_transcription_hook_timeout": 12.5,
+        })
+        with mock.patch(
+            "text_injector.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("command", 12.5, output="partial"),
+        ) as run:
+            result = injector._run_post_transcription_hook("original")
+        self.assertEqual(run.call_args.kwargs['timeout'], 12.5)
+        self.assertEqual(result.outcome, _PostTranscriptionHookOutcome.PRESERVE)
+        self.assertEqual(result.text, "original")
+
     def test_post_hook_consume_exit_code_returns_consume_result(self):
         injector = self._injector()
         injector.config_manager = ConfigStub({"post_transcription_hook": "command"})

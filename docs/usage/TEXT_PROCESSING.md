@@ -141,7 +141,7 @@ Chinese, Japanese and Korean write without spaces between words:
 
 ## Post-transcription hook
 
-Pipe each transcription through a shell command before it's pasted. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and fire-and-forget observers. A hook that exits with status `77` consumes the transcription successfully and prevents it from being pasted.
+Pipe each transcription through a shell command before it's pasted. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and observer-only hooks. Pasting waits for the hook to finish or time out. A hook that exits with status `77` consumes the transcription successfully and prevents it from being pasted.
 
 ```jsonc
 {
@@ -161,7 +161,7 @@ Archive transcriptions to a log, leave text unchanged (observer-only):
 { "post_transcription_hook": "tee -a ~/.local/share/hyprwhspr/log.txt >/dev/null" }
 ```
 
-User-provided transform script on `$PATH`:
+User-provided transform script at an explicit path:
 
 ```jsonc
 { "post_transcription_hook": "~/.local/bin/filler-word-coach" }
@@ -172,6 +172,19 @@ Two environment variables are exported to the hook:
 - `HYPRWHSPR_MODEL` — the active whisper model
 - `HYPRWHSPR_BACKEND` — the active transcription backend
 
-The hook runs under a 5-second timeout. Exit status `77` is reserved for an intentional consume result; stdout is ignored and the transcription is not pasted. On timeout, any other non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
+The hook runs under a 5-second timeout by default. Set `post_transcription_hook_timeout` to a positive number of seconds for slower transforms, such as local LLM cleanup:
+
+```jsonc
+{
+    "post_transcription_hook": "~/.local/bin/transcription-cleanup",
+    "post_transcription_hook_timeout": 15.0
+}
+```
+
+Fractional seconds are supported. Use a positive, finite JSON number, such as `0.5` or `15`, without quotes. Invalid runtime values fall back to 5 seconds; `0` does not disable the timeout.
+
+A longer timeout allows a slow hook to delay pasting for longer. If the hook makes an HTTP request, set the request's timeout below the hook timeout, leaving time for the script to handle errors and exit.
+
+Exit status `77` is reserved for an intentional consume result; stdout is ignored and the transcription is not pasted. On timeout, any other non-zero exit, or any subprocess error, the original text is preserved — a broken hook will never silently eat a dictation. Errors are logged to the service journal.
 
 Note: the command runs under `shell=True`, so pipes, redirects, and command chaining work as expected. Treat `post_transcription_hook` as trusted config (same threat model as the rest of `config.json`).
