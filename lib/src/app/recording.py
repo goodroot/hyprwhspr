@@ -362,7 +362,7 @@ class RecordingMixin:
                 # Stream is working and stable - start monitoring
                 self._start_audio_level_monitoring()
                     
-            except (RuntimeError, Exception) as e:
+            except Exception as e:
                 log(f"[ERROR] Failed to start recording: {e}")
 
                 # Clean up resources
@@ -642,10 +642,6 @@ class RecordingMixin:
             # Restore system audio if it was ducked or paused
             self._restore_recording_playback(session)
 
-            # Check backend type
-            backend = self.config.get_setting('transcription_backend', 'pywhispercpp')
-            backend = normalize_backend(backend)
-            
             # Stop audio capture
             self._wait_for_start_settled()
             audio_data = self.audio_capture.stop_recording()

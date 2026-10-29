@@ -170,7 +170,7 @@ class PywhispercppBackend(TranscriptionBackend):
                     if result.returncode == 0:
                         installed_package = pkg_name
                         break
-                except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                except Exception:
                     # pacman not available or error - will fall back to hardware detection
                     break
             
@@ -188,7 +188,7 @@ class PywhispercppBackend(TranscriptionBackend):
                             return "CUDA (NVIDIA)"
                         else:
                             return "CUDA (NVIDIA) - hardware unavailable"
-                    except (subprocess.TimeoutExpired, Exception):
+                    except Exception:
                         return "CUDA (NVIDIA) - hardware check failed"
                 else:
                     return "CUDA (NVIDIA) - hardware not detected"
@@ -206,7 +206,7 @@ class PywhispercppBackend(TranscriptionBackend):
                             return "ROCm (AMD)"
                         else:
                             return "ROCm (AMD) - hardware unavailable"
-                    except (subprocess.TimeoutExpired, Exception):
+                    except Exception:
                         return "ROCm (AMD) - hardware check failed"
                 else:
                     return "ROCm (AMD) - hardware not detected"
@@ -229,7 +229,7 @@ class PywhispercppBackend(TranscriptionBackend):
                                            timeout=2)
                     if result.returncode == 0:
                         return "CUDA (NVIDIA)"
-                except (subprocess.TimeoutExpired, Exception):
+                except Exception:
                     pass
         elif backend_config in ['amd', 'vulkan']:
             # Check for Vulkan first (new default for AMD/Intel)
@@ -242,7 +242,7 @@ class PywhispercppBackend(TranscriptionBackend):
                         summary = result.stdout.decode('utf-8', errors='replace') if isinstance(result.stdout, bytes) else result.stdout
                         if vulkaninfo_has_hardware_gpu(summary):
                             return "Vulkan (AMD/Intel)"
-                except (subprocess.TimeoutExpired, Exception):
+                except Exception:
                     pass
             # Fallback: check for ROCm (backward compatibility)
             if shutil.which('rocm-smi') or os.path.exists('/opt/rocm'):
@@ -252,7 +252,7 @@ class PywhispercppBackend(TranscriptionBackend):
                                            timeout=2)
                     if result.returncode == 0:
                         return "ROCm (AMD)"
-                except (subprocess.TimeoutExpired, Exception):
+                except Exception:
                     pass
         elif backend_config == 'cpu':
             return "CPU"
@@ -266,7 +266,7 @@ class PywhispercppBackend(TranscriptionBackend):
                                        timeout=2)
                 if result.returncode == 0:
                     return "CUDA (NVIDIA) - package unknown"
-            except (subprocess.TimeoutExpired, Exception):
+            except Exception:
                 pass
 
         # Check AMD ROCm - verify it actually works
@@ -277,7 +277,7 @@ class PywhispercppBackend(TranscriptionBackend):
                                        timeout=2)
                 if result.returncode == 0:
                     return "ROCm (AMD) - package unknown"
-            except (subprocess.TimeoutExpired, Exception):
+            except Exception:
                 pass
 
         # Check Vulkan
