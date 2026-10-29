@@ -269,7 +269,7 @@ class DictationRecoveryTests(unittest.TestCase):
                     mock.patch.object(injector, '_restore_clipboard'),
                     mock.patch.object(injector, '_send_enter_if_auto_submit') as enter,
                     mock.patch('text_injector.time.sleep'),
-                    mock.patch('text_injector.subprocess.run', return_value=mock.Mock(returncode=0, stdout=b'')),
+                    mock.patch('text_injector.subprocess.run', return_value=mock.Mock(returncode=0, stdout=b'', stderr=b'')),
                 ):
                     self.assertTrue(injector.recover_last('paste_last')[0])
                     self.assertEqual(type_text.called, direct)
