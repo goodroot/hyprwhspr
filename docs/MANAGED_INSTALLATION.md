@@ -104,3 +104,23 @@ smoke tests and mocked tests do not validate live Wayland/X11 service behavior.
 Release archives and recovery helpers use HTTPS and SHA-256 checksums. Extraction
 rejects unsafe archives. Checksums verify publisher-asset consistency, not an
 independent signature. Backend-wheel and GUI-runtime releases are excluded.
+
+### Publishing an application release
+
+1. Push the version tag (`vMAJOR.MINOR.PATCH`). The application release workflow
+   builds the payload, verifies checksums, and runs the distro smoke tests.
+2. Wait for the entire workflow to succeed. It attaches the tested assets to a
+   draft release and links the draft in the workflow summary.
+3. Review the assets and edit the generated release notes before publishing.
+4. Publish the draft manually on GitHub. Automation never publishes application
+   releases; release subscribers see the notes you prepared at publication.
+
+Rerunning the workflow refreshes assets on an existing draft without changing
+its title or notes. An already published release is left untouched. Do not
+publish while a workflow run is still uploading assets.
+
+Managed installs and updates ignore drafts and continue selecting the previous
+compatible published release until you publish the new one. Tag source archives
+are available independently of the draft, so defer publishing the AUR update
+until the application release is ready. Backend-wheel and GTK runtime release
+workflows are unchanged.

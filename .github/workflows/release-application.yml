@@ -4,6 +4,9 @@ on:
     tags: ['v[0-9]*']
 permissions:
   contents: read
+concurrency:
+  group: application-release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   payload:
     runs-on: ubuntu-24.04
@@ -49,7 +52,7 @@ jobs:
           PYTHONNOUSERSITE=1 /tmp/cli/bin/python -c 'import rich, requests, jsonschema, evdev, pulsectl, pyudev'
           PYTHONNOUSERSITE=1 /tmp/cli/bin/python /tmp/payload/lib/cli.py --version
           PYTHONNOUSERSITE=1 /tmp/cli/bin/python /tmp/payload/lib/cli.py install status
-  publish:
+  prepare-draft:
     needs: [payload, smoke]
     runs-on: ubuntu-24.04
     permissions:
@@ -59,16 +62,40 @@ jobs:
         with:
           name: application-release
           path: release
-      - name: Publish immutable application assets
+      - name: Prepare draft application release
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
           cd release
           sha256sum --check SHA256SUMS
-          # Idempotent: a re-run after a flaked smoke job, or a release created by
-          # hand to write notes, must still be able to publish these assets.
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber ./*
-          else
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes ./*
-          fi
+          # A successful list with no match means missing. API failures must
+          # stop the job rather than being mistaken for a missing release.
+          state=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq \
+            '.[] | [.tag_name, (if .draft then "draft" else "published" end)] | @tsv' \
+            | awk -v tag="$GITHUB_REF_NAME" '$1 == tag { print $2 }')
+          case "$state" in
+            "")
+              gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+                --verify-tag --draft --generate-notes ./*
+              ;;
+            draft)
+              # Preserve the maintainer's title and notes on reruns.
+              gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber ./*
+              ;;
+            published)
+              echo "Release $GITHUB_REF_NAME is already published; assets left unchanged." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+            *)
+              echo "Unexpected release lookup result: $state" >&2
+              exit 1
+              ;;
+          esac
+          url=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
+          {
+            echo "Draft release prepared: $url"
+            echo "Review the attached assets, edit the release notes, then publish the draft manually."
+            echo "Wait for this workflow to finish successfully before publishing."
+          } >> "$GITHUB_STEP_SUMMARY"
