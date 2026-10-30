@@ -5,7 +5,7 @@
 #
 # This script:
 # 1. Creates and pushes git tag in hyprwhspr repo
-# 2. Updates PKGBUILD version and SHA256 in aur-aur repo
+# 2. Updates PKGBUILD version and SHA256 in aur-hyprwhspr repo
 # 3. Updates .SRCINFO
 
 set -euo pipefail
@@ -17,6 +17,10 @@ if [ $# -ne 1 ]; then
 fi
 
 NEW_VERSION="$1"
+if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: Version must be major.minor.patch, without a v prefix"
+    exit 1
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HYPRWHSPR_REPO="$SCRIPT_DIR"
 AUR_REPO="$SCRIPT_DIR/../aur-hyprwhspr"
@@ -72,46 +76,37 @@ echo "   ✓ Release payload contracts valid"
 
 # Step 2: Create and push git tag
 echo "2. Creating git tag v$NEW_VERSION..."
-if git rev-parse "v$NEW_VERSION" >/dev/null 2>&1; then
-    echo "   ⚠ Tag v$NEW_VERSION already exists locally"
-    read -p "   Delete and recreate? (y/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        git tag -d "v$NEW_VERSION" || true
-        git push origin ":refs/tags/v$NEW_VERSION" 2>/dev/null || true
-    else
-        echo "   Using existing tag"
-    fi
-fi
-
-if ! git rev-parse "v$NEW_VERSION" >/dev/null 2>&1; then
+if git rev-parse --verify "refs/tags/v$NEW_VERSION" >/dev/null 2>&1; then
+    echo "   Using existing tag v$NEW_VERSION"
+else
     git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
     echo "   ✓ Tag created locally"
-    
-    echo "3. Pushing tag to origin..."
-    git push origin "v$NEW_VERSION"
-    echo "   ✓ Tag pushed to origin"
-    
-    # Wait a moment for GitHub to process
-    echo "   Waiting for GitHub to process tag..."
-    sleep 3
-else
-    echo "3. Tag already exists, skipping push"
 fi
+
+# Retry a previously failed push too. A conflicting remote tag must fail;
+# published release tags are never deleted or replaced here.
+echo "3. Pushing tag to origin..."
+git push origin "refs/tags/v$NEW_VERSION"
+echo "   ✓ Tag pushed to origin"
 
 # Step 4: Get SHA256 from GitHub
 echo "4. Fetching SHA256 from GitHub..."
 MAX_RETRIES=10
 RETRY_COUNT=0
 NEW_SHA256=""
+ARCHIVE=$(mktemp)
+trap 'rm -f "$ARCHIVE"' EXIT
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    NEW_SHA256=$(curl -sL "https://github.com/goodroot/hyprwhspr/archive/refs/tags/v$NEW_VERSION.tar.gz" | sha256sum | awk '{print $1}')
-    
-    if [ -n "$NEW_SHA256" ] && [ "$NEW_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000" ]; then
+    if curl --fail --location --silent --show-error \
+            --connect-timeout 10 --max-time 120 \
+            --output "$ARCHIVE" \
+            "https://github.com/goodroot/hyprwhspr/archive/refs/tags/v$NEW_VERSION.tar.gz" \
+            && tar -tzf "$ARCHIVE" >/dev/null 2>&1; then
+        NEW_SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')
         break
     fi
-    
+
     RETRY_COUNT=$((RETRY_COUNT + 1))
     if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
         echo "   Retrying... ($RETRY_COUNT/$MAX_RETRIES)"
@@ -119,7 +114,7 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     fi
 done
 
-if [ -z "$NEW_SHA256" ] || [ "$NEW_SHA256" = "0000000000000000000000000000000000000000000000000000000000000000" ]; then
+if [ -z "$NEW_SHA256" ]; then
     echo "   ✗ Error: Could not fetch SHA256 after $MAX_RETRIES attempts"
     echo "   The tag may not be available on GitHub yet. Try again in a moment."
     exit 1
