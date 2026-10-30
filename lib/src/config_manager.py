@@ -228,9 +228,7 @@ def build_default_config():
     }
 
 
-# Mirrored on save for one release cycle: older releases read only this key and
-# would otherwise re-enable evdev shortcuts next to compositor bindings after a
-# downgrade. Remove the mirror once that release is out of support.
+# Read on load as an alias of external_bindings; never written back.
 LEGACY_BINDINGS_KEY = 'use_hypr_bindings'
 
 
@@ -258,8 +256,7 @@ def normalize_legacy_config(config):
         del loaded_config['audio_device']
         migrations.append("'audio_device' -> 'audio_device_id'")
 
-    # The setting predates support for compositors other than Hyprland. Saves
-    # mirror it back (see save_config), so only a disagreement is a migration.
+    # The setting predates support for compositors other than Hyprland.
     if LEGACY_BINDINGS_KEY in loaded_config:
         legacy = loaded_config.pop(LEGACY_BINDINGS_KEY)
         if 'external_bindings' not in loaded_config:
@@ -267,6 +264,8 @@ def normalize_legacy_config(config):
             migrations.append(f"'{LEGACY_BINDINGS_KEY}' -> 'external_bindings'")
         elif loaded_config['external_bindings'] != legacy:
             migrations.append(f"'{LEGACY_BINDINGS_KEY}' dropped; 'external_bindings' wins")
+        else:
+            migrations.append(f"'{LEGACY_BINDINGS_KEY}' dropped")
 
     # Drop an inherited copy of the old English default so it stops
     # being read as a deliberate all-languages prompt
@@ -348,8 +347,6 @@ class ConfigManager:
             for key, value in self.config.items():
                 if key not in self.default_config or self.default_config[key] != value:
                     sparse[key] = value
-            if 'external_bindings' in sparse:
-                sparse[LEGACY_BINDINGS_KEY] = sparse['external_bindings']
             # Serialize beside the destination, then atomically replace it. Writing
             # directly to config.json can truncate the user's only configuration if
             # serialization, disk I/O, or the process fails partway through.

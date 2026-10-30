@@ -20,27 +20,22 @@ class ConfigManagerPersistenceTests(unittest.TestCase):
         ):
             return config_manager.ConfigManager(verbose=False)
 
-    def test_bindings_setting_is_mirrored_for_older_releases(self):
-        # Older releases read only use_hypr_bindings; dropping it on save would
-        # re-enable evdev shortcuts next to compositor bindings after a downgrade.
+    def test_legacy_bindings_key_migrates_and_is_not_rewritten(self):
         import managed_install
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(managed_install, 'record_ownership'):
             root = Path(tmp)
             path = root / "config.json"
-            path.write_text(json.dumps({"use_hypr_bindings": True}))
-            manager = self._manager(root)
-            self.assertTrue(manager.get_setting("external_bindings"))
-            saved = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual((saved["external_bindings"], saved["use_hypr_bindings"]), (True, True))
-            # A consistent mirror is not a migration, so loads do not rewrite the file.
-            before = path.stat().st_mtime_ns
-            self._manager(root)
-            self.assertEqual(path.stat().st_mtime_ns, before)
-            # A disagreeing stale alias loses to the new key and is rewritten.
-            path.write_text(json.dumps({"use_hypr_bindings": True, "external_bindings": False}))
-            self.assertFalse(self._manager(root).get_setting("external_bindings"))
-            self.assertNotIn("use_hypr_bindings", json.loads(path.read_text(encoding="utf-8")))
+            for legacy, current in ((True, None), (True, True), (True, False)):
+                with self.subTest(legacy=legacy, current=current):
+                    raw = {"use_hypr_bindings": legacy}
+                    if current is not None:
+                        raw["external_bindings"] = current
+                    path.write_text(json.dumps(raw))
+                    manager = self._manager(root)
+                    expected = legacy if current is None else current
+                    self.assertEqual(manager.get_setting("external_bindings"), expected)
+                    self.assertNotIn("use_hypr_bindings", json.loads(path.read_text(encoding="utf-8")))
 
     def test_save_atomically_replaces_config_with_sparse_json(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -22,12 +22,12 @@ class LegacyConfigTests(unittest.TestCase):
         normalized, migrations = diag.normalize_legacy_config({'use_hypr_bindings': True})
         self.assertEqual(normalized, {'external_bindings': True})
         self.assertIn("'use_hypr_bindings' -> 'external_bindings'", migrations)
-        # The new key wins; only a disagreement is a migration (saves mirror the alias).
+        # The new key wins; a leftover alias is always a migration so loads drop it.
         normalized, migrations = diag.normalize_legacy_config({'use_hypr_bindings': True, 'external_bindings': False})
         self.assertEqual(normalized, {'external_bindings': False})
         self.assertEqual(len(migrations), 1)
         normalized, migrations = diag.normalize_legacy_config({'use_hypr_bindings': True, 'external_bindings': True})
-        self.assertEqual((normalized, migrations), ({'external_bindings': True}, []))
+        self.assertEqual((normalized, migrations), ({'external_bindings': True}, ["'use_hypr_bindings' dropped"]))
 
 
 @unittest.skipUnless(importlib.util.find_spec("jsonschema") is not None, "jsonschema is required for schema validation tests")
@@ -102,10 +102,11 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(any(f['severity'] == 'error' for f in findings))
         self.assertNotIn(SECRET, json.dumps(findings))
 
-    def test_ignored_legacy_bindings_key_is_not_an_error(self):
+    def test_ignored_legacy_bindings_key_is_deprecated_not_an_error(self):
         config, findings, _ = self.validate({'use_hypr_bindings': 'true', 'external_bindings': False})
         self.assertFalse(config['external_bindings'])
         self.assertFalse(any(f['severity'] == 'error' for f in findings))
+        self.assertIn('config.deprecated', {f['check_id'] for f in findings})
 
     def test_conflicting_bindings_keys_warn_without_rewriting(self):
         for old, new in ((False, True), (True, False)):

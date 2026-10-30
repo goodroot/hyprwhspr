@@ -60,11 +60,9 @@ def validate_config(path=None):
         return config, findings + [finding('config.validator', 'error', 'Bundled schema or validator unavailable.',
             'Install jsonschema for the CLI system Python and restore the bundled schema.')], True
     known = schema['properties']
-    aliases = {'push_to_talk', 'audio_device', 'shift_paste', 'rest_api_key'}
+    aliases = {'push_to_talk', 'audio_device', 'shift_paste', 'rest_api_key', LEGACY_BINDINGS_KEY}
     for key in raw:
-        if key == LEGACY_BINDINGS_KEY:
-            pass  # saves mirror it for older releases; not a user error
-        elif key in aliases:
+        if key in aliases:
             findings.append(finding('config.deprecated', 'warning', 'A deprecated configuration alias is present.',
                 'Review legacy settings at https://hyprwhspr.com/docs/.'))
         elif key not in known and not re.fullmatch(r'whisper_prompt_[a-z]{2}', key):
@@ -82,7 +80,7 @@ def validate_config(path=None):
             and raw[LEGACY_BINDINGS_KEY] != raw['external_bindings']):
         findings.append(finding('config.bindings_conflict', 'warning',
             'use_hypr_bindings and external_bindings disagree; external_bindings takes precedence.',
-            'Edit external_bindings and remove use_hypr_bindings. Saving configuration mirrors the new value to the old key.'))
+            'Remove use_hypr_bindings.'))
     normalized, migrations = normalize_legacy_config(raw)
     if "'whisper_prompt' -> 'whisper_prompt_en'" in migrations:
         findings.append(finding('config.deprecated_prompt', 'warning',
