@@ -44,6 +44,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self.transcription_session_type = 'transcription'
         self.transcription_delay = 'low'
         self.transcription_prompt = None
+        self.transcription_languages = None
         self.conversation_history = 'turn'
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
         # 'flat': servers predating OpenAI's GA schema (NeMo-Speech.cpp) read
@@ -296,6 +297,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                     transcription_config['languages'] = [self.language]
                 else:
                     transcription_config['language'] = self.language
+            elif language_context and self.transcription_languages:
+                transcription_config['languages'] = self.transcription_languages
 
             if language_context and self.transcription_prompt:
                 transcription_config['prompt'] = self.transcription_prompt
@@ -407,10 +410,22 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             self._log('Flat sessions only transcribe; ignoring realtime_mode')
             self.mode = 'transcribe'
         super().configure(get_setting)
+        self.transcription_languages = self._normalize_transcription_languages(
+            get_setting('realtime_transcription_languages', None))
         self.set_transcription_session_type(
             get_setting('realtime_transcription_session_type', 'transcription'))
         self.set_transcription_delay(get_setting('realtime_transcription_delay', 'low'))
         self.set_conversation_history(get_setting('realtime_conversation_history', 'turn'))
+
+    def _normalize_transcription_languages(self, value):
+        if value is None:
+            return None
+        if not isinstance(value, list) or not value or any(
+            not isinstance(language, str) or not language.strip() for language in value
+        ):
+            self._log(f'Invalid realtime_transcription_languages {value!r}; ignoring language hints')
+            return None
+        return list(dict.fromkeys(language.strip().lower() for language in value))
 
     def _normalize_choice(self, value, valid: set, default: str, key: str) -> str:
         """Normalize a config enum; unset falls back quietly, anything invalid (non-strings too) with a log."""
