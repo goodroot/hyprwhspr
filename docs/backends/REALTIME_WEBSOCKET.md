@@ -76,6 +76,25 @@ scalar `language` setting as OpenAI's single-entry `languages` hint and resolves
 unset → omitted. For GPT Realtime Whisper it sends a plain scalar
 `language` and no prompt.
 
+For multilingual GPT Transcribe or GPT Live Transcribe dictation, set
+`realtime_transcription_languages` to the expected language codes. These are hints;
+leave the setting unset or `null` for automatic detection without language hints.
+An explicit `language`, including a secondary shortcut's language, takes precedence.
+A list without `en` never gets the English default prompt.
+Legacy models ignore this list. For example:
+
+```json
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "openai",
+    "websocket_model": "gpt-live-transcribe",
+    "language": null,
+    "realtime_transcription_languages": ["pl", "en"],
+    "realtime_transcription_delay": "medium",
+    "whisper_prompt": "Multilingual dictation in Polish and English."
+}
+```
+
 ## Google Gemini
 
 Realtime streaming transcription via Google's Gemini Live API.

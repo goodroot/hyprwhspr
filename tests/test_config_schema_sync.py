@@ -100,6 +100,16 @@ class ConfigSchemaSyncTests(unittest.TestCase):
     def test_every_default_has_a_schema_entry(self):
         self.assertEqual(sorted(self.defaults - self.schema_keys), [])
 
+    def test_realtime_transcription_languages_accepts_auto_or_language_list(self):
+        for value in (None, ["pl", "en"], ["en"], ["pl", "PL"]):
+            with self.subTest(value=value):
+                self.assertEqual(self._errors({'realtime_transcription_languages': value}), [])
+
+    def test_realtime_transcription_languages_rejects_invalid_lists(self):
+        for value in ("pl,en", [], [None], [""], ["  "]):
+            with self.subTest(value=value):
+                self.assertTrue(self._errors({'realtime_transcription_languages': value}))
+
     def test_every_schema_entry_has_a_default(self):
         self.assertEqual(sorted(self.schema_keys - self.defaults), [])
 

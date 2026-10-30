@@ -60,6 +60,10 @@ class RealtimeWsBackend(TranscriptionBackend):
         # 'connecting' | 'cooldown' | 'failed' | None
         self._last_connect_failure = None
         self._last_rebuild_attempt = None
+        # realtime_transcription_languages, normalized; GPT Transcribe/Live only
+        self._language_hints = None
+        # A per-recording override is live on the client until restored
+        self._language_overridden = False
 
     @property
     def _realtime_partial_callback(self):
@@ -77,12 +81,37 @@ class RealtimeWsBackend(TranscriptionBackend):
 
         active_model = model_id or getattr(self._realtime_client, 'model', None)
         if uses_language_context(active_model):
+            language = (language or '').strip().lower() or None
             self._realtime_client.update_transcription_config(
                 language,
-                self.resolve_whisper_prompt(language)[0],
+                self.resolve_whisper_prompt(self._prompt_language(language))[0],
             )
         else:
             self._realtime_client.update_language(language)
+
+    def _prompt_language(self, language: Optional[str]) -> Optional[str]:
+        """Language to pick a prompt for: hints without English never get the English default."""
+        hints = self._language_hints
+        if language or not hints or 'en' in hints:
+            return language
+        return hints[0]
+
+    @staticmethod
+    def _normalize_language_hints(value) -> Optional[list]:
+        """Clean realtime_transcription_languages, dropping only the entries that are invalid."""
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            log(f'[REALTIME] Invalid realtime_transcription_languages {value!r}; ignoring language hints')
+            return None
+        hints = []
+        for entry in value:
+            code = entry.strip().lower() if isinstance(entry, str) else ''
+            if not code:
+                log(f'[REALTIME] Ignoring invalid realtime_transcription_languages entry {entry!r}')
+            elif code not in hints:
+                hints.append(code)
+        return hints or None
 
     def initialize(self) -> bool:
         """Configure the Realtime WebSocket backend and connect the client"""
@@ -160,6 +189,20 @@ class RealtimeWsBackend(TranscriptionBackend):
 
         language = self.config.get_setting('language', None)
         instructions = self._build_instructions(language) if protocol.uses_instructions else None
+
+        self._language_hints = self._normalize_language_hints(
+            self.config.get_setting('realtime_transcription_languages', None))
+        self._language_overridden = False
+        set_hints = getattr(client, 'set_transcription_languages', None)
+        if self._language_hints:
+            if set_hints and uses_language_context(getattr(client, 'model', None) or model_id) \
+                    and getattr(client, 'session_format', 'nested') != 'flat':
+                set_hints(self._language_hints)
+                if language:
+                    log(f'[REALTIME] language={language!r} set; realtime_transcription_languages '
+                        'applies only when language is unset')
+            else:
+                log(f'[REALTIME] {model_id} takes no language hints; ignoring realtime_transcription_languages')
 
         self._realtime_client = client
         try:
@@ -553,7 +596,14 @@ class RealtimeWsBackend(TranscriptionBackend):
                 log(f"[WARN] Failed to cleanup realtime client: {e}")
 
     def update_language(self, language: Optional[str]) -> None:
-        """Apply a language override to a connected client (no-op otherwise)."""
+        """Apply a per-recording language override; None restores the configured language."""
+        if language is None:
+            if not self._language_overridden:
+                return
+            language = self.config.get_setting('language', None)
+            self._language_overridden = False
+        else:
+            self._language_overridden = True
         try:
             self._update_client_language(language)
         except ValueError as e:

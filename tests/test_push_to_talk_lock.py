@@ -328,6 +328,13 @@ class PushToTalkLockTests(unittest.TestCase):
         self.assertTrue(app.is_recording)
         self.assertTrue(app._ptt_locked)
 
+    def test_start_without_override_restores_configured_language(self):
+        app = self._app(lock_seconds=3.0, recording=False, mock_start=False)
+
+        app._start_recording()
+
+        app.whisper_manager.update_realtime_language.assert_called_once_with(None)
+
     def test_other_modes_unaffected(self):
         for mode in ('toggle', 'continuous', 'auto', 'long_form'):
             with self.subTest(mode=mode):

@@ -165,6 +165,7 @@ def build_default_config():
         'realtime_mode': 'transcribe',      # 'transcribe' (speech-to-text) or 'converse' (voice-to-AI)
         'realtime_transcription_session_type': 'transcription',  # 'realtime' for proxies requiring a full session
         'realtime_transcription_delay': 'low',  # OpenAI continuous transcription delay: minimal|low|medium|high|xhigh
+        'realtime_transcription_languages': None,  # Expected input languages for GPT Transcribe/Live; explicit language wins
         'realtime_conversation_history': 'turn',  # OpenAI converse mode: session|turn
         # whisper.cpp (pywhispercpp) backend settings
         'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled

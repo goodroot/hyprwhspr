@@ -166,6 +166,26 @@ class RealtimeClientTests(unittest.TestCase):
         transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
         self.assertNotIn("prompt", transcription)
 
+    def test_cleared_prompt_is_sent_empty_until_reconnect(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+        client.set_transcription_languages(["pl", "de"])
+
+        client.update_transcription_config("en", "English prompt")
+        client.update_transcription_config(None, None)
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["languages"], ["pl", "de"])
+        self.assertEqual(transcription["prompt"], "")
+
+        client._send_session_update()
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertNotIn("prompt", transcription)
+
+        client.update_transcription_config("en", "English prompt")
+        client._on_connect_success()
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["prompt"], "English prompt")
+
     def test_gpt_live_transcribe_uses_languages_array(self):
         client = self._client_with_ws("gpt-live-transcribe")
         client.language = "fr"
@@ -185,6 +205,48 @@ class RealtimeClientTests(unittest.TestCase):
 
         transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
         self.assertEqual(transcription["delay"], "xhigh")
+
+    def test_new_models_send_configured_language_hints_without_keywords(self):
+        for model in ("gpt-transcribe", "gpt-live-transcribe"):
+            with self.subTest(model=model):
+                client = self._client_with_ws(model)
+                client.set_transcription_languages(["pl", "en"])
+                client.update_transcription_config(None, "Multilingual dictation on varied topics.")
+
+                transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+                self.assertEqual(transcription["languages"], ["pl", "en"])
+                self.assertEqual(transcription["prompt"], "Multilingual dictation on varied topics.")
+                self.assertNotIn("language", transcription)
+                self.assertNotIn("keywords", transcription)
+
+    def test_explicit_language_overrides_hints_then_restores_them(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+        client.set_transcription_languages(["pl", "en"])
+
+        client.update_language("fr")
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["languages"], ["fr"])
+
+        client.update_language(None)
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["languages"], ["pl", "en"])
+
+    def test_empty_language_hints_preserve_auto_detection(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+        client.set_transcription_languages([])
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertNotIn("languages", transcription)
+        self.assertNotIn("language", transcription)
+
+    def test_legacy_model_ignores_multi_language_hints(self):
+        client = self._client_with_ws("gpt-realtime-whisper")
+        client.set_transcription_languages(["pl", "en"])
+        client.update_language("pl")
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["language"], "pl")
+        self.assertNotIn("languages", transcription)
 
     def test_gpt_live_transcribe_uses_manual_turn_detection(self):
         client = self._client_with_ws("gpt-live-transcribe")

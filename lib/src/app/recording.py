@@ -210,9 +210,8 @@ class RecordingMixin:
             # Write recording status to file for tray script
             self._write_recording_status(True)
 
-            # Update language in realtime client if override is provided
-            if language_override is not None:
-                self.whisper_manager.update_realtime_language(language_override)
+            # Apply this recording's language override, or restore the configured one
+            self.whisper_manager.update_realtime_language(language_override)
             
             # Check if using realtime-ws backend and get streaming callback
             streaming_callback = self.whisper_manager.get_realtime_streaming_callback()

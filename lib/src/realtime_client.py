@@ -44,6 +44,9 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self.transcription_session_type = 'transcription'
         self.transcription_delay = 'low'
         self.transcription_prompt = None
+        self.transcription_languages = None
+        # session.update merges, so a prompt sent this session must be cleared explicitly
+        self._session_has_prompt = False
         self.conversation_history = 'turn'
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
         # 'flat': servers predating OpenAI's GA schema (NeMo-Speech.cpp) read
@@ -76,6 +79,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
     def _on_connect_success(self):
         # Always send session.update with audio format configuration
+        self._session_has_prompt = False
         self._send_session_update()
 
     def _after_open(self, ws):
@@ -296,9 +300,14 @@ class RealtimeClient(WebSocketRealtimeClientBase):
                     transcription_config['languages'] = [self.language]
                 else:
                     transcription_config['language'] = self.language
+            elif language_context and self.transcription_languages:
+                transcription_config['languages'] = self.transcription_languages
 
             if language_context and self.transcription_prompt:
                 transcription_config['prompt'] = self.transcription_prompt
+            elif language_context and self._session_has_prompt:
+                transcription_config['prompt'] = ''
+            self._session_has_prompt = bool(transcription_config.get('prompt'))
 
             if is_continuous(model):
                 transcription_config['delay'] = self._validated_transcription_delay()
@@ -376,6 +385,12 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             language: Language code (e.g., 'en', 'it', 'fr') or None for auto-detect
         """
         self.update_transcription_config(language, self.transcription_prompt)
+
+    def set_transcription_languages(self, languages: Optional[list]):
+        """Expected languages, sent as hints while no explicit language is set."""
+        self.transcription_languages = languages or None
+        if self.connected:
+            self._send_session_update()
 
     def set_transcription_delay(self, delay: str):
         """Set the OpenAI streaming transcription delay."""

@@ -301,6 +301,80 @@ class OpenAIRealtimePromptTests(unittest.TestCase):
                     )
                     client.update_language.assert_not_called()
 
+    def _backend(self, model="gpt-live-transcribe", **values):
+        config = FakeConfig({
+            "websocket_provider": "openai",
+            "websocket_model": model,
+            **values,
+        })
+        backend = RealtimeWsBackend(FakeManager(config))
+        backend._language_hints = backend._normalize_language_hints(
+            values.get("realtime_transcription_languages"))
+        client = mock.Mock()
+        client.model = model
+        backend._realtime_client = client
+        return backend, client
+
+    def test_language_hints_drop_only_invalid_entries(self):
+        normalize = RealtimeWsBackend._normalize_language_hints
+        self.assertEqual(normalize(["pl", "", 42, " PL ", "en"]), ["pl", "en"])
+        for value in (None, "pl,en", {"pl": "en"}, [], [None, "  "]):
+            with self.subTest(value=value):
+                self.assertIsNone(normalize(value))
+
+    def test_non_english_hints_never_get_english_default_prompt(self):
+        defaults = {"whisper_prompt": "", "whisper_prompt_en": "English default"}
+        cases = (
+            (["pl", "de"], {}, None),
+            (["pl", "de"], {"whisper_prompt_pl": "Polish prompt"}, "Polish prompt"),
+            (["pl", "en"], {}, "English default"),
+            (None, {}, "English default"),
+        )
+        for hints, prompts, expected in cases:
+            with self.subTest(hints=hints, prompts=prompts):
+                backend, client = self._backend(
+                    realtime_transcription_languages=hints, **defaults, **prompts)
+
+                backend._update_client_language(None)
+
+                client.update_transcription_config.assert_called_once_with(None, expected)
+
+    def test_explicit_language_is_normalized(self):
+        backend, client = self._backend(whisper_prompt="Prompt")
+
+        backend.update_language(" PL ")
+
+        client.update_transcription_config.assert_called_once_with("pl", "Prompt")
+
+    def test_restoring_non_english_hints_drops_english_override_prompt(self):
+        backend, client = self._backend(
+            realtime_transcription_languages=["pl", "de"],
+            whisper_prompt="", whisper_prompt_en="English default")
+
+        backend.update_language("en")
+        backend.update_language(None)
+
+        self.assertEqual(
+            [c.args for c in client.update_transcription_config.call_args_list],
+            [("en", "English default"), (None, None)],
+        )
+
+    def test_override_is_restored_once_then_left_alone(self):
+        backend, client = self._backend(
+            realtime_transcription_languages=["pl", "de"], language=None)
+
+        backend.update_language(None)
+        client.update_transcription_config.assert_not_called()
+
+        backend.update_language("fr")
+        backend.update_language(None)
+        backend.update_language(None)
+
+        self.assertEqual(
+            [c.args[0] for c in client.update_transcription_config.call_args_list],
+            ["fr", None],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

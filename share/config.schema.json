@@ -480,6 +480,13 @@
       "default": "low",
       "description": "Latency/accuracy delay setting for OpenAI continuous transcription models"
     },
+    "realtime_transcription_languages": {
+      "type": ["array", "null"],
+      "items": {"type": "string", "pattern": "\\S"},
+      "minItems": 1,
+      "default": null,
+      "description": "Expected input languages for GPT Transcribe and GPT Live Transcribe; codes are trimmed, lowercased and deduplicated. Explicit language or secondary shortcut language takes precedence. null keeps auto-detection."
+    },
     "realtime_conversation_history": {
       "type": "string",
       "enum": ["session", "turn"],
