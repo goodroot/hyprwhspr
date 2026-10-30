@@ -108,7 +108,7 @@ class MainStartupSafetyTests(unittest.TestCase):
         )
         self.assertTrue(references_preview_file)
 
-    def test_migrate_legacy_state_files_creates_compat_symlinks(self):
+    def test_migrate_legacy_state_files_removes_old_paths(self):
         tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
 
         migrate_func = self._find_app_function("_migrate_legacy_state_files")
@@ -120,7 +120,7 @@ class MainStartupSafetyTests(unittest.TestCase):
             and node.func.attr == "symlink_to"
             for node in ast.walk(migrate_func)
         )
-        self.assertTrue(calls_symlink)
+        self.assertFalse(calls_symlink)
 
         constants = {
             node.value

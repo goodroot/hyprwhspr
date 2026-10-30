@@ -11,7 +11,7 @@ from dependency_plan import missing_imports
 from installation import is_nix_install, repair_hint, require_supported_backend
 from paths import (
     AUDIO_LEVEL_FILE, CONFIG_DIR, LONGFORM_STATE_FILE, MIC_ZERO_VOLUME_FILE, MODEL_UNLOADED_FILE,
-    RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE, RECOVERY_REQUESTED_FILE, RECOVERY_RESULT_FILE,
+    RECORDING_STATUS_FILE, RECOVERY_REQUESTED_FILE, RECOVERY_RESULT_FILE,
     RUNTIME_DIR, TRANSCRIPT_PREVIEW_FILE,
 )
 from service_log import log
@@ -214,9 +214,8 @@ class FeedbackMixin:
             log(f"[WARN] Failed to write recording status: {e}")
 
     def _migrate_legacy_state_files(self):
-        """One-time cleanup of signal files that lived in CONFIG_DIR before they
-        moved to RUNTIME_DIR, plus compat symlinks for the three files external
-        consumers (Hyprland binds, GNOME extension) may still use at old paths.
+        """Cleanup of signal files (and the compat symlinks earlier releases
+        made) that lived in CONFIG_DIR before they moved to RUNTIME_DIR.
         """
         try:
             RUNTIME_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -237,22 +236,6 @@ class FeedbackMixin:
             except Exception:
                 pass
         shutil.rmtree(CONFIG_DIR / '.recovery_notification_lock', ignore_errors=True)
-
-        # Compat symlinks, kept for one release cycle
-        compat = {
-            'recording_control': RECORDING_CONTROL_FILE,
-            'recording_status': RECORDING_STATUS_FILE,
-            'audio_level': AUDIO_LEVEL_FILE,
-        }
-        try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            log(f"[WARN] Failed to create config dir: {e}")
-        for name, target in compat.items():
-            try:
-                (CONFIG_DIR / name).symlink_to(target)
-            except Exception as e:
-                log(f"[WARN] Failed to create legacy compat symlink {name}: {e}")
 
     def _reset_stale_state(self):
         """Clear runtime state files that may be stale from a previous session.
