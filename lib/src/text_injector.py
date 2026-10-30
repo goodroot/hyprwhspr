@@ -119,8 +119,10 @@ def _apply_configured_word_overrides(text, config_manager):
         return text
     for original, replacement in (config_manager.get_word_overrides() or {}).items():
         if original:
+            # A single character is a spelling fix ("ß" -> "ss"), so it applies inside words.
+            pattern = re.escape(original) if len(original) == 1 else boundaried_pattern(original)
             text = re.sub(
-                boundaried_pattern(original), replacement, text, flags=re.IGNORECASE
+                pattern, replacement, text, flags=re.IGNORECASE
             )
     return re.sub(r' +', ' ', text).strip()
 

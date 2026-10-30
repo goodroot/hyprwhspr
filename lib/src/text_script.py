@@ -43,8 +43,7 @@ def needs_word_boundaries(term: str) -> tuple:
     """Whether (start, end) of term should be guarded by a word boundary.
 
     A boundary only means something in a space-delimited script: wrapped in
-    \\b...\\b a CJK term never fires mid-sentence, ß never matches in Straße,
-    and c++ never matches at all.
+    \\b...\\b a CJK term never fires mid-sentence, and c++ never matches at all.
     """
     if not term:
         return (False, False)
@@ -52,8 +51,6 @@ def needs_word_boundaries(term: str) -> tuple:
     # edge is enough to stop it matching: CJK characters are \w, so the guard
     # can never be satisfied inside CJK text.
     if any(is_no_space_char(char) for char in term):
-        return (False, False)
-    if len(term) == 1:
         return (False, False)
 
     def guarded(char: str) -> bool:

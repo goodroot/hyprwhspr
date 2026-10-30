@@ -49,9 +49,14 @@ class WordBoundaryTests(unittest.TestCase):
         self.assertEqual(needs_word_boundaries("hello"), (True, True))
         self.assertEqual(needs_word_boundaries("Straße"), (True, True))
 
-    def test_single_character_is_unguarded(self):
-        self.assertEqual(needs_word_boundaries("ß"), (False, False))
+    def test_single_word_character_is_guarded_on_both_edges(self):
+        for term in ("ß", "м", "э", "a", "1", "_"):
+            with self.subTest(term=term):
+                self.assertEqual(needs_word_boundaries(term), (True, True))
+
+    def test_single_cjk_or_punctuation_character_is_unguarded(self):
         self.assertEqual(needs_word_boundaries("中"), (False, False))
+        self.assertEqual(needs_word_boundaries("-"), (False, False))
 
     def test_cjk_term_is_unguarded(self):
         self.assertEqual(needs_word_boundaries("你好"), (False, False))

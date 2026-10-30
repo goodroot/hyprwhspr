@@ -45,6 +45,7 @@ Remove common filler words automatically:
 }
 ```
 
+- Fillers match whole words, single letters included (`"м"` leaves `"мама"` alone); terms containing CJK characters match without word boundaries
 - Backends that punctuate their own transcripts attach the mark to the filler (`"Um."`, `"Uh,"`); the mark is removed along with the filler, not left stranded
 - Punctuation belonging to the surrounding sentence survives -- `"I said, um, no."` keeps its first comma, and a sentence break the filler carried is kept: `"Well, um. Okay."` -> `"Well. Okay."`
 - A word left starting a sentence is re-capitalized: `"Fair enough. Um. Uh, what about it?"` -> `"Fair enough. What about it?"`

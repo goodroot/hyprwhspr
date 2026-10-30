@@ -135,6 +135,18 @@ class FillerFilterTests(unittest.TestCase):
     def test_an_all_filler_utterance_filters_to_nothing(self):
         self.assertTable({"Um. Uh.": "", "um uh": "", "Hmm...": ""})
 
+    def test_single_letter_fillers_match_whole_words(self):
+        # Issue #290: one-letter fillers must not strip letters inside words.
+        self.assertTable({
+            "Мама мыла раму, мм, это так": "Мама мыла раму, это так",
+        }, words=["м", "мм", "э"])
+        self.assertTable({"Ну, м, это так": "Ну, это так"}, words=["м"])
+
+    def test_single_cjk_fillers_still_match_without_word_boundaries(self):
+        for filler in ("嗯", "啊", "那"):
+            with self.subTest(filler=filler):
+                self.assertEqual(filter_filler_words(f"我{filler}觉得", [filler]), "我觉得")
+
     def test_cjk_terms_carry_their_marks_without_word_boundaries(self):
         self.assertTable({"我那个，觉得": "我觉得", "我那个觉得": "我觉得"}, words=["那个"])
         # A shorter filler listed first must not strip half of a longer one.
