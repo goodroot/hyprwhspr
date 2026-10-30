@@ -22,9 +22,6 @@ animates accordingly. No audio capture of its own, no extra dependencies:
 | `$XDG_RUNTIME_DIR/hyprwhspr/audio_level` | `0.000`–`1.000`, drives the bar heights |
 | `$XDG_RUNTIME_DIR/hyprwhspr/transcript_preview` | optional live transcript line |
 
-Older hyprwhspr versions wrote the first two under `~/.config/hyprwhspr/`;
-the extension falls back to those paths automatically.
-
 A pulsing record dot, 27 cyan→violet equalizer bars reacting to the live mic
 level, and (when available) the live transcript text underneath.
 
