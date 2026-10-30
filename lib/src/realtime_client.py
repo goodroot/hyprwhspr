@@ -45,6 +45,8 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         self.transcription_delay = 'low'
         self.transcription_prompt = None
         self.transcription_languages = None
+        # session.update merges, so a prompt sent this session must be cleared explicitly
+        self._session_has_prompt = False
         self.conversation_history = 'turn'
         self.sample_rate = 24000  # OpenAI Realtime API requires 24kHz
         # 'flat': servers predating OpenAI's GA schema (NeMo-Speech.cpp) read
@@ -77,6 +79,7 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
     def _on_connect_success(self):
         # Always send session.update with audio format configuration
+        self._session_has_prompt = False
         self._send_session_update()
 
     def _after_open(self, ws):
@@ -302,6 +305,9 @@ class RealtimeClient(WebSocketRealtimeClientBase):
 
             if language_context and self.transcription_prompt:
                 transcription_config['prompt'] = self.transcription_prompt
+            elif language_context and self._session_has_prompt:
+                transcription_config['prompt'] = ''
+            self._session_has_prompt = bool(transcription_config.get('prompt'))
 
             if is_continuous(model):
                 transcription_config['delay'] = self._validated_transcription_delay()

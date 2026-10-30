@@ -346,6 +346,19 @@ class OpenAIRealtimePromptTests(unittest.TestCase):
 
         client.update_transcription_config.assert_called_once_with("pl", "Prompt")
 
+    def test_restoring_non_english_hints_drops_english_override_prompt(self):
+        backend, client = self._backend(
+            realtime_transcription_languages=["pl", "de"],
+            whisper_prompt="", whisper_prompt_en="English default")
+
+        backend.update_language("en")
+        backend.update_language(None)
+
+        self.assertEqual(
+            [c.args for c in client.update_transcription_config.call_args_list],
+            [("en", "English default"), (None, None)],
+        )
+
     def test_override_is_restored_once_then_left_alone(self):
         backend, client = self._backend(
             realtime_transcription_languages=["pl", "de"], language=None)

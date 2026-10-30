@@ -166,6 +166,26 @@ class RealtimeClientTests(unittest.TestCase):
         transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
         self.assertNotIn("prompt", transcription)
 
+    def test_cleared_prompt_is_sent_empty_until_reconnect(self):
+        client = self._client_with_ws("gpt-live-transcribe")
+        client.set_transcription_languages(["pl", "de"])
+
+        client.update_transcription_config("en", "English prompt")
+        client.update_transcription_config(None, None)
+
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["languages"], ["pl", "de"])
+        self.assertEqual(transcription["prompt"], "")
+
+        client._send_session_update()
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertNotIn("prompt", transcription)
+
+        client.update_transcription_config("en", "English prompt")
+        client._on_connect_success()
+        transcription = client.ws.sent[-1]["session"]["audio"]["input"]["transcription"]
+        self.assertEqual(transcription["prompt"], "English prompt")
+
     def test_gpt_live_transcribe_uses_languages_array(self):
         client = self._client_with_ws("gpt-live-transcribe")
         client.language = "fr"
