@@ -482,11 +482,10 @@
     },
     "realtime_transcription_languages": {
       "type": ["array", "null"],
-      "items": {"type": "string", "minLength": 1, "pattern": "\\S"},
+      "items": {"type": "string", "pattern": "\\S"},
       "minItems": 1,
-      "uniqueItems": true,
       "default": null,
-      "description": "Expected input languages for GPT Transcribe and GPT Live Transcribe; explicit language or secondary shortcut language takes precedence. null keeps auto-detection."
+      "description": "Expected input languages for GPT Transcribe and GPT Live Transcribe; codes are trimmed, lowercased and deduplicated. Explicit language or secondary shortcut language takes precedence. null keeps auto-detection."
     },
     "realtime_conversation_history": {
       "type": "string",

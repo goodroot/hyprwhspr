@@ -80,6 +80,7 @@ For multilingual GPT Transcribe or GPT Live Transcribe dictation, set
 `realtime_transcription_languages` to the expected language codes. These are hints;
 leave the setting unset or `null` for automatic detection without language hints.
 An explicit `language`, including a secondary shortcut's language, takes precedence.
+A list without `en` never gets the English default prompt.
 Legacy models ignore this list. For example:
 
 ```json

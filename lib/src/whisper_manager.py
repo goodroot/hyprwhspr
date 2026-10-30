@@ -220,7 +220,7 @@ class WhisperManager:
         return backend_cls.is_local if backend_cls is not None else True
 
     def update_realtime_language(self, language: Optional[str]) -> None:
-        """Apply a language override to a connected realtime client (no-op otherwise)."""
+        """Apply a language override to a connected realtime client; None restores the config (no-op otherwise)."""
         backend = self._active_realtime_backend()
         if backend:
             backend.update_language(language)

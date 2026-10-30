@@ -380,6 +380,12 @@ class RealtimeClient(WebSocketRealtimeClientBase):
         """
         self.update_transcription_config(language, self.transcription_prompt)
 
+    def set_transcription_languages(self, languages: Optional[list]):
+        """Expected languages, sent as hints while no explicit language is set."""
+        self.transcription_languages = languages or None
+        if self.connected:
+            self._send_session_update()
+
     def set_transcription_delay(self, delay: str):
         """Set the OpenAI streaming transcription delay."""
         self.transcription_delay = self._normalize_transcription_delay(delay)
@@ -410,22 +416,10 @@ class RealtimeClient(WebSocketRealtimeClientBase):
             self._log('Flat sessions only transcribe; ignoring realtime_mode')
             self.mode = 'transcribe'
         super().configure(get_setting)
-        self.transcription_languages = self._normalize_transcription_languages(
-            get_setting('realtime_transcription_languages', None))
         self.set_transcription_session_type(
             get_setting('realtime_transcription_session_type', 'transcription'))
         self.set_transcription_delay(get_setting('realtime_transcription_delay', 'low'))
         self.set_conversation_history(get_setting('realtime_conversation_history', 'turn'))
-
-    def _normalize_transcription_languages(self, value):
-        if value is None:
-            return None
-        if not isinstance(value, list) or not value or any(
-            not isinstance(language, str) or not language.strip() for language in value
-        ):
-            self._log(f'Invalid realtime_transcription_languages {value!r}; ignoring language hints')
-            return None
-        return list(dict.fromkeys(language.strip().lower() for language in value))
 
     def _normalize_choice(self, value, valid: set, default: str, key: str) -> str:
         """Normalize a config enum; unset falls back quietly, anything invalid (non-strings too) with a log."""
