@@ -30,7 +30,11 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
 
     LOG_TAG = '[PHONON]'
     PROVIDER_NAME = 'Phonon'
-    END_OF_INPUT = {'type': 'end'}
+    # Control messages sent in order when recording stops
+    END_OF_INPUT = ({'type': 'end'},)
+    # Sent while idle for servers that drop silent streams; None sends nothing
+    KEEPALIVE = None
+    KEEPALIVE_SECONDS = 4.0
     commit_after_disconnect = True
 
     def __init__(self, mode: str = 'transcribe'):
@@ -171,12 +175,18 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
             if not self._ending:
                 raise ValueError('done received before end of input')
             # The server's full transcript is authoritative, not another segment.
-            self.current_response_text = text.strip()
-            self._partial_transcript = ''
-            self.response_complete = True
-            self.response_event.set()
+            self._complete_locked(text.strip())
         elif event_type == 'error':
             self._fail_locked(f'Server rejected stream: {event.get("error", event.get("message", text))}')
+
+    def _committed_text_locked(self):
+        return join_segments([self._segments[key] for key in sorted(self._segments)])
+
+    def _complete_locked(self, text):
+        self.current_response_text = text
+        self._partial_transcript = ''
+        self.response_complete = True
+        self.response_event.set()
 
     def _emit_partial_transcript(self, ws=None, generation=None):
         # Serialize preview delivery with teardown, without holding the state lock
@@ -188,7 +198,7 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
                 if self._failure or self._closed:
                     committed, tail = '', ''
                 else:
-                    committed = join_segments([self._segments[key] for key in sorted(self._segments)])
+                    committed = self._committed_text_locked()
                     tail = self._partial_transcript
             self._publish_live_text(committed, tail)
 
@@ -212,32 +222,49 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
             self._queue_cond.notify_all()
 
     def _sender_loop(self, sender_generation):
+        keepalive_timeout = self.KEEPALIVE_SECONDS if self.KEEPALIVE is not None else None
         while True:
             with self.lock:
-                self._queue_cond.wait_for(lambda: not self._sender_running or self._audio_queue or self._ending
-                                         or sender_generation != self._active_generation)
+                self._queue_cond.wait_for(
+                    lambda: not self._sender_running or self._audio_queue or self._ending
+                    or sender_generation != self._active_generation,
+                    timeout=keepalive_timeout,
+                )
                 if not self._sender_running or sender_generation != self._active_generation:
                     return
-                audio = self._audio_queue.popleft() if self._audio_queue else None
-                if audio is not None:
-                    self.audio_buffer_seconds = max(
-                        0.0, self.audio_buffer_seconds - len(audio) / float(self.input_sample_rate)
-                    )
-                self._sending_audio = True
                 ws = self.ws
                 generation = self._active_generation
+                idle = not self._audio_queue and not self._ending
+                if not idle:
+                    audio = self._audio_queue.popleft() if self._audio_queue else None
+                    if audio is not None:
+                        self.audio_buffer_seconds = max(
+                            0.0, self.audio_buffer_seconds - len(audio) / float(self.input_sample_rate)
+                        )
+                    self._sending_audio = True
+            if idle:
+                # Timed out with nothing to send: keep the idle stream open
+                if self.KEEPALIVE is not None:
+                    self._send_control(ws, generation, (self.KEEPALIVE,), 'KeepAlive send failed')
+                continue
+            if audio is None:
+                try:
+                    self._send_control(ws, generation, self.END_OF_INPUT, 'End of input send failed')
+                finally:
+                    with self.lock:
+                        if generation == self._active_generation:
+                            self._sending_audio = False
+                        self._queue_cond.notify_all()
+                return
             try:
-                if audio is not None:
-                    audio = self._resample_for_output(audio)
-                    payload = (np.clip(audio, -1.0, 1.0) * 32767).astype('<i2').tobytes()
-                else:
-                    payload = json.dumps(self.END_OF_INPUT)
+                audio = self._resample_for_output(audio)
+                payload = (np.clip(audio, -1.0, 1.0) * 32767).astype('<i2').tobytes()
                 with self._ws_send_lock:
                     with self.lock:
                         active = self._is_active_connection(ws, generation) and not self._failure
                     if active:
                         # websocket-client sends one FIN binary frame, not fragments.
-                        ws.send(payload, opcode=2 if audio is not None else 1)
+                        ws.send(payload, opcode=2)
             except Exception as exc:
                 self._on_error(ws, f'Audio send failed: {exc}', generation)
             finally:
@@ -245,12 +272,19 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
                     if generation == self._active_generation:
                         self._sending_audio = False
                     self._queue_cond.notify_all()
-            if audio is None:
-                self._after_end_of_input(ws, generation)
-                return
 
-    def _after_end_of_input(self, ws, generation):
-        """Run on the sender thread once END_OF_INPUT has gone out."""
+    def _send_control(self, ws, generation, messages, what):
+        """Send JSON control messages in order while the stream stays live."""
+        try:
+            for message in messages:
+                with self._ws_send_lock:
+                    with self.lock:
+                        active = self._is_active_connection(ws, generation) and not self._failure
+                    if not active:
+                        return
+                    ws.send(json.dumps(message), opcode=1)
+        except Exception as exc:
+            self._on_error(ws, f'{what}: {exc}', generation)
 
     def clear_audio_buffer(self):
         # The backend calls this just before capture. A used connection cannot
