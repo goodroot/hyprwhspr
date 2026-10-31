@@ -195,6 +195,7 @@ def build_default_config():
         # Visual feedback settings
         'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
         'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter' or 'pill'
+        'tray_icon_enabled': False,          # Show a system tray icon (StatusNotifierItem) while running
         # Live transcript above the pill OSD (ElevenLabs Scribe v2 Realtime)
         'mic_osd_pill_transcript_enabled': False,
         'mic_osd_pill_transcript_word_limit': 4,

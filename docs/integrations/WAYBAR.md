@@ -1,6 +1,6 @@
 # Waybar
 
-Add dynamic tray icon to your `~/.config/waybar/config`:
+Add the hyprwhspr status module to your `~/.config/waybar/config`:
 
 ```jsonc
 {
@@ -23,7 +23,17 @@ Add CSS styling to your `~/.config/waybar/style.css`:
 @import "/usr/lib/hyprwhspr/config/waybar/hyprwhspr-style.css";
 ```
 
-Waybar icon click interactions:
+Module click interactions:
 
 - **Left-click**: Start/stop recording (auto-starts service if needed)
 - **Right-click**: Restart Hyprwhspr service
+
+## Or use the tray
+
+Already run Waybar's built-in `tray` module? Skip the custom module and turn on the [tray icon](../usage/FEEDBACK.md#tray-icon) instead:
+
+```jsonc
+{
+  "tray_icon_enabled": true
+}
+```

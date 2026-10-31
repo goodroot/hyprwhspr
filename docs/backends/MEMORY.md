@@ -40,7 +40,7 @@ hyprwhspr model unload   # Free the model's VRAM or RAM
 hyprwhspr model reload   # Load it again
 ```
 
-While unloaded, recording is refused with a notification, and the Waybar tray shows a `󰒲` sleep icon. Works on every local backend; Qwen3-ASR stops its sidecar. Cloud backends have nothing to unload.
+While unloaded, recording is refused with a notification, the Waybar module shows a `󰒲` sleep icon, and the tray icon shows a muted mic. Works on every local backend; Qwen3-ASR stops its sidecar. Cloud backends have nothing to unload.
 
 Bind both in `~/.config/hypr/hyprland.conf`:
 
