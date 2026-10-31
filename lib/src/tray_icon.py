@@ -29,17 +29,31 @@ POLL_INTERVAL_MS = 250
 STATES = {
     'ready': ('audio-input-microphone', 'Ready'),
     'recording': ('media-record', 'Recording'),
+    'paused': ('media-playback-pause', 'Paused'),
+    'processing': ('microphone-sensitivity-muted', 'Transcribing'),
     'loading': ('microphone-sensitivity-muted', 'Loading model'),
     'unloaded': ('microphone-sensitivity-muted', 'Model unloaded'),
     'error': ('dialog-warning', 'Error'),
 }
 
-# Menu item ids; 0 is the dbusmenu root
+# Menu item ids; 0 is the dbusmenu root. Each action has its own id, so a
+# click does what its label said even if the state changed while the menu was open
 ITEM_STATUS = 1
-ITEM_RECORD = 3
-ITEM_MODEL = 4
-ITEM_RESTART = 6
-ITEM_STOP = 7
+ITEM_START = 3
+ITEM_STOP = 4
+ITEM_UNLOAD = 5
+ITEM_LOAD = 6
+ITEM_RESTART_SERVICE = 8
+ITEM_STOP_SERVICE = 9
+
+ACTIONS = {
+    ITEM_START: 'start',
+    ITEM_STOP: 'stop',
+    ITEM_UNLOAD: 'model_unload',
+    ITEM_LOAD: 'model_reload',
+    ITEM_RESTART_SERVICE: 'restart',
+    ITEM_STOP_SERVICE: 'stop_service',
+}
 
 ITEM_XML = f"""
 <node>
@@ -150,38 +164,35 @@ MENU_XML = f"""
 def menu_items(state, detail, service_controls):
     """Build the menu for a state as a list of (id, properties) with plain values."""
     label = STATES[state][1]
+    if state == 'recording':
+        record = (ITEM_STOP, {'label': 'Stop recording'})
+    else:
+        record = (ITEM_START, {
+            'label': 'Resume recording' if state == 'paused' else 'Start recording',
+            'enabled': state in ('ready', 'paused', 'error'),
+        })
+    if state == 'unloaded':
+        model = (ITEM_LOAD, {'label': 'Load model'})
+    else:
+        model = (ITEM_UNLOAD, {'label': 'Unload model', 'enabled': state == 'ready'})
     items = [
         (ITEM_STATUS, {'label': f"hyprwhspr: {detail or label}", 'enabled': False}),
         (2, {'type': 'separator'}),
-        (ITEM_RECORD, {
-            'label': 'Stop recording' if state == 'recording' else 'Start recording',
-            'enabled': state in ('ready', 'recording', 'error'),
-        }),
-        (ITEM_MODEL, {
-            'label': 'Load model' if state == 'unloaded' else 'Unload model',
-            'enabled': state in ('ready', 'unloaded'),
-        }),
+        record,
+        model,
     ]
     if service_controls:
         items += [
-            (5, {'type': 'separator'}),
-            (ITEM_RESTART, {'label': 'Restart hyprwhspr'}),
-            (ITEM_STOP, {'label': 'Stop hyprwhspr'}),
+            (7, {'type': 'separator'}),
+            (ITEM_RESTART_SERVICE, {'label': 'Restart hyprwhspr'}),
+            (ITEM_STOP_SERVICE, {'label': 'Stop hyprwhspr'}),
         ]
     return items
 
 
-def menu_action(item_id, state):
+def menu_action(item_id):
     """Map a clicked menu item to an action name, or None."""
-    if item_id == ITEM_RECORD:
-        return 'stop' if state == 'recording' else 'start'
-    if item_id == ITEM_MODEL:
-        return 'model_reload' if state == 'unloaded' else 'model_unload'
-    if item_id == ITEM_RESTART:
-        return 'restart'
-    if item_id == ITEM_STOP:
-        return 'stop_service'
-    return None
+    return ACTIONS.get(item_id)
 
 
 def _to_variant(value):
@@ -214,6 +225,7 @@ class TrayIcon:
         self._registrations = []
         self._watch_id = 0
         self._ready = threading.Event()
+        self._stopping = threading.Event()
         self._started = False
 
     def start(self) -> bool:
@@ -224,6 +236,7 @@ class TrayIcon:
         if self._thread is not None and self._thread.is_alive():
             return True
         self._ready.clear()
+        self._stopping.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name="TrayIcon")
         self._thread.start()
         self._ready.wait(timeout=5.0)
@@ -233,6 +246,8 @@ class TrayIcon:
 
     def stop(self):
         """Remove the icon and stop the thread"""
+        # A thread still connecting checks this once connected and gives up
+        self._stopping.set()
         loop, context = self._loop, self._context
         if loop is not None and context is not None:
             source = GLib.idle_source_new()
@@ -248,19 +263,29 @@ class TrayIcon:
         self._context.push_thread_default()
         try:
             self._connect()
-            self._started = True
         except Exception as e:
             print(f"[TRAY] Failed to start: {e}")
+            self._disconnect()
             self._started = False
             self._ready.set()
             self._context.pop_thread_default()
             return
-        self._ready.set()
 
         poll = GLib.timeout_source_new(POLL_INTERVAL_MS)
         poll.set_callback(self._poll)
         poll.attach(self._context)
+        # Publish the loop before checking _stopping: stop() sets the flag
+        # before reading the loop, so either it queues a quit or we see the flag
         self._loop = GLib.MainLoop.new(self._context, False)
+        if self._stopping.is_set():
+            poll.destroy()
+            self._disconnect()
+            self._loop = None
+            self._ready.set()
+            self._context.pop_thread_default()
+            return
+        self._started = True
+        self._ready.set()
         try:
             self._loop.run()
         except Exception as e:
@@ -451,7 +476,7 @@ class TrayIcon:
     def _handle_event(self, item_id, event_id):
         if event_id != 'clicked':
             return
-        action = menu_action(item_id, self._state)
+        action = menu_action(item_id)
         if action is None:
             return
         # Actions can block for seconds (model reload), so keep them off the bus thread

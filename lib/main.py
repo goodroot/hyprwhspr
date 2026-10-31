@@ -384,10 +384,20 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             log(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...")
             self._start_backend_init_background()
         else:
-            if not self.whisper_manager.initialize():
+            # Flag the load so the tray and model commands treat it as in progress
+            self._model_initializing = True
+            try:
+                ok = self.whisper_manager.initialize()
+            finally:
+                self._model_initializing = False
+            if not ok:
                 # Stay alive with recording blocked; the record gate retries init
                 log("[ERROR] Failed to initialize backend - will retry on next record attempt")
                 self._backend_init_failed = True
+            elif self._notify_when_ready:
+                # A record attempt was refused during the load
+                self._notify_when_ready = False
+                self._notify_user("hyprwhspr", "Ready", urgency="low")
 
         if external_bindings:
             log("\n[READY] hyprwhspr ready - using external bindings")

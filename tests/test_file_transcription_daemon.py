@@ -275,6 +275,15 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         self.assertTrue(observed['claimed'])
         self.assertFalse(app._model_operation_active)
 
+    def test_model_operation_refused_while_backend_initializes(self):
+        app = self._app()
+        app._notify_user = mock.Mock()
+        app._model_initializing = True
+        app.whisper_manager.unload_model = mock.Mock()
+        app._handle_model_operation('unload')
+        app.whisper_manager.unload_model.assert_not_called()
+        self.assertFalse(app._model_operation_active)
+
     def test_regular_processing_does_not_trigger_file_only_start_gate(self):
         app = self._app()
         app.is_processing = True
