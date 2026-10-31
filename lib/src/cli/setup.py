@@ -54,6 +54,11 @@ except ImportError:
     )
 
 try:
+    from ..realtime_protocols import resolve_protocol
+except ImportError:
+    from realtime_protocols import resolve_protocol
+
+try:
     from ..credential_manager import save_credential, get_credential, mask_api_key
 except ImportError:
     from credential_manager import save_credential, get_credential, mask_api_key
@@ -446,6 +451,21 @@ _REALTIME_SERVER_PRESETS = (
     ('Phonon', 'self-hosted · English', '', 'phonon-2', {'websocket_protocol': 'phonon'}),
     ('Other server', 'any OpenAI Realtime-compatible endpoint', '', '', {}),
 )
+
+
+def _warn_recording_mode_conflict(provider_id, custom_config, recording_mode):
+    """Warn when a one-stream-per-recording protocol meets a mode that commits mid-recording."""
+    if recording_mode not in ('continuous', 'long_form'):
+        return
+    try:
+        protocol = resolve_protocol(provider_id, (custom_config or {}).get('websocket_protocol'))
+    except ValueError:
+        return
+    if not protocol.per_recording_session:
+        return
+    provider = get_provider(provider_id) if provider_id != 'custom' else None
+    name = provider['name'] if provider else protocol.id
+    log_warning(f"{name} can't run {recording_mode}; use toggle, push_to_talk or auto")
 
 
 def _prompt_realtime_provider_model_selection():
@@ -1096,6 +1116,8 @@ def setup_command(python_path: Optional[str] = None):
             log_error(f"Failed to generate realtime configuration: {e}")
             return False
         
+        _warn_recording_mode_conflict(provider_id, custom_config,
+                                      ConfigManager().get_setting('recording_mode'))
         realtime_mode = get_realtime_mode(provider_id, model_id)
         remote_config['realtime_mode'] = realtime_mode
         if realtime_mode == 'converse':

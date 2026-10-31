@@ -176,6 +176,23 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(warning['severity'], 'warning')
         self.assertIn('continuous', warning['explanation'])
 
+    def test_per_recording_providers_reject_long_recording_modes(self):
+        deepgram = {'transcription_backend': 'realtime-ws', 'websocket_provider': 'deepgram',
+                    'websocket_model': 'nova-3'}
+        phonon = {'transcription_backend': 'realtime-ws', 'websocket_provider': 'custom',
+                  'websocket_protocol': 'phonon', 'websocket_model': 'phonon-2',
+                  'websocket_url': 'wss://asr.example.test/stream'}
+        for name, base in (('deepgram', deepgram), ('phonon', phonon)):
+            for mode in ('continuous', 'long_form'):
+                with self.subTest(provider=name, mode=mode):
+                    _, findings, _ = self.validate({**base, 'recording_mode': mode})
+                    matches = [f for f in findings if f['check_id'] == 'config.realtime_continuous']
+                    self.assertEqual(len(matches), 1)
+                    self.assertIn('one recording at a time', matches[0]['explanation'])
+            with self.subTest(provider=name, mode='toggle'):
+                _, findings, _ = self.validate({**base, 'recording_mode': 'toggle'})
+                self.assertNotIn('config.realtime_continuous', {f['check_id'] for f in findings})
+
     def test_schema_url_is_never_followed(self):
         _, findings, _ = self.validate({'$schema': 'https://' + SECRET})
         self.assertFalse(any(f['severity'] == 'error' for f in findings))
