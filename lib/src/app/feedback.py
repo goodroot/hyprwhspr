@@ -218,7 +218,7 @@ class FeedbackMixin:
     def _setup_tray_icon(self):
         """Publish the system tray icon (StatusNotifierItem) if enabled"""
         self.tray_icon = None
-        if not self.config.get_setting('tray_icon_enabled', True):
+        if not self.config.get_setting('tray_icon_enabled', False):
             return
         try:
             from tray_icon import TrayIcon

@@ -15,4 +15,6 @@ Install enables the plugin, but placing the widget is up to you: **Noctalia Sett
 
 Earlier `goodroot/hyprwhspr` names migrate automatically on reinstall.
 
+The widget covers what the [tray icon](../usage/FEEDBACK.md#tray-icon) does, so leave `tray_icon_enabled` off.
+
 Niri users: see [Service starts but doesn't work until restarted](../TROUBLESHOOTING.md#service-starts-but-doesnt-work-until-restarted) for the `NIRI_SOCKET` requirement.

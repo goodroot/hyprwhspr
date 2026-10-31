@@ -84,11 +84,13 @@ A system tray icon shows that hyprwhspr is running and what it's doing. It works
 
 Click it for a menu to start or stop recording, unload or load the model, and restart or stop the service. Restart and Stop only appear when the service runs as `hyprwhspr.service`.
 
-The icon disappears when the service stops, so no icon means hyprwhspr isn't running. It's on by default and needs PyGObject, which the visualizer also uses. To turn it off:
+The icon disappears when the service stops, so no icon means hyprwhspr isn't running. It needs PyGObject, which the visualizer also uses.
+
+It's off by default; setup offers it when you skip the bar integrations. Using the [Waybar module](../integrations/WAYBAR.md) or [Noctalia's widget](../integrations/NOCTALIA.md)? You don't need it. To turn it on:
 
 ```jsonc
 {
-  "tray_icon_enabled": false
+  "tray_icon_enabled": true
 }
 ```
 

@@ -620,7 +620,7 @@
     },
     "tray_icon_enabled": {
       "type": "boolean",
-      "default": true,
+      "default": false,
       "description": "Show a system tray icon (StatusNotifierItem) while the service runs, with its state and a menu to record, load or unload the model, and restart or stop the service. Works in any standard tray (KDE Plasma, XFCE, Waybar's tray, Quickshell shells); GNOME needs the AppIndicator extension. Restart the service after changing."
     },
     "mic_osd_pill_transcript_enabled": {

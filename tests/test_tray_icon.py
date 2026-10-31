@@ -305,6 +305,14 @@ class AppTrayActionTests(unittest.TestCase):
         ])
         app._handle_control_command.assert_not_called()
 
+    def test_off_by_default(self):
+        app = self._app()
+        app.config = types.SimpleNamespace(get_setting=lambda key, default=None: default)
+        with mock.patch.object(tray_icon.TrayIcon, 'start') as start:
+            app._setup_tray_icon()
+        start.assert_not_called()
+        self.assertIsNone(app.tray_icon)
+
     def test_disabled_in_config_starts_nothing(self):
         app = self._app()
         app.config = types.SimpleNamespace(get_setting=lambda key, default=None: False)
@@ -312,6 +320,7 @@ class AppTrayActionTests(unittest.TestCase):
             app._setup_tray_icon()
         start.assert_not_called()
         self.assertIsNone(app.tray_icon)
+
 
 
 if __name__ == '__main__':
