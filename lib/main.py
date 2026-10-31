@@ -323,6 +323,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
 
+        # Publish the system tray icon
+        self._setup_tray_icon()
+
     def _get_float_setting(self, key, default=0.0):
         """Coerce a config value to float; falls back to `default` if missing, invalid, or non-finite (NaN/Infinity)."""
         value = self.config.get_setting(key, default)
@@ -440,6 +443,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
 
         try:
             cleanup_step("stop recording control server", self._recording_control_server.stop)
+
+            # Remove the tray icon
+            cleanup_step("stop tray icon", lambda: call_optional('tray_icon', 'stop'))
 
             # Stop background recovery thread
             cleanup_step("stop background recovery", lambda: stop_thread(

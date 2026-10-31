@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import subprocess
 import threading
 import time
 
@@ -212,6 +213,59 @@ class FeedbackMixin:
                     RECORDING_STATUS_FILE.unlink()
         except Exception as e:
             log(f"[WARN] Failed to write recording status: {e}")
+
+    def _setup_tray_icon(self):
+        """Publish the system tray icon (StatusNotifierItem) if enabled"""
+        self.tray_icon = None
+        if not self.config.get_setting('tray_icon_enabled', True):
+            return
+        try:
+            from tray_icon import TrayIcon
+            # Restart/Stop only make sense when systemd manages the service
+            tray = TrayIcon(get_state=self._tray_state, on_action=self._on_tray_action,
+                            service_controls=bool(os.environ.get('INVOCATION_ID')))
+            if tray.start():
+                self.tray_icon = tray
+                log("[INIT] Tray icon enabled")
+            else:
+                log("[WARN] Failed to start tray icon")
+        except Exception as e:
+            log(f"[WARN] Failed to setup tray icon: {e}")
+
+    def _tray_state(self):
+        """Current (state, detail) for the tray icon; see tray_icon.STATES"""
+        if self._model_initializing or self._model_operation_active:
+            return 'loading', ''
+        if self._backend_init_failed:
+            return 'error', 'Model failed to load'
+        if RECORDING_STATUS_FILE.exists():
+            return 'recording', ''
+        if MODEL_UNLOADED_FILE.exists():
+            return 'unloaded', ''
+        with self._mic_state_lock:
+            if self._mic_disconnected:
+                return 'error', 'Microphone disconnected'
+        try:
+            # Same 60 s window as the waybar module
+            if time.time() - MIC_ZERO_VOLUME_FILE.stat().st_mtime < 60:
+                return 'error', 'Microphone not picking up audio'
+        except OSError:
+            pass
+        return 'ready', ''
+
+    def _on_tray_action(self, action):
+        """Run a tray menu action (called on its own thread)"""
+        if action in ('restart', 'stop_service'):
+            verb = 'restart' if action == 'restart' else 'stop'
+            log(f"[TRAY] Service {verb} requested")
+            try:
+                # --no-block: the job outlives us when it stops this process
+                subprocess.Popen(['systemctl', '--user', '--no-block', verb, 'hyprwhspr.service'],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                log(f"[WARN] Failed to {verb} service: {e}")
+            return
+        self._handle_control_command(action)
 
     def _migrate_legacy_state_files(self):
         """Cleanup of signal files (and the compat symlinks earlier releases
