@@ -197,7 +197,7 @@ PROVIDERS: Dict[str, Dict] = {
         'models': {
             'nova-3': {
                 'name': 'Nova-3',
-                'description': 'Live streaming; language=null detects across 10 languages',
+                'description': 'Live streaming, auto-detects 10 languages',
                 'backends': ('realtime-ws',),
                 'realtime': {
                     'default_mode': 'transcribe',

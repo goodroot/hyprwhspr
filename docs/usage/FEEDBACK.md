@@ -51,7 +51,7 @@ systemctl --user restart hyprwhspr
 
 ### Pill live transcript
 
-Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` plus a `realtime-ws` backend that streams partial transcripts (OpenAI, ElevenLabs, self-hosted — not Gemini yet). Final transcription and paste are unaffected.
+Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` plus a `realtime-ws` backend that streams partial transcripts (OpenAI, ElevenLabs, Deepgram, self-hosted — not Gemini yet). Final transcription and paste are unaffected.
 
 ```jsonc
 {

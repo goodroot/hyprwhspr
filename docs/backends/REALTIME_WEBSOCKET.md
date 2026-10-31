@@ -8,6 +8,7 @@ Persistent WebSocket streaming. `realtime_mode` selects `transcribe` (speech-to-
 | OpenAI | Yes | Yes, on a `gpt-realtime-*` model |
 | Google Gemini | Yes | Yes |
 | ElevenLabs | Yes | No — hyprwhspr ignores `realtime_mode` |
+| Deepgram | Yes | No — hyprwhspr ignores `realtime_mode` |
 | [Self-hosted](#self-hosted-streaming) | Yes | OpenAI-compatible servers only |
 
 ## OpenAI Realtime
@@ -137,6 +138,22 @@ Uses native 16kHz audio (no resampling) and auto-reconnects on connection drops.
 }
 ```
 
+## Deepgram Nova-3
+
+Live streaming with OSD previews. Bring an API key from [Deepgram](https://console.deepgram.com/); new accounts start
+with free credit.
+
+Leave `language` unset to auto-detect 10 languages. Toggle, push-to-talk or auto.
+
+```jsonc
+{
+    "transcription_backend": "realtime-ws",
+    "websocket_provider": "deepgram",
+    "websocket_model": "nova-3",
+    "websocket_url": "wss://api.deepgram.com/v1/listen?keyterm=Hyprland"  // Optional: any Deepgram option
+}
+```
+
 ## Self-hosted streaming
 
 Run your own server; no API key needed. `hyprwhspr setup` → **Realtime WS** lists NeMo-Speech.cpp, Phonon, and any
@@ -181,7 +198,7 @@ toggle, push-to-talk or auto.
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| `websocket_protocol` | `openai-realtime`, `phonon` | `openai-realtime` |
+| `websocket_protocol` | `openai-realtime`, `phonon`, `deepgram` | `openai-realtime` |
 | `websocket_sample_rate` | 8000–96000 | protocol's own |
 | `websocket_session_format` | `nested`, `flat` (older servers) | `nested` |
 | `websocket_live_text` | `none`, `revisable`, `append_only` | `none` |

@@ -305,7 +305,7 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
     print("  [4] Qwen3-ASR    Chinese · Japanese · Korean · experimental")
     print("Cloud:")
     print("  [5] REST API     OpenAI · Groq · Cohere · custom")
-    print("  [6] Realtime WS  OpenAI · Gemini · ElevenLabs · self-hosted")
+    print("  [6] Realtime WS  OpenAI · Gemini · ElevenLabs · Deepgram · self-hosted")
     print()
 
     # Seed the default with the installed backend, else the configured one, so
