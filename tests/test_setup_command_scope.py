@@ -420,6 +420,22 @@ class RemoteConfigSwitchTests(unittest.TestCase):
         for key in stale:
             self.assertIsNone(config[key], key)
 
+    def test_per_recording_provider_warns_about_long_recording_modes(self):
+        cases = (
+            ('deepgram', None, 'long_form', "Deepgram can't run long_form"),
+            ('custom', {'websocket_protocol': 'phonon'}, 'continuous', "phonon can't run continuous"),
+            ('deepgram', None, 'toggle', None),
+            ('openai', None, 'continuous', None),
+        )
+        for provider_id, custom_config, mode, expected in cases:
+            with self.subTest(provider=provider_id, mode=mode), \
+                    mock.patch.object(setup, "log_warning") as warn:
+                setup._warn_recording_mode_conflict(provider_id, custom_config, mode)
+                if expected:
+                    self.assertIn(expected, warn.call_args.args[0])
+                else:
+                    warn.assert_not_called()
+
     def test_realtime_nemo_preset_fills_the_server_shape(self):
         class Answers:
             @staticmethod

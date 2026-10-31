@@ -17,7 +17,7 @@ from backend_utils import normalize_backend
 from dependency_plan import PLAN_SPECS, plan_key
 from installation import is_nix_install, is_supported_backend, repair_hint
 from provider_registry import get_models_for_backend, get_realtime_capabilities, get_realtime_mode
-from realtime_protocols import PROTOCOLS, live_typing_conflict
+from realtime_protocols import PROTOCOLS, live_typing_conflict, protocol_for_provider
 from session_environment import classify_display_environment
 
 ROOT = Path(os.environ.get('HYPRWHSPR_ROOT', Path(__file__).resolve().parents[2]))
@@ -121,22 +121,25 @@ def validate_config(path=None):
     if normalize_backend(config['transcription_backend']) == 'realtime-ws':
         provider, model = config['websocket_provider'], config['websocket_model']
         models = get_models_for_backend(provider, 'realtime-ws')
+        protocol = None
         if provider != 'custom' and model not in models:
             findings.append(finding('config.realtime_model', 'error', 'Unsupported realtime provider/model combination.'))
         elif provider != 'custom':
             caps = get_realtime_capabilities(provider, model)
+            protocol = protocol_for_provider(provider)
             if config['realtime_mode'] != get_realtime_mode(provider, model):
                 findings.append(finding('config.realtime_mode', 'error', 'Realtime mode does not match the model.'))
-            if config['recording_mode'] == 'continuous' and not caps.get('continuous', False):
+            if (config['recording_mode'] == 'continuous' and not caps.get('continuous', False)
+                    and not protocol.per_recording_session):
                 findings.append(finding('config.realtime_continuous', 'error', 'This model does not support continuous recording.'))
         else:
             if not config['websocket_url']:
                 findings.append(finding('config.realtime_url', 'error', 'Custom realtime provider requires a WebSocket URL.'))
             protocol = PROTOCOLS.get(config['websocket_protocol'] or 'openai-realtime')
-            if (config['recording_mode'] in ('continuous', 'long_form')
-                    and protocol is not None and protocol.per_recording_session):
-                findings.append(finding('config.realtime_continuous', 'error',
-                                        f'{protocol.id} streams one recording at a time; use toggle, push_to_talk or auto.'))
+        if (config['recording_mode'] in ('continuous', 'long_form')
+                and protocol is not None and protocol.per_recording_session):
+            findings.append(finding('config.realtime_continuous', 'error',
+                                    f'{protocol.id} streams one recording at a time; use toggle, push_to_talk or auto.'))
     if config.get('realtime_live_typing'):
         conflict = live_typing_conflict(lambda key, default=None: config.get(key, default))
         if conflict:

@@ -49,7 +49,7 @@ Use a different hotkey for a specific language:
 
 > **Note**: Works with backends that support language parameters:
 > - **Local whisper models**: Fully supported (all pywhispercpp models)
-> - **Realtime WebSocket**: Fully supported (OpenAI, Google, ElevenLabs)
+> - **Realtime WebSocket**: Fully supported (OpenAI, Google, ElevenLabs, Deepgram)
 > - **REST API**: Only if the endpoint accepts a `language` parameter (varies by provider/custom endpoint)
 
 The primary shortcut uses the `language` setting from your config (or auto-detect if `null`); the secondary always uses `secondary_language`.

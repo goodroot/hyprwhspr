@@ -435,6 +435,15 @@ class PhononClientTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'send failed'):
             client.commit_and_get_text(1)
 
+    def test_idle_stream_sends_no_keepalive(self):
+        client = PhononRealtimeClient()
+        client.KEEPALIVE_SECONDS = 0.01
+        client._websocket_transport = types.SimpleNamespace(WebSocketApp=FakeSocket)
+        self.addCleanup(client.close)
+        self.assertTrue(client.connect('wss://asr.example.test/v1/audio/stream', None, 'phonon-2'))
+        time.sleep(0.1)
+        self.assertEqual([json.loads(payload)['type'] for _, payload in client.ws.sent], ['config'])
+
     def test_resamples_capture_rate_on_sender(self):
         client = self.client()
         client.set_input_sample_rate(48000)

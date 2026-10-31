@@ -186,6 +186,26 @@ PROVIDERS: Dict[str, Dict] = {
                 'realtime': {'default_mode': 'transcribe'},
             }
         }
+    },
+    'deepgram': {
+        'name': 'Deepgram',
+        'endpoint': 'https://api.deepgram.com/v1/listen',
+        'websocket_endpoint': 'wss://api.deepgram.com/v1/listen',
+        'websocket_protocol': 'deepgram',
+        'api_key_prefix': None,
+        'api_key_description': 'Deepgram API key',
+        'models': {
+            'nova-3': {
+                'name': 'Nova-3',
+                'description': 'Live streaming, auto-detects 10 languages',
+                'backends': ('realtime-ws',),
+                'realtime': {
+                    'default_mode': 'transcribe',
+                    'transcription_only': True,
+                    'live_text': 'revisable',
+                },
+            }
+        }
     }
 }
 
