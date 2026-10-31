@@ -2,12 +2,14 @@
 Deepgram live streaming protocol: raw PCM16 over a WebSocket.
 
 Session options travel in the URL query; there is no config message. Binary
-audio frames follow, then {"type":"CloseStream"}. The server answers with
-Results events (interim, then is_final) and, after CloseStream, flushes the
-last Results, sends Metadata and closes. A stream can't be cleared or resumed,
-so each recording gets its own connection, as with Phonon.
+audio frames follow, then {"type":"Finalize"} and {"type":"CloseStream"}. The
+server answers with Results events (interim, then is_final). Finalize flushes
+the tail and marks its Results from_finalize; CloseStream then sends Metadata
+and closes. A stream can't be cleared or resumed, so each recording gets its
+own connection, as with Phonon.
 """
 
+import json
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -24,9 +26,16 @@ class DeepgramRealtimeClient(PhononRealtimeClient):
 
     LOG_TAG = '[DEEPGRAM]'
     PROVIDER_NAME = 'Deepgram'
-    END_OF_INPUT = {'type': 'CloseStream'}
+    END_OF_INPUT = {'type': 'Finalize'}
+    CLOSE_STREAM = {'type': 'CloseStream'}
+    # A short wait: Deepgram doesn't answer Finalize when little audio is pending
+    FINALIZE_WAIT_SECONDS = 1.5
     # The language is part of the connection URL
     supports_mid_session_language_update = False
+
+    def __init__(self, mode: str = 'transcribe'):
+        super().__init__(mode)
+        self._finalized = False
 
     def _ws_connect_params(self):
         # No language means auto-detect, which Deepgram streams as multilingual
@@ -52,6 +61,31 @@ class DeepgramRealtimeClient(PhononRealtimeClient):
 
     def update_language(self, language: Optional[str]):
         self.language = language
+
+    def _prepare_connect(self):
+        super()._prepare_connect()
+        with self.lock:
+            self._finalized = False
+
+    def _stream_open_locked(self, ws, generation):
+        return (self._is_active_connection(ws, generation) and self.connected
+                and not self._failure and not self.response_complete)
+
+    def _after_end_of_input(self, ws, generation):
+        # CloseStream also flushes, so an unanswered Finalize loses nothing
+        with self.lock:
+            self._queue_cond.wait_for(
+                lambda: self._finalized or not self._stream_open_locked(ws, generation),
+                timeout=self.FINALIZE_WAIT_SECONDS,
+            )
+        try:
+            with self._ws_send_lock:
+                with self.lock:
+                    stream_open = self._stream_open_locked(ws, generation)
+                if stream_open:
+                    ws.send(json.dumps(self.CLOSE_STREAM), opcode=1)
+        except Exception as exc:
+            self._on_error(ws, f'CloseStream send failed: {exc}', generation)
 
     def _on_open(self, ws, generation=None):
         with self.lock:
@@ -104,6 +138,9 @@ class DeepgramRealtimeClient(PhononRealtimeClient):
             if not isinstance(text, str):
                 raise ValueError('transcript text must be a string')
             text = text.strip()
+            if event.get('from_finalize'):
+                self._finalized = True
+                self._queue_cond.notify_all()
             if not event.get('is_final'):
                 self._partial_transcript = text
                 return

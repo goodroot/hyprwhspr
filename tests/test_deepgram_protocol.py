@@ -21,15 +21,16 @@ from realtime_protocols import live_text_mode, protocol_for_provider, resolve_pr
 URL = 'wss://api.deepgram.com/v1/listen'
 
 
-def results(text, is_final=True):
-    return {'type': 'Results', 'is_final': is_final,
+def results(text, is_final=True, from_finalize=False):
+    return {'type': 'Results', 'is_final': is_final, 'from_finalize': from_finalize,
             'channel': {'alternatives': [{'transcript': text}]}}
 
 
 class FakeSocket:
-    """Answers CloseStream the way Deepgram does, unless `script` says otherwise."""
+    """Answers Finalize and CloseStream the way Deepgram does, unless scripted otherwise."""
 
     script = ()
+    finalize_script = (results('', from_finalize=True),)
 
     def __init__(self, url, on_open, on_message, on_error, on_close, **kwargs):
         self.url = url
@@ -41,6 +42,7 @@ class FakeSocket:
         self.sent = []
         self.closed = threading.Event()
         self.audio_sent = threading.Event()
+        self.finalize_sent = threading.Event()
 
     def run_forever(self):
         self.on_open(self)
@@ -53,12 +55,21 @@ class FakeSocket:
         self.sent.append((opcode, payload))
         if opcode == 2:
             self.audio_sent.set()
+        elif json.loads(payload) == {'type': 'Finalize'}:
+            self.finalize_sent.set()
+            self.play(self.finalize_script)
         elif json.loads(payload) == {'type': 'CloseStream'}:
-            for step in self.script:
-                if isinstance(step, int):
-                    self.on_close(self, step, 'closed')
-                else:
-                    self.event(step)
+            self.play(self.script)
+
+    def play(self, steps):
+        for step in steps:
+            if isinstance(step, int):
+                self.on_close(self, step, 'closed')
+            else:
+                self.event(step)
+
+    def control_messages(self):
+        return [json.loads(payload)['type'] for opcode, payload in self.sent if opcode == 1]
 
     def close(self):
         self.closed.set()
@@ -66,8 +77,11 @@ class FakeSocket:
 
 
 class DeepgramClientTests(unittest.TestCase):
-    def client(self, script=(), language=None, url=URL, key='secret'):
-        fake = type('Fake', (FakeSocket,), {'script': script})
+    def client(self, script=(), language=None, url=URL, key='secret', finalize_script=None):
+        attributes = {'script': script}
+        if finalize_script is not None:
+            attributes['finalize_script'] = finalize_script
+        fake = type('Fake', (FakeSocket,), attributes)
         client = DeepgramRealtimeClient()
         client._websocket_transport = types.SimpleNamespace(WebSocketApp=fake)
         client.update_language(language)
@@ -130,6 +144,41 @@ class DeepgramClientTests(unittest.TestCase):
         client.ws.event(results('Bonjour.'))
         client.ws.event(results('comment', is_final=False))
         self.assertEqual(previews[-1], 'Bonjour. comment')
+
+    def test_closestream_waits_for_the_finalized_tail(self):
+        client = self.client(script=({'type': 'Metadata'},), finalize_script=())
+        client.FINALIZE_WAIT_SECONDS = 5
+        ws = client.ws
+        self.speak(client)
+        text = []
+        commit = threading.Thread(target=lambda: text.append(client.commit_and_get_text(3)))
+        commit.start()
+        self.assertTrue(ws.finalize_sent.wait(2))
+        self.assertEqual(ws.control_messages(), ['Finalize'])
+        ws.event(results('la fin.', from_finalize=True))
+        commit.join(2)
+        self.assertEqual(text, ['la fin.'])
+        self.assertEqual(ws.control_messages(), ['Finalize', 'CloseStream'])
+
+    def test_unanswered_finalize_still_closes_the_stream(self):
+        client = self.client(script=(results('Bonjour.'), {'type': 'Metadata'}), finalize_script=())
+        client.FINALIZE_WAIT_SECONDS = 0.01
+        ws = client.ws
+        self.speak(client)
+        self.assertEqual(client.commit_and_get_text(2), 'Bonjour.')
+        self.assertEqual(ws.control_messages(), ['Finalize', 'CloseStream'])
+
+    def test_stream_lost_while_finalizing_sends_no_closestream(self):
+        client = self.client(finalize_script=(1011,))
+        client.FINALIZE_WAIT_SECONDS = 5
+        ws = client.ws
+        self.speak(client)
+        sender = client._sender_thread
+        with self.assertRaisesRegex(RuntimeError, '1011'):
+            client.commit_and_get_text(2)
+        sender.join(2)
+        self.assertFalse(sender.is_alive())
+        self.assertEqual(ws.control_messages(), ['Finalize'])
 
     def test_error_event_fails_the_recording(self):
         client = self.client()

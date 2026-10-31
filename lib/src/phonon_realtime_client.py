@@ -246,7 +246,11 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
                         self._sending_audio = False
                     self._queue_cond.notify_all()
             if audio is None:
+                self._after_end_of_input(ws, generation)
                 return
+
+    def _after_end_of_input(self, ws, generation):
+        """Run on the sender thread once END_OF_INPUT has gone out."""
 
     def clear_audio_buffer(self):
         # The backend calls this just before capture. A used connection cannot
