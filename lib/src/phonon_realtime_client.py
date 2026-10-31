@@ -29,6 +29,8 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
     """One connection per recording, with no unsafe mid-stream replay/reconnect."""
 
     LOG_TAG = '[PHONON]'
+    PROVIDER_NAME = 'Phonon'
+    END_OF_INPUT = {'type': 'end'}
     commit_after_disconnect = True
 
     def __init__(self, mode: str = 'transcribe'):
@@ -229,7 +231,7 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
                     audio = self._resample_for_output(audio)
                     payload = (np.clip(audio, -1.0, 1.0) * 32767).astype('<i2').tobytes()
                 else:
-                    payload = json.dumps({'type': 'end'})
+                    payload = json.dumps(self.END_OF_INPUT)
                 with self._ws_send_lock:
                     with self.lock:
                         active = self._is_active_connection(ws, generation) and not self._failure
@@ -251,7 +253,7 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
         # be cleared server-side; cancellation must close it instead.
         with self.lock:
             if not self.connected or self._audio_activity_id or self._ending or self._failure:
-                raise RuntimeError('Phonon requires a fresh connection for each recording')
+                raise RuntimeError(f'{self.PROVIDER_NAME} requires a fresh connection for each recording')
             self._partial_transcript = ''
         self._emit_partial_transcript()
 
@@ -329,7 +331,7 @@ class PhononRealtimeClient(WebSocketRealtimeClientBase):
                 if self._failure:
                     raise RuntimeError(self._failure)
             if not response_event.wait(max(0.0, deadline - time.monotonic())):
-                raise RuntimeError('Timeout waiting for Phonon completion')
+                raise RuntimeError(f'Timeout waiting for {self.PROVIDER_NAME} completion')
             with self.lock:
                 if generation != self._active_generation:
                     raise RuntimeError('Recording cancelled or replaced')

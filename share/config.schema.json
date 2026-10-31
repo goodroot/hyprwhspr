@@ -422,7 +422,7 @@
     },
     "websocket_protocol": {
       "type": ["string", "null"],
-      "enum": ["openai-realtime", "phonon", "gemini-live", "elevenlabs", null],
+      "enum": ["openai-realtime", "phonon", "gemini-live", "elevenlabs", "deepgram", null],
       "default": null,
       "description": "Custom server protocol. null = openai-realtime."
     },

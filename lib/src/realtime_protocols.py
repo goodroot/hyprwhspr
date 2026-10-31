@@ -70,6 +70,14 @@ PROTOCOLS = {
         live_text='revisable',
         per_recording_session=True,
     ),
+    'deepgram': RealtimeProtocol(
+        id='deepgram',
+        client='deepgram_realtime_client:DeepgramRealtimeClient',
+        deps='realtime',
+        vad='provider_managed',
+        live_text='revisable',
+        per_recording_session=True,
+    ),
 }
 
 
