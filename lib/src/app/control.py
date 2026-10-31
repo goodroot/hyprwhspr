@@ -147,6 +147,7 @@ class ControlMixin:
                     or self._recording_finalizing.is_set()
                     or self._file_transcription_active
                     or self._model_operation_active
+                    or self._model_initializing
                     or self._longform_active)
             if not busy:
                 self._model_operation_active = True

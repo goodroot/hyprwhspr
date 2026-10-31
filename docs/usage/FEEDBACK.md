@@ -70,6 +70,32 @@ Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` pl
 | `mic_osd_pill_transcript_word_limit` | `4` | Recent words shown (1–12). |
 | `mic_osd_pill_transcript_idle_timeout_ms` | `1400` | Hide after this much idle time; `0` disables. |
 
+## Tray icon
+
+A system tray icon shows that hyprwhspr is running and what it's doing. It works in any standard tray (StatusNotifierItem): KDE Plasma, XFCE, Waybar's `tray` module, and Quickshell shells such as DankMaterialShell. GNOME needs the AppIndicator extension.
+
+| Icon | State |
+|---|---|
+| Microphone | Ready to record |
+| Record dot | Recording |
+| Pause | Long-form session paused |
+| Muted microphone | Model loading or unloaded, or transcribing |
+| Warning | Microphone or model problem (the tooltip says which) |
+
+Click it for a menu to start or stop recording, unload or load the model, and restart or stop the service. Restart and Stop only appear when the service runs as `hyprwhspr.service`.
+
+The icon disappears when the service stops, so no icon means hyprwhspr isn't running. It needs PyGObject, which the visualizer also uses.
+
+It's off by default; setup offers it when you skip the bar integrations. Using the [Waybar module](../integrations/WAYBAR.md) or [Noctalia's widget](../integrations/NOCTALIA.md)? You don't need it. To turn it on:
+
+```jsonc
+{
+  "tray_icon_enabled": true
+}
+```
+
+Restart the service after changing it.
+
 ## Audio feedback
 
 Optional sound notifications:

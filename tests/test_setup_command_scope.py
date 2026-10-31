@@ -738,5 +738,24 @@ class HyprlandBindingSetupTests(unittest.TestCase):
             self.assertIn(binding, output.getvalue())
 
 
+class SetupTrayPromptTests(unittest.TestCase):
+    def test_not_asked_when_a_bar_integration_was_chosen(self):
+        with mock.patch.object(setup, "Confirm") as confirm:
+            self.assertIsNone(setup._prompt_tray_icon({}, bar_chosen=True))
+        confirm.ask.assert_not_called()
+
+    def test_offered_without_a_bar_integration(self):
+        with mock.patch.object(setup, "Confirm") as confirm, \
+             contextlib.redirect_stdout(io.StringIO()):
+            confirm.ask.return_value = True
+            self.assertTrue(setup._prompt_tray_icon({}, bar_chosen=False))
+        self.assertTrue(confirm.ask.call_args.kwargs["default"])
+
+    def test_offer_defaults_to_the_stored_choice(self):
+        with mock.patch.object(setup, "Confirm") as confirm, \
+             contextlib.redirect_stdout(io.StringIO()):
+            setup._prompt_tray_icon({"tray_icon_enabled": False}, bar_chosen=False)
+        self.assertFalse(confirm.ask.call_args.kwargs["default"])
+
 if __name__ == "__main__":
     unittest.main()

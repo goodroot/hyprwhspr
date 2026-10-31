@@ -109,6 +109,15 @@ def _bool_default(cfg: dict, key: str, fallback: bool) -> bool:
     return val if isinstance(val, bool) else fallback
 
 
+def _prompt_tray_icon(cfg: dict, bar_chosen: bool) -> Optional[bool]:
+    """Offer the tray icon when no bar integration was chosen; None leaves it as is."""
+    if bar_chosen:
+        return None
+    print("\nA tray icon shows state and a record/model menu in any system tray")
+    print("(KDE, XFCE, Waybar's tray, GNOME with AppIndicator).")
+    return Confirm.ask("Show a system tray icon?", default=_bool_default(cfg, 'tray_icon_enabled', True))
+
+
 def _atspi_package_hint() -> str:
     """Distro-appropriate package names for the AT-SPI Python bindings."""
     if Path('/etc/debian_version').exists():
@@ -1148,6 +1157,7 @@ def setup_command(python_path: Optional[str] = None):
     if not waybar_installed and not noctalia_installed:
         print("\nNo supported bar detected (Waybar, Noctalia).")
         setup_waybar_choice = Confirm.ask("Set up Waybar integration anyway?", default=False)
+    setup_tray_choice = _prompt_tray_icon(existing_cfg, setup_waybar_choice or setup_noctalia_choice)
     
     # Step 3b: Recording status indicator setup
     print("\n" + "="*60)
@@ -1376,6 +1386,8 @@ def setup_command(python_path: Optional[str] = None):
     print(f"Waybar integration: {'Yes' if setup_waybar_choice else 'No'}")
     if noctalia_installed:
         print(f"Noctalia integration: {'Yes' if setup_noctalia_choice else 'No'}")
+    if setup_tray_choice is not None:
+        print(f"Tray icon: {'Yes' if setup_tray_choice else 'No'}")
     _status_label = "Recording status (notifications)" if is_mutter_session else "Mic-OSD visualization"
     if setup_mic_osd_choice and not is_mutter_session and not mic_osd_available:
         print(f"{_status_label}: Yes (enabled, but dependencies missing: {mic_osd_reason})")
@@ -1448,6 +1460,11 @@ def setup_command(python_path: Optional[str] = None):
             setup_noctalia('install')
         elif noctalia_installed:
             log_info("Skipping Noctalia integration")
+        if setup_tray_choice is not None:
+            traycfg = ConfigManager()
+            traycfg.set_setting('tray_icon_enabled', setup_tray_choice)
+            traycfg.save_config()
+            log_info(f"Tray icon {'enabled' if setup_tray_choice else 'disabled'}")
         
         # Step 2b: Mic-OSD
         if setup_mic_osd_choice:

@@ -2,8 +2,10 @@
 
 import os
 import shutil
+import subprocess
 import threading
 import time
+from pathlib import Path
 
 from backend_installer import get_state, resolve_dependency_plan
 from backend_utils import normalize_backend
@@ -212,6 +214,83 @@ class FeedbackMixin:
                     RECORDING_STATUS_FILE.unlink()
         except Exception as e:
             log(f"[WARN] Failed to write recording status: {e}")
+
+    def _setup_tray_icon(self):
+        """Publish the system tray icon (StatusNotifierItem) if enabled"""
+        self.tray_icon = None
+        if not self.config.get_setting('tray_icon_enabled', False):
+            return
+        try:
+            from tray_icon import TrayIcon
+            # Restart/Stop only make sense when systemd manages the service
+            tray = TrayIcon(get_state=self._tray_state, on_action=self._on_tray_action,
+                            service_controls=self._running_as_service_unit())
+            if tray.start():
+                self.tray_icon = tray
+                log("[INIT] Tray icon enabled")
+            else:
+                log("[WARN] Failed to start tray icon")
+        except Exception as e:
+            log(f"[WARN] Failed to setup tray icon: {e}")
+
+    @staticmethod
+    def _running_as_service_unit():
+        """True if this process lives in hyprwhspr.service's own cgroup.
+
+        INVOCATION_ID alone is inherited from any unit up the process tree, e.g.
+        a compositor run as a systemd user service.
+        """
+        try:
+            lines = Path('/proc/self/cgroup').read_text().splitlines()
+        except OSError:
+            return False
+        return any(Path(line.split(':', 2)[-1]).name == 'hyprwhspr.service'
+                   for line in lines)
+
+    def _tray_state(self):
+        """Current (state, detail) for the tray icon; see tray_icon.STATES"""
+        if self._model_initializing or self._model_operation_active:
+            return 'loading', ''
+        if self._backend_init_failed:
+            return 'error', 'Model failed to load'
+        # Long-form keeps its own state machine and never writes the recording file
+        longform_state = getattr(getattr(self, '_longform', None), 'state', 'IDLE')
+        if longform_state == 'RECORDING':
+            return 'recording', ''
+        if longform_state == 'PAUSED':
+            return 'paused', ''
+        if longform_state == 'PROCESSING':
+            return 'processing', ''
+        if longform_state == 'ERROR':
+            return 'error', 'Long-form submit failed; submit to retry'
+        if RECORDING_STATUS_FILE.exists():
+            return 'recording', ''
+        if MODEL_UNLOADED_FILE.exists():
+            return 'unloaded', ''
+        with self._mic_state_lock:
+            if self._mic_disconnected:
+                return 'error', 'Microphone disconnected'
+        try:
+            # Same 60 s window as the waybar module
+            if time.time() - MIC_ZERO_VOLUME_FILE.stat().st_mtime < 60:
+                return 'error', 'Microphone not picking up audio'
+        except OSError:
+            pass
+        return 'ready', ''
+
+    def _on_tray_action(self, action):
+        """Run a tray menu action (called on its own thread)"""
+        if action in ('restart', 'stop_service'):
+            verb = 'restart' if action == 'restart' else 'stop'
+            log(f"[TRAY] Service {verb} requested")
+            try:
+                # --no-block: the job outlives us when it stops this process
+                subprocess.Popen(['systemctl', '--user', '--no-block', verb, 'hyprwhspr.service'],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                log(f"[WARN] Failed to {verb} service: {e}")
+            return
+        self._handle_control_command(action)
 
     def _migrate_legacy_state_files(self):
         """Cleanup of signal files (and the compat symlinks earlier releases
