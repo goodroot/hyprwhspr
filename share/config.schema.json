@@ -583,6 +583,38 @@
       "default": true,
       "description": "Enable mute detection to cancel recording when mic is muted"
     },
+    "audio_ducking_hooks": {
+      "type": "array",
+      "default": [],
+      "description": "Independent background commands tied to recording. Session mode uses recording heartbeats and EOF; persistent mode adds idle state and ready/ok acknowledgements. Commands must restore on lease expiry. Restart required.",
+      "items": {
+        "type": "object",
+        "required": ["command"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "enabled": {"type": "boolean", "default": true},
+          "persistent": {
+            "type": "boolean",
+            "default": false,
+            "description": "Start the command while idle and reconnect in background. Requires ready/ok stdout acknowledgements and idle/recording stdin protocol."
+          },
+          "command": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+            "description": "Trusted executable and argument array, without implicit shell expansion. Use absolute paths."
+          },
+          "restore_timeout": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 60,
+            "default": 10,
+            "description": "Seconds allowed for command exit after EOF, before process-group termination."
+          }
+        }
+      }
+    },
     "audio_ducking": {
       "type": "boolean",
       "default": false,

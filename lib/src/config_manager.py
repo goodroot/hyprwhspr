@@ -188,6 +188,7 @@ class ConfigManager:
             'notification_timeout_ms': 5000,
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
             # Audio ducking settings
+            'audio_ducking_hooks': [],          # Background recording-scoped command sessions
             'audio_ducking': False,              # Reduce system volume during recording
             'audio_ducking_percent': 50,         # How much to reduce BY (50 = reduce to 50% of original)
             # Post-paste behavior

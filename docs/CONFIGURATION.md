@@ -927,6 +927,162 @@ Quiet system volume on record:
 
 Ducking lowers each application stream's volume, not the device master — your speaker setting is untouched and shell volume OSDs don't fire on every recording. Streams that start mid-recording aren't ducked.
 
+#### Other devices: background ducking hooks
+
+`audio_ducking_hooks` is an optional list of recording-scoped command sessions.
+It works independently of local `audio_ducking` and does not require `pulsectl`.
+Each device has its own background worker: connections, commands, and restoration
+never wait on the recording or transcription thread. Restart hyprwhspr after
+editing this list.
+
+Example for an Android tablet running Termux with SSH and Termux:API:
+
+```json
+{
+  "audio_ducking_hooks": [
+    {
+      "name": "galaxy-tab",
+      "command": [
+        "/usr/bin/python3",
+        "/absolute/path/to/hyprwhspr/scripts/duck-termux.py",
+        "--host", "u0_a280@192.168.4.175",
+        "--port", "8022",
+        "--volume", "2"
+      ],
+      "restore_timeout": 15
+    }
+  ]
+}
+```
+
+The helper runs its script over SSH; nothing needs to be installed from this
+repository on the tablet. Remote dependencies are `bash`, `flock`, `timeout`,
+`jq`, and working `termux-volume` (Termux:API app/package and permissions).
+Configure key-based SSH and verify the host key interactively first. The helper
+uses batch mode, strict host-key checking, a five-second connect timeout and
+SSH keepalives; it will never prompt during recording. `--host` can also be an
+SSH config alias, so address changes can live in `~/.ssh/config`.
+
+It snapshots the music volume, lowers it to `--volume` (default `2`), then
+restores the snapshot on EOF when **recording ends**, without waiting for STT.
+A heartbeat renews a six-second remote lease: if the network stalls or the
+parent disappears, the remote shell restores after the heartbeats cease.
+Termux API calls have five-second deadlines. A per-stream lock prevents
+concurrent clients from saving an already-ducked value. A private volume journal
+allows the next invocation to recover an interrupted restoration. A phone that
+is powered off, suspended indefinitely, or forcibly kills the remote shell
+cannot be guaranteed to restore immediately; recovery occurs when the command
+can run again. Manual volume changes during a take are replaced by the snapshot
+on restoration.
+
+**Custom devices / operating systems:** add another object with a unique `name`
+and a trusted `command` argument array. The command may be any local adapter or
+SSH client; no implicit shell expansion occurs (use absolute paths, not `~`).
+Optional `enabled: false` disables a device. Commands run as your user, so treat
+this configuration as executable code and do not embed passwords in it.
+
+The default (`persistent: false`) command protocol is deliberately small:
+
+1. Read a `recording` line from stdin before changing volume.
+2. Save the original device state and duck it.
+3. Consume subsequent `recording` lines (sent once per second).
+4. On EOF, restore and exit. Also restore on a remote lease timeout and signals;
+   a network disconnect may not deliver EOF promptly. Cleanup must be idempotent.
+
+Do not use SSH `-n`, `-f`, or a PTY: stdin carries the session lifetime. The
+remote adapter must implement its own lease and bounded device calls; a generic
+local timeout cannot undo arbitrary remote commands. Do not implement this as a
+fixed-duration sleep or separate uncoordinated start/stop SSH commands.
+
+In the default session mode, on stop/cancel/start failure/shutdown, hyprwhspr closes stdin asynchronously.
+`restore_timeout` (default `10`, range `1`–`60` seconds) bounds the local cleanup
+wait, followed by process-group TERM and, one second later, KILL. Rapid recording
+restarts are serialized per device: the previous command finishes cleanup
+before the next starts, while other devices remain independent. Commands that
+fail are not retried during the same take, avoiding duplicate volume snapshots;
+they are tried again on the next recording. Exit failures are logged with the
+device name; command output is discarded to avoid blocking or leaking secrets.
+Remote ducking is best effort: capture starts immediately, so connection latency
+can leave the beginning of a recording unducked.
+
+##### Low-latency persistent control (recommended for rooted Android)
+
+Termux:API's broadcast bridge can take seconds per volume operation; warming
+SSH alone does not remove that delay. On a rooted device, use Android's direct
+volume service through Magisk `su` instead, together with a warm SSH connection:
+
+```json
+{
+  "audio_ducking_hooks": [
+    {
+      "name": "galaxy-tab",
+      "persistent": true,
+      "command": [
+        "/usr/bin/python3",
+        "/absolute/path/to/hyprwhspr/scripts/duck-termux.py",
+        "--host", "u0_a280@192.168.4.175",
+        "--port", "8022",
+        "--volume", "2",
+        "--persistent",
+        "--backend", "android-root"
+      ],
+      "restore_timeout": 3
+    }
+  ]
+}
+```
+
+Both `persistent: true` and the adapter's `--persistent` are required. The root
+backend needs `bash`, `flock`, `timeout`, non-interactive Magisk root permission
+for Termux, and `/system/bin/cmd media_session volume`; no Termux:API or Rust
+service is needed. Volume calls have two-second deadlines and verify the
+result. The control process stays unprivileged; only volume-service calls use
+`su`. No root network listener is installed. Establish root permission manually
+before use, rather than allowing a permission prompt during a recording.
+
+The worker connects at app startup while idle. Look for
+`[DUCKING_HOOK] galaxy-tab: persistent connection ready`. Each recording sends
+one state update over the existing encrypted channel. Stop sends `idle`, restores
+the saved volume, and leaves the connection ready for the next take. Repeated
+heartbeats do not re-query the volume or overwrite the snapshot. EOF, shutdown,
+and six seconds without a heartbeat still trigger restoration and exit.
+
+The persistent protocol for other adapters is:
+
+- Emit `ready\n` on stdout after connection setup and recovery.
+- Read `idle\n` or `recording\n` on stdin. These are desired states, not toggle
+  commands; apply them idempotently and emit `ok\n` **after** completion.
+- Keep stdout reserved for these short acknowledgements. Restore on EOF, signals,
+  and remote lease expiry; preserve a recovery journal if applicable.
+
+The worker permits only one outstanding request, waits at most ten seconds for
+`ready` and five for `ok`, and tears down unresponsive sessions. Connections are
+retried in the background with 1–15 second exponential backoff, even while idle.
+After reconnect it sends the **current** recording state, not a queue of old
+start/stop commands. Recovery of a stale journal happens before `ready`, so a
+reconnected active recording can safely take a fresh snapshot. A single live
+connection owns the remote stream lock. Disconnected clients cannot hold it
+indefinitely while the remote process is running normally: lease expiry restores
+and releases it. Suspend/force-kill limitations described above still apply.
+
+**Roaming/security:** retain strict SSH host-key checks and key authentication.
+No broadcast discovery, plaintext UDP, or extra listening port is used. If the
+LAN address is unreachable on a public network, ducking becomes unavailable
+without affecting capture; the remote lease restores volume, and the worker
+reconnects when reachable again. An unrelated host at the same private IP will
+not receive commands unless its SSH identity matches the pinned key. Use a DHCP
+reservation/local DNS or SSH alias for changing LAN addresses. For control from
+outside the LAN, use a private authenticated VPN (for example WireGuard or
+Tailscale) and its stable address; do not expose root control to the public
+internet. No VPN or public exposure is configured automatically.
+
+Android must allow Termux/sshd to run in the background; check battery restrictions
+if connections disappear while the screen is off. A wake lock can improve
+reliability but consumes battery. Recording never waits for readiness or a remote
+acknowledgement, so a small amount of audio can still leak during network/device
+latency, especially immediately after roaming. There is deliberately no capture
+delay and no promise of instantaneous remote muting.
+
 ## Text processing
 
 ### Word overrides

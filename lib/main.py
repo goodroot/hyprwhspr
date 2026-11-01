@@ -79,6 +79,7 @@ from text_injector import TextInjector
 from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
 from audio_ducker import AudioDucker
+from ducking_hooks import DuckingHooks
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
@@ -109,6 +110,7 @@ class hyprwhsprApp:
         # Initialize audio ducker for reducing system volume during recording
         ducking_percent = self.config.get_setting('audio_ducking_percent', 50)
         self.audio_ducker = AudioDucker(reduction_percent=ducking_percent)
+        self.ducking_hooks = DuckingHooks(self.config.get_setting('audio_ducking_hooks', []))
 
         # Initialize whisper manager with shared config
         self.whisper_manager = WhisperManager(config_manager=self.config)
@@ -1595,7 +1597,10 @@ class hyprwhsprApp:
                 pass
 
     def _write_recording_status(self, is_recording):
-        """Write recording status to file for tray script"""
+        """Publish capture state, independently of subsequent transcription."""
+        hooks = getattr(self, 'ducking_hooks', None)
+        if hooks is not None:
+            hooks.set_recording(is_recording)
         try:
             RECORDING_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -2368,6 +2373,9 @@ class hyprwhsprApp:
 
             # Prevent a long-form autosave callback from racing shutdown.
             cleanup_step("stop long-form timer", self._longform.stop_auto_save_timer)
+
+            # Remote restore is requested even on shutdown/startup failure.
+            cleanup_step("restore external audio", lambda: call_optional('ducking_hooks', 'close'))
 
             # Stop audio capture
             if getattr(self, 'is_recording', False):
