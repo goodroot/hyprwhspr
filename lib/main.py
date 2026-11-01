@@ -2380,8 +2380,9 @@ class hyprwhsprApp:
             # paste fallback was used; no-op otherwise).
             cleanup_step("close text injector", lambda: call_optional('text_injector', 'close'))
 
-            # Save configuration
-            cleanup_step("save configuration", lambda: call_optional('config', 'save_config'))
+            # Runtime shutdown must not save the startup configuration snapshot:
+            # CLI/OSD edits made while running would be silently overwritten.
+            # Configuration-changing commands persist their own changes.
 
             # Clear runtime state files so external consumers (tray, CLI)
             # don't see stale values after shutdown

@@ -13,6 +13,16 @@ class MainStartupSafetyTests(unittest.TestCase):
                 return node
         return None
 
+    def test_shutdown_does_not_overwrite_external_config_edits(self):
+        tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
+        cleanup = self._find_function(tree, "_cleanup")
+        self.assertIsNotNone(cleanup)
+        for node in ast.walk(cleanup):
+            if isinstance(node, ast.Attribute):
+                self.assertNotEqual(node.attr, "save_config")
+            if isinstance(node, ast.Constant):
+                self.assertNotEqual(node.value, "save_config")
+
     def test_realtime_partial_callback_registration_is_guarded(self):
         tree = ast.parse((ROOT / "lib" / "main.py").read_text(encoding="utf-8"))
 
