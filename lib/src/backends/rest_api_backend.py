@@ -32,6 +32,11 @@ try:
 except ImportError:
     from backend_utils import endpoint_key, is_valid_http_url, redact_url
 
+try:
+    from ..provider_registry import get_provider
+except ImportError:
+    from provider_registry import get_provider
+
 from .base import TranscriptionBackend
 
 
@@ -131,7 +136,7 @@ class RestApiBackend(TranscriptionBackend):
         return True
 
     def _has_credential(self):
-        """Whether requests carry a key: stored, legacy, or a custom Authorization header."""
+        """Whether requests carry a key: stored, legacy, or a custom auth header."""
         provider_id = self.config.get_setting('rest_api_provider')
         if provider_id:
             if get_credential(provider_id):
@@ -139,9 +144,24 @@ class RestApiBackend(TranscriptionBackend):
         elif self.config.get_setting('rest_api_key'):
             return True
         rest_headers = self.config.get_setting('rest_headers', {})
+        auth_headers = self._auth_header_names(provider_id)
         return isinstance(rest_headers, dict) and any(
-            str(key).lower() == 'authorization' and value is not None
+            str(key).lower() in auth_headers and value is not None
             for key, value in rest_headers.items())
+
+    @classmethod
+    def _auth_header_names(cls, provider_id):
+        """Lowercased header names that carry a credential for this provider."""
+        key_header = cls._provider_key_header(provider_id)
+        return {'authorization', key_header.lower()} if key_header else {'authorization'}
+
+    @staticmethod
+    def _provider_key_header(provider_id):
+        """Header a registered provider expects the bare key in, or None for Bearer auth."""
+        if not provider_id:
+            return None
+        provider = get_provider(provider_id)
+        return provider.get('api_key_header') if provider else None
 
     def _resolve_endpoints(self, endpoint_url, warn=False):
         """Primary first, then usable fallbacks, in order.
@@ -244,8 +264,13 @@ class RestApiBackend(TranscriptionBackend):
                     log(f'WARNING: Skipping rest_body entry with non-stringable key: {key}')
                     continue
 
+                # requests sends a flat list as repeated form fields (e.g. ElevenLabs keyterms).
+                if isinstance(value, list) and not any(isinstance(item, (dict, list)) for item in value):
+                    extra_body[key_str] = value
+                    continue
+
                 if isinstance(value, (dict, list, tuple, set)):
-                    log(f'WARNING: rest_body values must be scalar (key: {key_str}); skipping entry')
+                    log(f'WARNING: rest_body values must be scalars or flat arrays (key: {key_str}); skipping entry')
                     continue
 
                 extra_body[key_str] = value
@@ -275,10 +300,19 @@ class RestApiBackend(TranscriptionBackend):
 
             headers = {'Accept': 'application/json'}
             headers.update(extra_headers)
-            if api_key:
-                header_names = {key.lower() for key in headers.keys()}
-                if 'authorization' not in header_names:
+            # Providers such as ElevenLabs take the bare key in their own header.
+            key_header = self._provider_key_header(provider_id)
+            header_names = {key.lower() for key in headers.keys()}
+            # An auth header set explicitly in rest_headers wins over the stored key:
+            # adding a second one makes providers like ElevenLabs reject the request.
+            if api_key and not header_names & self._auth_header_names(provider_id):
+                if key_header:
+                    headers[key_header] = api_key
+                else:
                     headers['Authorization'] = f'Bearer {api_key}'
+            # requests drops Authorization on cross-host redirects but keeps custom
+            # headers, so a provider key header must never follow a redirect.
+            allow_redirects = key_header is None
 
             # Add language parameter if configured
             data = extra_body.copy()
@@ -296,7 +330,10 @@ class RestApiBackend(TranscriptionBackend):
             # Log request parameters for debugging
             if data:
                 # Sanitize - don't log full prompt, just keys
-                param_summary = ', '.join(f'{k}={v[:20] + "..." if isinstance(v, str) and len(v) > 20 else v}' for k, v in data.items())
+                param_summary = ', '.join(
+                    f'{k}=[{len(v)} items]' if isinstance(v, list)
+                    else f'{k}={v[:20] + "..." if isinstance(v, str) and len(v) > 20 else v}'
+                    for k, v in data.items())
                 log(f'[REST] Request params: {param_summary}')
 
             # Send the request, advancing to the next endpoint only when the
@@ -308,7 +345,8 @@ class RestApiBackend(TranscriptionBackend):
                 try:
                     log(f'[REST] Sending request to {redact_url(request_url)}...')
                     start_time = time.time()
-                    response = requests.post(request_url, files=files, data=data, headers=headers, timeout=timeout)
+                    response = requests.post(request_url, files=files, data=data, headers=headers,
+                                             timeout=timeout, allow_redirects=allow_redirects)
                     response_time = time.time() - start_time
                     log(f'[REST] Response received in {response_time:.2f}s (status: {response.status_code})')
                 except requests.exceptions.ConnectionError as exc:

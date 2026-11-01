@@ -531,6 +531,69 @@ class RestApiFailoverTests(unittest.TestCase):
 
 
 
+class RestApiRequestShapeTests(unittest.TestCase):
+    def backend(self, **settings):
+        backend = RestApiBackend(Manager(Config(rest_fallback_endpoint_urls=[], **settings)))
+        backend._requests = requests
+        backend._numpy_to_wav_bytes = mock.Mock(return_value=b"wav-bytes")
+        return backend
+
+    def sent(self, backend, credential=None):
+        """Transcribe once and return the kwargs of the single POST."""
+        with mock.patch("backends.rest_api_backend.get_credential", return_value=credential):
+            with mock.patch.object(requests, "post", return_value=response()) as post:
+                self.assertEqual(backend.transcribe(np.zeros(160, dtype=np.float32)), "hello")
+        return post.call_args.kwargs
+
+    # -- body arrays ---------------------------------------------------
+
+    def test_array_body_values_are_sent_as_repeated_form_fields(self):
+        kwargs = self.sent(self.backend(rest_body={"keyterms": ["Claude Code", "Hyprland"]}))
+        body = requests.Request("POST", PRIMARY, files=kwargs["files"], data=kwargs["data"]).prepare().body
+        self.assertEqual(body.count(b'name="keyterms"'), 2)
+
+    def test_mapping_and_nested_body_values_are_skipped(self):
+        backend = self.backend(rest_body={"ok": "yes", "mapping": {"a": 1}, "nested": [["x"]], "unordered": {"x"}})
+        with mock.patch("backends.rest_api_backend.log") as logger:
+            kwargs = self.sent(backend)
+        self.assertEqual(kwargs["data"], {"ok": "yes"})
+        joined = "\n".join(str(call.args[0]) for call in logger.call_args_list if call.args)
+        for key in ("mapping", "nested", "unordered"):
+            self.assertIn(f"key: {key}", joined)
+
+    # -- provider key header -------------------------------------------
+
+    def test_provider_key_header_replaces_bearer(self):
+        kwargs = self.sent(self.backend(rest_api_provider="elevenlabs"), credential="el-key")
+        self.assertEqual(kwargs["headers"]["xi-api-key"], "el-key")
+        self.assertNotIn("Authorization", kwargs["headers"])
+        # requests keeps custom headers on a cross-host redirect.
+        self.assertFalse(kwargs["allow_redirects"])
+
+    def test_explicit_authorization_suppresses_provider_key_header(self):
+        # Two auth headers make ElevenLabs answer 401, so the configured one wins.
+        backend = self.backend(rest_api_provider="elevenlabs", rest_headers={"authorization": "Bearer proxy-token"})
+        kwargs = self.sent(backend, credential="el-key")
+        self.assertEqual(kwargs["headers"]["authorization"], "Bearer proxy-token")
+        self.assertNotIn("xi-api-key", kwargs["headers"])
+
+    def test_explicit_provider_key_header_counts_for_plain_http_fallback_guard(self):
+        backend = RestApiBackend(Manager(Config(
+            rest_api_provider="elevenlabs",
+            rest_headers={"XI-API-KEY": "from-config"},
+            rest_fallback_endpoint_urls=["http://plain.test/v1/speech-to-text"],
+        )))
+        with mock.patch("backends.rest_api_backend.get_credential", return_value=None):
+            self.assertEqual(backend._resolve_endpoints(PRIMARY), [PRIMARY])
+
+    def test_providers_without_key_header_keep_bearer(self):
+        for provider in ("openai", "custom"):
+            with self.subTest(provider=provider):
+                kwargs = self.sent(self.backend(rest_api_provider=provider), credential="the-key")
+                self.assertEqual(kwargs["headers"]["Authorization"], "Bearer the-key")
+                self.assertTrue(kwargs["allow_redirects"])
+
+
 class EndpointHelperTests(unittest.TestCase):
     def test_is_valid_http_url(self):
         from backend_utils import is_valid_http_url

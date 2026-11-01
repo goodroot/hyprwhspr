@@ -374,7 +374,7 @@
     "rest_api_provider": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Provider identifier for credential lookup (e.g., 'openai', 'groq', 'custom')"
+      "description": "Provider identifier for credential lookup (e.g., 'openai', 'groq', 'elevenlabs', 'custom'). Registered providers with their own key header (ElevenLabs: xi-api-key) get the key there instead of Authorization: Bearer"
     },
     "rest_api_key": {
       "type": ["string", "null"],
@@ -392,7 +392,7 @@
     "rest_body": {
       "type": "object",
       "default": {},
-      "description": "Additional body fields for remote transcription"
+      "description": "Additional body fields for remote transcription. Values are scalars or arrays of scalars; an array is sent as one repeated form field per item (e.g. ElevenLabs keyterms)"
     },
     "rest_timeout": {
       "type": "integer",
