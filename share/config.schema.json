@@ -583,6 +583,16 @@
       "default": true,
       "description": "Enable mute detection to cancel recording when mic is muted"
     },
+    "voxd_integration": {
+      "type": "boolean",
+      "default": false,
+      "description": "Hold a voxd input lease during actual dictation capture: pause voxd playback and request speech-input lighting. Restart required."
+    },
+    "voxd_socket": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "voxd Unix socket path. Null uses VOXD_SOCKET, then XDG_RUNTIME_DIR/voxd.sock or /tmp/voxd-<uid>.sock. Restart required."
+    },
     "audio_ducking_hooks": {
       "type": "array",
       "default": [],

@@ -189,6 +189,85 @@ class AudioDeviceRefreshTests(unittest.TestCase):
 
         return run
 
+    def test_voice_lease_precedes_stream_start_and_releases_on_success_or_failure(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                events = []
+                lease = mock.Mock()
+                lease.close.side_effect = lambda: events.append('release')
+                activity = mock.Mock()
+                activity.begin.side_effect = lambda **kwargs: (events.append('begin'), lease)[1]
+                with mock.patch('subprocess.run', side_effect=self._run_sources([
+                    'alsa_input.old mic', 'alsa_input.old mic',
+                ])):
+                    capture = module.AudioCapture(config_manager=FakeConfig())
+                    capture.voice_activity = activity
+                    def start():
+                        events.append('start')
+                        if fail:
+                            raise RuntimeError('device unavailable')
+                        capture.is_recording = False
+                    fake_sd.on_stream_start = start
+                    self.assertTrue(capture.start_recording())
+                    capture.record_thread.join(timeout=1)
+                    self.assertFalse(capture.record_thread.is_alive())
+                    self.assertEqual(events, ['begin', 'start', 'release'])
+                    activity.begin.assert_called_once()
+                    self.assertFalse(activity.begin.call_args.kwargs['active']())
+                    lease.close.assert_called_once()
+                    capture.is_recording = False
+
+    def test_stream_retry_releases_then_reacquires_voice_lease(self):
+        fake_sd = FakeSoundDevice()
+        fake_sd.fail_once_for_device = 0
+        module = self._load_audio_capture(fake_sd)
+        leases = [mock.Mock(), mock.Mock()]
+        with mock.patch('subprocess.run', side_effect=self._run_sources([
+            'alsa_input.old mic', 'alsa_input.old mic', 'alsa_input.old mic',
+        ])):
+            capture = module.AudioCapture(config_manager=FakeConfig({'stream_start_retry_delay': 0}))
+            capture.voice_activity = mock.Mock()
+            capture.voice_activity.begin.side_effect = leases
+            fake_sd.on_stream_start = lambda: setattr(capture, 'is_recording', False)
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=1)
+            self.assertFalse(capture.record_thread.is_alive())
+            self.assertEqual(capture.voice_activity.begin.call_count, 2)
+            for lease in leases:
+                lease.close.assert_called_once()
+
+    def test_stop_during_voice_handshake_does_not_start_microphone(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        with mock.patch('subprocess.run', side_effect=self._run_sources([
+            'alsa_input.old mic', 'alsa_input.old mic',
+        ])):
+            capture = module.AudioCapture(config_manager=FakeConfig())
+            lease = mock.Mock()
+            def begin(**kwargs):
+                capture.is_recording = False
+                return lease
+            capture.voice_activity = mock.Mock()
+            capture.voice_activity.begin.side_effect = begin
+            self.assertTrue(capture.start_recording())
+            capture.record_thread.join(timeout=1)
+            self.assertFalse(capture.record_thread.is_alive())
+            self.assertEqual(fake_sd.started_devices, [])
+            lease.close.assert_called_once()
+
+    def test_keepalive_does_not_acquire_voice_lease(self):
+        fake_sd = FakeSoundDevice()
+        module = self._load_audio_capture(fake_sd)
+        with mock.patch('subprocess.run', side_effect=self._run_sources(['alsa_input.old mic'])):
+            capture = module.AudioCapture(config_manager=FakeConfig({'keepalive_stream': True}))
+            capture.voice_activity = mock.Mock()
+            capture._stop_keepalive()
+            capture._start_keepalive()
+            capture.voice_activity.begin.assert_not_called()
+            capture._stop_keepalive()
+
     def test_system_default_init_does_not_make_default_preferred(self):
         fake_sd = FakeSoundDevice()
         module = self._load_audio_capture(fake_sd)

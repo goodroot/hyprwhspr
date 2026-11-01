@@ -1293,6 +1293,29 @@ Note: the command runs under `shell=True`, so pipes, redirects, and command chai
 
 ## Integrations
 
+### voxd / lightd microphone activity
+
+Set `"voxd_integration": true` and restart Hyprwhspr to suspend voxd-managed
+speech while dictation capture is active. `"voxd_socket": null` (default) uses
+`VOXD_SOCKET`, then `$XDG_RUNTIME_DIR/voxd.sock` (or `/tmp/voxd-<uid>.sock`). An
+explicit socket path is also supported. Start voxd with `--light-socket` to have
+it hold lightd's `speech-input` profile; configure that profile's colour/effect
+in lightd (cyan breathing is hue 180).
+
+The capture thread acquires a connection-owned lease before starting its
+recording stream, renews every second, and closes it on stop, failure, pause or
+recovery. Transcription, idle keepalive, and level monitoring do not hold the
+lease. voxd pauses/continues the same player rather than restarting the TTS
+message. Multiple microphones aggregate; output resumes only after the last
+lease ends. A dead/stalled client expires after five seconds.
+
+The initial local handshake is bounded to 500 ms. If voxd is unavailable or
+restarts, dictation continues with a warning and retries in the background;
+output/light coordination cannot be guaranteed until reconnection. Already
+buffered device audio may produce a brief tail after suspension. This controls
+voxd audio, not unrelated browser/music players; existing `audio_ducking` and
+`audio_ducking_hooks` remain independent.
+
 ### Waybar
 
 Add dynamic tray icon to your `~/.config/waybar/config`:

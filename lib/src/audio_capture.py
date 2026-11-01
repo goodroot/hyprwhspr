@@ -88,6 +88,7 @@ class AudioCapture:
         # Callbacks
         self.level_callback = None
         self.streaming_callback = None  # For realtime streaming backends
+        self.voice_activity = None  # Optional recording-thread scoped voxd lease factory
         
         # Audio stream
         self.stream = None
@@ -1055,6 +1056,7 @@ class AudioCapture:
 
     def _record_audio(self):
         """Internal method to record audio in a separate thread"""
+        input_lease = None
         try:
             chunk_count = 0
             # Holds the stream this thread opens; the callback only trusts
@@ -1138,11 +1140,26 @@ class AudioCapture:
                             callback=audio_callback
                         )
                         stream_box[0] = self.stream
+                        if not self.is_recording:
+                            return
+                        if self.voice_activity is not None and input_lease is None:
+                            input_lease = self.voice_activity.begin(
+                                active=lambda: self.is_recording and stream_box[0] is not None
+                                and self.stream is stream_box[0],
+                            )
+                        # A stop may arrive during the bounded lease handshake.
+                        if not self.is_recording:
+                            return
                         self.stream.start()
                     self.stream_opened = True
                     self._stop_keepalive()  # Node is warm; safe to release keepalive now
                     break  # success
                 except Exception as _start_err:
+                    with self.lock:
+                        stream_box[0] = None
+                    if input_lease is not None:
+                        input_lease.close()
+                        input_lease = None  # reacquire before a retried stream starts
                     err_str = str(_start_err).lower()
                     is_retriable = (
                         "timed out" in err_str or
@@ -1212,6 +1229,13 @@ class AudioCapture:
                 import traceback
                 traceback.print_exc()
         finally:
+            # Invalidate this thread's callback BEFORE releasing output. Idle
+            # keepalive/monitoring and transcription never hold an input lease.
+            if 'stream_box' in locals():
+                with self.lock:
+                    stream_box[0] = None
+            if input_lease is not None:
+                input_lease.close()
             # Ensure stream is cleaned up even on exception during stream
             # creation (recovery owns the teardown when it aborted us)
             stream = None

@@ -80,6 +80,7 @@ from global_shortcuts import GlobalShortcuts
 from audio_manager import AudioManager
 from audio_ducker import AudioDucker
 from ducking_hooks import DuckingHooks
+from voice_activity import VoiceActivity
 from device_monitor import DeviceMonitor, PYUDEV_AVAILABLE
 from paths import (
     RECORDING_STATUS_FILE, RECORDING_CONTROL_FILE, AUDIO_LEVEL_FILE, RECOVERY_REQUESTED_FILE,
@@ -103,6 +104,10 @@ class hyprwhsprApp:
         audio_device_id = self.config.get_setting('audio_device_id', None)
         self.audio_capture = AudioCapture(device_id=audio_device_id, config_manager=self.config)
         self.audio_capture.on_unrecoverable_stream = self._on_unrecoverable_audio_stream
+        self.voice_activity = None
+        if self.config.get_setting('voxd_integration', False):
+            self.voice_activity = VoiceActivity(self.config.get_setting('voxd_socket', None))
+            self.audio_capture.voice_activity = self.voice_activity
 
         # Initialize audio feedback manager
         self.audio_manager = AudioManager(self.config)
@@ -2380,6 +2385,9 @@ class hyprwhsprApp:
             # Stop audio capture
             if getattr(self, 'is_recording', False):
                 cleanup_step("stop audio capture", lambda: call_optional('audio_capture', 'stop_recording'))
+
+            # Release input leases even if a broken capture thread cannot exit.
+            cleanup_step("release voice input leases", lambda: call_optional('voice_activity', 'close'))
 
             # Cleanup whisper manager (closes WebSocket connections, etc.)
             cleanup_step("close transcription backend", lambda: call_optional('whisper_manager', 'cleanup'))

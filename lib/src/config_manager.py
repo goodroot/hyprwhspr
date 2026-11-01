@@ -188,6 +188,8 @@ class ConfigManager:
             'notification_timeout_ms': 5000,
             'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
             # Audio ducking settings
+            'voxd_integration': False,         # Capture-scoped TTS pause and speech-input lighting
+            'voxd_socket': None,               # None = VOXD_SOCKET or the default runtime socket
             'audio_ducking_hooks': [],          # Background recording-scoped command sessions
             'audio_ducking': False,              # Reduce system volume during recording
             'audio_ducking_percent': 50,         # How much to reduce BY (50 = reduce to 50% of original)
