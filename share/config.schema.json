@@ -537,7 +537,7 @@
       "minimum": 1,
       "maximum": 30,
       "default": 6,
-      "description": "Maximum wrapped transcript lines before the oldest lines are elided. The OSD grows and shrinks up to this limit."
+      "description": "Legacy setting retained for compatibility. Spectrum previews now grow to the available monitor-height limit rather than a fixed line count."
     },
     "mic_osd_transcript_line_spacing": {
       "type": "number",

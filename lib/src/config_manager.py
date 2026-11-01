@@ -175,7 +175,7 @@ class ConfigManager:
             # Dynamically wrapped transcript below the spectrum meter
             'mic_osd_transcript_font_family': 'sans-serif',
             'mic_osd_transcript_font_size': 18.0,
-            'mic_osd_transcript_max_lines': 6,
+            'mic_osd_transcript_max_lines': 6,  # Legacy; spectrum preview uses monitor-height limit
             'mic_osd_transcript_line_spacing': 1.25,
             'mic_osd_transcript_opacity': 0.96,
             # Live transcript above the pill OSD (ElevenLabs Scribe v2 Realtime)

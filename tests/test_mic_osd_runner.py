@@ -367,13 +367,55 @@ class MicOSDRunnerTests(unittest.TestCase):
 
         window._draw_dynamic_preview_text(cr, 100)
 
-        self.assertEqual(window._height, 177)
-        window.drawing_area.set_content_height.assert_called_once_with(177)
-        self.assertLessEqual(len(cr.shown_text), 6)
+        self.assertEqual(window._height, 227)
+        window.drawing_area.set_content_height.assert_called_once_with(227)
+        self.assertEqual(
+            cr.shown_text[::2],
+            ["one two", "three four", "five six", "seven eight", "nine"],
+        )
 
         window._preview_text = ""
         window._draw_dynamic_preview_text(cr, 100)
         self.assertEqual(window._height, 86)
+
+    def test_dynamic_preview_limits_growth_to_monitor_space(self):
+        window_module, _ = self._import_window_with_stubs()
+        from mic_osd.osd_config import MicOSDConfig
+
+        window = object.__new__(window_module.OSDWindow)
+        window._osd_config = MicOSDConfig(transcript_font_size=20)
+        window._width = 100
+        window._height = window._meter_height = 86
+        window._visualizer_state = "recording"
+        window._preview_text = "one two three four five six seven eight nine"
+        window._preview_height_limit = mock.Mock(return_value=177)
+        window.drawing_area = mock.Mock()
+        window.set_default_size = mock.Mock()
+        cr = FakeCairoContext()
+
+        window._draw_dynamic_preview_text(cr, 100)
+
+        self.assertEqual(window._height, 177)
+        self.assertEqual(len(cr.shown_text), 6)
+        self.assertTrue(cr.shown_text[0].startswith("… "))
+        self.assertEqual(cr.shown_text[-1], "nine")
+        # Presentation truncation must never discard the source transcript.
+        self.assertTrue(window._preview_text.startswith("one two"))
+
+    def test_preview_height_limit_uses_logical_monitor_geometry(self):
+        window_module, _ = self._import_window_with_stubs()
+        from mic_osd.osd_config import MicOSDConfig
+
+        window = object.__new__(window_module.OSDWindow)
+        window._meter_height = 86
+        window._osd_config = MicOSDConfig(bottom_margin=130)
+        window.get_surface = mock.Mock(return_value=object())
+        window.get_display = mock.Mock()
+        monitor = window.get_display.return_value.get_monitor_at_surface.return_value
+        monitor.get_geometry.return_value.height = 1080
+        self.assertEqual(window._preview_height_limit(), 648)
+        monitor.get_geometry.return_value.height = 300
+        self.assertEqual(window._preview_height_limit(), 146)
 
     def test_preview_text_draws_only_while_recording(self):
         window_module, _ = self._import_window_with_stubs()

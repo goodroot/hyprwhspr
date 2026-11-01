@@ -788,8 +788,11 @@ Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` pl
 
 The spectrum keeps its meter at a stable height. Its panel has only that height
 when there is no preview, then grows and shrinks as transcript lines wrap. Long
-transcripts retain the newest `mic_osd_transcript_max_lines` lines rather than
-allowing an overlay to consume the entire screen. GTK4 Layer Shell supports this
+transcripts expand up to 60% of the current monitor's logical height (also
+respecting the bottom margin). Once full, the panel shows the newest lines with
+an ellipsis; the underlying transcript is unchanged. The legacy
+`mic_osd_transcript_max_lines` setting is retained for compatibility but no longer
+limits this preview. GTK4 Layer Shell supports this
 dynamic surface sizing directly; no Quickshell process or compositor window rule
 is involved.
 
@@ -816,6 +819,13 @@ is involved.
   "mic_osd_spectrum_fall_ms": 150
 }
 ```
+
+For a larger, more responsive live preview, try width `900`, meter height `110`,
+transcript font size `26`, line spacing `1.3`, and background opacity `0.85`.
+For quieter microphones, try gain `1.6`, peak `-34` dB, curve `0.85`, rise `12` ms,
+and fall `85` ms. These are optional overrides, not changes to the defaults.
+The preview can only show text supplied by the backend; a rolling partial
+transcript cannot reconstruct speech the server has already omitted.
 
 Response tuning does **not** alter the audio sent to transcription:
 

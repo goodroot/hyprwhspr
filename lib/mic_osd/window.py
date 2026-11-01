@@ -310,6 +310,26 @@ class OSDWindow(Gtk.Window):
         )
         return ascent, line_height
 
+    def _preview_height_limit(self):
+        """Bound the growing preview in logical pixels on its actual monitor.
+
+        Leave desktop space visible and account for the bottom anchor margin.
+        Before the surface is mapped, use a conservative fallback.
+        """
+        try:
+            display = self.get_display()
+            surface = self.get_surface()
+            monitor = display.get_monitor_at_surface(surface) if surface else None
+            if monitor is not None:
+                height = monitor.get_geometry().height
+                return max(
+                    self._meter_height,
+                    min(int(height * 0.6), height - self._osd_config.bottom_margin - 24),
+                )
+        except (AttributeError, TypeError):
+            pass
+        return max(self._meter_height, 720)
+
     def _draw_dynamic_preview_text(self, cr: cairo.Context, width: int):
         config = self._osd_config
         if not self._preview_text or self._visualizer_state != "recording":
@@ -331,12 +351,13 @@ class OSDWindow(Gtk.Window):
             self._set_dynamic_height(self._meter_height)
             return
 
-        if len(lines) > config.transcript_max_lines:
-            lines = lines[-config.transcript_max_lines :]
-            lines[0] = self._ellipsize(cr, "... " + lines[0], max_width)
-
         ascent, line_height = self._font_metrics(cr)
         text_top = self._meter_height + gap
+        available = self._preview_height_limit() - text_top - padding_bottom
+        visible_lines = max(1, int(available // line_height))
+        if len(lines) > visible_lines:
+            lines = lines[-visible_lines:]
+            lines[0] = self._ellipsize(cr, "… " + lines[0], max_width)
         target_height = int(
             math.ceil(text_top + line_height * len(lines) + padding_bottom)
         )
