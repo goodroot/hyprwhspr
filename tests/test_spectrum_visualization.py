@@ -26,6 +26,12 @@ class SpectrumVisualizationTests(unittest.TestCase):
         module = importlib.import_module("mic_osd.visualizations.spectrum")
         self.SpectrumVisualization = module.SpectrumVisualization
         self.VisualizerState = module.VisualizerState
+        # Rendering tests must not depend on the user's live OSD preferences.
+        config_patch = mock.patch.object(
+            module.MicOSDConfig, "load", return_value=module.MicOSDConfig()
+        )
+        config_patch.start()
+        self.addCleanup(config_patch.stop)
 
     def tearDown(self):
         self.cairo_patch.stop()
