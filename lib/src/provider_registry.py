@@ -180,7 +180,6 @@ PROVIDERS: Dict[str, Dict] = {
                 'name': 'Scribe v2',
                 'description': 'Batch transcription, 90+ languages',
                 'body': {'model_id': 'scribe_v2'},
-                'backends': (),  # reference entry; no setup picker offers it
             },
             'scribe_v2_realtime': {
                 'name': 'Scribe v2 Realtime',
