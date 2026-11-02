@@ -128,7 +128,9 @@ class RestApiBackend(TranscriptionBackend):
 
         language = self.config.get_setting('language', None)
         if language:
-            log(f'[REST] Language hint: {language}')
+            field = self._provider_language_field(provider_id)
+            suffix = f' (as {field})' if field != 'language' else ''
+            log(f'[REST] Language hint: {language}{suffix}')
 
         # Explicitly set to None to avoid confusion with top-level model setting
         self.current_model = None
@@ -162,6 +164,12 @@ class RestApiBackend(TranscriptionBackend):
             return None
         provider = get_provider(provider_id)
         return provider.get('api_key_header') if provider else None
+
+    @staticmethod
+    def _provider_language_field(provider_id):
+        """Form field a registered provider reads the language from (ElevenLabs: language_code)."""
+        provider = get_provider(provider_id) if provider_id else None
+        return (provider or {}).get('language_field') or 'language'
 
     def _resolve_endpoints(self, endpoint_url, warn=False):
         """Primary first, then usable fallbacks, in order.
@@ -318,8 +326,10 @@ class RestApiBackend(TranscriptionBackend):
             data = extra_body.copy()
             # Use language_override if provided, otherwise get from config
             language = language_override if language_override is not None else self.config.get_setting('language', None)
-            if language and 'language' not in data:
-                data['language'] = language
+            # A value pinned in rest_body wins, as before.
+            language_field = self._provider_language_field(provider_id)
+            if language and language_field not in data:
+                data[language_field] = language
 
             # Fill prompt from config - use language-specific prompt if available
             if 'prompt' not in data:

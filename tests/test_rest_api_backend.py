@@ -538,11 +538,11 @@ class RestApiRequestShapeTests(unittest.TestCase):
         backend._numpy_to_wav_bytes = mock.Mock(return_value=b"wav-bytes")
         return backend
 
-    def sent(self, backend, credential=None):
+    def sent(self, backend, credential=None, **transcribe_kwargs):
         """Transcribe once and return the kwargs of the single POST."""
         with mock.patch("backends.rest_api_backend.get_credential", return_value=credential):
             with mock.patch.object(requests, "post", return_value=response()) as post:
-                self.assertEqual(backend.transcribe(np.zeros(160, dtype=np.float32)), "hello")
+                self.assertEqual(backend.transcribe(np.zeros(160, dtype=np.float32), **transcribe_kwargs), "hello")
         return post.call_args.kwargs
 
     # -- body arrays ---------------------------------------------------
@@ -592,6 +592,24 @@ class RestApiRequestShapeTests(unittest.TestCase):
                 kwargs = self.sent(self.backend(rest_api_provider=provider), credential="the-key")
                 self.assertEqual(kwargs["headers"]["Authorization"], "Bearer the-key")
                 self.assertTrue(kwargs["allow_redirects"])
+
+    # -- provider language field ---------------------------------------
+
+    def test_provider_language_field_carries_the_language(self):
+        kwargs = self.sent(self.backend(rest_api_provider="elevenlabs", language="de"), credential="el-key")
+        self.assertEqual(kwargs["data"]["language_code"], "de")
+        self.assertNotIn("language", kwargs["data"])
+
+    def test_secondary_shortcut_language_reaches_the_provider_field(self):
+        backend = self.backend(rest_api_provider="elevenlabs", language="en")
+        kwargs = self.sent(backend, credential="el-key", language_override="it")
+        self.assertEqual(kwargs["data"]["language_code"], "it")
+
+    def test_language_pinned_in_rest_body_wins(self):
+        backend = self.backend(rest_api_provider="elevenlabs", language="de",
+                               rest_body={"language_code": "fr"})
+        kwargs = self.sent(backend, credential="el-key")
+        self.assertEqual(kwargs["data"]["language_code"], "fr")
 
 
 class EndpointHelperTests(unittest.TestCase):
