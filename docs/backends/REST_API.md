@@ -74,10 +74,11 @@ Connect to any backend, local or cloud, via your own custom configuration:
         "keywords": ["one", "two"]        // arrays are sent as repeated form fields
     },
     "rest_api_key": "your-api-key-here",  // equivalent to rest_headers: { authorization: Bearer your-api-key-here }
-    "rest_timeout": 30,                   // optional, default: 30; per endpoint
-    "rest_audio_format": "wav"            // optional audio format sent to the endpoint: "wav" (default) | "mp3"
+    "rest_timeout": 30                    // optional, default: 30; per endpoint
 }
 ```
+
+Audio is sent as 16-bit WAV.
 
 `rest_fallback_endpoint_urls` are mirrors of the primary, tried in order. They get the same key, headers and body.
 Failover happens only when an endpoint can't be reached or answers 429 or 5xx.

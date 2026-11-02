@@ -150,7 +150,7 @@ def build_default_config():
         'rest_headers': {},                # Additional HTTP headers for remote transcription
         'rest_body': {},                   # Additional body fields for remote transcription
         'rest_timeout': 30,                # Request timeout in seconds
-        'rest_audio_format': 'wav',        # Audio format for remote transcription
+        'rest_audio_format': 'wav',        # Unused: REST uploads are always WAV
         # WebSocket realtime backend settings
         'websocket_provider': None,        # Provider identifier for credential lookup (e.g., 'openai', 'google', 'elevenlabs')
         'websocket_model': None,           # Model identifier (e.g., 'gpt-transcribe')

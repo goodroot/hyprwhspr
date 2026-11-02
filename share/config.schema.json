@@ -403,7 +403,7 @@
     "rest_audio_format": {
       "type": "string",
       "default": "wav",
-      "description": "Audio format for remote transcription (e.g., 'wav', 'mp3')"
+      "description": "Unused; REST uploads are always 16-bit WAV"
     },
     "websocket_provider": {
       "type": ["string", "null"],
