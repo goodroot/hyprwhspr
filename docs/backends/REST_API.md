@@ -22,25 +22,25 @@ Bring an API key from OpenAI, and choose from:
 
 ## ElevenLabs
 
-Bring an API key from [ElevenLabs](https://elevenlabs.io/app/settings/api-keys) for **Scribe v2** batch transcription (90+ languages).
-`rest_api_provider: "elevenlabs"` sends the stored key in the `xi-api-key` header ElevenLabs expects. Requests carrying that header don't follow redirects, so the key never reaches another host.
+Bring an API key from [ElevenLabs](https://elevenlabs.io/app/settings/api-keys), and choose:
+
+- **Scribe v2** - Batch transcription, 90+ languages
+
+Shares its key with Scribe v2 Realtime. `language` and `secondary_language` work as usual.
+
+Bias toward your vocabulary with keyterms:
 
 ```jsonc
 {
-    "transcription_backend": "rest-api",
-    "rest_endpoint_url": "https://api.elevenlabs.io/v1/speech-to-text",
-    "rest_api_provider": "elevenlabs",
     "rest_body": {
         "model_id": "scribe_v2",
-        "language_code": "en",                          // optional; omit to auto-detect
-        "keyterms": ["Claude Code", "Hyprland", "useEffect"]  // optional vocabulary biasing
+        "keyterms": ["Claude Code", "Hyprland", "useEffect"]
     }
 }
 ```
 
-It reuses the key `hyprwhspr setup` stores when you pick ElevenLabs (for example for Scribe v2 Realtime).
-ElevenLabs reads `language_code`, not `language`, so set the language in `rest_body`.
-Keyterms add a 20% surcharge, and more than 100 of them bill every request as at least 20 seconds; see [ElevenLabs' limits](https://elevenlabs.io/docs/api-reference/speech-to-text/convert) (under 50 characters and at most 5 words per keyterm).
+Keyterms cost 20% more, and past 100 every request bills as at least 20s.
+Each stays under 50 characters and 5 words ([limits](https://elevenlabs.io/docs/api-reference/speech-to-text/convert)).
 
 ## Groq
 

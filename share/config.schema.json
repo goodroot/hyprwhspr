@@ -374,7 +374,7 @@
     "rest_api_provider": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Provider identifier for credential lookup (e.g., 'openai', 'groq', 'elevenlabs', 'custom'). Registered providers with their own key header (ElevenLabs: xi-api-key) get the key there instead of Authorization: Bearer"
+      "description": "Provider identifier for credential lookup (e.g., 'openai', 'groq', 'elevenlabs', 'custom'). ElevenLabs gets its key in xi-api-key and its language as language_code"
     },
     "rest_api_key": {
       "type": ["string", "null"],
