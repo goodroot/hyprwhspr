@@ -34,7 +34,7 @@ Bias toward your vocabulary with keyterms:
 {
     "rest_body": {
         "model_id": "scribe_v2",
-        "keyterms": ["Claude Code", "Hyprland", "useEffect"]
+        "keyterms": ["hyprwhspr", "Hyprland", "Claude Code", "useEffect"]
     }
 }
 ```
