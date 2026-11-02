@@ -8,6 +8,11 @@ import os
 import threading
 
 try:
+    from .service_log import log
+except ImportError:
+    from service_log import log
+
+try:
     import gi
     gi.require_version('Gio', '2.0')
     from gi.repository import Gio, GLib
@@ -248,7 +253,7 @@ class TrayIcon:
     def start(self) -> bool:
         """Connect to the session bus and publish the icon in a daemon thread"""
         if not GIO_AVAILABLE:
-            print("[TRAY] PyGObject not available, tray icon disabled")
+            log("[TRAY] PyGObject not available, tray icon disabled")
             return False
         if self._thread is not None and self._thread.is_alive():
             return True
@@ -281,7 +286,7 @@ class TrayIcon:
         try:
             self._connect()
         except Exception as e:
-            print(f"[TRAY] Failed to start: {e}")
+            log(f"[TRAY] Failed to start: {e}")
             self._disconnect()
             self._started = False
             self._ready.set()
@@ -306,7 +311,7 @@ class TrayIcon:
         try:
             self._loop.run()
         except Exception as e:
-            print(f"[TRAY] Main loop crashed: {e}")
+            log(f"[TRAY] Main loop crashed: {e}")
         finally:
             poll.destroy()
             self._disconnect()
@@ -368,12 +373,12 @@ class TrayIcon:
     def _on_registered(self, connection, result):
         try:
             connection.call_finish(result)
-            print("[TRAY] Tray icon registered")
+            log("[TRAY] Tray icon registered")
         except Exception as e:
-            print(f"[TRAY] Tray refused the icon: {e}")
+            log(f"[TRAY] Tray refused the icon: {e}")
 
     def _on_watcher_vanished(self, connection, name):
-        print("[TRAY] No system tray running; the icon appears when one starts")
+        log("[TRAY] No system tray running; the icon appears when one starts")
 
     def _read_state(self):
         try:
@@ -408,7 +413,7 @@ class TrayIcon:
         try:
             self._connection.emit_signal(None, path, iface, signal, params)
         except Exception as e:
-            print(f"[TRAY] Failed to emit {signal}: {e}")
+            log(f"[TRAY] Failed to emit {signal}: {e}")
 
     # ==================== StatusNotifierItem ====================
 
@@ -495,7 +500,7 @@ class TrayIcon:
                 invocation.return_dbus_error(
                     'org.freedesktop.DBus.Error.UnknownMethod', method)
         except Exception as e:
-            print(f"[TRAY] Menu call {method} failed: {e}")
+            log(f"[TRAY] Menu call {method} failed: {e}")
             invocation.return_dbus_error('org.freedesktop.DBus.Error.Failed', str(e))
 
     def _handle_event(self, item_id, event_id):
