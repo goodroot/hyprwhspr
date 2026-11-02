@@ -15,6 +15,8 @@ DEFAULT_MODEL_BACKENDS: Tuple[str, ...] = ('rest-api',)
 # DEFAULT_MODEL_BACKENDS when omitted. 'websocket_protocol' names the wire
 # protocol (realtime_protocols.PROTOCOLS); omitted means OpenAI Realtime. 'realtime' carries the model's Realtime
 # WebSocket capabilities, which drive session payloads and mode guards.
+# 'api_key_header' and 'language_field' replace the REST defaults
+# (Authorization: Bearer, a 'language' form field) for providers that differ.
 PROVIDERS: Dict[str, Dict] = {
     'openai': {
         'name': 'OpenAI',
@@ -170,6 +172,7 @@ PROVIDERS: Dict[str, Dict] = {
         'websocket_endpoint': 'wss://api.elevenlabs.io/v1/speech-to-text/realtime',
         'websocket_protocol': 'elevenlabs',
         'api_key_header': 'xi-api-key',
+        'language_field': 'language_code',
         'api_key_prefix': None,
         'api_key_description': 'ElevenLabs API key',
         'models': {
@@ -177,7 +180,6 @@ PROVIDERS: Dict[str, Dict] = {
                 'name': 'Scribe v2',
                 'description': 'Batch transcription, 90+ languages',
                 'body': {'model_id': 'scribe_v2'},
-                'backends': (),  # reference entry; no setup picker offers it
             },
             'scribe_v2_realtime': {
                 'name': 'Scribe v2 Realtime',

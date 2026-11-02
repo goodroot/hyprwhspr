@@ -509,6 +509,12 @@ class RemoteConfigSwitchTests(unittest.TestCase):
         config = setup._generate_remote_config(provider_id, model_id, api_key, custom_config)
         self.assertEqual(config['rest_api_provider'], 'custom')
 
+    def test_rest_elevenlabs_scribe_v2_config(self):
+        config = self._switch({}, 'elevenlabs', 'scribe_v2', 'el-key')
+        self.assertEqual(config['rest_endpoint_url'], 'https://api.elevenlabs.io/v1/speech-to-text')
+        self.assertEqual(config['rest_api_provider'], 'elevenlabs')
+        self.assertEqual(config['rest_body'], {'model_id': 'scribe_v2'})
+
     def test_rest_known_provider_drops_custom_headers(self):
         stale = {'rest_headers': {'Authorization': 'Bearer custom-secret'}}
         config = self._switch(stale, 'openai', 'whisper-1', 'sk')

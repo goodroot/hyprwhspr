@@ -20,6 +20,28 @@ Bring an API key from OpenAI, and choose from:
 - **GPT Audio Mini (2025-12-15)** - General purpose audio model
 - **Whisper 1** - Legacy Whisper model
 
+## ElevenLabs
+
+Bring an API key from [ElevenLabs](https://elevenlabs.io/app/settings/api-keys), and choose:
+
+- **Scribe v2** - Batch transcription, 90+ languages
+
+Shares its key with Scribe v2 Realtime. `language` and `secondary_language` work as usual.
+
+Bias toward your vocabulary with keyterms:
+
+```jsonc
+{
+    "rest_body": {
+        "model_id": "scribe_v2",
+        "keyterms": ["hyprwhspr", "Hyprland", "Claude Code", "useEffect"]
+    }
+}
+```
+
+Keyterms cost 20% more, and past 100 every request bills as at least 20s.
+Each stays under 50 characters and 5 words ([limits](https://elevenlabs.io/docs/api-reference/speech-to-text/convert)).
+
 ## Groq
 
 Bring an API key from Groq, and choose from:
@@ -48,7 +70,8 @@ Connect to any backend, local or cloud, via your own custom configuration:
         "authorization": "Bearer your-api-key-here"
     },
     "rest_body": {                        // optional body fields merged with defaults
-        "model": "custom-model"
+        "model": "custom-model",
+        "keywords": ["one", "two"]        // arrays are sent as repeated form fields
     },
     "rest_api_key": "your-api-key-here",  // equivalent to rest_headers: { authorization: Bearer your-api-key-here }
     "rest_timeout": 30,                   // optional, default: 30; per endpoint

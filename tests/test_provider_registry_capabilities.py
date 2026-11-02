@@ -30,8 +30,8 @@ class ModelBackendRoutingTests(unittest.TestCase):
         for model_id in ("whisper-1", "gpt-4o-transcribe"):
             self.assertNotIn(model_id, realtime_models)
 
-    def test_elevenlabs_offers_only_its_realtime_model(self):
-        self.assertEqual(list(get_models_for_backend("elevenlabs", "rest-api")), [])
+    def test_elevenlabs_splits_batch_and_realtime_models(self):
+        self.assertEqual(list(get_models_for_backend("elevenlabs", "rest-api")), ["scribe_v2"])
         self.assertEqual(
             list(get_models_for_backend("elevenlabs", "realtime-ws")),
             ["scribe_v2_realtime"],
