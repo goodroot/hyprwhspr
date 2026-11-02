@@ -304,7 +304,7 @@ def _prompt_backend_selection(existing_cfg: Optional[dict] = None):
     print("  [3] Cohere       most accurate · NVIDIA")
     print("  [4] Qwen3-ASR    Chinese · Japanese · Korean · experimental")
     print("Cloud:")
-    print("  [5] REST API     OpenAI · Groq · Cohere · custom")
+    print("  [5] REST API     OpenAI · Groq · Cohere · ElevenLabs · custom")
     print("  [6] Realtime WS  OpenAI · Gemini · ElevenLabs · Deepgram · self-hosted")
     print()
 
