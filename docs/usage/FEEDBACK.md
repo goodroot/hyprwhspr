@@ -80,9 +80,9 @@ A system tray icon shows that hyprwhspr is running and what it's doing. It works
 | Record dot | Recording |
 | Pause | Long-form session paused |
 | Muted microphone | Model loading or unloaded, or transcribing |
-| Warning | Microphone or model problem (the tooltip says which) |
+| Warning | Microphone, model or long-form submit problem (the tooltip says which) |
 
-Click it for a menu to start or stop recording, unload or load the model, and restart or stop the service. Restart and Stop only appear when the service runs as `hyprwhspr.service`.
+Click it for a menu to start or stop recording, unload or load the model, and restart or stop the service. In long-form, it pauses, submits, retries or cancels. Restart and Stop only appear when the service runs as `hyprwhspr.service`.
 
 The icon disappears when the service stops, so no icon means hyprwhspr isn't running. It needs PyGObject, which the visualizer also uses.
 

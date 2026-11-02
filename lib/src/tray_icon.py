@@ -34,6 +34,7 @@ STATES = {
     'loading': ('microphone-sensitivity-muted', 'Loading model'),
     'unloaded': ('microphone-sensitivity-muted', 'Model unloaded'),
     'error': ('dialog-warning', 'Error'),
+    'submit_failed': ('dialog-warning', 'Submit failed'),
 }
 
 # Menu item ids; 0 is the dbusmenu root. Each action has its own id, so a
@@ -45,6 +46,8 @@ ITEM_UNLOAD = 5
 ITEM_LOAD = 6
 ITEM_RESTART_SERVICE = 8
 ITEM_STOP_SERVICE = 9
+ITEM_SUBMIT = 10
+ITEM_CANCEL = 11
 
 ACTIONS = {
     ITEM_START: 'start',
@@ -53,7 +56,12 @@ ACTIONS = {
     ITEM_LOAD: 'model_reload',
     ITEM_RESTART_SERVICE: 'restart',
     ITEM_STOP_SERVICE: 'stop_service',
+    ITEM_SUBMIT: 'submit',
+    ITEM_CANCEL: 'cancel',
 }
+
+# Long-form states with a session to submit or cancel
+SESSION_STATES = ('recording', 'paused', 'submit_failed')
 
 ITEM_XML = f"""
 <node>
@@ -161,11 +169,12 @@ MENU_XML = f"""
 """
 
 
-def menu_items(state, detail, service_controls):
+def menu_items(state, detail, service_controls, long_form=False):
     """Build the menu for a state as a list of (id, properties) with plain values."""
     label = STATES[state][1]
     if state == 'recording':
-        record = (ITEM_STOP, {'label': 'Stop recording'})
+        # Long-form's stop command pauses; submit ends the session
+        record = (ITEM_STOP, {'label': 'Pause recording' if long_form else 'Stop recording'})
     else:
         record = (ITEM_START, {
             'label': 'Resume recording' if state == 'paused' else 'Start recording',
@@ -179,8 +188,13 @@ def menu_items(state, detail, service_controls):
         (ITEM_STATUS, {'label': f"hyprwhspr: {detail or label}", 'enabled': False}),
         (2, {'type': 'separator'}),
         record,
-        model,
     ]
+    if long_form and state in SESSION_STATES:
+        items += [
+            (ITEM_SUBMIT, {'label': 'Retry submit' if state == 'submit_failed' else 'Submit'}),
+            (ITEM_CANCEL, {'label': 'Cancel recording'}),
+        ]
+    items.append(model)
     if service_controls:
         items += [
             (7, {'type': 'separator'}),
@@ -204,19 +218,22 @@ def _to_variant(value):
 class TrayIcon:
     """StatusNotifierItem that polls the app for its state and forwards menu clicks"""
 
-    def __init__(self, get_state, on_action, service_controls=False):
+    def __init__(self, get_state, on_action, service_controls=False, long_form=None):
         """
         Args:
             get_state: returns (state, detail); state is a key of STATES
             on_action: called with an action name from menu_action()
             service_controls: show Restart/Stop (only meaningful under systemd)
+            long_form: returns True in long-form mode, for Pause/Submit/Cancel
         """
         self.get_state = get_state
+        self.long_form = long_form or (lambda: False)
         self.on_action = on_action
         self.service_controls = service_controls
         self.bus_name = f"org.kde.StatusNotifierItem-{os.getpid()}-1"
         self._state = 'loading'
         self._detail = ''
+        self._long_form = False
         self._revision = 1
         self._context = None
         self._loop = None
@@ -307,6 +324,7 @@ class TrayIcon:
             | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
             None, None)
         self._state, self._detail = self._read_state()
+        self._long_form = self._read_long_form()
 
         item_info = Gio.DBusNodeInfo.new_for_xml(ITEM_XML).interfaces[0]
         menu_info = Gio.DBusNodeInfo.new_for_xml(MENU_XML).interfaces[0]
@@ -366,11 +384,18 @@ class TrayIcon:
             return 'error', detail
         return state, detail
 
+    def _read_long_form(self):
+        try:
+            return bool(self.long_form())
+        except Exception:
+            return False
+
     def _poll(self, *_):
         state, detail = self._read_state()
-        if (state, detail) != (self._state, self._detail):
+        long_form = self._read_long_form()
+        if (state, detail, long_form) != (self._state, self._detail, self._long_form):
             icon_changed = STATES[state][0] != STATES[self._state][0]
-            self._state, self._detail = state, detail
+            self._state, self._detail, self._long_form = state, detail, long_form
             self._revision += 1
             self._emit(ITEM_PATH, ITEM_IFACE, 'NewToolTip', None)
             if icon_changed:
@@ -415,7 +440,7 @@ class TrayIcon:
     # ==================== dbusmenu ====================
 
     def _items(self):
-        return menu_items(self._state, self._detail, self.service_controls)
+        return menu_items(self._state, self._detail, self.service_controls, self._long_form)
 
     def _layout(self):
         children = [

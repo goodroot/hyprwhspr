@@ -224,7 +224,8 @@ class FeedbackMixin:
             from tray_icon import TrayIcon
             # Restart/Stop only make sense when systemd manages the service
             tray = TrayIcon(get_state=self._tray_state, on_action=self._on_tray_action,
-                            service_controls=self._running_as_service_unit())
+                            service_controls=self._running_as_service_unit(),
+                            long_form=lambda: self.config.get_setting('recording_mode') == 'long_form')
             if tray.start():
                 self.tray_icon = tray
                 log("[INIT] Tray icon enabled")
@@ -262,7 +263,10 @@ class FeedbackMixin:
         if longform_state == 'PROCESSING':
             return 'processing', ''
         if longform_state == 'ERROR':
-            return 'error', 'Long-form submit failed; submit to retry'
+            return 'submit_failed', ''
+        # Push-to-talk, toggle and file transcriptions
+        if self.is_processing or self._file_transcription_active:
+            return 'processing', ''
         if RECORDING_STATUS_FILE.exists():
             return 'recording', ''
         if MODEL_UNLOADED_FILE.exists():

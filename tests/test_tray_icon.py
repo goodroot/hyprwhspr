@@ -70,8 +70,31 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(items[0][1]['label'], 'hyprwhspr: Microphone disconnected')
         self.assertFalse(items[0][1]['enabled'])
 
+    def test_long_form_recording_pauses_submits_and_cancels(self):
+        items = {i: p for i, p in tray_icon.menu_items('recording', '', False, long_form=True)}
+        self.assertEqual(items[tray_icon.ITEM_STOP]['label'], 'Pause recording')
+        self.assertEqual(items[tray_icon.ITEM_SUBMIT]['label'], 'Submit')
+        self.assertEqual(items[tray_icon.ITEM_CANCEL]['label'], 'Cancel recording')
+        self.assertEqual(tray_icon.menu_action(tray_icon.ITEM_SUBMIT), 'submit')
+        self.assertEqual(tray_icon.menu_action(tray_icon.ITEM_CANCEL), 'cancel')
+
+    def test_failed_submit_offers_retry_and_cancel_not_start(self):
+        # Long-form ignores start in ERROR; only submit or cancel leave it
+        items = {i: p for i, p in tray_icon.menu_items('submit_failed', '', False, long_form=True)}
+        self.assertEqual(items[tray_icon.ITEM_SUBMIT]['label'], 'Retry submit')
+        self.assertIn(tray_icon.ITEM_CANCEL, items)
+        self.assertFalse(items[tray_icon.ITEM_START]['enabled'])
+
+    def test_session_items_only_with_an_open_long_form_session(self):
+        for state, long_form in (('recording', False), ('ready', True), ('processing', True)):
+            with self.subTest(state=state, long_form=long_form):
+                items = dict(tray_icon.menu_items(state, '', False, long_form=long_form))
+                self.assertNotIn(tray_icon.ITEM_SUBMIT, items)
+                self.assertNotIn(tray_icon.ITEM_CANCEL, items)
+
     def test_every_state_has_an_icon(self):
-        for state in ('ready', 'recording', 'paused', 'processing', 'loading', 'unloaded', 'error'):
+        for state in ('ready', 'recording', 'paused', 'processing', 'loading', 'unloaded', 'error',
+                      'submit_failed'):
             self.assertTrue(tray_icon.STATES[state][0])
 
 
@@ -196,6 +219,8 @@ class AppTrayStateTests(unittest.TestCase):
         self.app._backend_init_failed = False
         self.app._mic_state_lock = threading.Lock()
         self.app._mic_disconnected = False
+        self.app.is_processing = False
+        self.app._file_transcription_active = False
         for name in ('RECORDING_STATUS_FILE', 'MODEL_UNLOADED_FILE', 'MIC_ZERO_VOLUME_FILE'):
             patch = patch_app_global(self.app.__class__, name, self.dir / name)
             patch.start()
@@ -214,6 +239,13 @@ class AppTrayStateTests(unittest.TestCase):
     def test_recording(self):
         self._touch('RECORDING_STATUS_FILE')
         self.assertEqual(self.app._tray_state()[0], 'recording')
+
+    def test_transcribing_a_recording_or_file(self):
+        for flag in ('is_processing', '_file_transcription_active'):
+            with self.subTest(flag=flag):
+                setattr(self.app, flag, True)
+                self.assertEqual(self.app._tray_state(), ('processing', ''))
+                setattr(self.app, flag, False)
 
     def test_unloaded(self):
         self._touch('MODEL_UNLOADED_FILE')
@@ -242,7 +274,7 @@ class AppTrayStateTests(unittest.TestCase):
         # Long-form never writes the recording file; its own state drives the icon
         self.app._longform = types.SimpleNamespace(state='IDLE')
         expected = {'IDLE': 'ready', 'RECORDING': 'recording', 'PAUSED': 'paused',
-                    'PROCESSING': 'processing', 'ERROR': 'error'}
+                    'PROCESSING': 'processing', 'ERROR': 'submit_failed'}
         for longform_state, tray_state in expected.items():
             self.app._longform.state = longform_state
             self.assertEqual(self.app._tray_state()[0], tray_state, longform_state)
