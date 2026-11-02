@@ -247,6 +247,12 @@ class AppTrayStateTests(unittest.TestCase):
                 self.assertEqual(self.app._tray_state(), ('processing', ''))
                 setattr(self.app, flag, False)
 
+    def test_recording_wins_while_the_last_one_transcribes(self):
+        # Stop must stay in the menu for the new recording
+        self.app.is_processing = True
+        self._touch('RECORDING_STATUS_FILE')
+        self.assertEqual(self.app._tray_state(), ('recording', ''))
+
     def test_unloaded(self):
         self._touch('MODEL_UNLOADED_FILE')
         self.assertEqual(self.app._tray_state()[0], 'unloaded')

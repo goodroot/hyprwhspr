@@ -264,11 +264,12 @@ class FeedbackMixin:
             return 'processing', ''
         if longform_state == 'ERROR':
             return 'submit_failed', ''
+        # A new recording can start while the last one transcribes; keep Stop reachable
+        if RECORDING_STATUS_FILE.exists():
+            return 'recording', ''
         # Push-to-talk, toggle and file transcriptions
         if self.is_processing or self._file_transcription_active:
             return 'processing', ''
-        if RECORDING_STATUS_FILE.exists():
-            return 'recording', ''
         if MODEL_UNLOADED_FILE.exists():
             return 'unloaded', ''
         with self._mic_state_lock:
