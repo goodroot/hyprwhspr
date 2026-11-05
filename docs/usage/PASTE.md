@@ -78,6 +78,12 @@ physical keycodes: non-QWERTY layouts and modifier remaps may require the overri
 below. Non-Latin layouts are not automatically switched on Hyprland. A successful
 command cannot guarantee that the focused app accepted the shortcut.
 
+## COSMIC paste compatibility
+
+wtype chords with modifiers start with an Insert release, so COSMIC keeps
+the modifiers ([#288](https://github.com/goodroot/hyprwhspr/issues/288)).
+Applies everywhere, needs no config. Apps that track key releases may see it.
+
 ## Non-QWERTY layouts
 
 `ydotool` sends physical Linux keycodes, so `Ctrl+KEY_V` may not be `Ctrl+v` on layouts like bepo or dvorak. To fix on Wayland: run `wev`, press the key that types `v`, and copy the printed keycode into `paste_keycode_wev`:

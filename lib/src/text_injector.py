@@ -990,7 +990,10 @@ except Exception:
         key_name = self._wtype_key_name(key)
         if key_name is None:
             return False
-        args = []
+        # Activate the device keymap before modifiers (COSMIC regression):
+        # https://github.com/goodroot/hyprwhspr/issues/288
+        # Use a release only: a dummy press can leak escape sequences into TUIs.
+        args = ['-p', 'Insert'] if modifiers else []
         for modifier in modifiers:
             args.extend(['-M', WTYPE_MODIFIERS[modifier]])
         args.extend(['-k', key_name])

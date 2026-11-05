@@ -415,10 +415,54 @@ class TextInjectorInjectionTests(unittest.TestCase):
             self.assertTrue(injector._send_paste_keys_wtype("ctrl+y"))
 
         run.assert_called_once_with(
-            ["wtype", "-M", "ctrl", "-k", "y", "-m", "ctrl"],
+            ["wtype", "-p", "Insert", "-M", "ctrl", "-k", "y", "-m", "ctrl"],
             capture_output=True,
             timeout=5,
         )
+
+    def test_wtype_activates_keymap_before_paste_modifiers(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+        cases = {
+            "ctrl+v": ["-M", "ctrl", "-k", "v", "-m", "ctrl"],
+            "ctrl+shift+v": ["-M", "ctrl", "-M", "shift", "-k", "v",
+                             "-m", "shift", "-m", "ctrl"],
+        }
+        for chord, expected_args in cases.items():
+            with self.subTest(chord=chord), mock.patch(
+                "text_injector.subprocess.run", return_value=completed
+            ) as run:
+                self.assertTrue(injector._send_paste_keys_wtype(chord))
+                run.assert_called_once_with(
+                    ["wtype", "-p", "Insert"] + expected_args,
+                    capture_output=True, timeout=5,
+                )
+
+    def test_wtype_unmodified_key_needs_no_leading_release(self):
+        injector = self._injector()
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+        with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
+            self.assertTrue(injector._send_paste_keys_wtype("enter"))
+        run.assert_called_once_with(
+            ["wtype", "-k", "Return"], capture_output=True, timeout=5,
+        )
+
+    def test_wtype_rejects_invalid_or_unsupported_chords_without_sending_keys(self):
+        injector = self._injector()
+        for chord in ("", "ctrl+shift", "ctrl+unknown_key"):
+            with self.subTest(chord=chord), mock.patch("text_injector.subprocess.run") as run:
+                self.assertFalse(injector._send_paste_keys_wtype(chord))
+                run.assert_not_called()
+
+    def test_wtype_reports_command_failure_and_timeout(self):
+        injector = self._injector()
+        failed = types.SimpleNamespace(returncode=1, stderr=b"rejected")
+        with mock.patch("text_injector.subprocess.run", return_value=failed):
+            self.assertFalse(injector._send_paste_keys_wtype("ctrl+v"))
+        with mock.patch(
+            "text_injector.subprocess.run", side_effect=subprocess.TimeoutExpired("wtype", 5)
+        ):
+            self.assertFalse(injector._send_paste_keys_wtype("ctrl+v"))
 
     def test_wtype_translates_named_keys_to_xkb_keysym_names(self):
         # wtype's -k resolves through libxkbcommon: case-sensitive names that
@@ -435,6 +479,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
             with mock.patch("text_injector.subprocess.run", return_value=completed) as run:
                 self.assertTrue(injector._send_paste_keys_wtype(chord))
             sent = run.call_args.args[0]
+            self.assertEqual(sent[:3], ["wtype", "-p", "Insert"])
             self.assertEqual(sent[sent.index("-k") + 1], expected_key)
 
     def test_hyprland_session_detection_requires_exact_desktop_or_signature(self):
