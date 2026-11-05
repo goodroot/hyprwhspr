@@ -1803,6 +1803,14 @@ class WordOverrideBoundaryTests(unittest.TestCase):
     def test_single_character_override_still_matches_mid_word(self):
         self.assertEqual(self._preprocess("Straße", {"ß": "ss"}), "Strasse")
 
+    def test_override_replacements_preserve_literal_backslashes(self):
+        for replacement in ("\\", r"C:\users\notes", r"\n", r"\1", r"\g<0>"):
+            with self.subTest(replacement=replacement):
+                self.assertEqual(
+                    self._preprocess("say snippet twice", {"snippet": replacement}),
+                    f"say {replacement} twice",
+                )
+
     def test_filler_filtering_reaches_preprocessing_through_config(self):
         # Rule-level coverage lives in test_filler_filter.py; this pins the
         # config adapter and the interaction with the spoken-symbol pass, which

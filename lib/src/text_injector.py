@@ -121,8 +121,9 @@ def _apply_configured_word_overrides(text, config_manager):
         if original:
             # A single character is a spelling fix ("ß" -> "ss"), so it applies inside words.
             pattern = re.escape(original) if len(original) == 1 else boundaried_pattern(original)
+            # Overrides are literal text, including backslashes and regex-like snippets.
             text = re.sub(
-                pattern, replacement, text, flags=re.IGNORECASE
+                pattern, lambda _match: replacement, text, flags=re.IGNORECASE
             )
     return re.sub(r' +', ' ', text).strip()
 
