@@ -1957,10 +1957,13 @@ except Exception:
             if stream is not None and stream.cancelled.is_set():
                 return False
             with self._clipboard_lock:
+                # Preserve the existing non-Sway call contract. Only Sway
+                # requires an expected focus identity at delivery time.
+                focus_guard = {'expected_window': window_info} if os.environ.get('SWAYSOCK') else {}
                 if stream is not None:
                     return self._paste_via_clipboard(
-                        text, paste_chord, gnome_wayland_session, auto_submit, stream=stream, expected_window=window_info)
-                return self._paste_via_clipboard(text, paste_chord, gnome_wayland_session, auto_submit, expected_window=window_info)
+                        text, paste_chord, gnome_wayland_session, auto_submit, stream=stream, **focus_guard)
+                return self._paste_via_clipboard(text, paste_chord, gnome_wayland_session, auto_submit, **focus_guard)
 
         except Exception as e:
             log(f"Clipboard+hotkey injection failed: {e}")
