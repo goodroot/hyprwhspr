@@ -194,5 +194,32 @@ class MaintenanceUinputValidationTests(unittest.TestCase):
         output.assert_called_once_with("  Re-run 'hyprwhspr validate' without sudo.")
 
 
+class CompositorEnvironmentTests(unittest.TestCase):
+    def report(self, env_output, niri=False, sway=False):
+        with (
+            mock.patch.object(maintenance, '_is_niri_session', return_value=niri),
+            mock.patch.object(maintenance, 'is_sway_session', return_value=sway),
+            mock.patch.object(maintenance, 'log_success') as success,
+            mock.patch.object(maintenance, 'log_warning') as warning,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            maintenance._report_compositor_ipc_environment(env_output)
+        return success.call_args_list, warning.call_args_list, output.getvalue()
+
+    def test_sway_socket_in_service_environment(self):
+        success, warning, _ = self.report('SWAYSOCK=/run/user/1000/sway-ipc.sock\n', sway=True)
+        self.assertIn('SWAYSOCK set', success[0].args[0])
+        self.assertEqual(warning, [])
+
+    def test_missing_sway_socket_names_the_import(self):
+        success, warning, output = self.report('WAYLAND_DISPLAY=wayland-1\n', sway=True)
+        self.assertEqual(success, [])
+        self.assertIn('SWAYSOCK not found', warning[0].args[0])
+        self.assertIn('import-environment SWAYSOCK', output)
+
+    def test_other_sessions_report_nothing(self):
+        self.assertEqual(self.report(''), ([], [], ''))
+
+
 if __name__ == '__main__':
     unittest.main()

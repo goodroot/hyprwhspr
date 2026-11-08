@@ -54,6 +54,11 @@ except ImportError:
 from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, _check_ydotool_version,
                       _is_niri_session, _validate_hyprwhspr_root)
 
+try:
+    from ..sway_focus import is_sway_session
+except ImportError:
+    from sway_focus import is_sway_session
+
 
 def _has_non_ydotool_injection_path() -> bool:
     """Whether the active session has a detected injection path besides ydotool."""
@@ -646,6 +651,26 @@ def state_reset_command(remove_all: bool = False):
     return True
 
 
+def _report_compositor_ipc_environment(env_output: str) -> None:
+    """Warn when the service would miss the compositor socket it needs."""
+    if _is_niri_session():
+        if 'NIRI_SOCKET=' in env_output:
+            log_success("✓ NIRI_SOCKET set in systemd user environment")
+        else:
+            log_warning("⚠ NIRI_SOCKET not found in systemd user environment")
+            print("  Niri window detection needs NIRI_SOCKET in the systemd user environment.")
+            print("  Add to your Niri startup config:")
+            print("    spawn-at-startup \"dbus-update-activation-environment\" \"--systemd\" \"WAYLAND_DISPLAY\" \"XDG_CURRENT_DESKTOP\" \"NIRI_SOCKET\"")
+    elif is_sway_session():
+        if 'SWAYSOCK=' in env_output:
+            log_success("✓ SWAYSOCK set in systemd user environment")
+        else:
+            log_warning("⚠ SWAYSOCK not found in systemd user environment")
+            print("  Without it, Sway paste may not run. Run inside Sway:")
+            print("    systemctl --user import-environment SWAYSOCK XDG_CURRENT_DESKTOP")
+            print("    systemctl --user restart hyprwhspr.service")
+
+
 def validate_command():
     """Validate installation"""
     log_info("Validating installation...")
@@ -891,14 +916,7 @@ def validate_command():
                 print("  Hyprland example:")
                 print("    exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE")
 
-        if _is_niri_session():
-            if 'NIRI_SOCKET=' in env_output:
-                log_success("✓ NIRI_SOCKET set in systemd user environment")
-            else:
-                log_warning("⚠ NIRI_SOCKET not found in systemd user environment")
-                print("  Niri window detection needs NIRI_SOCKET in the systemd user environment.")
-                print("  Add to your Niri startup config:")
-                print("    spawn-at-startup \"dbus-update-activation-environment\" \"--systemd\" \"WAYLAND_DISPLAY\" \"XDG_CURRENT_DESKTOP\" \"NIRI_SOCKET\"")
+        _report_compositor_ipc_environment(env_output)
     except Exception:
         pass
 
