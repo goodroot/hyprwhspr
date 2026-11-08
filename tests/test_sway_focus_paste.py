@@ -75,6 +75,40 @@ class DeliveryTests(unittest.TestCase):
         self.assertTrue(self.paste(target()))
         self.assertEqual(self.senders(), {'wtype': True, 'xdotool': False, 'slow': False})
 
+    def test_wtype_failure_rechecks_focus_before_ydotool(self):
+        i = self.injector
+        i._send_paste_keys_wtype.return_value = False
+        for name, later_focus, fallback in (('focus kept', 42, True), ('focus moved', 99, False)):
+            with self.subTest(name):
+                i._sway = sway_ipc()
+                i._sway.request.side_effect = [seats(42), seats(later_focus)]
+                i._send_paste_keys_slow.reset_mock()
+                i._withdraw_undelivered.reset_mock()
+                i._save_clipboard.return_value = b'previous'
+                self.assertEqual(self.paste(target()), fallback)
+                self.assertEqual(i._sway.request.call_count, 2)
+                self.assertEqual(i._send_paste_keys_slow.called, fallback)
+                self.assertEqual(i._withdraw_undelivered.called, not fallback)
+                if not fallback:
+                    i._withdraw_undelivered.assert_called_once_with(b'previous', 'Synthetic fixture')
+
+    def test_wtype_failure_in_live_typing_stops_the_session(self):
+        i = self.injector
+        i._send_paste_keys_wtype.return_value = False
+        i._sway.request.side_effect = [seats(42), seats(99)]
+        stream = patched_injector._StreamSession()
+        stream.saved_clipboard = b'before dictation'
+        self.assertFalse(self.paste(target(), stream=stream))
+        i._send_paste_keys_slow.assert_not_called()
+        self.assertTrue(stream.focus_lost)
+
+    def test_ydotool_first_needs_no_second_check(self):
+        i = self.injector
+        i.wtype_available = False
+        self.assertTrue(self.paste(target()))
+        i._send_paste_keys_slow.assert_called_once_with('ctrl+v')
+        self.assertEqual(i._sway.request.call_count, 1)
+
     def test_xwayland_view_uses_xdotool(self):
         self.assertTrue(self.paste(target(True)))
         self.injector._send_paste_keys_xdotool.assert_called_once_with('ctrl+v')

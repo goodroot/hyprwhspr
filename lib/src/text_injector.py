@@ -1488,6 +1488,17 @@ except Exception:
 
         threading.Thread(target=_restore, daemon=True).start()
 
+    def _refuse_delivery(self, saved_clipboard, text: str, stream=None) -> bool:
+        """Focus moved before dispatch: send nothing, take the text back.
+
+        The new focus is unknown, so the clipboard is restored; copy-last
+        still recovers the text. Live typing stops for the rest of the session.
+        """
+        self._withdraw_undelivered(saved_clipboard if stream is None else stream.saved_clipboard, text)
+        if stream is not None:
+            stream.focus_lost = True
+        return False
+
     def _leave_on_clipboard(self, text: str, stream=None) -> None:
         """Nothing can paste: hold the dictation so far for a manual paste."""
         log("No paste transport for this window. Text is on the clipboard.")
@@ -2120,12 +2131,7 @@ except Exception:
             # activate a previous window.
             transport = self._delivery_transport(expected_window)
             if transport is None:
-                # The new focus is unknown, so take the text back off the
-                # clipboard; copy-last still recovers it.
-                self._withdraw_undelivered(saved_clipboard if stream is None else stream.saved_clipboard, text)
-                if stream is not None:
-                    stream.focus_lost = True
-                return False
+                return self._refuse_delivery(saved_clipboard, text, stream)
             if transport == 'clipboard':
                 self._leave_on_clipboard(text, stream)
                 return True
@@ -2174,6 +2180,10 @@ except Exception:
                     log(f"ℹ️  Dispatching paste chord {paste_chord!r} with ydotool.")
                 self._clear_stuck_modifiers()
                 time.sleep(0.02)
+                # A failed wtype attempt took time; focus may have moved since
+                # the first check. Recheck before a second transport fires.
+                if self.wtype_available and self._delivery_transport(expected_window) is None:
+                    return self._refuse_delivery(saved_clipboard, text, stream)
                 # Non-Latin layouts (Thai, Russian, …) remap KEY_V, so the raw-keycode
                 # Ctrl+V chord lands as the wrong keysym and paste silently fails. Force
                 # a Latin layout just for the chord, then restore — the clipboard text is
