@@ -53,6 +53,19 @@ def is_sway_session(environ=os.environ) -> bool:
     return bool(swaysock)
 
 
+def delivery_seat(seats: Any) -> Optional[Dict[str, Any]]:
+    """The seat injected keys land on, or None when that is ambiguous.
+
+    wtype and ydotool devices join the seat that holds the input devices. With
+    one such seat, or one seat at all, that is it. With several, another seat
+    may hold the target while the keys go elsewhere, so delivery is refused.
+    """
+    if not isinstance(seats, list) or not all(isinstance(seat, dict) for seat in seats):
+        return None
+    candidates = [seat for seat in seats if seat.get('devices')] or seats
+    return candidates[0] if len(candidates) == 1 else None
+
+
 class SwayIPC:
     """One Sway instance, addressed by its socket; follows a restart only when
     exactly one live instance is left."""
@@ -168,16 +181,16 @@ class SwayIPC:
         return None, NO_VIEW
 
     def focus_matches(self, expected: Optional[Dict[str, Any]]) -> bool:
-        """True while some seat still focuses the expected view.
+        """True while the delivery seat still focuses the expected view.
 
         GET_SEATS stays small however many windows are open. Container IDs are
         unique within one compositor instance, so the socket must match too.
         """
         if not expected or type(expected.get('sway_id')) is not int:
             return False
-        seats = self.request(GET_SEATS)
+        seat = delivery_seat(self.request(GET_SEATS))
         return (
-            expected.get('sway_socket') == self.socket_path
-            and isinstance(seats, list)
-            and any(isinstance(seat, dict) and seat.get('focus') == expected['sway_id'] for seat in seats)
+            seat is not None
+            and expected.get('sway_socket') == self.socket_path
+            and seat.get('focus') == expected['sway_id']
         )

@@ -131,19 +131,33 @@ class FocusMatchTests(unittest.TestCase):
         self.ipc = SwayIPC('/fake/sway.sock', '/nonexistent', uid=1000)
         self.target = {'sway_id': 42, 'sway_socket': '/fake/sway.sock'}
 
-    def test_any_seat_may_hold_focus(self):
+    def test_the_delivery_seat_must_hold_focus(self):
+        keyboard = [{'type': 'keyboard'}]
         for seats in ([{'name': 'seat0', 'focus': 42}],
-                      [{'name': 'main', 'focus': 42}],
-                      [{'name': 'seat0', 'focus': 9}, {'name': 'seat1', 'focus': 42}]):
+                      [{'name': 'main', 'focus': 42, 'devices': keyboard}],
+                      # `seat main attach *` leaves an empty seat0 behind.
+                      [{'name': 'seat0', 'focus': 9, 'devices': []},
+                       {'name': 'main', 'focus': 42, 'devices': keyboard}]):
             with self.subTest(seats=seats), patch.object(self.ipc, 'request', return_value=seats) as request:
                 self.assertTrue(self.ipc.focus_matches(self.target))
                 request.assert_called_once_with(GET_SEATS)
+
+    def test_another_seat_holding_the_target_does_not_count(self):
+        keyboard = [{'type': 'keyboard'}]
+        for seats in ([{'name': 'seat0', 'focus': 9, 'devices': keyboard},
+                       {'name': 'seat1', 'focus': 42, 'devices': []}],
+                      # Two seats with input: the keys' seat is ambiguous.
+                      [{'name': 'seat0', 'focus': 42, 'devices': keyboard},
+                       {'name': 'seat1', 'focus': 42, 'devices': keyboard}],
+                      [{'name': 'seat0', 'focus': 42}, {'name': 'seat1', 'focus': 42}]):
+            with self.subTest(seats=seats), patch.object(self.ipc, 'request', return_value=seats):
+                self.assertFalse(self.ipc.focus_matches(self.target))
 
     def test_moved_focus_or_other_instance_does_not_match(self):
         with patch.object(self.ipc, 'request', return_value=[{'name': 'seat0', 'focus': 42}]):
             self.assertFalse(self.ipc.focus_matches(dict(self.target, sway_id=43)))
             self.assertFalse(self.ipc.focus_matches(dict(self.target, sway_socket='/old')))
-        for seats in (None, {'focus': 42}, ['bad']):
+        for seats in (None, {'focus': 42}, ['bad'], [], [{'focus': 42}, 'bad']):
             with self.subTest(seats=seats), patch.object(self.ipc, 'request', return_value=seats):
                 self.assertFalse(self.ipc.focus_matches(self.target))
 

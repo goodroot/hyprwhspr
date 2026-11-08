@@ -172,6 +172,7 @@ If focus is unknown, nothing is pasted. If focus moves before paste, nothing is
 sent and your clipboard is restored. In live typing, a focus change stops the
 rest of the dictation. `copy-last` recovers all of it.
 An app rule with `auto_paste: false` blocks recovery when focus is unknown.
+With more than one input seat, nothing is pasted.
 
 XWayland apps like Steam and Wine paste through `xdotool`, then `ydotool`.
 Native windows use `wtype` or `ydotool`.
