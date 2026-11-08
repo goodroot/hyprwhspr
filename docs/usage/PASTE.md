@@ -160,16 +160,17 @@ Dictation into an app with injection disabled is never retained.
 
 ### Sway focus and recovery
 
-Sway paste needs `SWAYSOCK` in the service environment. Setup imports it.
+The service finds Sway through `SWAYSOCK`. Setup imports it.
 After upgrading, run these from inside Sway:
 
 ```bash
-systemctl --user import-environment SWAYSOCK
+systemctl --user import-environment SWAYSOCK XDG_CURRENT_DESKTOP
 systemctl --user restart hyprwhspr.service
 ```
 
 If focus is unknown, nothing is pasted. If focus moves before paste, nothing is
-sent and your clipboard is restored. Either way, `copy-last` recovers the text.
+sent and your clipboard is restored. In live typing, a focus change stops the
+rest of the dictation. `copy-last` recovers all of it.
 An app rule with `auto_paste: false` blocks recovery when focus is unknown.
 
 XWayland apps like Steam and Wine paste through `xdotool`, then `ydotool`.
