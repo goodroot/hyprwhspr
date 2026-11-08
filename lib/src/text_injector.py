@@ -1213,8 +1213,13 @@ except Exception:
         if not parsed:
             return False
         modifiers, key = parsed
-        key = 'Return' if key == 'enter' else key
-        chord = '+'.join([*modifiers, key])
+        # xdotool takes X keysym names, the same ones wtype uses. A raw name
+        # like 'tab' is rejected, yet xdotool still exits 0.
+        keysym = self._wtype_key_name(key)
+        if keysym is None:
+            log(f"  xdotool cannot send key {key!r}")
+            return False
+        chord = '+'.join([*modifiers, keysym])
         try:
             result = subprocess.run(
                 ['xdotool', 'key', '--clearmodifiers', chord],

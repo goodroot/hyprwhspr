@@ -236,6 +236,32 @@ class TextInjectorInjectionTests(unittest.TestCase):
             timeout=5,
         )
 
+    def test_xdotool_chords_use_x_keysym_names(self):
+        injector = self._injector()
+        injector.session_type = "x11"
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+        for chord, sent in (
+            ("ctrl+tab", "ctrl+Tab"),
+            ("f5", "F5"),
+            ("shift+pageup", "shift+Page_Up"),
+            ("enter", "Return"),
+            ("super+-", "super+minus"),
+        ):
+            with self.subTest(chord=chord), mock.patch("text_injector.subprocess.run", return_value=completed) as run:
+                self.assertTrue(injector._send_paste_keys_xdotool(chord))
+                self.assertEqual(run.call_args.args[0], ["xdotool", "key", "--clearmodifiers", sent])
+
+    def test_xdotool_refuses_keys_it_cannot_name(self):
+        # xdotool exits 0 on an unknown key name, so an unmapped key would be
+        # reported as pasted while nothing was typed.
+        injector = self._injector()
+        injector.session_type = "x11"
+        injector.xdotool_available = True
+        injector.wtype_available = injector.ydotool_available = False
+        with mock.patch("text_injector.subprocess.run") as run, mock.patch("text_injector.log"):
+            self.assertFalse(injector._send_paste_keys_xdotool("ctrl+bogus"))
+        run.assert_not_called()
+
     def test_x11_injection_prefers_xdotool_without_wtype_or_ydotool(self):
         injector = self._injector()
         injector.config_manager = ConfigStub(
