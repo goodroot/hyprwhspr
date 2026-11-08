@@ -58,11 +58,15 @@ def _unredirected_path_globals(module, redirected):
 
 
 class SetupCommandScopeTests(unittest.TestCase):
-    def test_sway_focus_diagnostic_does_not_promise_ctrl_v_fallback(self):
-        with mock.patch.dict(config.os.environ, {'XDG_CURRENT_DESKTOP': 'sway'}, clear=True), contextlib.redirect_stdout(io.StringIO()) as output:
-            config._explain_undetected_window()
-        self.assertIn('Nothing will paste', output.getvalue())
-        self.assertNotIn('falls back to Ctrl+V', output.getvalue())
+    def test_sway_focus_diagnostic_names_the_cause(self):
+        for reason, cause in (('no-view', 'Focus a window'), ('ipc', 'Check SWAYSOCK')):
+            with self.subTest(reason=reason), \
+                    mock.patch.dict(config.os.environ, {'XDG_CURRENT_DESKTOP': 'sway'}, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                config._explain_undetected_window(reason)
+            self.assertIn('Nothing will paste', output.getvalue())
+            self.assertIn(cause, output.getvalue())
+            self.assertNotIn('falls back to Ctrl+V', output.getvalue())
 
 
     def test_service_setup_imports_sway_socket(self):

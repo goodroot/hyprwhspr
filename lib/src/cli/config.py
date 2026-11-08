@@ -43,7 +43,7 @@ def config_command(action: str, show_all: bool = False):
         log_error(f"Unknown config action: {action}")
 
 
-def _explain_undetected_window():
+def _explain_undetected_window(sway_reason=None):
     """Explain why the focused window could not be identified, and what to do.
 
     GNOME and KDE run native-Wayland windows that no compositor IPC of ours can
@@ -62,10 +62,14 @@ def _explain_undetected_window():
         print('to choose one shortcut for every app:  "paste_mode": "ctrl_shift"')
         return
 
-    from text_injector import TextInjector
-    if TextInjector.sway_session():
-        print("\nSway focus not found. Nothing will paste.")
-        print("Focus a window and retry. See docs/usage/PASTE.md.")
+    if sway_reason is not None:
+        from sway_focus import NO_VIEW
+        if sway_reason == NO_VIEW:
+            print("\nNo Sway window has focus. Nothing will paste.")
+            print("Focus a window and retry.")
+        else:
+            print("\nSway did not answer over SWAYSOCK. Nothing will paste.")
+            print("Check SWAYSOCK, then restart hyprwhspr. See docs/usage/PASTE.md.")
         return
 
     on_gnome = _is_gnome_or_mutter_session()
@@ -104,15 +108,19 @@ def show_focused_window_config_identifiers():
         from text_injector import TextInjector
 
         injector = TextInjector(config_manager=ConfigManager(verbose=False))
+        sway_reason = None
         try:
-            window_info = injector._get_active_window_info()
+            if injector._sway is not None:
+                window_info, sway_reason = injector._sway.lookup()
+            else:
+                window_info = injector._get_active_window_info()
             identifiers = TextInjector.focused_window_identifiers(window_info)
         finally:
             injector.close()
 
         print("\nFocused window:")
         if not window_info:
-            _explain_undetected_window()
+            _explain_undetected_window(sway_reason)
             return
 
         for key in ('source', 'class', 'app_id', 'title'):

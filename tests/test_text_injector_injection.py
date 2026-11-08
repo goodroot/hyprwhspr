@@ -261,6 +261,8 @@ class TextInjectorInjectionTests(unittest.TestCase):
         with mock.patch("text_injector.subprocess.run") as run, mock.patch("text_injector.log"):
             self.assertFalse(injector._send_paste_keys_xdotool("ctrl+bogus"))
         run.assert_not_called()
+        self.assertFalse(injector._chord_is_usable("ctrl+bogus"))
+        self.assertTrue(injector._chord_is_usable("ctrl+tab"))
 
     def test_x11_injection_prefers_xdotool_without_wtype_or_ydotool(self):
         injector = self._injector()
@@ -1001,7 +1003,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
         paste_chord.assert_called_once_with("ctrl+v")
         direct_type.assert_not_called()
         restore_clipboard.assert_called_once()
-        auto_submit.assert_called_once_with()
+        auto_submit.assert_called_once_with(expected_window=None)
 
     def test_gnome_non_us_layout_uses_clipboard_paste_not_direct_typing(self):
         # German (or any non-US) layout: ydotool type would mangle keys, so we
@@ -1035,7 +1037,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
         direct_type.assert_not_called()
         copy.assert_called_once_with("hello")
         paste_chord.assert_called_once_with("ctrl+v")
-        auto_submit.assert_called_once_with()
+        auto_submit.assert_called_once_with(expected_window=None)
 
     def test_gnome_non_ascii_text_uses_clipboard_paste_not_direct_typing(self):
         # Umlauts/typographic characters can't be produced by ydotool type
