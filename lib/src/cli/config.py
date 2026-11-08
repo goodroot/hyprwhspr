@@ -62,6 +62,12 @@ def _explain_undetected_window():
         print('to choose one shortcut for every app:  "paste_mode": "ctrl_shift"')
         return
 
+    from text_injector import TextInjector
+    if TextInjector.sway_session():
+        print("\nSway focus not found. Nothing will paste.")
+        print("Focus a window and retry. See docs/usage/PASTE.md.")
+        return
+
     on_gnome = _is_gnome_or_mutter_session()
     on_kde = _is_kde_plasma_session()
 

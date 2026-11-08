@@ -15,6 +15,8 @@ import ast
 import math
 import socket
 import struct
+import stat
+from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Any, List, Tuple
@@ -248,6 +250,7 @@ class _StreamSession:
     recovery_allowed: bool = True
     cancelled: threading.Event = field(default_factory=threading.Event)
     recovery_text: Optional[str] = None
+    last_window: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         self.held = []
@@ -397,9 +400,13 @@ class TextInjector:
 
         # Detect available injectors once for the active display protocol.
         self.session_type = os.environ.get('XDG_SESSION_TYPE', '').lower()
+        self._sway_enabled = self.sway_session()
+        self._sway_socket = os.environ.get('SWAYSOCK') if self._sway_enabled else None
+        self._sway_runtime_dir = os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')
         self.ydotool_available = self._check_ydotool()
         self.wtype_available = not self._is_x11_session() and shutil.which('wtype') is not None
-        self.xdotool_available = (self._is_x11_session() or bool(os.environ.get('SWAYSOCK'))) and shutil.which('xdotool') is not None
+        self.xdotool_available = self._is_x11_session() and shutil.which('xdotool') is not None
+        self.sway_xdotool_available = self._sway_enabled and shutil.which('xdotool') is not None
         self._hyprland_shortcut_syntax = None
         self._warned_invalid_ydotool_modifier_overrides = set()
 
@@ -422,6 +429,33 @@ class TextInjector:
             log("⚠️  No injection backend found. Install wtype or ydotool on Wayland, or xdotool on X11.")
         elif not self._is_x11_session() and not self.wtype_available and self.ydotool_available:
             log("ℹ️  wtype not found. Falling back to ydotool for paste hotkey injection.")
+
+    @staticmethod
+    def sway_session():
+        """Prefer the current desktop identity over inherited IPC variables."""
+        if os.environ.get('XDG_SESSION_TYPE', '').lower() == 'x11':
+            return False
+        for key in ('XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'DESKTOP_SESSION'):
+            tokens = re.split(r'[:;,]', os.environ.get(key, '').lower())
+            tokens = [token.strip() for token in tokens if token.strip()]
+            if tokens:
+                return any(token in ('sway', 'swayfx') for token in tokens)
+        if os.environ.get('NIRI_SOCKET') or os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
+            return False
+        return bool(os.environ.get('SWAYSOCK'))
+
+    def _rediscover_sway_socket(self):
+        """Recover a restarted Sway only when there is one unambiguous socket."""
+        candidates = []
+        try:
+            for path in Path(self._sway_runtime_dir).glob(f'sway-ipc.{os.getuid()}.*.sock'):
+                pid = path.name.split('.')[-2]
+                if (pid.isdigit() and Path('/proc', pid).exists()
+                        and stat.S_ISSOCK(path.stat().st_mode)):
+                    candidates.append(str(path))
+        except OSError:
+            return None
+        return candidates[0] if len(candidates) == 1 else None
 
     def _check_ydotool(self) -> bool:
         """Check if ydotool is usable (both the client and the ydotoold daemon)."""
@@ -623,71 +657,116 @@ class TextInjector:
             return False
         return bool(self.config_manager.get_setting('prefer_clipboard_paste', False))
 
-    def _get_sway_window_info(self) -> Optional[Dict[str, Any]]:
-        """Read Sway's authoritative focus without consulting stale X11 focus.
-
-        CONTRACT: bounded IPC (500 ms total, 8 MiB maximum), fixed i3 header,
-        iterative tree traversal, no window titles or clipboard data in logs.
-        A missing/invalid focus is failure, never permission to guess a target.
-        """
-        path = os.environ.get('SWAYSOCK')
-        if not path:
-            return None
+    def _sway_request(self, kind):
+        """Bound each IPC exchange to 500 ms and 8 MiB, including reconnect."""
         deadline = time.monotonic() + 0.5
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as ipc:
+                def budget():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError('Sway IPC deadline')
+                    ipc.settimeout(remaining)
+
                 def receive(count):
                     data = bytearray()
                     while len(data) < count:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise TimeoutError('Sway IPC deadline')
-                        ipc.settimeout(remaining)
+                        budget()
                         part = ipc.recv(min(count - len(data), 65536))
                         if not part:
                             raise ValueError('Sway IPC truncated')
                         data.extend(part)
                     return data
-                ipc.settimeout(0.5)
-                ipc.connect(path)
-                ipc.sendall(b'i3-ipc' + struct.pack('<II', 0, 4))
+
+                path = self._sway_socket
+                if not path:
+                    path = self._rediscover_sway_socket()
+                if not path:
+                    return None
+                budget()
+                try:
+                    ipc.connect(path)
+                except (FileNotFoundError, ConnectionRefusedError):
+                    path = self._rediscover_sway_socket()
+                    if not path:
+                        return None
+                    budget()
+                    ipc.connect(path)
+                self._sway_socket = path
+                budget()
+                ipc.sendall(b'i3-ipc' + struct.pack('=II', 0, kind))
                 header = receive(14)
-                length, kind = struct.unpack('<II', header[6:])
-                if header[:6] != b'i3-ipc' or kind != 4 or length > 8 * 1024 * 1024:
+                length, reply_kind = struct.unpack('=II', header[6:])
+                if header[:6] != b'i3-ipc' or reply_kind != kind or length > 8 * 1024 * 1024:
                     return None
-                tree = json.loads(receive(length))
-            pending = [tree]
-            while pending:
-                node = pending.pop()
-                if not isinstance(node, dict):
-                    return None
-                props = node.get('window_properties') or {}
-                if not isinstance(props, dict):
-                    return None
-                app_id = node.get('app_id')
-                wm_class = props.get('class')
-                if node.get('focused') is True and (app_id or wm_class):
-                    identity = app_id or wm_class
-                    if not isinstance(identity, str) or not isinstance(node.get('id'), int):
-                        return None
-                    return {'class': identity, 'app_id': app_id,
-                            'title': node.get('name') or '', 'source': 'sway',
-                            'sway_id': node['id'], 'xwayland': not bool(app_id),
-                            'x11_window_id': node.get('window')}
-                for key in ('nodes', 'floating_nodes'):
-                    children = node.get(key, [])
-                    if not isinstance(children, list):
-                        return None
-                    pending.extend(children)
+                return json.loads(receive(length))
         except (OSError, ValueError, TypeError, RecursionError, struct.error):
-            pass
+            return None
+
+    def _get_sway_window_info(self) -> Optional[Dict[str, Any]]:
+        """Identify a focused view even if it has no application identifier."""
+        pending = [self._sway_request(4)]
+        while pending:
+            node = pending.pop()
+            if not isinstance(node, dict):
+                return None
+            props = node.get('window_properties') or {}
+            if not isinstance(props, dict):
+                return None
+            app_id = node.get('app_id')
+            wm_class = props.get('class')
+            # pid/shell belong to views; a focused workspace or split container
+            # must not be mistaken for an unidentified application.
+            is_view = bool(app_id or wm_class or node.get('pid') or node.get('shell') or node.get('window'))
+            if node.get('focused') is True and is_view:
+                identity = app_id or wm_class or ''
+                if not isinstance(identity, str) or type(node.get('id')) is not int:
+                    return None
+                return {'class': identity, 'app_id': app_id,
+                        'title': node.get('name') or '', 'source': 'sway',
+                        'sway_id': node['id'], 'sway_socket': self._sway_socket,
+                        'xwayland': node.get('shell') == 'xwayland' or node.get('window') is not None or bool(wm_class),
+                        'x11_window_id': node.get('window')}
+            for key in ('nodes', 'floating_nodes'):
+                children = node.get(key, [])
+                if not isinstance(children, list):
+                    return None
+                pending.extend(children)
         return None
+
+    def _sway_focus_matches(self, expected):
+        # GET_SEATS is small regardless of the number of open windows. IDs are
+        # unique within one compositor instance; never compare across restarts.
+        seats = self._sway_request(101)
+        matches = (expected and type(expected.get('sway_id')) is int
+                   and expected.get('sway_socket') == self._sway_socket
+                   and isinstance(seats, list) and any(
+                       isinstance(seat, dict) and seat.get('focus') == expected.get('sway_id')
+                       for seat in seats))
+        if not matches:
+            log("Sway focus changed or unknown. Nothing sent.")
+        return bool(matches)
+
+    def _sway_x11_focus_matches(self, expected):
+        window_id = expected.get('x11_window_id')
+        if type(window_id) is not int or window_id <= 0:
+            log("Sway XWayland window ID unknown. Nothing sent.")
+            return False
+        try:
+            active = subprocess.run(['xdotool', 'getactivewindow'],
+                                    capture_output=True, text=True, timeout=0.5)
+            if active.returncode == 0 and int(active.stdout.strip()) == window_id:
+                return True
+            log("Sway XWayland focus changed. Nothing sent.")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            log("Sway XWayland focus check failed. Nothing sent.")
+        return False
 
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
         """Get active window info, trying multiple compositor APIs."""
         # WHY: under Sway, XWayland's last active window can be stale while a
         # native Wayland terminal is focused. Never fall through on IPC failure.
-        if os.environ.get('SWAYSOCK'):
+        if getattr(self, '_sway_enabled', False):
             return self._get_sway_window_info()
 
         # Niri
@@ -932,13 +1011,16 @@ except Exception:
             return False  # legacy explicit override — no auto-detect
         return True  # auto-detect path needs the window class
 
-    def _chord_is_usable(self, chord: str) -> bool:
+    def _chord_is_usable(self, chord: str, window_info=None) -> bool:
         """True if `chord` resolves to keys for at least one available backend."""
         parsed = self._parse_key_chord(PASTE_MODE_CHORDS.get(chord, chord))
         if not parsed:
             return False
         _modifiers, key = parsed
-        if getattr(self, 'xdotool_available', False):
+        if getattr(self, 'xdotool_available', False) or (
+            window_info and window_info.get('xwayland')
+            and getattr(self, 'sway_xdotool_available', False)
+        ):
             return True
         if self._is_hyprland_session() and self._wtype_key_name(key) is not None:
             return True
@@ -964,7 +1046,7 @@ except Exception:
                 return False, matched_identifier
             if isinstance(auto_paste, str) and auto_paste.strip():
                 chord = auto_paste.strip()
-                if not self._chord_is_usable(chord):
+                if not self._chord_is_usable(chord, window_info):
                     log(f"⚠️  Ignoring unusable auto_paste chord {chord!r} for app "
                           f"'{matched_identifier}'. Use a form like 'ctrl+v' or 'ctrl+y'; "
                           f"text will be left on the clipboard.")
@@ -982,7 +1064,7 @@ except Exception:
         chord = PASTE_MODE_CHORDS.get(paste_mode, paste_mode)
         # Auto-detected modes ('ctrl'/'ctrl_shift') always resolve; only an
         # explicitly-configured paste_mode can be unusable here.
-        if not self._chord_is_usable(chord):
+        if not self._chord_is_usable(chord, window_info):
             log(f"⚠️  Configured paste_mode {paste_mode!r} is not a usable chord; "
                   f"text will be left on the clipboard.")
         return chord, matched_identifier
@@ -1131,6 +1213,7 @@ except Exception:
         if not parsed:
             return False
         modifiers, key = parsed
+        key = 'Return' if key == 'enter' else key
         chord = '+'.join([*modifiers, key])
         try:
             result = subprocess.run(
@@ -1280,6 +1363,9 @@ except Exception:
 
     def _is_gnome_wayland_session(self) -> bool:
         """Return True for Mutter/GNOME Wayland sessions where uinput chords are unreliable."""
+        # sway:GNOME is common for portals/theming; it must not bypass Sway's focus guard.
+        if getattr(self, '_sway_enabled', False):
+            return False
         session_type = os.environ.get('XDG_SESSION_TYPE', '').lower()
         if session_type and session_type != 'wayland':
             return False
@@ -1489,6 +1575,18 @@ except Exception:
 
         threading.Thread(target=_restore, daemon=True).start()
 
+    def _withdraw_undelivered(self, saved, text: str) -> None:
+        """Undo a copy whose paste was refused, unless the user copied since."""
+        if saved is not None and saved is not _CLIPBOARD_UNSAVED:
+            self._restore_clipboard(saved, injected=text.encode("utf-8"), delay=0)
+            return
+        with self._clipboard_lock:
+            try:
+                if self._save_clipboard() == text.encode("utf-8"):
+                    subprocess.run(["wl-copy", "--clear"], capture_output=True, timeout=2)
+            except Exception as e:
+                log(f"Warning: Could not clear undelivered text from clipboard: {e}")
+
     def _use_hyprland_ydotool(self) -> bool:
         if not self._is_hyprland_session():
             return False
@@ -1500,13 +1598,35 @@ except Exception:
             return False
         return backend == 'ydotool'
 
-    def _send_enter_if_auto_submit(self, cancel_event=None):
+    def _send_enter_if_auto_submit(self, cancel_event=None, expected_window=None):
         """Send Enter key if auto_submit is enabled"""
         if not (self.config_manager and self.config_manager.get_setting('auto_submit', False)):
             return
         if cancel_event is not None and cancel_event.is_set():
             return
         try:
+            if expected_window and expected_window.get('source') == 'sway':
+                if not self._sway_focus_matches(expected_window):
+                    return
+                if expected_window.get('xwayland'):
+                    if getattr(self, 'sway_xdotool_available', False):
+                        if not self._sway_x11_focus_matches(expected_window):
+                            return
+                        if cancel_event is None or not cancel_event.is_set():
+                            if not self._send_paste_keys_xdotool('enter'):
+                                log("Sway XWayland auto-submit failed; not retrying.")
+                        return
+                    if not self.ydotool_available:
+                        log("Sway XWayland auto-submit needs xdotool or ydotool.")
+                        return
+                    # uinput reaches the seat-focused view; wtype keysyms do not.
+                    if cancel_event is None or not cancel_event.is_set():
+                        enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1)
+                        if enter_result is None or enter_result.returncode != 0:
+                            log("Sway XWayland ydotool auto-submit failed; not retrying.")
+                    return
+                if cancel_event is not None and cancel_event.is_set():
+                    return
             if self._use_hyprland_ydotool():
                 enter_result = self._run_ydotool(['key', '28:1', '28:0'], timeout=1) if self.ydotool_available else None
                 if enter_result is None or enter_result.returncode != 0:
@@ -1669,7 +1789,8 @@ except Exception:
                     delay=restore_delay,
                 )
             if submit and not session.cancelled.is_set() and not session.failed and not session.not_pasted:
-                self._send_enter_if_auto_submit(cancel_event=session.cancelled)
+                self._send_enter_if_auto_submit(cancel_event=session.cancelled, **(
+                    {'expected_window': session.last_window} if session.last_window else {}))
             return InjectionOutcome.FAILED if session.failed else InjectionOutcome.INJECTED
 
     def _deliver_stream_words(self, session: _StreamSession, words: List[str]) -> InjectionOutcome:
@@ -1888,15 +2009,26 @@ except Exception:
     ) -> bool:
         """Copy text to clipboard, then trigger the compositor-native paste path."""
         try:
-            window_lookup_needed = bool(os.environ.get('SWAYSOCK')) or self._active_window_lookup_needed()
+            window_lookup_needed = getattr(self, '_sway_enabled', False) or self._active_window_lookup_needed()
             window_info = (
                 self._get_active_window_info()
                 if window_lookup_needed
                 else None
             )
-            if os.environ.get('SWAYSOCK') and window_info is None:
-                # Fail closed before publishing potentially private text.
-                log("Sway focus unavailable; delivery not dispatched.")
+            if getattr(self, '_sway_enabled', False) and window_info is None:
+                # No target is safe to dispatch to. Keep recovery only when an
+                # unknown app cannot match an explicit injection deny rule.
+                applications = self.config_manager.get_setting('applications', {}) if self.config_manager else {}
+                recovery_allowed = not (isinstance(applications, dict) and any(
+                    isinstance(rule, dict) and rule.get('auto_paste') is False
+                    for rule in applications.values()
+                ))
+                if stream is not None:
+                    stream.recovery_allowed = stream.recovery_allowed and recovery_allowed
+                elif retain and recovery_allowed:
+                    with self._last_text_lock:
+                        self._last_text = text
+                log("Sway focus unknown. Nothing sent.")
                 return False
             gnome_wayland_session = self._is_gnome_wayland_session()
             paste_chord, app_match = self._resolve_paste_chord(window_info)
@@ -1959,7 +2091,7 @@ except Exception:
             with self._clipboard_lock:
                 # Preserve the existing non-Sway call contract. Only Sway
                 # requires an expected focus identity at delivery time.
-                focus_guard = {'expected_window': window_info} if os.environ.get('SWAYSOCK') else {}
+                focus_guard = {'expected_window': window_info} if getattr(self, '_sway_enabled', False) else {}
                 if stream is not None:
                     return self._paste_via_clipboard(
                         text, paste_chord, gnome_wayland_session, auto_submit, stream=stream, **focus_guard)
@@ -2005,35 +2137,41 @@ except Exception:
             # taken when direct typing was skipped for a non-US layout / non-ASCII text.
             if stream is not None and stream.cancelled.is_set():
                 return False
-            sway_xwayland = False
-            if os.environ.get('SWAYSOCK'):
+            sway_xwayland = None
+            if getattr(self, '_sway_enabled', False):
                 # WHY: clipboard publication/settling may take seconds. Recheck
                 # after it, at delivery time; never paste into a changed focus or
-                # activate a previous window. A failed check leaves text recoverable.
-                current = self._get_sway_window_info()
-                if not expected_window or not current or any(
-                    current.get(key) != expected_window.get(key)
-                    for key in ('sway_id', 'class', 'app_id', 'x11_window_id')
-                ):
-                    log("Sway focus changed or unavailable; paste not dispatched.")
+                # activate a previous window. The new focus is unknown, so take the
+                # text back off the clipboard; copy-last still recovers it.
+                withdraw_from = saved_clipboard if stream is None else stream.saved_clipboard
+                if not self._sway_focus_matches(expected_window):
+                    self._withdraw_undelivered(withdraw_from, text)
                     return False
-                sway_xwayland = current.get('xwayland', False)
-                if sway_xwayland:
-                    # CONTRACT: XTest is used only for Sway-confirmed XWayland.
-                    # wtype can exit 0 while XWayland receives a different keysym
-                    # after its temporary keymap. Verify X focus before XTest.
-                    try:
-                        active = subprocess.run(['xdotool', 'getactivewindow'],
-                            capture_output=True, text=True, timeout=0.5)
-                        if active.returncode or int(active.stdout.strip()) != current.get('x11_window_id'):
+                if expected_window.get('xwayland', False):
+                    if getattr(self, 'sway_xdotool_available', False):
+                        if not self._sway_x11_focus_matches(expected_window):
+                            self._withdraw_undelivered(withdraw_from, text)
                             return False
-                    except (OSError, ValueError, subprocess.TimeoutExpired):
+                        sway_xwayland = 'xdotool'
+                    elif self.ydotool_available:
+                        # Seat focus is verified; uinput lands there.
+                        sway_xwayland = 'ydotool'
+                    else:
+                        log("Sway XWayland paste needs xdotool or ydotool. Text is on the clipboard.")
                         return False
+            # Focus IPC and X11 verification can block; cancellation may arrive
+            # while either check is in flight.
+            if stream is not None and stream.cancelled.is_set():
+                return False
             pasted = False
             hyprland_ydotool = self._use_hyprland_ydotool()
             if sway_xwayland:
                 # Do not retry another transport after a possibly dispatched key.
-                pasted = bool(getattr(self, 'xdotool_available', False)) and self._send_paste_keys_xdotool(paste_chord)
+                if sway_xwayland == 'xdotool':
+                    pasted = self._send_paste_keys_xdotool(paste_chord)
+                else:
+                    self._clear_stuck_modifiers()
+                    pasted = self._send_paste_keys_slow(paste_chord)
                 if not pasted:
                     log("Sway XWayland paste failed; not retrying another transport.")
                     return False
@@ -2098,13 +2236,15 @@ except Exception:
             if stream is not None:
                 if pasted:
                     stream.last_pasted = text
+                    stream.last_window = expected_window
             elif pasted:
                 restore_delay = 5.0
                 if self.config_manager:
                     restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
                 if auto_submit:
-                    self._send_enter_if_auto_submit()
+                    self._send_enter_if_auto_submit(**(
+                        {'expected_window': expected_window} if expected_window else {}))
             elif (
                 gnome_wayland_session
                 and not getattr(self, '_last_ydotool_failure_explicit', False)

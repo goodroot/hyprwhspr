@@ -58,6 +58,34 @@ def _unredirected_path_globals(module, redirected):
 
 
 class SetupCommandScopeTests(unittest.TestCase):
+    def test_sway_focus_diagnostic_does_not_promise_ctrl_v_fallback(self):
+        with mock.patch.dict(config.os.environ, {'XDG_CURRENT_DESKTOP': 'sway'}, clear=True), contextlib.redirect_stdout(io.StringIO()) as output:
+            config._explain_undetected_window()
+        self.assertIn('Nothing will paste', output.getvalue())
+        self.assertNotIn('falls back to Ctrl+V', output.getvalue())
+
+
+    def test_service_setup_imports_sway_socket(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                mock.patch.dict(systemd.os.environ, {}, clear=True),
+                mock.patch.object(systemd, 'HYPRWHSPR_ROOT', str(ROOT)),
+                mock.patch.object(systemd, 'USER_SYSTEMD_DIR', Path(directory)),
+                mock.patch.object(systemd, '_validate_hyprwhspr_root', return_value=True),
+                mock.patch.object(systemd, 'is_nix_install', return_value=False),
+                mock.patch.object(systemd, '_migrate_remove_managed_ydotool_unit'),
+                mock.patch.object(systemd, 'run_command', return_value=mock.Mock(returncode=0)) as run,
+                mock.patch.object(systemd.subprocess, 'run', return_value=mock.Mock(returncode=1)),
+            ):
+                self.assertTrue(systemd.setup_systemd('install'))
+            imports = [call.args[0] for call in run.call_args_list
+                       if call.args[0][:3] == ['systemctl', '--user', 'import-environment']]
+            self.assertEqual(len(imports), 1)
+            self.assertTrue({'SWAYSOCK', 'NIRI_SOCKET', 'HYPRLAND_INSTANCE_SIGNATURE',
+                             'WAYLAND_DISPLAY', 'DISPLAY', 'XAUTHORITY', 'XDG_SESSION_TYPE',
+                             'XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'DESKTOP_SESSION'}
+                            .issubset(imports[0][3:]))
+
     def test_run_command_is_not_function_local(self):
         # Regression: a conditional local re-import of run_command made it a
         # function-local throughout setup_command, so non-cloud GNOME setups hit
