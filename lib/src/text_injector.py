@@ -1718,12 +1718,16 @@ except Exception:
         with self._delivery_lock:
             if session is not self._stream:
                 return InjectionOutcome.FAILED
-            if submit and not session.failed and not session.cancelled.is_set() and session.held:
-                try:
-                    self._deliver_stream_words(session, session.held)
-                except Exception as e:
-                    session.failed = True
-                    log(f'[LIVE] Held text delivery failed: {e}')
+            if session.held:
+                if submit and not session.failed and not session.cancelled.is_set():
+                    try:
+                        self._deliver_stream_words(session, session.held)
+                    except Exception as e:
+                        session.failed = True
+                        log(f'[LIVE] Held text delivery failed: {e}')
+                else:
+                    # Never typed, but spoken: recovery must still have it.
+                    session.raw_parts.append(' '.join(session.held))
             full_text = self._preprocess_text(' '.join(session.raw_parts))
             if not session.injected_any:
                 if session.failed and session.recovery_allowed:
