@@ -217,6 +217,11 @@ class CompositorEnvironmentTests(unittest.TestCase):
         self.assertIn('SWAYSOCK not found', warning[0].args[0])
         self.assertIn('import-environment SWAYSOCK', output)
 
+    def test_leftover_niri_socket_does_not_hide_sway_advice(self):
+        _, warning, output = self.report('NIRI_SOCKET=/old\n', niri=True, sway=True)
+        self.assertIn('SWAYSOCK not found', warning[0].args[0])
+        self.assertNotIn('NIRI', output)
+
     def test_other_sessions_report_nothing(self):
         self.assertEqual(self.report(''), ([], [], ''))
 

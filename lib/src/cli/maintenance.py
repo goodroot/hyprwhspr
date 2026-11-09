@@ -652,16 +652,12 @@ def state_reset_command(remove_all: bool = False):
 
 
 def _report_compositor_ipc_environment(env_output: str) -> None:
-    """Warn when the service would miss the compositor socket it needs."""
-    if _is_niri_session():
-        if 'NIRI_SOCKET=' in env_output:
-            log_success("✓ NIRI_SOCKET set in systemd user environment")
-        else:
-            log_warning("⚠ NIRI_SOCKET not found in systemd user environment")
-            print("  Niri window detection needs NIRI_SOCKET in the systemd user environment.")
-            print("  Add to your Niri startup config:")
-            print("    spawn-at-startup \"dbus-update-activation-environment\" \"--systemd\" \"WAYLAND_DISPLAY\" \"XDG_CURRENT_DESKTOP\" \"NIRI_SOCKET\"")
-    elif is_sway_session():
+    """Warn when the service would miss the compositor socket it needs.
+
+    Sway first: is_sway_session already outranks a leftover NIRI_SOCKET,
+    while _is_niri_session trusts any.
+    """
+    if is_sway_session():
         if 'SWAYSOCK=' in env_output:
             log_success("✓ SWAYSOCK set in systemd user environment")
         else:
@@ -669,6 +665,14 @@ def _report_compositor_ipc_environment(env_output: str) -> None:
             print("  Without it, Sway paste may not run. Run inside Sway:")
             print("    systemctl --user import-environment SWAYSOCK XDG_CURRENT_DESKTOP")
             print("    systemctl --user restart hyprwhspr.service")
+    elif _is_niri_session():
+        if 'NIRI_SOCKET=' in env_output:
+            log_success("✓ NIRI_SOCKET set in systemd user environment")
+        else:
+            log_warning("⚠ NIRI_SOCKET not found in systemd user environment")
+            print("  Niri window detection needs NIRI_SOCKET in the systemd user environment.")
+            print("  Add to your Niri startup config:")
+            print("    spawn-at-startup \"dbus-update-activation-environment\" \"--systemd\" \"WAYLAND_DISPLAY\" \"XDG_CURRENT_DESKTOP\" \"NIRI_SOCKET\"")
 
 
 def validate_command():
