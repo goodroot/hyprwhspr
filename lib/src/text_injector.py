@@ -23,9 +23,9 @@ except ImportError:
     from service_log import log
 
 try:
-    from .sway_focus import SwayIPC, NO_VIEW, is_sway_session
+    from .sway_focus import REASON_TEXT, SwayIPC, is_sway_session
 except ImportError:
-    from sway_focus import SwayIPC, NO_VIEW, is_sway_session
+    from sway_focus import REASON_TEXT, SwayIPC, is_sway_session
 
 try:
     from .ydotoold_session import YdotooldSession
@@ -648,28 +648,20 @@ class TextInjector:
             return False
         return bool(self.config_manager.get_setting('prefer_clipboard_paste', False))
 
-    def _sway_x11_focus(self, expected) -> Optional[bool]:
-        """Whether X11 agrees the expected XWayland window is active.
+    def _sway_x11_focused(self, expected) -> bool:
+        """Whether X11 confirms the expected XWayland window is active.
 
-        None means X11 could not answer: no window ID, or xdotool failed. Sway
-        has already confirmed seat focus, so that is not a refusal.
+        A missing window ID or a failed query is not a confirmation.
         """
         window_id = expected.get('x11_window_id')
         if type(window_id) is not int or window_id <= 0:
-            log("Sway XWayland window ID unknown.")
-            return None
+            return False
         try:
             active = subprocess.run(['xdotool', 'getactivewindow'],
                                     capture_output=True, text=True, timeout=0.5)
-            if active.returncode == 0:
-                if int(active.stdout.strip()) == window_id:
-                    return True
-                log("Sway XWayland focus changed. Nothing sent.")
-                return False
+            return active.returncode == 0 and int(active.stdout.strip()) == window_id
         except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
-        log("Sway XWayland focus check failed.")
-        return None
+            return False
 
     def _get_active_window_info(self) -> Optional[Dict[str, Any]]:
         """Get active window info, trying multiple compositor APIs."""
@@ -1114,20 +1106,25 @@ except Exception:
                 self._hyprland_shortcut_syntax = None
         return False
 
+    def _xdotool_chord(self, chord: str) -> Optional[str]:
+        """The chord as xdotool spells it, or None if xdotool cannot name it.
+
+        xdotool takes X keysym names, the same ones wtype uses. A raw name
+        like 'tab' is rejected, yet xdotool still exits 0.
+        """
+        parsed = self._parse_key_chord(PASTE_MODE_CHORDS.get(chord, chord))
+        if not parsed:
+            return None
+        modifiers, key = parsed
+        keysym = self._wtype_key_name(key)
+        return '+'.join([*modifiers, keysym]) if keysym is not None else None
+
     def _send_paste_keys_xdotool(self, paste_chord: str) -> bool:
         """Send a symbolic paste chord through the native X11 input path."""
-        paste_chord = PASTE_MODE_CHORDS.get(paste_chord, paste_chord)
-        parsed = self._parse_key_chord(paste_chord)
-        if not parsed:
+        chord = self._xdotool_chord(paste_chord)
+        if chord is None:
+            log(f"  xdotool cannot send {paste_chord!r}")
             return False
-        modifiers, key = parsed
-        # xdotool takes X keysym names, the same ones wtype uses. A raw name
-        # like 'tab' is rejected, yet xdotool still exits 0.
-        keysym = self._wtype_key_name(key)
-        if keysym is None:
-            log(f"  xdotool cannot send key {key!r}")
-            return False
-        chord = '+'.join([*modifiers, keysym])
         try:
             result = subprocess.run(
                 ['xdotool', 'key', '--clearmodifiers', chord],
@@ -1539,14 +1536,18 @@ except Exception:
             return False
         return backend == 'ydotool'
 
-    def _delivery_transport(self, expected_window) -> Optional[str]:
-        """How to deliver to `expected_window`, checked right before dispatch.
+    def _delivery_transport(self, expected_window, chord: str = 'enter') -> Optional[str]:
+        """How to deliver `chord` to `expected_window`, checked right before dispatch.
 
         'default' is the normal backend chain. On Sway, None means focus moved
-        or cannot be confirmed: send nothing. XWayland views take 'xdotool'
-        when X11 confirms focus, else 'ydotool', which lands on the
-        seat-focused view. wtype keysyms are unreliable there, so with neither
-        tool the result is 'clipboard'.
+        or cannot be confirmed: send nothing. 'clipboard' means no tool can
+        send it, so the text waits there for a manual paste.
+
+        XWayland views prefer 'ydotool': uinput follows keyboard focus, like
+        wtype on native windows, so a launcher opened over the app gets the
+        keys. xdotool's XTest events go to the X window even then, so it is
+        only the fallback, and only once X11 confirms the window is active.
+        wtype keysyms are unreliable under XWayland.
         """
         if self._sway is None:
             return 'default'
@@ -1555,18 +1556,14 @@ except Exception:
             return None
         if not expected_window.get('xwayland'):
             return 'default'
-        x11_focus = self._sway_x11_focus(expected_window) if self.sway_xdotool_available else None
-        if x11_focus is True:
-            return 'xdotool'
-        if x11_focus is False:
-            return None
         if self.ydotool_available:
             return 'ydotool'
-        if self.sway_xdotool_available:
-            # X11 cannot confirm focus, so nothing xdotool sends is safe.
-            log("Sway XWayland focus unconfirmed. Nothing sent.")
-            return None
-        return 'clipboard'
+        if not self.sway_xdotool_available or self._xdotool_chord(chord) is None:
+            return 'clipboard'
+        if self._sway_x11_focused(expected_window):
+            return 'xdotool'
+        log("X11 cannot confirm Sway XWayland focus. Nothing sent.")
+        return None
 
     def _send_enter_ydotool(self) -> Optional[str]:
         """Press Enter through uinput; the error text, or None on success."""
@@ -1606,13 +1603,7 @@ except Exception:
                     log(f"  ydotool auto_submit Enter failed: {error}; not retrying")
                 return
             if self._is_x11_session() and getattr(self, 'xdotool_available', False):
-                enter_result = subprocess.run(
-                    ['xdotool', 'key', '--clearmodifiers', 'Return'],
-                    capture_output=True, timeout=1,
-                )
-                if enter_result.returncode != 0:
-                    stderr = (enter_result.stderr or b'').decode('utf-8', 'ignore')
-                    log(f"  xdotool Enter key failed: {stderr}")
+                self._send_paste_keys_xdotool('enter')  # logs its own failure
             elif self._is_hyprland_session() and self._send_shortcut_hyprland('enter'):
                 return
             elif cancel_event is not None and cancel_event.is_set():
@@ -2077,8 +2068,7 @@ except Exception:
             if stream is not None:
                 stream.target = window_info
             return window_info
-        log("No Sway window focused. Nothing sent." if reason == NO_VIEW
-            else "Sway IPC unavailable. Nothing sent.")
+        log(f"{REASON_TEXT[reason]}. Nothing sent.")
         # Keep recovery only when an unknown app cannot match an explicit
         # injection deny rule.
         applications = self.config_manager.get_setting('applications', {}) if self.config_manager else {}
@@ -2133,7 +2123,7 @@ except Exception:
             # WHY: clipboard publication/settling may take seconds. Recheck focus
             # after it, at delivery time; never paste into a changed focus or
             # activate a previous window.
-            transport = self._delivery_transport(expected_window)
+            transport = self._delivery_transport(expected_window, paste_chord)
             if transport is None:
                 return self._refuse_delivery(saved_clipboard, text, stream)
             if transport == 'clipboard':
@@ -2186,7 +2176,7 @@ except Exception:
                 time.sleep(0.02)
                 # A failed wtype attempt took time; focus may have moved since
                 # the first check. Recheck before a second transport fires.
-                if self.wtype_available and self._delivery_transport(expected_window) is None:
+                if self.wtype_available and self._delivery_transport(expected_window, paste_chord) is None:
                     return self._refuse_delivery(saved_clipboard, text, stream)
                 # Non-Latin layouts (Thai, Russian, …) remap KEY_V, so the raw-keycode
                 # Ctrl+V chord lands as the wrong keysym and paste silently fails. Force

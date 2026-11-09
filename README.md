@@ -54,7 +54,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **Wayland or X11 session** (GNOME, KDE Plasma, Sway, Hyprland, Niri, etc.).
 - **Clipboard/window tools:**
     - `wl-clipboard` and `wtype` on Wayland
-    - `xdotool` for Sway XWayland apps like Steam and Wine
+    - `xdotool` as a fallback for Sway XWayland apps like Steam and Wine
     - `python-pyperclip`, `xclip`, `xdotool`, and `xprop` on X11 (installed by the dependency script)
 - **Waybar or Noctalia** (optional, for status bar)
 - **gtk4 + PyCairo** (optional, for visualizer)

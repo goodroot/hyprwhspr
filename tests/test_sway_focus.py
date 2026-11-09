@@ -15,7 +15,8 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib' / 'src'))
 import sway_focus
-from sway_focus import GET_SEATS, GET_TREE, IPC_UNAVAILABLE, NO_VIEW, SwayIPC, is_sway_session
+from sway_focus import (GET_SEATS, GET_TREE, IPC_UNAVAILABLE, MULTI_SEAT, NO_VIEW,
+                        SwayIPC, is_sway_session)
 
 
 class Wire:
@@ -47,14 +48,16 @@ def view(app='kitty', **extra):
 
 
 class LookupTests(unittest.TestCase):
+    """lookup() asks GET_SEATS for the delivery seat, then finds its view."""
+
     def setUp(self):
         self.ipc = SwayIPC('/fake/sway.sock', '/nonexistent', uid=1000)
 
-    def lookup(self, tree):
-        wire = Wire(reply(tree))
-        with patch.object(sway_focus.socket, 'socket', return_value=wire):
+    def lookup(self, tree, seats=({'name': 'seat0', 'focus': 42},)):
+        wires = [Wire(reply(list(seats), GET_SEATS)), Wire(reply(tree, GET_TREE))]
+        with patch.object(sway_focus.socket, 'socket', side_effect=wires):
             result = self.ipc.lookup()
-        self.assertEqual(wire.sent, b'i3-ipc' + struct.pack('=II', 0, GET_TREE))
+        self.assertEqual(wires[0].sent, b'i3-ipc' + struct.pack('=II', 0, GET_SEATS))
         return result
 
     def test_native_view(self):
@@ -70,10 +73,13 @@ class LookupTests(unittest.TestCase):
         info, _ = self.lookup({'nodes': [view(None, window=123, window_properties={'class': 'Chatgpt'})]})
         self.assertEqual((info['class'], info['xwayland'], info['x11_window_id']), ('Chatgpt', True, 123))
 
-    def test_unfocused_xwayland_view_is_not_selected(self):
-        stale = dict(view(None, window_properties={'class': 'Chatgpt'}), focused=False)
-        info, _ = self.lookup({'nodes': [stale, view()]})
-        self.assertEqual(info['class'], 'kitty')
+    def test_the_seat_decides_not_the_tree_flag(self):
+        # The tree's `focused` flag follows Sway's default seat; the delivery
+        # seat's focus is what paste is checked against later.
+        flagged = dict(view(None, window_properties={'class': 'Chatgpt'}), id=7)
+        unflagged = dict(view(), focused=False)
+        info, _ = self.lookup({'nodes': [flagged, unflagged]})
+        self.assertEqual((info['class'], info['sway_id']), ('kitty', 42))
 
     def test_views_without_app_identity(self):
         for node, xwayland in (
@@ -85,22 +91,32 @@ class LookupTests(unittest.TestCase):
                 self.assertEqual((info['class'], info['xwayland']), ('', xwayland))
 
     def test_focused_workspace_or_container_is_no_view(self):
-        container = {'id': 7, 'type': 'con', 'focused': True, 'nodes': [dict(view(), focused=False)]}
-        for tree in ({'id': 42, 'type': 'workspace', 'focused': True}, {'nodes': [container]}):
+        container = {'id': 42, 'type': 'con', 'nodes': [dict(view(), id=7, focused=False)]}
+        for tree in ({'id': 42, 'type': 'workspace'}, {'nodes': [container]}, {'nodes': []}):
             with self.subTest(tree=tree):
                 self.assertEqual(self.lookup(tree), (None, NO_VIEW))
 
+    def test_seat_problems(self):
+        for seats, reason in (
+            ([], NO_VIEW),
+            ([{'name': 'seat0', 'focus': 42}, {'name': 'main', 'focus': 42}], MULTI_SEAT),
+            ([{'name': 'seat0', 'focus': None}], IPC_UNAVAILABLE),
+            (['bad'], IPC_UNAVAILABLE),
+        ):
+            with self.subTest(seats=seats):
+                self.assertEqual(self.lookup({'nodes': [view()]}, seats), (None, reason))
+
     def test_malformed_tree_is_unavailable(self):
         for tree in ({'nodes': 'bad'}, {'nodes': [view(window_properties='bad')]},
-                     {'nodes': [dict(view(), id='42')]}):
+                     {'nodes': [dict(view(), app_id=7)]}):
             with self.subTest(tree=tree):
                 self.assertEqual(self.lookup(tree), (None, IPC_UNAVAILABLE))
 
     def test_wire_errors_are_unavailable(self):
-        for data in (b'', b'i3-ipc' + struct.pack('=II', 9 * 1024 * 1024, GET_TREE),
-                     b'bad-ip' + struct.pack('=II', 0, GET_TREE),
+        for data in (b'', b'i3-ipc' + struct.pack('=II', 9 * 1024 * 1024, GET_SEATS),
+                     b'bad-ip' + struct.pack('=II', 0, GET_SEATS),
                      b'i3-ipc' + struct.pack('=II', 0, 2),
-                     b'i3-ipc' + struct.pack('=II', 1, GET_TREE) + b'{'):
+                     b'i3-ipc' + struct.pack('=II', 1, GET_SEATS) + b'{'):
             with self.subTest(data=data[:14]), patch.object(sway_focus.socket, 'socket', return_value=Wire(data)):
                 self.assertEqual(self.ipc.lookup(), (None, IPC_UNAVAILABLE))
 
@@ -116,14 +132,24 @@ class LookupTests(unittest.TestCase):
         self.assertEqual(wire.connected, [])
 
     def test_follows_a_restarted_sway(self):
-        wire = Wire(reply({'nodes': [view()]}))
-        wire.connect = Mock(side_effect=[FileNotFoundError(), None])
-        with patch.object(sway_focus.socket, 'socket', return_value=wire), \
+        seats = Wire(reply([{'name': 'seat0', 'focus': 42}], GET_SEATS))
+        seats.connect = Mock(side_effect=[FileNotFoundError(), None])
+        tree = Wire(reply({'nodes': [view()]}))
+        with patch.object(sway_focus.socket, 'socket', side_effect=[seats, tree]), \
                 patch.object(self.ipc, 'rediscover', return_value='/new/sway.sock'):
             info, _ = self.ipc.lookup()
         self.assertEqual(info['sway_socket'], '/new/sway.sock')
-        self.assertEqual(self.ipc.socket_path, '/new/sway.sock')
-        self.assertEqual(wire.connect.call_args_list[-1].args, ('/new/sway.sock',))
+        self.assertEqual(seats.connect.call_args_list[-1].args, ('/new/sway.sock',))
+        self.assertEqual(tree.connected, ['/new/sway.sock'])
+
+    def test_replies_from_two_instances_are_refused(self):
+        def tree_after_restart(kind):
+            if kind == GET_SEATS:
+                return [{'name': 'seat0', 'focus': 42}]
+            self.ipc.socket_path = '/new/sway.sock'
+            return {'nodes': [view()]}
+        with patch.object(self.ipc, 'request', side_effect=tree_after_restart):
+            self.assertEqual(self.ipc.lookup(), (None, IPC_UNAVAILABLE))
 
 
 class FocusMatchTests(unittest.TestCase):

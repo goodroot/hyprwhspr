@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib' / 'src'))
 import text_injector as patched_injector
-from sway_focus import GET_SEATS, GET_TREE, IPC_UNAVAILABLE, NO_VIEW, SwayIPC
+from sway_focus import GET_SEATS, GET_TREE, IPC_UNAVAILABLE, MULTI_SEAT, NO_VIEW, SwayIPC
 from tests.text_injector_helpers import ConfigStub, make_injector
 
 Outcome = patched_injector.InjectionOutcome
@@ -120,16 +120,30 @@ class DeliveryTests(unittest.TestCase):
         i._send_paste_keys_slow.assert_called_once_with('ctrl+v')
         self.assertEqual(i._sway.request.call_count, 1)
 
-    def test_xwayland_view_uses_xdotool(self):
+    def test_xwayland_view_prefers_ydotool(self):
+        # uinput follows keyboard focus; XTest would bypass a launcher holding it.
+        with patch.object(patched_injector.subprocess, 'run') as run:
+            self.assertTrue(self.injector._paste_via_clipboard(
+                'Synthetic fixture', 'ctrl+v', False, False, expected_window=target(True)))
+        self.injector._send_paste_keys_slow.assert_called_once_with('ctrl+v')
+        self.assertEqual(self.senders(), {'wtype': False, 'xdotool': False, 'slow': True})
+        run.assert_not_called()  # no X11 query needed
+
+    def test_xwayland_without_ydotool_uses_xdotool(self):
+        self.injector.ydotool_available = False
         self.assertTrue(self.paste(target(True)))
         self.injector._send_paste_keys_xdotool.assert_called_once_with('ctrl+v')
         self.assertEqual(self.senders(), {'wtype': False, 'xdotool': True, 'slow': False})
 
-    def test_xwayland_without_xdotool_uses_ydotool(self):
-        self.injector.sway_xdotool_available = False
-        self.assertTrue(self.paste(target(True)))
-        self.injector._send_paste_keys_slow.assert_called_once_with('ctrl+v')
-        self.assertEqual(self.senders(), {'wtype': False, 'xdotool': False, 'slow': True})
+    def test_xdotool_route_needs_a_nameable_key(self):
+        i = self.injector
+        i.ydotool_available = False
+        with patch.object(patched_injector.subprocess, 'run') as run:
+            self.assertTrue(i._paste_via_clipboard(
+                'Synthetic fixture', 'ctrl+bogus', False, False, expected_window=target(True)))
+        self.assertFalse(any(self.senders().values()))
+        run.assert_not_called()
+        i._restore_clipboard.assert_not_called()
 
     def test_xwayland_transport_failure_is_not_retried(self):
         i = self.injector
@@ -160,7 +174,9 @@ class DeliveryTests(unittest.TestCase):
             ('IPC lost', dict(focus=None), target()),
             ('other Sway instance', dict(), dict(target(), sway_socket='/old')),
             ('X11 focus moved', dict(), target(True)),
+            ('X11 window id missing', dict(), dict(target(True), x11_window_id=None)),
         )
+        self.injector.ydotool_available = False  # X11 checks guard only xdotool
         for name, ipc, expected in cases:
             with self.subTest(name):
                 i = self.injector
@@ -170,26 +186,6 @@ class DeliveryTests(unittest.TestCase):
                 self.assertFalse(self.paste(expected, xfocus='456'))
                 self.assertFalse(any(self.senders().values()))
                 i._withdraw_undelivered.assert_called_once_with(b'previous', 'Synthetic fixture')
-
-    def test_unconfirmed_x11_focus_falls_back_to_ydotool(self):
-        # Seat focus is confirmed; X11 just cannot answer for this window.
-        i = self.injector
-        for name, expected, xfocus in (
-            ('no window id', dict(target(True), x11_window_id=None), '123'),
-            ('xdotool fails', target(True), 'not a window id'),
-        ):
-            with self.subTest(name):
-                i._send_paste_keys_slow.reset_mock()
-                self.assertTrue(self.paste(expected, xfocus=xfocus))
-                i._send_paste_keys_slow.assert_called_once_with('ctrl+v')
-                i._send_paste_keys_xdotool.assert_not_called()
-
-    def test_unconfirmed_x11_focus_without_ydotool_sends_nothing(self):
-        i = self.injector
-        i.ydotool_available = False
-        self.assertFalse(self.paste(dict(target(True), x11_window_id=None)))
-        self.assertFalse(any(self.senders().values()))
-        i._withdraw_undelivered.assert_called_once()
 
     def test_clipboard_only_live_typing_keeps_whole_dictation(self):
         i = self.injector
@@ -244,28 +240,31 @@ class AutoSubmitTests(unittest.TestCase):
             self.injector._send_enter_if_auto_submit(cancel_event=cancel_event, expected_window=expected)
         return [c.args[0] for c in run.call_args_list], self.injector._run_ydotool.called
 
-    def test_xwayland_enter_uses_xdotool(self):
-        commands, ydotool = self.submit(target(True))
-        self.assertEqual(commands[-1], ['xdotool', 'key', '--clearmodifiers', 'Return'])
-        self.assertFalse(ydotool)
-        self.assertFalse(any(c[0] == 'wtype' for c in commands))
-
-    def test_xwayland_enter_without_xdotool_uses_ydotool(self):
-        self.injector.sway_xdotool_available = False
+    def test_xwayland_enter_prefers_ydotool(self):
         commands, _ = self.submit(target(True))
         self.injector._run_ydotool.assert_called_once_with(['key', '28:1', '28:0'], timeout=1)
         self.assertEqual(commands, [])
+
+    def test_xwayland_enter_without_ydotool_uses_xdotool(self):
+        self.injector.ydotool_available = False
+        commands, ydotool = self.submit(target(True))
+        self.assertEqual(commands[-1][:3], ['xdotool', 'key', '--clearmodifiers'])
+        self.assertEqual(commands[-1][3], 'Return')
+        self.assertFalse(ydotool)
+        self.assertFalse(any(c[0] == 'wtype' for c in commands))
 
     def test_xwayland_enter_with_neither_tool_is_skipped(self):
         self.injector.sway_xdotool_available = self.injector.ydotool_available = False
         self.assertEqual(self.submit(target(True)), ([], False))
 
     def test_enter_never_follows_moved_focus(self):
-        for name, ipc, expected in (('Sway focus', dict(focus=99), target(True)),
-                                    ('X11 focus', dict(), target(True)),
-                                    ('no target', dict(), None)):
+        for name, ipc, expected, ydotool_available in (
+                ('Sway focus', dict(focus=99), target(True), True),
+                ('X11 focus', dict(), target(True), False),
+                ('no target', dict(), None, True)):
             with self.subTest(name):
                 self.injector._sway = sway_ipc(**ipc)
+                self.injector.ydotool_available = ydotool_available
                 commands, ydotool = self.submit(expected, xfocus='456')
                 self.assertNotIn(['xdotool', 'key', '--clearmodifiers', 'Return'], commands)
                 self.assertFalse(ydotool)
@@ -285,6 +284,7 @@ class InjectTests(unittest.TestCase):
         i.config_manager = ConfigStub({'auto_submit': True, 'append_trailing_space': False})
         i._sway = SwayIPC('/fake/sway.sock', '/nonexistent', uid=1000)
         i.sway_xdotool_available = True
+        i.ydotool_available = False  # observe keys through the xdotool stub
         self.focus = 42
         self.tree = {'nodes': [dict(id=42, focused=True, shell='xwayland', window=123,
                                     window_properties={'class': 'Chatgpt'})]}
@@ -313,7 +313,7 @@ class InjectTests(unittest.TestCase):
     def test_one_shot_reads_tree_once_and_rechecks_before_paste_and_enter(self):
         self.assertEqual(self.injector.inject_text('hello'), Outcome.INJECTED)
         self.assertEqual(self.sent, ['ctrl+v', 'enter'])
-        self.assertEqual(self.requests(), [GET_TREE, GET_SEATS, GET_SEATS])
+        self.assertEqual(self.requests(), [GET_SEATS, GET_TREE, GET_SEATS, GET_SEATS])
 
     def test_live_typing_reads_tree_once_per_dictation(self):
         i = self.injector
@@ -338,13 +338,29 @@ class InjectTests(unittest.TestCase):
         self.assertEqual(i._last_text, 'one two three')
         i.release_stream(session)
 
+    def test_held_words_reach_recovery_after_focus_moves(self):
+        # "new" may begin "new line", so it is held for the next chunk.
+        i = self.injector
+        session = i.begin_stream()
+        self.assertEqual(i.inject_stream_chunk(session, 'one', final=True), Outcome.INJECTED)
+        self.focus = 99
+        i.inject_stream_chunk(session, 'two new', final=False)
+        self.assertEqual(session.held, ['new'])
+        self.assertEqual(i.end_stream(session), Outcome.FAILED)
+        self.assertEqual(i._last_text, 'one two new')
+        i.release_stream(session)
+
     def test_unknown_focus_logs_why(self):
-        for tree, reason, message in (
-            ({'id': 1, 'type': 'workspace', 'focused': True}, NO_VIEW, 'No Sway window focused'),
-            (None, IPC_UNAVAILABLE, 'Sway IPC unavailable'),
+        for tree, focus, reason, message in (
+            ({'id': 42, 'type': 'workspace'}, 42, NO_VIEW, 'No Sway window has focus'),
+            (None, 42, IPC_UNAVAILABLE, 'Sway did not answer'),
+            (self.tree, None, MULTI_SEAT, 'more than one seat'),
         ):
             with self.subTest(reason=reason):
                 self.tree = tree
+                if focus is None:
+                    self.injector._sway.request.side_effect = lambda kind: (
+                        self.tree if kind == GET_TREE else seats(42) + seats(42))
                 with patch.object(patched_injector, 'log') as log:
                     self.assertEqual(self.injector.inject_text('hello'), Outcome.FAILED)
                 self.assertTrue(any(message in c.args[0] for c in log.call_args_list))
@@ -411,6 +427,7 @@ class RecoveryTests(unittest.TestCase):
             with self.subTest(xwayland=xwayland):
                 i = self.injector
                 i.sway_xdotool_available = True
+                i.ydotool_available = False  # cancel lands inside the X11 query
                 i._sway = sway_ipc()
                 session = i.begin_stream()
                 def focus(kind):
@@ -491,25 +508,20 @@ class LookupRoutingTests(unittest.TestCase):
         i.config_manager = ConfigStub({'applications': {'firefox': {'auto_paste': 'ctrl+y'}}})
         self.assertEqual(i._resolve_paste_chord({'class': 'firefox'}), ('ctrl+y', 'firefox'))
 
-    def test_x11_focus_errors_are_logged(self):
+    def test_only_a_matching_x11_answer_confirms_focus(self):
         i = make_injector()
-        logger = patch.object(patched_injector, 'log')
-        logger.start()
-        self.addCleanup(logger.stop)
         cases = [Mock(returncode=1, stdout=''), Mock(returncode=0, stdout='bad'),
+                 Mock(returncode=0, stdout='456'),
                  OSError('unavailable'), patched_injector.subprocess.TimeoutExpired('xdotool', 0.5)]
         for result in cases:
             with self.subTest(result=result), \
                     patch.object(patched_injector.subprocess, 'run',
                                  side_effect=result if isinstance(result, Exception) else None,
-                                 return_value=result), \
-                    patch.object(patched_injector, 'log') as log:
-                self.assertIsNone(i._sway_x11_focus(target(True)))
-                log.assert_called_once()
-        with patch.object(patched_injector.subprocess, 'run', return_value=Mock(returncode=0, stdout='456')):
-            self.assertFalse(i._sway_x11_focus(target(True)))
+                                 return_value=result):
+                self.assertFalse(i._sway_x11_focused(target(True)))
         with patch.object(patched_injector.subprocess, 'run', return_value=Mock(returncode=0, stdout='123')):
-            self.assertTrue(i._sway_x11_focus(target(True)))
+            self.assertTrue(i._sway_x11_focused(target(True)))
+        self.assertFalse(i._sway_x11_focused(dict(target(True), x11_window_id=None)))
 
 
 class SessionTests(unittest.TestCase):

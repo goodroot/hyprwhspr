@@ -63,13 +63,12 @@ def _explain_undetected_window(sway_reason=None):
         return
 
     if sway_reason is not None:
-        from sway_focus import NO_VIEW
-        if sway_reason == NO_VIEW:
-            print("\nNo Sway window has focus. Nothing will paste.")
-            print("Focus a window and retry.")
-        else:
-            print("\nSway did not answer over SWAYSOCK. Nothing will paste.")
-            print("Check SWAYSOCK, then restart hyprwhspr. See docs/usage/PASTE.md.")
+        from sway_focus import IPC_UNAVAILABLE, MULTI_SEAT, REASON_TEXT
+        print(f"\n{REASON_TEXT[sway_reason]}. Nothing will paste.")
+        print({
+            IPC_UNAVAILABLE: "Check SWAYSOCK, then restart hyprwhspr. See docs/usage/PASTE.md.",
+            MULTI_SEAT: "Sway paste needs exactly one seat. See docs/usage/PASTE.md.",
+        }.get(sway_reason, "Focus a window and retry."))
         return
 
     on_gnome = _is_gnome_or_mutter_session()

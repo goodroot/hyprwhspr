@@ -19,10 +19,18 @@ GET_SEATS = 101
 
 # Why a lookup found no target. IPC_UNAVAILABLE covers a missing, dead or
 # malformed reply; NO_VIEW means Sway answered but focus is on a workspace or
-# container. Keyboard routing for a focused container cannot be verified, so
-# both fail closed.
+# container, whose keyboard routing cannot be verified; MULTI_SEAT means the
+# seat injected keys land on is ambiguous. All fail closed.
 IPC_UNAVAILABLE = 'ipc'
 NO_VIEW = 'no-view'
+MULTI_SEAT = 'seats'
+
+# One wording per reason, shared by the service log and the CLI.
+REASON_TEXT = {
+    IPC_UNAVAILABLE: 'Sway did not answer',
+    NO_VIEW: 'No Sway window has focus',
+    MULTI_SEAT: 'Sway has more than one seat',
+}
 
 _MAGIC = b'i3-ipc'
 _HEADER = struct.Struct('=II')  # i3-ipc uses host byte order
@@ -144,9 +152,27 @@ class SwayIPC:
             return False
 
     def lookup(self) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        """The focused view as window info, or (None, reason)."""
+        """The delivery seat's focused view as window info, or (None, reason).
+
+        Starts from the seat, as focus_matches does, so a target found here
+        is one delivery can confirm. The tree's `focused` flag follows Sway's
+        default seat instead.
+        """
+        seats = self.request(GET_SEATS)
+        socket_path = self.socket_path
+        if not isinstance(seats, list) or not all(isinstance(seat, dict) for seat in seats):
+            return None, IPC_UNAVAILABLE
+        if not seats:
+            return None, NO_VIEW
+        seat = delivery_seat(seats)
+        if seat is None:
+            return None, MULTI_SEAT
+        focus = seat.get('focus')
+        if type(focus) is not int:
+            return None, IPC_UNAVAILABLE
         pending = [self.request(GET_TREE)]
-        if not isinstance(pending[0], dict):
+        # Both replies must come from one compositor instance.
+        if not isinstance(pending[0], dict) or self.socket_path != socket_path:
             return None, IPC_UNAVAILABLE
         while pending:
             node = pending.pop()
@@ -160,9 +186,11 @@ class SwayIPC:
             # pid/shell belong to views; a focused workspace or split container
             # must not be mistaken for an unidentified application.
             is_view = bool(app_id or wm_class or node.get('pid') or node.get('shell') or node.get('window'))
-            if node.get('focused') is True and is_view:
+            if node.get('id') == focus and type(node.get('id')) is int:
                 identity = app_id or wm_class or ''
-                if not isinstance(identity, str) or type(node.get('id')) is not int:
+                if not is_view:
+                    return None, NO_VIEW
+                if not isinstance(identity, str):
                     return None, IPC_UNAVAILABLE
                 return {
                     'class': identity, 'app_id': app_id,
