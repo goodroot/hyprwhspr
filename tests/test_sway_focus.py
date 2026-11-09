@@ -135,9 +135,7 @@ class FocusMatchTests(unittest.TestCase):
         keyboard = [{'type': 'keyboard'}]
         for seats in ([{'name': 'seat0', 'focus': 42}],
                       [{'name': 'main', 'focus': 42, 'devices': keyboard}],
-                      # `seat main attach *` leaves an empty seat0 behind.
-                      [{'name': 'seat0', 'focus': 9, 'devices': []},
-                       {'name': 'main', 'focus': 42, 'devices': keyboard}]):
+                      [{'name': 'seat0', 'focus': 42, 'devices': []}]):
             with self.subTest(seats=seats), patch.object(self.ipc, 'request', return_value=seats) as request:
                 self.assertTrue(self.ipc.focus_matches(self.target))
                 request.assert_called_once_with(GET_SEATS)
@@ -146,6 +144,11 @@ class FocusMatchTests(unittest.TestCase):
         keyboard = [{'type': 'keyboard'}]
         for seats in ([{'name': 'seat0', 'focus': 9, 'devices': keyboard},
                        {'name': 'seat1', 'focus': 42, 'devices': []}],
+                      # An empty seat may still receive wtype's virtual keyboard.
+                      [{'name': 'seat0', 'focus': 42, 'devices': keyboard},
+                       {'name': 'seat1', 'focus': 9, 'devices': []}],
+                      [{'name': 'seat0', 'focus': 9, 'devices': []},
+                       {'name': 'main', 'focus': 42, 'devices': keyboard}],
                       # Two seats with input: the keys' seat is ambiguous.
                       [{'name': 'seat0', 'focus': 42, 'devices': keyboard},
                        {'name': 'seat1', 'focus': 42, 'devices': keyboard}],

@@ -56,14 +56,12 @@ def is_sway_session(environ=os.environ) -> bool:
 def delivery_seat(seats: Any) -> Optional[Dict[str, Any]]:
     """The seat injected keys land on, or None when that is ambiguous.
 
-    wtype and ydotool devices join the seat that holds the input devices. With
-    one such seat, or one seat at all, that is it. With several, another seat
-    may hold the target while the keys go elsewhere, so delivery is refused.
+    The transports do not share a verified seat selection mechanism. Even an
+    empty seat can receive a virtual keyboard, so require exactly one seat.
     """
-    if not isinstance(seats, list) or not all(isinstance(seat, dict) for seat in seats):
+    if not isinstance(seats, list) or len(seats) != 1 or not isinstance(seats[0], dict):
         return None
-    candidates = [seat for seat in seats if seat.get('devices')] or seats
-    return candidates[0] if len(candidates) == 1 else None
+    return seats[0]
 
 
 class SwayIPC:

@@ -75,6 +75,17 @@ class DeliveryTests(unittest.TestCase):
         self.assertTrue(self.paste(target()))
         self.assertEqual(self.senders(), {'wtype': True, 'xdotool': False, 'slow': False})
 
+    def test_empty_second_seat_refuses_delivery_and_withdraws_text(self):
+        i = self.injector
+        i._sway.request.return_value = [
+            {'name': 'seat0', 'focus': 42, 'devices': [{'type': 'keyboard'}]},
+            {'name': 'seat1', 'focus': 99, 'devices': []},
+        ]
+        i._save_clipboard.return_value = b'previous'
+        self.assertFalse(self.paste(target()))
+        self.assertFalse(any(self.senders().values()))
+        i._withdraw_undelivered.assert_called_once_with(b'previous', 'Synthetic fixture')
+
     def test_wtype_failure_rechecks_focus_before_ydotool(self):
         i = self.injector
         i._send_paste_keys_wtype.return_value = False
