@@ -46,7 +46,7 @@ Each stays under 50 characters and 5 words ([limits](https://elevenlabs.io/docs/
 
 Bring an API key from [AssemblyAI](https://www.assemblyai.com/dashboard/api-keys), and choose:
 
-- **Dictation** - Returns the transcript already cleaned up: filler removed, punctuation and self-corrections fixed. 32 languages
+- **Dictation** - Removes filler words and fixes punctuation and self-corrections. Supports 32 languages.
 
 `language` is sent as `language_codes`. Options from the [Dictation API](https://www.assemblyai.com/docs/dictation) go in `rest_body`, sent as one JSON `config` part:
 

@@ -111,7 +111,7 @@ PROVIDERS: Dict[str, Dict] = {
         'models': {
             'dictation': {
                 'name': 'Dictation',
-                'description': 'Returns the transcript already cleaned up, 32 languages',
+                'description': 'Removes filler words and fixes punctuation and self-corrections. Supports 32 languages.',
                 'body': {},
             },
         },
