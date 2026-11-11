@@ -6,6 +6,7 @@ OpenAI-compatible transcription API) and returns the transcript.
 Stateless: configuration is re-read on every request.
 """
 
+import json
 import re
 import time
 from typing import Optional
@@ -164,6 +165,23 @@ class RestApiBackend(TranscriptionBackend):
             return None
         provider = get_provider(provider_id)
         return provider.get('api_key_header') if provider else None
+
+    @staticmethod
+    def _provider_request_format(provider_id):
+        """Provider-specific multipart shape, or None for the OpenAI-style form."""
+        provider = get_provider(provider_id) if provider_id else None
+        return (provider or {}).get('request_format')
+
+    @staticmethod
+    def _assemblyai_dictation_parts(wav_bytes, body, language):
+        """Multipart parts for AssemblyAI Dictation: the audio, and every option in one JSON config part."""
+        config = dict(body)
+        if language and 'language_codes' not in config:
+            config['language_codes'] = [language]
+        files = {'audio': ('audio.wav', wav_bytes, 'audio/wav')}
+        if config:
+            files['config'] = (None, json.dumps(config), 'application/json')
+        return files, {}
 
     @staticmethod
     def _provider_language_field(provider_id):
@@ -326,16 +344,24 @@ class RestApiBackend(TranscriptionBackend):
             data = extra_body.copy()
             # Use language_override if provided, otherwise get from config
             language = language_override if language_override is not None else self.config.get_setting('language', None)
-            # A value pinned in rest_body wins, as before.
-            language_field = self._provider_language_field(provider_id)
-            if language and language_field not in data:
-                data[language_field] = language
+            dictation = self._provider_request_format(provider_id) == 'assemblyai-dictation'
+            if dictation:
+                # Dictation takes no prompt field; vocabulary goes in rest_body as keyterms_prompt.
+                files, data = self._assemblyai_dictation_parts(wav_bytes, data, language)
+                if 'config' in files:
+                    config_keys = ', '.join(sorted(json.loads(files['config'][1])))
+                    log(f'[REST] Dictation config: {config_keys}')
+            else:
+                # A value pinned in rest_body wins, as before.
+                language_field = self._provider_language_field(provider_id)
+                if language and language_field not in data:
+                    data[language_field] = language
 
-            # Fill prompt from config - use language-specific prompt if available
-            if 'prompt' not in data:
-                whisper_prompt, _ = self.resolve_whisper_prompt(language)
-                if whisper_prompt:
-                    data['prompt'] = whisper_prompt
+                # Fill prompt from config - use language-specific prompt if available
+                if 'prompt' not in data:
+                    whisper_prompt, _ = self.resolve_whisper_prompt(language)
+                    if whisper_prompt:
+                        data['prompt'] = whisper_prompt
 
             # Log request parameters for debugging
             if data:
@@ -396,7 +422,10 @@ class RestApiBackend(TranscriptionBackend):
 
                 # Try common response formats
                 transcription = ''
-                if 'text' in result:
+                # Dictation returns the cleaned-up text in llm_response, empty when the rewrite failed.
+                if dictation and isinstance(result.get('llm_response'), str) and result['llm_response'].strip():
+                    transcription = result['llm_response']
+                elif 'text' in result:
                     transcription = result['text']
                 elif 'transcription' in result:
                     transcription = result['transcription']

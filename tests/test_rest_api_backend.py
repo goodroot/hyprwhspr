@@ -4,6 +4,7 @@ These tests are fully isolated: ``requests`` is imported only for its real
 exception classes and every HTTP call is replaced with a mock. Nothing here
 touches the network, the user's config, or the credential store.
 """
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -610,6 +611,64 @@ class RestApiRequestShapeTests(unittest.TestCase):
                                rest_body={"language_code": "fr"})
         kwargs = self.sent(backend, credential="el-key")
         self.assertEqual(kwargs["data"]["language_code"], "fr")
+
+
+    # -- AssemblyAI Dictation ------------------------------------------
+
+    def dictation_config(self, kwargs):
+        return json.loads(kwargs["files"]["config"][1])
+
+    def test_dictation_sends_audio_part_and_bare_key(self):
+        kwargs = self.sent(self.backend(rest_api_provider="assemblyai"), credential="aai-key")
+        self.assertEqual(kwargs["files"]["audio"][0], "audio.wav")
+        self.assertNotIn("file", kwargs["files"])
+        self.assertEqual(kwargs["headers"]["Authorization"], "aai-key")
+        self.assertFalse(kwargs["allow_redirects"])
+        self.assertEqual(kwargs["data"], {})
+
+    def test_dictation_puts_language_and_body_in_one_json_config_part(self):
+        backend = self.backend(rest_api_provider="assemblyai", language="de",
+                               rest_body={"keyterms_prompt": ["hyprwhspr", "Hyprland"], "rewrite_mode": "smart"})
+        kwargs = self.sent(backend, credential="aai-key")
+        self.assertEqual(self.dictation_config(kwargs), {
+            "keyterms_prompt": ["hyprwhspr", "Hyprland"], "rewrite_mode": "smart", "language_codes": ["de"]})
+        self.assertEqual(kwargs["files"]["config"][2], "application/json")
+        self.assertEqual(kwargs["data"], {})
+
+    def test_dictation_language_codes_pinned_in_rest_body_win(self):
+        backend = self.backend(rest_api_provider="assemblyai", language="de",
+                               rest_body={"language_codes": ["en", "fr"]})
+        kwargs = self.sent(backend, credential="aai-key", language_override="it")
+        self.assertEqual(self.dictation_config(kwargs)["language_codes"], ["en", "fr"])
+
+    def test_dictation_without_options_sends_no_config_part_or_prompt(self):
+        backend = self.backend(rest_api_provider="assemblyai", whisper_prompt="Use proper punctuation.")
+        kwargs = self.sent(backend, credential="aai-key")
+        self.assertNotIn("config", kwargs["files"])
+        self.assertEqual(kwargs["data"], {})
+
+    def dictation_result(self, payload):
+        backend = self.backend(rest_api_provider="assemblyai")
+        with mock.patch("backends.rest_api_backend.get_credential", return_value="aai-key"):
+            with mock.patch.object(requests, "post", return_value=response(payload=payload)):
+                return backend.transcribe(np.zeros(160, dtype=np.float32))
+
+    def test_dictation_returns_the_cleaned_up_text(self):
+        self.assertEqual(self.dictation_result({"text": "um so the the meeting", "llm_response": "So the meeting."}),
+                         "So the meeting.")
+
+    def test_dictation_falls_back_to_the_transcript_when_the_rewrite_is_empty(self):
+        for llm_response in ("", "   ", None):
+            with self.subTest(llm_response=llm_response):
+                self.assertEqual(self.dictation_result({"text": "so the meeting", "llm_response": llm_response}),
+                                 "so the meeting")
+
+    def test_other_providers_ignore_llm_response(self):
+        with mock.patch("backends.rest_api_backend.get_credential", return_value="the-key"):
+            with mock.patch.object(requests, "post",
+                                   return_value=response(payload={"text": "raw", "llm_response": "clean"})):
+                self.assertEqual(self.backend(rest_api_provider="openai").transcribe(np.zeros(160, dtype=np.float32)),
+                                 "raw")
 
 
 class EndpointHelperTests(unittest.TestCase):

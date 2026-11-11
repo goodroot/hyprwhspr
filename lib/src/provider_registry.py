@@ -17,6 +17,7 @@ DEFAULT_MODEL_BACKENDS: Tuple[str, ...] = ('rest-api',)
 # WebSocket capabilities, which drive session payloads and mode guards.
 # 'api_key_header' and 'language_field' replace the REST defaults
 # (Authorization: Bearer, a 'language' form field) for providers that differ.
+# 'request_format' names a provider-specific multipart shape (rest_api_backend).
 PROVIDERS: Dict[str, Dict] = {
     'openai': {
         'name': 'OpenAI',
@@ -99,6 +100,21 @@ PROVIDERS: Dict[str, Dict] = {
                 'body': {'model': 'whisper-1'}
             }
         }
+    },
+    'assemblyai': {
+        'name': 'AssemblyAI',
+        'endpoint': 'https://dictation.assemblyai.com/v1/transcribe',
+        'api_key_header': 'Authorization',
+        'request_format': 'assemblyai-dictation',
+        'api_key_prefix': None,
+        'api_key_description': 'AssemblyAI API key',
+        'models': {
+            'dictation': {
+                'name': 'Dictation',
+                'description': 'Removes filler words and fixes punctuation and self-corrections. Supports 32 languages.',
+                'body': {},
+            },
+        },
     },
     'groq': {
         'name': 'Groq',

@@ -42,6 +42,25 @@ Bias toward your vocabulary with keyterms:
 Keyterms cost 20% more, and past 100 every request bills as at least 20s.
 Each stays under 50 characters and 5 words ([limits](https://elevenlabs.io/docs/api-reference/speech-to-text/convert)).
 
+## AssemblyAI
+
+Bring an API key from [AssemblyAI](https://www.assemblyai.com/dashboard/api-keys), and choose:
+
+- **Dictation** - Removes filler words and fixes punctuation and self-corrections. Supports 32 languages.
+
+`language` is sent as `language_codes`. Options from the [Dictation API](https://www.assemblyai.com/docs/dictation) go in `rest_body`, sent as one JSON `config` part:
+
+```jsonc
+{
+    "rest_body": {
+        "keyterms_prompt": ["hyprwhspr", "Hyprland", "Claude Code"],
+        "rewrite_mode": "smart"
+    }
+}
+```
+
+If the cleanup fails, you get the plain transcript instead.
+
 ## Groq
 
 Bring an API key from Groq, and choose from:

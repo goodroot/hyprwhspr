@@ -374,7 +374,7 @@
     "rest_api_provider": {
       "type": ["string", "null"],
       "default": null,
-      "description": "Provider identifier for credential lookup (e.g., 'openai', 'groq', 'elevenlabs', 'custom'). ElevenLabs gets its key in xi-api-key and its language as language_code"
+      "description": "Provider identifier for credential lookup (e.g., 'openai', 'groq', 'elevenlabs', 'custom'). ElevenLabs gets its key in xi-api-key and its language as language_code. AssemblyAI uses the API key directly in Authorization and sends language and rest_body in one JSON config part"
     },
     "rest_api_key": {
       "type": ["string", "null"],
