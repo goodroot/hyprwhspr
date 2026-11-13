@@ -165,14 +165,14 @@ def setup_systemd(mode: str = 'install'):
     _migrate_remove_managed_ydotool_unit()
 
     # Import the compositor environment visible to this setup process into the
-    # systemd user manager. Niri's focused-window IPC needs NIRI_SOCKET; Hyprland
-    # detection needs HYPRLAND_INSTANCE_SIGNATURE; wtype/wl-clipboard need the
+    # systemd user manager. Sway focus IPC needs SWAYSOCK, Niri needs
+    # NIRI_SOCKET; Hyprland needs HYPRLAND_INSTANCE_SIGNATURE; wtype/wl-clipboard need the
     # graphical-session environment used by Wayland and X11 integrations.
     run_command([
         'systemctl', '--user', 'import-environment',
         'WAYLAND_DISPLAY', 'DISPLAY', 'XAUTHORITY', 'XDG_SESSION_TYPE',
         'XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'DESKTOP_SESSION',
-        'HYPRLAND_INSTANCE_SIGNATURE', 'NIRI_SOCKET',
+        'HYPRLAND_INSTANCE_SIGNATURE', 'NIRI_SOCKET', 'SWAYSOCK',
     ], check=False)
 
     # Reload systemd daemon

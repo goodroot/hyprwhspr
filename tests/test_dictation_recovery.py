@@ -166,8 +166,9 @@ class DictationRecoveryTests(unittest.TestCase):
             preprocess.assert_called_once_with('raw')
             hook.assert_called_once()
             copy.assert_called_once_with('Café 東京')
-            paste.assert_has_calls([mock.call('Café 東京', 'ctrl+v', False, True),
-                                   mock.call('Café 東京', 'ctrl+v', False, False)])
+            paste.assert_has_calls([
+                mock.call('Café 東京', 'ctrl+v', False, True, stream=None, expected_window={}),
+                mock.call('Café 東京', 'ctrl+v', False, False, stream=None, expected_window={})])
 
     def test_replacement_empty_filtered_and_consumed_results(self):
         injector = make_injector()
@@ -193,7 +194,7 @@ class DictationRecoveryTests(unittest.TestCase):
         started = threading.Event()
         release = threading.Event()
 
-        def deliver(text, *args):
+        def deliver(text, *args, **kwargs):
             started.set()
             return release.wait(2)
 

@@ -1,6 +1,6 @@
 # Paste and clipboard
 
-hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. Wayland uses `wl-clipboard`; Hyprland prefers its native shortcut dispatcher, while other Wayland sessions prefer `wtype`, with `ydotool key` as a fallback. X11 uses `python-pyperclip` with `xclip`, and `xdotool`/`xprop` for focused-window and terminal detection. `xsel` is also accepted as a clipboard fallback when installed. Most setups need no configuration. GNOME/Mutter and KDE Plasma need the AT-SPI bridge for window detection — see [GNOME and KDE](../integrations/DESKTOPS.md).
+hyprwhspr copies dictated text to the clipboard, sends a paste shortcut, then restores your clipboard. Wayland uses `wl-clipboard`; Hyprland prefers its native shortcut dispatcher, while other Wayland sessions prefer `wtype`, with `ydotool key` as a fallback. Sway XWayland apps use `ydotool`, then `xdotool`. X11 uses `python-pyperclip` with `xclip`, and `xdotool`/`xprop` for focused-window and terminal detection. `xsel` is also accepted as a clipboard fallback when installed. Most setups need no configuration. GNOME/Mutter and KDE Plasma need the AT-SPI bridge for window detection — see [GNOME and KDE](../integrations/DESKTOPS.md).
 
 ## Paste mode
 
@@ -157,3 +157,24 @@ Bind these through your compositor so the destination keeps focus — in Hyprlan
 exact prepared text without rerunning hooks, and never sends the auto-submit
 Enter. Continuous mode retains the latest segment, not the whole session.
 Dictation into an app with injection disabled is never retained.
+
+### Sway focus and recovery
+
+The service finds Sway through `SWAYSOCK`. Setup imports it.
+After upgrading, run these from inside Sway:
+
+```bash
+systemctl --user import-environment SWAYSOCK XDG_CURRENT_DESKTOP
+systemctl --user restart hyprwhspr.service
+```
+
+If focus is unknown, nothing is pasted. If focus moves before paste, nothing is
+sent and your clipboard is restored. In live typing, a focus change stops the
+rest of the dictation. `copy-last` recovers all of it.
+An app rule with `auto_paste: false` blocks recovery when focus is unknown.
+Sway paste needs exactly one seat. A named seat beside `seat0` counts as two.
+
+XWayland apps like Steam and Wine paste through `ydotool`, then `xdotool`.
+Native windows use `wtype` or `ydotool`.
+
+Restart the service after changing sessions.

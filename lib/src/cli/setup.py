@@ -1432,17 +1432,24 @@ def setup_command(python_path: Optional[str] = None):
 
     # Paste mode detection notice — only shown when auto-detection won't work at runtime.
     # Per-app paste detection: Hyprland uses hyprctl, Niri uses niri msg
-    # (NIRI_SOCKET), XWayland uses xdotool, and GNOME/KDE use the AT-SPI
+    # (NIRI_SOCKET), Sway uses its IPC socket plus ydotool for XWayland apps,
+    # and GNOME/KDE use the AT-SPI
     # accessibility bridge (offered above). A pure-Wayland compositor with none of
     # these can't tell terminals from other apps, so terminal paste (Ctrl+Shift+V)
     # isn't auto-selected there.
+    from sway_focus import is_sway_session
+    _has_sway = is_sway_session()
     _has_hyprctl = bool(shutil.which('hyprctl'))
     _has_niri = bool(shutil.which('niri')) and bool(os.environ.get('NIRI_SOCKET'))
     _has_xdotool = bool(shutil.which('xdotool'))
     # Only an actually-enabled bridge counts as a route: declining the prompt, or
     # missing bindings, leaves the user with no detection and needing the advice.
     _has_a11y_route = a11y_bridge_enabled
-    if not _has_a11y_route and not _has_hyprctl and not _has_niri and not _has_xdotool:
+    if _has_sway:
+        print("\nSway paste checks focus first. If Sway can't confirm it, nothing is pasted.")
+        if not shutil.which('ydotool') and not _has_xdotool:
+            print("XWayland apps like Steam and Wine need ydotool or xdotool.")
+    elif not _has_a11y_route and not _has_hyprctl and not _has_niri and not _has_xdotool:
         print("\nNote: Window detection unavailable on this system (no hyprctl, niri session, or xdotool).")
         print("Paste will default to Ctrl+V, which works in most apps but not terminals.")
         print("If a paste ever lands in the wrong place, you can override the key combo")

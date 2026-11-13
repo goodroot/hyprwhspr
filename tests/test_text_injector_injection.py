@@ -236,6 +236,34 @@ class TextInjectorInjectionTests(unittest.TestCase):
             timeout=5,
         )
 
+    def test_xdotool_chords_use_x_keysym_names(self):
+        injector = self._injector()
+        injector.session_type = "x11"
+        completed = types.SimpleNamespace(returncode=0, stderr=b"")
+        for chord, sent in (
+            ("ctrl+tab", "ctrl+Tab"),
+            ("f5", "F5"),
+            ("shift+pageup", "shift+Page_Up"),
+            ("enter", "Return"),
+            ("super+-", "super+minus"),
+        ):
+            with self.subTest(chord=chord), mock.patch("text_injector.subprocess.run", return_value=completed) as run:
+                self.assertTrue(injector._send_paste_keys_xdotool(chord))
+                self.assertEqual(run.call_args.args[0], ["xdotool", "key", "--clearmodifiers", sent])
+
+    def test_xdotool_refuses_keys_it_cannot_name(self):
+        # xdotool exits 0 on an unknown key name, so an unmapped key would be
+        # reported as pasted while nothing was typed.
+        injector = self._injector()
+        injector.session_type = "x11"
+        injector.xdotool_available = True
+        injector.wtype_available = injector.ydotool_available = False
+        with mock.patch("text_injector.subprocess.run") as run, mock.patch("text_injector.log"):
+            self.assertFalse(injector._send_paste_keys_xdotool("ctrl+bogus"))
+        run.assert_not_called()
+        self.assertFalse(injector._chord_is_usable("ctrl+bogus"))
+        self.assertTrue(injector._chord_is_usable("ctrl+tab"))
+
     def test_x11_injection_prefers_xdotool_without_wtype_or_ydotool(self):
         injector = self._injector()
         injector.config_manager = ConfigStub(
@@ -975,7 +1003,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
         paste_chord.assert_called_once_with("ctrl+v")
         direct_type.assert_not_called()
         restore_clipboard.assert_called_once()
-        auto_submit.assert_called_once_with()
+        auto_submit.assert_called_once_with(expected_window=None)
 
     def test_gnome_non_us_layout_uses_clipboard_paste_not_direct_typing(self):
         # German (or any non-US) layout: ydotool type would mangle keys, so we
@@ -1009,7 +1037,7 @@ class TextInjectorInjectionTests(unittest.TestCase):
         direct_type.assert_not_called()
         copy.assert_called_once_with("hello")
         paste_chord.assert_called_once_with("ctrl+v")
-        auto_submit.assert_called_once_with()
+        auto_submit.assert_called_once_with(expected_window=None)
 
     def test_gnome_non_ascii_text_uses_clipboard_paste_not_direct_typing(self):
         # Umlauts/typographic characters can't be produced by ydotool type
