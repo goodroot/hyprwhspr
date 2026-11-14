@@ -12,12 +12,11 @@ def resolve_model(settings, explicit=None):
     return model, settings.get('onnx_asr_quantization', 'int8'), settings.get('onnx_asr_use_vad', True)
 
 
-def vad_batch_size(settings):
-    """VAD segments per inference: a whole number, at least 1."""
-    value = settings.get('onnx_asr_vad_batch_size', 1)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+def clean_vad_batch_size(value):
+    """onnx_asr_vad_batch_size as onnx-asr needs it: a whole number, at least 1."""
+    if isinstance(value, bool) or not isinstance(value, int):
         return 1
-    return max(1, int(min(value, 64)))
+    return max(1, value)
 
 
 def effective_quantization(model, quantization):

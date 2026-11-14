@@ -69,16 +69,15 @@ class OnnxAsrBackend(TranscriptionBackend):
         logging.getLogger('onnxruntime').setLevel(logging.CRITICAL)
 
         try:
-            from ..onnx_model import load_model, effective_quantization, vad_batch_size, active_provider
+            from ..onnx_model import load_model, effective_quantization, clean_vad_batch_size, active_provider
         except ImportError:
-            from onnx_model import load_model, effective_quantization, vad_batch_size, active_provider
+            from onnx_model import load_model, effective_quantization, clean_vad_batch_size, active_provider
         model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
         quantization = effective_quantization(
             model_name, self.config.get_setting('onnx_asr_quantization', 'int8'))
         use_vad = self.config.get_setting('onnx_asr_use_vad', True)
         vad_min_duration = self._get_onnx_asr_vad_min_duration()
-        batch_size = vad_batch_size(
-            {'onnx_asr_vad_batch_size': self.config.get_setting('onnx_asr_vad_batch_size', 1)})
+        batch_size = clean_vad_batch_size(self.config.get_setting('onnx_asr_vad_batch_size', 1))
 
         log(f'[BACKEND] Loading onnx-asr model: {model_name}')
         if model_name == 'orukeet' and _orukeet().cache_state() != 'verified':
