@@ -261,23 +261,32 @@ class WhisperManager:
                     self._init_cond.wait()
                 return self._last_init_result
 
-        # Transcriptions, unloads and loads hold this lock: never swap the
-        # model under one, and look at the state they leave behind
-        with self._model_lock:
+        def needs_reinit():
             if self._model_manually_unloaded:
-                return True
+                return None
             backend = self._backend
             if backend is None or not backend.reinit_on_resume:
-                return True
-
+                return None
             if only_if_idle:
                 if not (backend.is_local and backend.is_loaded):
-                    return True
+                    return None
                 idle = time.monotonic() - self._last_use_time
                 if not (idle > 1800 and self._last_use_time > 0):
-                    return True
-                log(f"[RECOVERY] Reinitializing {self._current_backend_name()} model after audio recovery (suspend/resume detected)")
+                    return None
+            return backend
 
+        # Nothing to do: answer without queueing behind a transcription
+        if needs_reinit() is None:
+            return True
+
+        # Transcriptions, unloads and loads hold this lock: never swap the
+        # model under one, and look again at the state they leave behind
+        with self._model_lock:
+            backend = needs_reinit()
+            if backend is None:
+                return True
+            if only_if_idle:
+                log(f"[RECOVERY] Reinitializing {self._current_backend_name()} model after audio recovery (suspend/resume detected)")
             return backend.reinitialize()
 
     def is_ready(self) -> bool:

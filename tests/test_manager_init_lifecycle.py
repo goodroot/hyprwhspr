@@ -126,6 +126,37 @@ class InitLifecycleTests(unittest.TestCase):
         self.assertEqual(results, [True])
         self.assertEqual([e[0] for e in events].count('reinitialize'), 1)
 
+    def test_resume_with_nothing_to_do_does_not_queue_behind_a_transcription(self):
+        events = []
+        manager = self._manager(self._resumable(events))
+        self.assertTrue(manager.initialize())
+        results = []
+        with manager._model_lock:   # a transcription in flight
+            for kwargs in ({'only_if_idle': True},):   # used moments ago: not idle
+                manager._last_use_time = wm.time.monotonic()
+                check = threading.Thread(
+                    target=lambda: results.append(manager.reinitialize_after_resume(**kwargs)))
+                check.start()
+                check.join(timeout=2)
+                self.assertFalse(check.is_alive())
+        self.assertEqual(results, [True])
+        self.assertNotIn('reinitialize', [e[0] for e in events])
+
+    def test_resume_sees_an_unload_that_won_the_lock(self):
+        events = []
+        manager = self._manager(self._resumable(events))
+        self.assertTrue(manager.initialize())
+        results = []
+        with manager._model_lock:   # an unload in progress
+            resume = threading.Thread(target=lambda: results.append(manager.reinitialize_after_resume()))
+            resume.start()
+            resume.join(timeout=0.2)
+            self.assertTrue(resume.is_alive())
+            manager._model_manually_unloaded = True
+        resume.join(timeout=5)
+        self.assertEqual(results, [True])
+        self.assertNotIn('reinitialize', [e[0] for e in events])
+
     def test_resume_leaves_an_unloaded_model_unloaded(self):
         events = []
         manager = self._manager(self._resumable(events))
