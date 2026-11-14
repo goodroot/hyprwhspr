@@ -125,7 +125,7 @@ def record_command(action: str, language: str = None):
     # The status file lags the daemon, so it never gates these; the daemon
     # ignores a start while recording and a stop/cancel while idle.
     if action == 'start':
-        expected = not is_recording()
+        expected = not (is_recording() or longform_recording())
         if send_control(start_cmd):
             if expected:
                 report_start()
@@ -162,7 +162,7 @@ def record_command(action: str, language: str = None):
                 report_start()
 
     elif action == 'status':
-        if is_recording():
+        if is_recording() or longform_recording():
             log_info("Status: Recording in progress")
         else:
             log_info("Status: Idle")

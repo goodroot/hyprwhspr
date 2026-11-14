@@ -145,10 +145,8 @@ def model_command(action: str, model_name: str = None) -> bool:
         if backend in ('rest-api', 'realtime-ws'):
             log_error(f"Model reload not applicable for backend: {backend}")
             return False
-        if not MODEL_UNLOADED_FILE.exists():
-            log_warning("Model does not appear to be unloaded.")
-            log_info("Use this after: hyprwhspr model unload")
-            return False
+        # No marker check: an idle unload leaves none. The service answers
+        # "Model already loaded" when there is nothing to do.
         log_info("Sending model reload request to service...")
         success = _send_model_control('model_reload')
         if success:

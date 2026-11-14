@@ -97,6 +97,24 @@ class RecordCommandTests(unittest.TestCase):
         success.assert_called_once_with("Recording started")
         info.assert_not_called()
 
+    def test_long_form_recording_counts_for_start_and_status(self):
+        with tempfile.TemporaryDirectory() as temp:
+            control = Path(temp) / "recording_control"
+            control.write_text("")
+            state = Path(temp) / "longform_state"
+            state.write_text("RECORDING")
+            for action, expected in (("start", "Start sent"), ("status", "Status: Recording in progress")):
+                with (
+                    mock.patch.object(record, "RECORDING_CONTROL_FILE", control),
+                    mock.patch.object(record, "RECORDING_STATUS_FILE", Path(temp) / "recording_status"),
+                    mock.patch.object(record, "LONGFORM_STATE_FILE", state),
+                    mock.patch.object(record, "log_success") as success,
+                    mock.patch.object(record, "log_info") as info,
+                ):
+                    record.record_command(action)
+                success.assert_not_called()      # nothing started: it was already recording
+                info.assert_called_once_with(expected)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -153,6 +153,26 @@ class CohereAndModelCommandTests(unittest.TestCase):
             self.assertTrue(models.model_command('download', 'base'))
         download.assert_called_once_with('base')
 
+    def test_unload_and_reload_against_the_unloaded_marker(self):
+        config = mock.Mock()
+        config.get_setting.return_value = 'cohere-transcribe'
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / 'model_unloaded'
+            for marked, action, sends in ((True, 'unload', False),    # already unloaded: nothing to send
+                                          (False, 'unload', True),    # also pins an idle unload
+                                          (True, 'reload', True),
+                                          (False, 'reload', True)):   # an idle unload leaves no marker
+                with self.subTest(marked=marked, action=action):
+                    marker.touch() if marked else marker.unlink(missing_ok=True)
+                    with (
+                        mock.patch.object(models, 'ConfigManager', return_value=config),
+                        mock.patch.object(models, 'MODEL_UNLOADED_FILE', marker),
+                        mock.patch.object(models, '_send_model_control', return_value=True) as send,
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
+                        self.assertTrue(models.model_command(action))
+                    self.assertEqual(send.called, sends)
+
     def test_invalid_backend_action_fails(self):
         config = mock.Mock()
         config.get_setting.return_value = 'cohere-transcribe'
