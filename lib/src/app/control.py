@@ -154,7 +154,7 @@ class ControlMixin:
 
         Called once a second from the main loop. Every use of the model holds
         one of the busy flags, so seeing none for long enough means idle. The
-        next recording loads the model again (_wake_idle_model).
+        next recording loads the model again while it records.
         """
         try:
             now = time.monotonic() if now is None else now
@@ -180,24 +180,47 @@ class ControlMixin:
             log(f"[MODEL] Idle unload check failed: {e}")
             return False
 
+    def _claim_model_wake_locked(self):
+        """Claim the reload of an idle-unloaded model (call under _recording_lock).
+
+        True for the caller that must then run _start_model_wake(). Claiming
+        here, not on the reload thread, keeps a recording accepted in between
+        from being mistaken for a reason to refuse the reload.
+        """
+        if (not getattr(self, '_model_idle_unloaded', False)
+                or getattr(self, '_model_waking', False)
+                or self._model_operation_active):
+            return False
+        self._model_waking = True
+        self._model_operation_active = True
+        self._model_wake_done.clear()
+        return True
+
+    def _start_model_wake(self, quiet=False):
+        """Run a claimed reload on its own thread."""
+        log("[MODEL] Loading the idle-unloaded model")
+        threading.Thread(
+            target=self._run_model_operation, args=("reload",), kwargs={'quiet': quiet},
+            daemon=True, name="ModelWake").start()
+
     def _wake_idle_model(self):
         """Reload a model the idle timer unloaded. False if it was unloaded by hand."""
         with self._recording_lock:
             if not getattr(self, '_model_idle_unloaded', False):
                 return False
-            if getattr(self, '_model_waking', False):
-                return True
-            self._model_waking = True
-
-        def wake():
-            try:
-                self._handle_model_operation("reload")
-            finally:
-                self._model_waking = False
-
-        log("[MODEL] Loading the idle-unloaded model")
-        threading.Thread(target=wake, daemon=True, name="ModelWake").start()
+            claimed = self._claim_model_wake_locked()
+        if claimed:
+            self._start_model_wake()
         return True
+
+    def _await_model_wake(self):
+        """Hold a transcription until a reload in flight has finished."""
+        done = getattr(self, '_model_wake_done', None)
+        if done is None or done.is_set():
+            return
+        log("[MODEL] Waiting for the model to load")
+        if not done.wait(timeout=120):
+            log("[MODEL] Model still loading after 120s")
 
     def _handle_model_operation(self, operation, automatic=False):
         """Load or unload the model without holding the recording lock.
@@ -221,8 +244,16 @@ class ControlMixin:
                 "hyprwhspr", "Finish the current recording or transcription first", urgency="normal"
             )
             return
+        self._run_model_operation(operation, automatic=automatic)
 
+    def _run_model_operation(self, operation, automatic=False, quiet=False):
+        """The work of a model operation whose _model_operation_active claim is held.
+
+        quiet: a reload that a recording is already waiting on; success needs
+        no announcement.
+        """
         log(f"[CONTROL] Model {operation} requested")
+        succeeded = False
         try:
             if operation == "unload":
                 succeeded = self.whisper_manager.unload_model()
@@ -231,6 +262,16 @@ class ControlMixin:
         finally:
             with self._recording_lock:
                 self._model_operation_active = False
+                if operation == "reload":
+                    self._model_waking = False
+                    # Cleared with the claim: a failed wake must not leave a
+                    # window where a recording starts with no reload behind it
+                    if succeeded:
+                        self._model_idle_unloaded = False
+            if operation == "reload":
+                done = getattr(self, '_model_wake_done', None)
+                if done is not None:
+                    done.set()
 
         if operation == "unload":
             if succeeded:
@@ -245,13 +286,13 @@ class ControlMixin:
                 self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
         else:
             if succeeded:
-                self._model_idle_unloaded = False
                 self._model_idle_since = time.monotonic()
                 try:
                     MODEL_UNLOADED_FILE.unlink(missing_ok=True)
                 except Exception:
                     pass
-                self._notify_user("hyprwhspr", "Model reloaded — ready to record", urgency="low")
+                if not quiet:
+                    self._notify_user("hyprwhspr", "Model reloaded — ready to record", urgency="low")
             else:
                 self._notify_user("hyprwhspr", "Model reload failed — check logs", urgency="critical")
 

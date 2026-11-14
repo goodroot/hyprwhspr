@@ -63,6 +63,6 @@ Let the model go on its own:
 }
 ```
 
-After ten quiet minutes the model leaves memory. The next recording brings it back: the first press loads it, a notification says when it is ready. Press again.
+After ten quiet minutes the model leaves memory. The next recording brings it back: speak as usual, the model loads while you talk. Text lands once it is ready.
 
 Unloading by hand still holds until `hyprwhspr model reload`.

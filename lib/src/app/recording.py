@@ -101,9 +101,13 @@ class RecordingMixin:
         # Gate checks happen under the same lock that sets the flag, so a
         # concurrent toggle never sees is_recording=True for a start that
         # gets blocked (and stops a recording that never began)
+        wake_model = False
         with self._recording_lock:
             if self.is_recording:
                 return
+            # The idle timer unloaded the model: record now, load meanwhile.
+            # The transcription waits for the load (_await_model_wake).
+            asleep = getattr(self, '_model_idle_unloaded', False)
             if self.text_injector.stream_busy():
                 blocked = 'text-delivery'
             elif self._recording_starting:
@@ -115,9 +119,9 @@ class RecordingMixin:
                 blocked = 'init-failed'
             elif self._file_transcription_active:
                 blocked = 'file-transcription'
-            elif self._model_operation_active:
+            elif self._model_operation_active and not getattr(self, '_model_waking', False):
                 blocked = 'model-operation'
-            elif getattr(self.whisper_manager, '_model_manually_unloaded', False):
+            elif getattr(self.whisper_manager, '_model_manually_unloaded', False) and not asleep:
                 blocked = 'unloaded'
             elif self.whisper_manager.realtime_client_missing():
                 blocked = 'realtime-reconnect'
@@ -139,12 +143,15 @@ class RecordingMixin:
                 self._ptt_press_time = time.monotonic()
                 self._ptt_locked = False
                 self._model_idle_since = self._ptt_press_time  # idle unload counts from here
+                wake_model = asleep and self._claim_model_wake_locked()
 
         # A capture client self-triggered this start over the FIFO and is now
         # blocking on completion. Release it here or it waits forever and keeps
         # the capture slot occupied (no recording will ever finish for it).
         if blocked is not None:
             self._release_blocked_capture()
+        elif wake_model:
+            self._start_model_wake(quiet=True)
 
         # Model is still loading in background
         if blocked in ('initializing', 'init-failed', 'realtime-reconnect'):
@@ -198,11 +205,6 @@ class RecordingMixin:
 
         # Model was deliberately unloaded to free GPU resources
         if blocked == 'unloaded':
-            if self._wake_idle_model():
-                # The idle timer unloaded it: load now, the user retries
-                self._notify_user("hyprwhspr", "Loading model — try again shortly", urgency="normal")
-                log("[CONTROL] Recording blocked: loading the idle-unloaded model")
-                return
             self._notify_user(
                 "hyprwhspr",
                 "Model unloaded — run: hyprwhspr model reload",
@@ -724,6 +726,7 @@ class RecordingMixin:
 
         success = False
         try:
+            self._await_model_wake()
             # Transcribe audio with language override if set
             transcription = self.whisper_manager.transcribe_audio(
                 audio_data,

@@ -502,7 +502,7 @@
       "type": "number",
       "minimum": 0,
       "default": 0,
-      "description": "Unload a local model after this many idle minutes to free VRAM or RAM. 0 (default) = never. The next recording loads it again; that first press is refused while it loads."
+      "description": "Unload a local model after this many idle minutes to free VRAM or RAM. 0 (default) = never. The next recording loads it again while it records."
     },
     "onnx_asr_model": {
       "type": "string",

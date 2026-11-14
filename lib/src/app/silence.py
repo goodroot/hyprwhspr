@@ -239,6 +239,7 @@ class SilenceMixin:
         # completes so the next flush is blocked until this one finishes.
         def process():
             try:
+                self._await_model_wake()
                 transcription = self.whisper_manager.transcribe_audio(
                     audio_data,
                     sample_rate=self.audio_capture.sample_rate,

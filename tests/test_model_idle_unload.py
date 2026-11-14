@@ -36,6 +36,8 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app._backend_init_failed = False
         app._model_idle_since = None
         app._model_idle_unloaded = app._model_waking = False
+        app._model_wake_done = threading.Event()
+        app._model_wake_done.set()
         app._notify_user = mock.Mock()
         loaded = {'ready': True}
 
@@ -52,8 +54,38 @@ class ModelIdleUnloadTests(unittest.TestCase):
             active_backend_is_local=lambda: local,
             unload_model=mock.Mock(side_effect=unload),
             reload_model=mock.Mock(side_effect=reload),
+            realtime_client_missing=lambda: False,
+            realtime_busy=lambda: False,
+            close_realtime_connection=mock.Mock(),
+            _model_manually_unloaded=False,
         )
         return app
+
+    def _press(self, app):
+        """Run _start_recording through its gate; True if the recording was accepted."""
+        app.text_injector = mock.Mock()
+        app.text_injector.stream_busy.return_value = False
+        app._recording_starting = False
+        app._start_settled = threading.Event()
+        app._start_settled.set()
+        app._start_owner = None
+        app._ptt_press_time = None
+        app._ptt_locked = False
+        app._recording_session = None
+        app._playback_lock = threading.Lock()
+        app._playback_session = None
+        app._playback_shutdown = False
+        app._release_blocked_capture = mock.Mock()
+        app._clear_mic_osd_preview_text = mock.Mock()
+        app._clear_zero_volume_signal = mock.Mock(side_effect=RuntimeError('stop after gate'))
+        app._hide_mic_osd = mock.Mock()
+        app._stop_audio_level_monitoring = mock.Mock()
+        app._write_recording_status = mock.Mock()
+        app.playback_suppressor = types.SimpleNamespace(is_active=False)
+        app._recording_control_server = types.SimpleNamespace(has_capture_subscriber=lambda: False)
+        app.is_recording = False
+        app._start_recording()
+        return app._clear_mic_osd_preview_text.called
 
     def _join_wake(self):
         for thread in threading.enumerate():
@@ -139,19 +171,75 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app._handle_model_operation('unload')
         self.assertFalse(app._wake_idle_model())
 
-    def test_record_start_wakes_the_model_and_asks_for_a_retry(self):
+    def _slow_reload(self, app, result=True):
+        gate = threading.Event()
+        reload = app.whisper_manager.reload_model.side_effect
+
+        def slow():
+            gate.wait(timeout=5)
+            return reload() if result else False
+
+        app.whisper_manager.reload_model.side_effect = slow
+        return gate
+
+    def test_first_press_records_while_the_model_loads(self):
         app = self._idle_unloaded_app()
-        app.text_injector = mock.Mock()
-        app.text_injector.stream_busy.return_value = False
-        app._recording_starting = False
-        app._release_blocked_capture = mock.Mock()
         app.whisper_manager._model_manually_unloaded = True
-        app._start_recording()
+        gate = self._slow_reload(app)
+        self.assertTrue(self._press(app))            # accepted, not refused
+        self.assertTrue(app._model_operation_active)
+        self.assertFalse(app._model_wake_done.is_set())
+        self.assertTrue(self._press(app))            # a second press mid-load records too
+        app._notify_user.assert_not_called()
+
+        waited = []
+        waiter = threading.Thread(target=lambda: (app._await_model_wake(), waited.append(True)))
+        waiter.start()
+        waiter.join(timeout=0.2)
+        self.assertEqual(waited, [])                 # the transcription holds for the load
+        gate.set()
+        waiter.join(timeout=5)
         self._join_wake()
-        self.assertFalse(app.is_recording)
-        self.assertIn('Loading model', app._notify_user.call_args_list[0].args[1])
+        self.assertEqual(waited, [True])
         app.whisper_manager.reload_model.assert_called_once_with()
         self.assertFalse(self.marker.exists())
+        self.assertFalse(app._model_idle_unloaded)
+        self.assertFalse(app._model_operation_active)
+        self.assertFalse(app._model_waking)
+        app._notify_user.assert_not_called()         # the text arriving is the announcement
+
+    def test_failed_wake_says_so_and_the_next_press_tries_again(self):
+        app = self._idle_unloaded_app()
+        app.whisper_manager._model_manually_unloaded = True
+        gate = self._slow_reload(app, result=False)
+        self.assertTrue(self._press(app))
+        gate.set()
+        self._join_wake()
+        self.assertTrue(app._model_wake_done.is_set())   # waiters are released either way
+        self.assertIn('failed', app._notify_user.call_args.args[1])
+        self.assertTrue(app._model_idle_unloaded)
+        self.assertFalse(app._model_operation_active)
+
+        app.whisper_manager.reload_model.side_effect = lambda: True
+        self.assertTrue(self._press(app))
+        self._join_wake()
+        self.assertEqual(app.whisper_manager.reload_model.call_count, 2)
+        self.assertFalse(app._model_idle_unloaded)
+
+    def test_press_is_still_refused_after_an_unload_by_hand(self):
+        app = self._app()
+        app._handle_model_operation('unload')
+        app.whisper_manager._model_manually_unloaded = True
+        app._notify_user.reset_mock()
+        self.assertFalse(self._press(app))
+        self.assertIn('hyprwhspr model reload', app._notify_user.call_args.args[1])
+        app.whisper_manager.reload_model.assert_not_called()
+
+    def test_press_is_refused_during_a_load_that_is_not_a_wake(self):
+        app = self._app()
+        app._model_operation_active = True
+        self.assertFalse(self._press(app))
+        self.assertIn('Model load in progress', app._notify_user.call_args.args[1])
 
     def test_file_transcription_and_long_form_wake_the_model(self):
         app = self._idle_unloaded_app()

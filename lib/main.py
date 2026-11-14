@@ -198,6 +198,8 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._model_idle_since = None
         self._model_idle_unloaded = False
         self._model_waking = False
+        self._model_wake_done = threading.Event()  # clear while that reload runs
+        self._model_wake_done.set()
 
         self._recording_control_server = RecordingControlServer(
             fifo_path=RECORDING_CONTROL_FILE,
