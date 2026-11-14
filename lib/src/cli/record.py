@@ -6,6 +6,7 @@ import os
 import json
 import sys
 import socket
+import time
 
 try:
     from ..paths import (RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE,
@@ -18,6 +19,11 @@ try:
     from ..output_control import log_info, log_success, log_error
 except ImportError:
     from output_control import log_info, log_success, log_error
+
+
+# How long `record start` waits for the service to confirm. A refused start
+# (model loading, text still pasting) never flips the status file.
+START_CONFIRM_TIMEOUT = 1.5
 
 
 def record_command(action: str, language: str = None):
@@ -96,6 +102,16 @@ def record_command(action: str, language: str = None):
             log_error(f"Failed to send command: {e}")
             return False
 
+    def report_start():
+        """Say "started" only once the service has."""
+        deadline = time.monotonic() + START_CONFIRM_TIMEOUT
+        while not is_recording():
+            if time.monotonic() >= deadline:
+                log_info("Start sent. The service did not confirm; check notifications.")
+                return
+            time.sleep(0.05)
+        log_success(f"Recording started (language: {language})" if language else "Recording started")
+
     # Build start command with optional language
     start_cmd = f'start:{language}' if language else 'start'
 
@@ -105,8 +121,7 @@ def record_command(action: str, language: str = None):
         expected = not is_recording()
         if send_control(start_cmd):
             if expected:
-                msg = f"Recording started (language: {language})" if language else "Recording started"
-                log_success(msg)
+                report_start()
             else:
                 log_info("Start sent")
 
@@ -137,8 +152,7 @@ def record_command(action: str, language: str = None):
                 log_success("Recording stopped")
         else:
             if send_control(start_cmd):
-                msg = f"Recording started (language: {language})" if language else "Recording started"
-                log_success(msg)
+                report_start()
 
     elif action == 'status':
         if is_recording():
