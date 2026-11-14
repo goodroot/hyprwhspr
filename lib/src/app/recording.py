@@ -31,9 +31,15 @@ class RecordingMixin:
             busy = self._file_transcription_active or self._model_operation_active
             loading = self._model_initializing or self._backend_init_failed
             asleep = getattr(self, '_model_idle_unloaded', False)
-            if not (busy or loading or asleep):
+            # Unloaded by hand: a session recorded now could not be submitted
+            unloaded = (not asleep
+                        and getattr(self.whisper_manager, '_model_manually_unloaded', False))
+            if not (busy or loading or asleep or unloaded):
                 self._longform_active = True
                 return True
+        if unloaded and not (busy or loading):
+            self._notify_user(
+                "hyprwhspr", "Model unloaded — run: hyprwhspr model reload", urgency="normal")
         if asleep and not busy:
             # The idle timer unloaded the model: load it, the user retries
             self._wake_idle_model()

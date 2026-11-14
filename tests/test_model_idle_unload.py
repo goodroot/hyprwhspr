@@ -256,6 +256,15 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app.whisper_manager.reload_model.assert_called_once_with()
         self.assertTrue(app._claim_longform_recording())   # loaded now
 
+        app = self._app()                                  # unloaded by hand: refused with the reason
+        app._handle_model_operation('unload')
+        app.whisper_manager._model_manually_unloaded = True
+        app._notify_user.reset_mock()
+        self.assertFalse(app._claim_longform_recording())
+        self.assertFalse(app._longform_active)
+        self.assertIn('hyprwhspr model reload', app._notify_user.call_args.args[1])
+        app.whisper_manager.reload_model.assert_not_called()
+
         app = self._app()                                  # unloaded by hand: old answer, no load
         app._handle_model_operation('unload')
         ok, message = app._handle_file_transcribe('/tmp/audio.wav')

@@ -25,6 +25,7 @@ class BackgroundInitTests(unittest.TestCase):
         app._file_transcription_active = False
         app._model_operation_active = False
         app._longform_active = False
+        app.whisper_manager = types.SimpleNamespace(_model_manually_unloaded=False)
         return app
 
     def _init(self, elapsed, ok=True, waiting=False):
