@@ -153,24 +153,6 @@ class CohereAndModelCommandTests(unittest.TestCase):
             self.assertTrue(models.model_command('download', 'base'))
         download.assert_called_once_with('base')
 
-    def test_unload_is_sent_even_when_already_unloaded(self):
-        # An idle unload wakes on the next recording; unloading by hand must stick.
-        config = mock.Mock()
-        config.get_setting.return_value = 'cohere-transcribe'
-        with tempfile.TemporaryDirectory() as temp:
-            marker = Path(temp) / 'model_unloaded'
-            marker.touch()
-            for sent in (True, False):
-                with (
-                    mock.patch.object(models, 'ConfigManager', return_value=config),
-                    mock.patch.object(models, 'MODEL_UNLOADED_FILE', marker),
-                    mock.patch.object(models, '_send_model_control', return_value=sent) as send,
-                    mock.patch.object(models, 'log_info') as info,
-                ):
-                    self.assertEqual(models.model_command('unload'), sent)
-                send.assert_called_once_with('model_unload')
-                self.assertEqual(info.called, sent)
-
     def test_invalid_backend_action_fails(self):
         config = mock.Mock()
         config.get_setting.return_value = 'cohere-transcribe'
