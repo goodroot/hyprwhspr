@@ -132,9 +132,12 @@ def model_command(action: str, model_name: str = None) -> bool:
             log_info("Only local backends (pywhispercpp, faster-whisper, onnx-asr, cohere-transcribe, qwen3-asr) hold GPU memory.")
             return False
         if MODEL_UNLOADED_FILE.exists():
-            log_warning("Model is already unloaded.")
-            log_info("Reload it with: hyprwhspr model reload")
-            return True
+            # The idle timer may have unloaded it, to load again on the next
+            # recording. Sending the unload anyway makes it stay unloaded.
+            success = _send_model_control('model_unload')
+            if success:
+                log_info("Model stays unloaded until: hyprwhspr model reload")
+            return success
         log_info("Sending model unload request to service...")
         success = _send_model_control('model_unload')
         if success:
