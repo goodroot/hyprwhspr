@@ -256,7 +256,9 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
 
     def test_model_operation_frees_the_recording_lock_while_loading(self):
         with tempfile.TemporaryDirectory() as tempdir:
-            with patch_app_global(self.app, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'):
+            marker = Path(tempdir) / 'unloaded'
+            marker.touch()
+            with patch_app_global(self.app, 'MODEL_UNLOADED_FILE', marker):
                 app = self._app()
                 app._notify_user = mock.Mock()
                 observed = {}

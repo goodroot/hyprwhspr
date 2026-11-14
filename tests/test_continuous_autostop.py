@@ -207,6 +207,24 @@ class ContinuousAutostopTests(unittest.TestCase):
                     self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
                 self.assertEqual(app._continuous_pasted is session, delivered)
 
+    def test_an_undelivered_chunk_clears_an_earlier_delivery(self):
+        app = self._flush_app(np.ones(10, dtype=np.float32))
+        session = app._recording_session
+        app._continuous_pasted = session                 # chunk 1 was pasted
+        app.whisper_manager.transcribe_audio.return_value = ""   # chunk 2 comes back empty
+        with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+            self.assertTrue(app._continuous_flush_audio(session))
+            self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
+        self.assertIsNone(app._continuous_pasted)
+
+    def test_stop_does_not_wait_on_a_model_load(self):
+        app = self._flush_app(np.ones(10, dtype=np.float32))
+        app._continuous_silence_stop = threading.Event()
+        app._continuous_silence_thread = None
+        app._await_model_wake = mock.Mock()
+        app._continuous_stop_and_wait()
+        app._await_model_wake.assert_not_called()        # capture must stop first
+
     def test_words_in_a_tail_marked_silent_are_still_pasted(self):
         app = self._process_app("late words")
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):

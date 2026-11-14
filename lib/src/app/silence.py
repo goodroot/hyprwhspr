@@ -30,7 +30,7 @@ class SilenceMixin:
         # The session whose audio since its last paste is all silence, if any.
         # A stop then expects an empty tail and doesn't call it an error.
         self._continuous_silent_tail = None
-        self._continuous_pasted = None   # the session that has delivered a chunk
+        self._continuous_pasted = None   # the session whose newest chunk was delivered
         with self._recording_lock:
             self._continuous_delivery_failure_notified = False
         self._continuous_stop_silence_monitor()
@@ -198,8 +198,6 @@ class SilenceMixin:
     def _continuous_stop_and_wait(self, monitor=None):
         """Stop the silence monitor and wait for any in-progress transcription"""
         self._continuous_stop_silence_monitor(monitor)
-        # A chunk parked behind a model load must still paste before the tail
-        self._await_model_wake()
         self._continuous_transcription_done.wait(timeout=30)
 
     def _continuous_flush_audio(self, session):
@@ -227,6 +225,8 @@ class SilenceMixin:
 
             log(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription")
             should_transcribe = True
+            # Flushes run one at a time, so this tracks the newest chunk only
+            self._continuous_pasted = None
         except Exception as e:
             log(f"[CONTINUOUS] Flush error: {e}")
             return False

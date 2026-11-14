@@ -51,14 +51,16 @@ class ControlMixin:
             if not asleep and (MODEL_UNLOADED_FILE.exists() or not self.whisper_manager.is_ready()):
                 return False, 'The transcription backend is not loaded; run hyprwhspr model reload'
             self._file_transcription_active = True
-            wake = self._claim_model_wake_locked()
-        if wake:
-            self._start_model_wake(quiet=True)
 
         try:
+            # Decode first: a bad file should fail fast, not load a model
+            audio_data, sample_rate = decode_audio_file(path)
+            with self._recording_lock:
+                wake = self._claim_model_wake_locked()
+            if wake:
+                self._start_model_wake(quiet=True)
             if not self._await_model_wake():
                 return False, 'The transcription backend failed to load; check the service log'
-            audio_data, sample_rate = decode_audio_file(path)
             text = self.whisper_manager.transcribe_audio(
                 audio_data,
                 sample_rate=sample_rate,
@@ -255,6 +257,15 @@ class ControlMixin:
                 "hyprwhspr", "Finish the current recording or transcription first", urgency="normal"
             )
             return
+        if (operation == "reload" and not MODEL_UNLOADED_FILE.exists()
+                and not getattr(self, '_model_idle_unloaded', False)
+                and self.whisper_manager.is_ready()):
+            # The CLI cannot see an idle unload, so it always asks
+            with self._recording_lock:
+                self._model_operation_active = False
+            log("[CONTROL] Model reload requested but the model is loaded")
+            self._notify_user("hyprwhspr", "Model already loaded", urgency="low")
+            return
         self._run_model_operation(operation, automatic=automatic)
 
     def _run_model_operation(self, operation, automatic=False, quiet=False):
@@ -282,10 +293,12 @@ class ControlMixin:
                         self._model_idle_unloaded = False
                 elif succeeded:
                     self._model_idle_unloaded = automatic
-            if operation == "reload":
-                done = getattr(self, '_model_wake_done', None)
-                if done is not None:
-                    done.set()
+                # Set under the lock: a newer wake's claim clears this event,
+                # and a late set from here would release its waiters early
+                if operation == "reload":
+                    done = getattr(self, '_model_wake_done', None)
+                    if done is not None:
+                        done.set()
 
         if operation == "unload":
             if succeeded and not automatic:

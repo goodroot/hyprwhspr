@@ -612,8 +612,12 @@ class RecordingMixin:
     def _keep_unsent_audio(self, audio_data):
         """Save a dictation the model never loaded for, and say where it is."""
         try:
-            DEBUG_RECORDINGS_DIR.mkdir(mode=0o700, exist_ok=True)
-            path = DEBUG_RECORDINGS_DIR / f"unsent-{time.strftime('%Y%m%d-%H%M%S')}.wav"
+            # Its own directory: the debug-recordings pruner must not count
+            # these. Milliseconds: a chunk and its tail can fail together.
+            folder = DEBUG_RECORDINGS_DIR / 'unsent'
+            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+            millis = time.time_ns() // 1_000_000 % 1000
+            path = folder / f"{time.strftime('%Y%m%d-%H%M%S')}-{millis:03d}.wav"
             self.audio_capture.save_audio_to_wav(audio_data, str(path))
         except Exception as e:
             log(f"[ERROR] Model failed to load and the audio could not be kept: {e}")

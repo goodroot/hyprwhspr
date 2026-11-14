@@ -8,7 +8,7 @@ from unittest import mock
 
 import numpy as np
 
-from tests.test_suspend_resume_recovery import _import_main_isolated, patch_app_global
+from tests.test_suspend_resume_recovery import _import_main_isolated, app_global, patch_app_global
 
 
 class ModelIdleUnloadTests(unittest.TestCase):
@@ -264,6 +264,13 @@ class ModelIdleUnloadTests(unittest.TestCase):
             self.assertIn('failed to load', message)
             self.assertFalse(app._file_transcription_active)
 
+        app = self._idle_unloaded_app()                # a bad file fails fast and loads nothing
+        error = app_global(self.app_cls, 'AudioFileError')('not audio')
+        with patch_app_global(self.app_cls, 'decode_audio_file', mock.Mock(side_effect=error)):
+            self.assertEqual(app._handle_file_transcribe('/tmp/bad.wav'), (False, 'not audio'))
+        app.whisper_manager.reload_model.assert_not_called()
+        self.assertFalse(app._file_transcription_active)
+
         app = self._idle_unloaded_app()
         self.assertFalse(app._claim_longform_recording())
         self._join_wake()
@@ -287,11 +294,46 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app.whisper_manager.reload_model.assert_not_called()
 
 
+    def test_reload_command_wakes_an_idle_unload_and_ignores_a_loaded_model(self):
+        app = self._idle_unloaded_app()              # no marker, yet there is something to load
+        app._handle_model_operation('reload')
+        app.whisper_manager.reload_model.assert_called_once_with()
+        self.assertFalse(app._model_idle_unloaded)
+
+        app._notify_user.reset_mock()                # loaded: nothing to do, and say so
+        app._handle_model_operation('reload')
+        app.whisper_manager.reload_model.assert_called_once_with()
+        self.assertEqual(app._notify_user.call_args.args[1], 'Model already loaded')
+        self.assertFalse(app._model_operation_active)
+
+    def test_a_finished_wake_cannot_release_the_next_wakes_waiters(self):
+        # The event is set under the lock that the next claim clears it under.
+        app = self._idle_unloaded_app()
+        order = []
+        real_lock = app._recording_lock
+
+        class Watched:
+            def __enter__(self_inner):
+                real_lock.acquire()
+                order.append('lock')
+
+            def __exit__(self_inner, *exc):
+                order.append('unlock')
+                real_lock.release()
+
+        app._recording_lock = Watched()
+        app._model_wake_done = mock.Mock()
+        app._model_wake_done.set.side_effect = lambda: order.append('set')
+        app._run_model_operation('reload', quiet=True)
+        self.assertEqual(order[:3], ['lock', 'set', 'unlock'])
+
     def test_tray_shows_the_recording_not_the_load_during_a_wake(self):
         app = self._app()
         app._model_operation_active = True
         self.assertEqual(app._tray_state(), ('loading', ''))
-        app._model_waking = True
+        app._model_waking = True                     # a wake with nothing recording is still a load
+        self.assertEqual(app._tray_state(), ('loading', ''))
+        app.is_recording = True
         app._longform = types.SimpleNamespace(state='IDLE')
         with tempfile.TemporaryDirectory() as temp:
             status = Path(temp) / 'recording_status'
@@ -314,7 +356,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
             app._process_audio([0.25])
             saved = app.audio_capture.save_audio_to_wav.call_args.args
         self.assertEqual(saved[0], [0.25])
-        self.assertIn('unsent-', saved[1])
+        self.assertEqual(Path(saved[1]).parent.name, 'unsent')   # out of the debug pruner's reach
         self.assertIn(saved[1], app._notify_user.call_args.args[1])
         app.whisper_manager.transcribe_audio.assert_not_called()
         app.audio_manager.play_error_sound.assert_called_once()
