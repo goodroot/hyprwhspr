@@ -31,7 +31,11 @@ def load_model(model, quantization='int8', use_vad=True, *, offline=False, repai
         loaded = onnx_asr.load_model(model, quantization=quantization)
     else:
         loaded = onnx_asr.load_model(model)
-    vad_model = loaded.with_vad(onnx_asr.load_vad('silero')) if use_vad else None
+    # One segment per inference. onnx-asr's default of 8 pads segments to the
+    # longest and runs them together; a 2-minute dictation then peaks near
+    # 4 GB, which ONNX Runtime's arena keeps until unload (#302). Batching is
+    # only faster on long GPU recordings, by roughly 10%.
+    vad_model = loaded.with_vad(onnx_asr.load_vad('silero'), batch_size=1) if use_vad else None
     return loaded, vad_model
 
 

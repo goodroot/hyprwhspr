@@ -165,9 +165,9 @@ class OnnxAsrBackend(TranscriptionBackend):
                 log(f'[ONNX-ASR] Mode: {mode} (vad_min_duration={vad_min_duration}s)')
             start_time = time.time()
             result = model.recognize(audio_data, sample_rate=sample_rate)
-            elapsed = time.time() - start_time
 
-            # When VAD is enabled, recognize() returns a generator of segments
+            # When VAD is enabled, recognize() returns a lazy generator of
+            # segments; the work happens as it is consumed below.
             if isinstance(result, types.GeneratorType):
                 # Collect all segments and combine their text
                 segments = list(result)
@@ -194,6 +194,7 @@ class OnnxAsrBackend(TranscriptionBackend):
                 else:
                     transcription = str(result)
 
+            elapsed = time.time() - start_time
             log(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s')
 
             return transcription.strip()

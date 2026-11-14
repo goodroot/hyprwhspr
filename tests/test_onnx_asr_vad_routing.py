@@ -29,7 +29,35 @@ class OnnxAsrVadRoutingTests(unittest.TestCase):
             direct, vad = load_model('custom', use_vad=True)
         self.assertIs(direct, runtime.load_model.return_value)
         self.assertIs(vad, direct.with_vad.return_value)
-        direct.with_vad.assert_called_once_with(runtime.load_vad.return_value)
+        direct.with_vad.assert_called_once_with(runtime.load_vad.return_value, batch_size=1)
+
+    def test_vad_timing_covers_the_lazy_segment_generator(self):
+        import sys
+        import types
+        from unittest.mock import patch
+        if str(ROOT / 'lib' / 'src') not in sys.path:
+            sys.path.insert(0, str(ROOT / 'lib' / 'src'))
+        from backends import onnx_asr_backend
+        import numpy as np
+
+        clock = [100.0]
+
+        def segments():
+            clock[0] += 36.0  # the real work happens while segments are consumed
+            yield types.SimpleNamespace(text='hello')
+
+        settings = {'onnx_asr_vad_min_duration': 0}
+        manager = types.SimpleNamespace(
+            config=types.SimpleNamespace(get_setting=lambda key, default=None: settings.get(key, default)))
+        backend = onnx_asr_backend.OnnxAsrBackend(manager)
+        backend._onnx_asr_model = object()
+        backend._onnx_asr_vad_model = types.SimpleNamespace(recognize=lambda audio, sample_rate: segments())
+        logged = []
+        with patch.object(onnx_asr_backend, 'log', logged.append), \
+             patch.object(onnx_asr_backend.time, 'time', lambda: clock[0]):
+            text = backend.transcribe(np.zeros(16000, dtype=np.float32))
+        self.assertEqual(text, 'hello')
+        self.assertIn('[ONNX-ASR] Transcription completed in 36.00s', logged)
 
     def test_onnx_vad_is_duration_gated_at_transcription_time(self):
         tree = self._parse_onnx_backend()
