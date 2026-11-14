@@ -14,7 +14,8 @@ Run `hyprwhspr setup` and select **Parakeet → Parakeet v3**. The model (~1 GB)
     "onnx_asr_model": "nemo-parakeet-tdt-0.6b-v3",  // default
     "onnx_asr_quantization": "int8",                  // int8 (default) | null (FP32)
     "onnx_asr_use_vad": true,                         // Silero VAD for longer recordings (default: true)
-    "onnx_asr_vad_min_duration": 30                   // seconds before VAD is used (default: 30)
+    "onnx_asr_vad_min_duration": 30,                  // seconds before VAD is used (default: 30)
+    "onnx_asr_vad_batch_size": 1                      // VAD segments per pass (default: 1)
 }
 ```
 

@@ -12,12 +12,20 @@ def resolve_model(settings, explicit=None):
     return model, settings.get('onnx_asr_quantization', 'int8'), settings.get('onnx_asr_use_vad', True)
 
 
+def vad_batch_size(settings):
+    """VAD segments per inference: a whole number, at least 1."""
+    value = settings.get('onnx_asr_vad_batch_size', 1)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+        return 1
+    return max(1, int(min(value, 64)))
+
+
 def effective_quantization(model, quantization):
     """Orukeet ships only int8 files, whatever onnx_asr_quantization says."""
     return 'int8' if model == 'orukeet' else quantization
 
 
-def load_model(model, quantization='int8', use_vad=True, *, offline=False, repair=False):
+def load_model(model, quantization='int8', use_vad=True, *, vad_batch_size=1, offline=False, repair=False):
     import onnx_asr
     quantization = effective_quantization(model, quantization)
     if model == 'orukeet':
@@ -31,12 +39,28 @@ def load_model(model, quantization='int8', use_vad=True, *, offline=False, repai
         loaded = onnx_asr.load_model(model, quantization=quantization)
     else:
         loaded = onnx_asr.load_model(model)
-    # One segment per inference. onnx-asr's default of 8 pads segments to the
-    # longest and runs them together; a 2-minute dictation then peaks near
-    # 4 GB, which ONNX Runtime's arena keeps until unload (#302). Batching is
-    # only faster on long GPU recordings, by roughly 10%.
-    vad_model = loaded.with_vad(onnx_asr.load_vad('silero'), batch_size=1) if use_vad else None
+    # One segment per inference by default. onnx-asr's own default of 8 pads
+    # segments to the longest and runs them together; a 2-minute dictation then
+    # peaks near 4 GB, which ONNX Runtime's arena keeps until unload (#302).
+    # Batching is only faster on long GPU recordings, by roughly 10%.
+    vad_model = (loaded.with_vad(onnx_asr.load_vad('silero'), batch_size=vad_batch_size)
+                 if use_vad else None)
     return loaded, vad_model
+
+
+def active_provider(model):
+    """The execution provider a loaded model runs on, or None if it can't be read.
+
+    onnx-asr keeps its ONNX Runtime session on private attributes, so this is
+    best effort and only feeds the load log.
+    """
+    try:
+        asr = model.asr
+        session = getattr(asr, '_encoder', None) or getattr(asr, '_model', None)
+        provider = session.get_providers()[0]
+        return provider if isinstance(provider, str) else None
+    except Exception:
+        return None
 
 
 def prepare(selection, offline):

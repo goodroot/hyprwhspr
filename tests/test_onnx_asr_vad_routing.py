@@ -31,6 +31,42 @@ class OnnxAsrVadRoutingTests(unittest.TestCase):
         self.assertIs(vad, direct.with_vad.return_value)
         direct.with_vad.assert_called_once_with(runtime.load_vad.return_value, batch_size=1)
 
+    def test_vad_batch_size_is_configurable_and_clamped(self):
+        import sys
+        from unittest.mock import Mock, patch
+        if str(ROOT / 'lib' / 'src') not in sys.path:
+            sys.path.insert(0, str(ROOT / 'lib' / 'src'))
+        from onnx_model import load_model, vad_batch_size
+        runtime = Mock()
+        with patch.dict(sys.modules, {'onnx_asr': runtime}):
+            direct, _ = load_model('custom', use_vad=True, vad_batch_size=4)
+        direct.with_vad.assert_called_once_with(runtime.load_vad.return_value, batch_size=4)
+        for raw, expected in (({}, 1), (4, 4), (2.9, 2), (0, 1), (-3, 1), ('8', 1),
+                              (None, 1), (True, 1), (float('nan'), 1), (10**9, 64)):
+            settings = raw if isinstance(raw, dict) else {'onnx_asr_vad_batch_size': raw}
+            self.assertEqual(vad_batch_size(settings), expected, raw)
+
+    def test_active_provider_reads_the_session_and_never_raises(self):
+        import sys
+        import types
+        if str(ROOT / 'lib' / 'src') not in sys.path:
+            sys.path.insert(0, str(ROOT / 'lib' / 'src'))
+        from onnx_model import active_provider
+
+        def model(**attrs):
+            return types.SimpleNamespace(asr=types.SimpleNamespace(**attrs))
+
+        def session(*providers):
+            return types.SimpleNamespace(get_providers=lambda: list(providers))
+
+        fallback = session('CPUExecutionProvider')
+        self.assertEqual(active_provider(model(_encoder=fallback)), 'CPUExecutionProvider')
+        self.assertEqual(
+            active_provider(model(_model=session('CUDAExecutionProvider', 'CPUExecutionProvider'))),
+            'CUDAExecutionProvider')
+        for unreadable in (object(), model(), model(_encoder=session()), model(_encoder=object())):
+            self.assertIsNone(active_provider(unreadable))
+
     def test_vad_timing_covers_the_lazy_segment_generator(self):
         import sys
         import types

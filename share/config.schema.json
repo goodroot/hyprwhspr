@@ -520,6 +520,12 @@
       "default": 30,
       "description": "Minimum recording duration in seconds before ONNX ASR routes audio through VAD"
     },
+    "onnx_asr_vad_batch_size": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "VAD segments transcribed per inference. Higher values can be faster on long GPU recordings and hold more memory."
+    },
     "faster_whisper_model": {
       "type": "string",
       "default": "base",

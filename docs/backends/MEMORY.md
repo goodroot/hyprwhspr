@@ -25,6 +25,7 @@ Whisper figures are model sizes; expect some overhead on top. Qwen3-ASR's contex
 
 - **Smaller model.** Whisper `base` or `small`, Qwen3-ASR `0.6b-q8_0`.
 - **Quantize.** Parakeet runs `int8` by default (`onnx_asr_quantization`); keep it. faster-whisper's `auto` compute type is `int8`; `float16` and `float32` cost more.
+- **Keep Parakeet's batch at 1.** `onnx_asr_vad_batch_size` trades memory for speed on long GPU recordings. At 8, a two-minute dictation holds 4 GB.
 - **Keep Cohere on bfloat16.** Its GPU default. `float32` doubles the footprint.
 - **Trim Qwen3-ASR's context.** `qwen3_asr_ctx_size` sizes the KV cache, ~112 KiB per token on the 1.7B. `null` means llama.cpp's 32000, ~3.5 GB.
 - **Move to CPU.** Frees VRAM, spends RAM.

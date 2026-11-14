@@ -66,35 +66,21 @@ class OnnxAsrBackend(TranscriptionBackend):
         # Suppress ONNX Runtime verbose error logging
         # Errors about missing CUDA libraries are expected and will fall back to CPU
         import logging
-
-
-        # Detect GPU availability at runtime (but don't claim it if libraries aren't available)
-        use_gpu = False
-        try:
-            import onnxruntime
-            # Suppress ONNX Runtime Python logging
-            logging.getLogger('onnxruntime').setLevel(logging.CRITICAL)
-
-            # Check if providers are listed (but they may not actually work)
-            available_providers = onnxruntime.get_available_providers()
-            if 'CUDAExecutionProvider' in available_providers or 'TensorrtExecutionProvider' in available_providers:
-                # Note: We'll let onnx-asr try to use GPU, but it will fall back to CPU
-                # if libraries aren't available. We won't claim GPU support upfront.
-                use_gpu = True
-        except Exception:
-            pass
+        logging.getLogger('onnxruntime').setLevel(logging.CRITICAL)
 
         try:
-            from ..onnx_model import load_model, effective_quantization
+            from ..onnx_model import load_model, effective_quantization, vad_batch_size, active_provider
         except ImportError:
-            from onnx_model import load_model, effective_quantization
+            from onnx_model import load_model, effective_quantization, vad_batch_size, active_provider
         model_name = self.config.get_setting('onnx_asr_model', 'nemo-parakeet-tdt-0.6b-v3')
         quantization = effective_quantization(
             model_name, self.config.get_setting('onnx_asr_quantization', 'int8'))
         use_vad = self.config.get_setting('onnx_asr_use_vad', True)
         vad_min_duration = self._get_onnx_asr_vad_min_duration()
+        batch_size = vad_batch_size(
+            {'onnx_asr_vad_batch_size': self.config.get_setting('onnx_asr_vad_batch_size', 1)})
 
-        log(f'[BACKEND] Loading onnx-asr model: {model_name} ({"GPU" if use_gpu else "CPU"})')
+        log(f'[BACKEND] Loading onnx-asr model: {model_name}')
         if model_name == 'orukeet' and _orukeet().cache_state() != 'verified':
             # Download progress is hidden with the CUDA noise below, so say why it is slow.
             log('[BACKEND] Fetching or verifying Orukeet (~672 MB); first start takes a while')
@@ -105,11 +91,14 @@ class OnnxAsrBackend(TranscriptionBackend):
             # service is live, and swapping sys.stderr would swallow other
             # threads' output. ORT's own noise is silenced by the log level above.
             self._onnx_asr_model, self._onnx_asr_vad_model = load_model(
-                model_name, quantization, use_vad
+                model_name, quantization, use_vad, vad_batch_size=batch_size
             )
 
-            vad_info = f', vad_min_duration={vad_min_duration}s' if use_vad else ''
-            log(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, gpu={use_gpu})')
+            vad_info = f', vad_min_duration={vad_min_duration}s, vad_batch_size={batch_size}' if use_vad else ''
+            # The provider the session really got: a listed CUDA provider
+            # falls back to CPU when its libraries are missing.
+            provider = active_provider(self._onnx_asr_model) or 'unknown'
+            log(f'[BACKEND] onnx-asr ready (model={model_name}, quantization={quantization}, vad={use_vad}{vad_info}, provider={provider})')
 
         except Exception as e:
             log(f'ERROR: Failed to load onnx-asr model: {e}')
