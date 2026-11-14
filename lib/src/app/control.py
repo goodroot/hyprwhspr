@@ -39,21 +39,25 @@ class ControlMixin:
                 return False, 'Another file transcription is already running'
             if self._longform_active:
                 return False, 'A long-form session is active; submit or cancel it first'
-            if self._model_operation_active:
+            if self._model_operation_active and not getattr(self, '_model_waking', False):
                 return False, 'The transcription backend is loading; retry shortly'
             if self._recording_finalizing.is_set():
                 return False, 'The daemon is finalizing a recording'
             if self._model_initializing:
                 return False, 'The transcription backend is still initializing; retry shortly'
-            unloaded = MODEL_UNLOADED_FILE.exists() or not self.whisper_manager.is_ready()
-            if not unloaded:
-                self._file_transcription_active = True
-        if unloaded:
-            if self._wake_idle_model():
-                return False, 'The transcription backend is loading; retry shortly'
-            return False, 'The transcription backend is not loaded; run hyprwhspr model reload'
+            # Unloaded by the idle timer: load it and serve this request
+            asleep = (getattr(self, '_model_idle_unloaded', False)
+                      or getattr(self, '_model_waking', False))
+            if not asleep and (MODEL_UNLOADED_FILE.exists() or not self.whisper_manager.is_ready()):
+                return False, 'The transcription backend is not loaded; run hyprwhspr model reload'
+            self._file_transcription_active = True
+            wake = self._claim_model_wake_locked()
+        if wake:
+            self._start_model_wake(quiet=True)
 
         try:
+            if not self._await_model_wake():
+                return False, 'The transcription backend failed to load; check the service log'
             audio_data, sample_rate = decode_audio_file(path)
             text = self.whisper_manager.transcribe_audio(
                 audio_data,
@@ -213,14 +217,21 @@ class ControlMixin:
             self._start_model_wake()
         return True
 
+    # A load this slow has hung; give the recording up rather than wedge it
+    _MODEL_WAKE_TIMEOUT = 600
+
     def _await_model_wake(self):
-        """Hold a transcription until a reload in flight has finished."""
+        """Hold a transcription until a reload in flight has finished.
+
+        False if the idle-unloaded model is still not loaded: the reload
+        failed, whether just now or while the recording was still running.
+        """
         done = getattr(self, '_model_wake_done', None)
-        if done is None or done.is_set():
-            return
-        log("[MODEL] Waiting for the model to load")
-        if not done.wait(timeout=120):
-            log("[MODEL] Model still loading after 120s")
+        if done is not None and not done.is_set():
+            log("[MODEL] Waiting for the model to load")
+            if not done.wait(timeout=self._MODEL_WAKE_TIMEOUT):
+                log(f"[MODEL] Model still loading after {self._MODEL_WAKE_TIMEOUT}s")
+        return not getattr(self, '_model_idle_unloaded', False)
 
     def _handle_model_operation(self, operation, automatic=False):
         """Load or unload the model without holding the recording lock.
@@ -262,27 +273,30 @@ class ControlMixin:
         finally:
             with self._recording_lock:
                 self._model_operation_active = False
+                # Both flags change with the claim, so a press never sees a
+                # half-finished operation: an unloaded model with no reason
+                # yet, or a failed wake with no reload behind it
                 if operation == "reload":
                     self._model_waking = False
-                    # Cleared with the claim: a failed wake must not leave a
-                    # window where a recording starts with no reload behind it
                     if succeeded:
                         self._model_idle_unloaded = False
+                elif succeeded:
+                    self._model_idle_unloaded = automatic
             if operation == "reload":
                 done = getattr(self, '_model_wake_done', None)
                 if done is not None:
                     done.set()
 
         if operation == "unload":
-            if succeeded:
-                self._model_idle_unloaded = automatic
+            if succeeded and not automatic:
+                # The marker means "recording is refused". An idle unload sets
+                # none: the tray stays ready and the next press just records.
                 try:
                     MODEL_UNLOADED_FILE.touch()
                 except Exception:
                     pass
-                if not automatic:
-                    self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
-            elif not automatic:
+                self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
+            elif not succeeded and not automatic:
                 self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
         else:
             if succeeded:

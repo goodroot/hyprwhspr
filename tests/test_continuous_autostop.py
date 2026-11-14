@@ -6,7 +6,7 @@ from unittest import mock
 
 import numpy as np
 
-from tests.test_suspend_resume_recovery import _import_main_isolated, patch_app_global
+from tests.test_suspend_resume_recovery import _import_main_isolated, app_global, patch_app_global
 
 
 class LevelFeed:
@@ -173,6 +173,7 @@ class ContinuousAutostopTests(unittest.TestCase):
                 app._recording_finalizing = threading.Event()
                 app._recording_session = session = object()
                 app._continuous_silent_tail = session if marked else object()
+                app._continuous_pasted = session
                 app.is_recording = True
                 app._ptt_press_time = None
                 app._ptt_locked = False
@@ -191,6 +192,20 @@ class ContinuousAutostopTests(unittest.TestCase):
                     app._stop_recording()
                 app._process_audio.assert_called_once_with(audio, silent_tail=marked)
                 self.assertFalse(app._recording_finalizing.is_set())
+
+    def test_silent_tail_needs_a_chunk_that_was_delivered(self):
+        failed = app_global(self.main.hyprwhsprApp, 'InjectionOutcome').FAILED
+        for transcript, outcome, delivered in (("words", None, True), ("words", failed, False), ("", None, False)):
+            with self.subTest(transcript=transcript, outcome=outcome):
+                app = self._flush_app(np.ones(10, dtype=np.float32))
+                app._continuous_pasted = None
+                app.whisper_manager.transcribe_audio.return_value = transcript
+                app._inject_text.return_value = outcome
+                session = app._recording_session
+                with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+                    self.assertTrue(app._continuous_flush_audio(session))
+                    self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
+                self.assertEqual(app._continuous_pasted is session, delivered)
 
     def test_words_in_a_tail_marked_silent_are_still_pasted(self):
         app = self._process_app("late words")

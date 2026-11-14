@@ -30,6 +30,7 @@ class SilenceMixin:
         # The session whose audio since its last paste is all silence, if any.
         # A stop then expects an empty tail and doesn't call it an error.
         self._continuous_silent_tail = None
+        self._continuous_pasted = None   # the session that has delivered a chunk
         with self._recording_lock:
             self._continuous_delivery_failure_notified = False
         self._continuous_stop_silence_monitor()
@@ -197,6 +198,8 @@ class SilenceMixin:
     def _continuous_stop_and_wait(self, monitor=None):
         """Stop the silence monitor and wait for any in-progress transcription"""
         self._continuous_stop_silence_monitor(monitor)
+        # A chunk parked behind a model load must still paste before the tail
+        self._await_model_wake()
         self._continuous_transcription_done.wait(timeout=30)
 
     def _continuous_flush_audio(self, session):
@@ -239,7 +242,9 @@ class SilenceMixin:
         # completes so the next flush is blocked until this one finishes.
         def process():
             try:
-                self._await_model_wake()
+                if not self._await_model_wake():
+                    self._keep_unsent_audio(audio_data)
+                    return
                 transcription = self.whisper_manager.transcribe_audio(
                     audio_data,
                     sample_rate=self.audio_capture.sample_rate,
@@ -256,6 +261,8 @@ class SilenceMixin:
                         log("[CONTINUOUS] Cancelled — discarding transcription")
                         return
                     outcome = self._inject_text(text)
+                    if outcome != InjectionOutcome.FAILED:
+                        self._continuous_pasted = session
                     preview = f"{text[:80]}{'...' if len(text) > 80 else ''}"
                     if outcome == InjectionOutcome.INJECTED:
                         log(f"[CONTINUOUS] Pasted: {preview}")

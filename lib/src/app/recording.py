@@ -609,6 +609,21 @@ class RecordingMixin:
         except Exception as e:
             log(f"[ERROR] Error cancelling recording: {e}")
 
+    def _keep_unsent_audio(self, audio_data):
+        """Save a dictation the model never loaded for, and say where it is."""
+        try:
+            DEBUG_RECORDINGS_DIR.mkdir(mode=0o700, exist_ok=True)
+            path = DEBUG_RECORDINGS_DIR / f"unsent-{time.strftime('%Y%m%d-%H%M%S')}.wav"
+            self.audio_capture.save_audio_to_wav(audio_data, str(path))
+        except Exception as e:
+            log(f"[ERROR] Model failed to load and the audio could not be kept: {e}")
+            self._notify_user("hyprwhspr", "Model failed to load — dictation lost", urgency="critical")
+            return
+        log(f"[ERROR] Model failed to load; audio kept at {path}")
+        self._notify_user(
+            "hyprwhspr", f"Model failed to load. Audio kept: hyprwhspr transcribe {path}",
+            urgency="critical")
+
     _DEBUG_RECORDINGS_KEEP = 3
 
     def _save_debug_recording(self, audio_data):
@@ -639,8 +654,9 @@ class RecordingMixin:
             self._recording_finalizing.set()
             session = self._recording_session
             self._ptt_reset()
-            # Continuous mode: everything since the last paste was silence
-            silent_tail = getattr(self, '_continuous_silent_tail', None) is session
+            # Continuous mode: a chunk was pasted and only silence followed
+            silent_tail = (getattr(self, '_continuous_silent_tail', None) is session
+                           and getattr(self, '_continuous_pasted', None) is session)
 
         try:
             log("Recording stopped")
@@ -732,7 +748,10 @@ class RecordingMixin:
 
         success = False
         try:
-            self._await_model_wake()
+            if not self._await_model_wake():
+                self._keep_unsent_audio(audio_data)
+                self.audio_manager.play_error_sound()
+                return
             # Transcribe audio with language override if set
             transcription = self.whisper_manager.transcribe_audio(
                 audio_data,

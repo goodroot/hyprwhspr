@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
+
 from tests.test_suspend_resume_recovery import _import_main_isolated, patch_app_global
 
 
@@ -99,7 +101,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app.whisper_manager.unload_model.assert_not_called()
         self.assertTrue(app._unload_model_if_idle(now=1000 + 600))
         app.whisper_manager.unload_model.assert_called_once_with()
-        self.assertTrue(self.marker.exists())                        # tray shows the sleep icon
+        self.assertFalse(self.marker.exists())                       # the marker means "refused"; this is not
         self.assertTrue(app._model_idle_unloaded)
         app._notify_user.assert_not_called()                         # nobody is watching; stay quiet
         self.assertFalse(app._unload_model_if_idle(now=5000))        # nothing left to unload
@@ -169,6 +171,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
         # Even when the idle timer got there first
         app = self._idle_unloaded_app()
         app._handle_model_operation('unload')
+        self.assertTrue(self.marker.exists())
         self.assertFalse(app._wake_idle_model())
 
     def _slow_reload(self, app, result=True):
@@ -242,12 +245,24 @@ class ModelIdleUnloadTests(unittest.TestCase):
         self.assertIn('Model load in progress', app._notify_user.call_args.args[1])
 
     def test_file_transcription_and_long_form_wake_the_model(self):
-        app = self._idle_unloaded_app()
-        ok, message = app._handle_file_transcribe('/tmp/audio.wav')
-        self._join_wake()
-        self.assertFalse(ok)
-        self.assertIn('loading', message)
-        app.whisper_manager.reload_model.assert_called_once_with()
+        decode = mock.Mock(return_value=(np.zeros(8, dtype=np.float32), 16000))
+        with patch_app_global(self.app_cls, 'decode_audio_file', decode):
+            app = self._idle_unloaded_app()            # asleep: load, then serve the request
+            app.whisper_manager.transcribe_audio = mock.Mock(return_value='from a file')
+            self.assertEqual(app._handle_file_transcribe('/tmp/audio.wav'), (True, 'from a file'))
+            self._join_wake()
+            app.whisper_manager.reload_model.assert_called_once_with()
+            self.assertFalse(app._file_transcription_active)
+            self.assertFalse(app._model_idle_unloaded)
+            app._notify_user.assert_not_called()
+
+            app = self._idle_unloaded_app()            # the load fails: say so, hold no claim
+            app.whisper_manager.reload_model.side_effect = lambda: False
+            ok, message = app._handle_file_transcribe('/tmp/audio.wav')
+            self._join_wake()
+            self.assertFalse(ok)
+            self.assertIn('failed to load', message)
+            self.assertFalse(app._file_transcription_active)
 
         app = self._idle_unloaded_app()
         self.assertFalse(app._claim_longform_recording())
@@ -270,6 +285,41 @@ class ModelIdleUnloadTests(unittest.TestCase):
         ok, message = app._handle_file_transcribe('/tmp/audio.wav')
         self.assertIn('hyprwhspr model reload', message)
         app.whisper_manager.reload_model.assert_not_called()
+
+
+    def test_tray_shows_the_recording_not_the_load_during_a_wake(self):
+        app = self._app()
+        app._model_operation_active = True
+        self.assertEqual(app._tray_state(), ('loading', ''))
+        app._model_waking = True
+        app._longform = types.SimpleNamespace(state='IDLE')
+        with tempfile.TemporaryDirectory() as temp:
+            status = Path(temp) / 'recording_status'
+            status.write_text('true')
+            with patch_app_global(self.app_cls, 'RECORDING_STATUS_FILE', status):
+                self.assertEqual(app._tray_state(), ('recording', ''))
+
+    def test_failed_wake_keeps_the_dictation(self):
+        app = self._idle_unloaded_app()
+        app.is_processing = False
+        app.audio_manager = mock.Mock()
+        app.audio_capture = mock.Mock()
+        app._notify_capture = mock.Mock()
+        app._clear_mic_osd_preview_text = mock.Mock()
+        app._show_result_and_hide = mock.Mock()
+        app.whisper_manager.transcribe_audio = mock.Mock()
+        # The wake failed while the recording ran: nothing is in flight by now
+        with tempfile.TemporaryDirectory() as temp, \
+             patch_app_global(self.app_cls, 'DEBUG_RECORDINGS_DIR', Path(temp) / 'recordings'):
+            app._process_audio([0.25])
+            saved = app.audio_capture.save_audio_to_wav.call_args.args
+        self.assertEqual(saved[0], [0.25])
+        self.assertIn('unsent-', saved[1])
+        self.assertIn(saved[1], app._notify_user.call_args.args[1])
+        app.whisper_manager.transcribe_audio.assert_not_called()
+        app.audio_manager.play_error_sound.assert_called_once()
+        app._show_result_and_hide.assert_called_once_with(False)
+        self.assertFalse(app.is_processing)
 
 
 if __name__ == '__main__':

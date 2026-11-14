@@ -250,7 +250,9 @@ class FeedbackMixin:
 
     def _tray_state(self):
         """Current (state, detail) for the tray icon; see tray_icon.STATES"""
-        if self._model_initializing or self._model_operation_active:
+        # A wake loads the model under a live recording: that state wins below
+        waking = getattr(self, '_model_waking', False)
+        if self._model_initializing or (self._model_operation_active and not waking):
             return 'loading', ''
         if self._backend_init_failed:
             return 'error', 'Model failed to load'
