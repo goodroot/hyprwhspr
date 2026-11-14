@@ -52,3 +52,17 @@ bindd = SUPER ALT, U, Unload speech model, exec, hyprwhspr model unload
 # Reclaim dictation when done
 bindd = SUPER ALT, L, Reload speech model, exec, hyprwhspr model reload
 ```
+
+## Unload when idle
+
+Let the model go on its own:
+
+```jsonc
+{
+    "model_idle_unload_minutes": 10   // 0 (default) = never
+}
+```
+
+After ten quiet minutes the model leaves memory. The next recording brings it back: the first press loads it, a notification says when it is ready. Press again.
+
+Unloading by hand still holds until `hyprwhspr model reload`.

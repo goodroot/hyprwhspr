@@ -498,6 +498,12 @@
       "default": false,
       "description": "Enable native Silero VAD for the pywhispercpp backend (strips silence, reduces hallucination loops). Auto-downloads the ~1MB ggml-silero VAD model on first use."
     },
+    "model_idle_unload_minutes": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0,
+      "description": "Unload a local model after this many idle minutes to free VRAM or RAM. 0 (default) = never. The next recording loads it again; that first press is refused while it loads."
+    },
     "onnx_asr_model": {
       "type": "string",
       "default": "nemo-parakeet-tdt-0.6b-v3",

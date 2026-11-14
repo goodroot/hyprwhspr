@@ -45,9 +45,13 @@ class ControlMixin:
                 return False, 'The daemon is finalizing a recording'
             if self._model_initializing:
                 return False, 'The transcription backend is still initializing; retry shortly'
-            if MODEL_UNLOADED_FILE.exists() or not self.whisper_manager.is_ready():
-                return False, 'The transcription backend is not loaded; run hyprwhspr model reload'
-            self._file_transcription_active = True
+            unloaded = MODEL_UNLOADED_FILE.exists() or not self.whisper_manager.is_ready()
+            if not unloaded:
+                self._file_transcription_active = True
+        if unloaded:
+            if self._wake_idle_model():
+                return False, 'The transcription backend is loading; retry shortly'
+            return False, 'The transcription backend is not loaded; run hyprwhspr model reload'
 
         try:
             audio_data, sample_rate = decode_audio_file(path)
@@ -72,6 +76,7 @@ class ControlMixin:
         finally:
             with self._recording_lock:
                 self._file_transcription_active = False
+            self._model_idle_since = time.monotonic()
 
     def _handle_control_command(self, action, language=None):
         """Apply recording policy for a command received by the control server."""
@@ -135,22 +140,81 @@ class ControlMixin:
         else:
             log(f"[CONTROL] Unknown recording control action: {action}")
 
-    def _handle_model_operation(self, operation):
+    def _model_busy_locked(self):
+        """Whether anything is using or loading the model (call under _recording_lock)."""
+        return (self.is_recording or self.is_processing
+                or self._recording_finalizing.is_set()
+                or self._file_transcription_active
+                or self._model_operation_active
+                or self._model_initializing
+                or self._longform_active)
+
+    def _unload_model_if_idle(self, now=None):
+        """Free a local model left idle for model_idle_unload_minutes (0 = never).
+
+        Called once a second from the main loop. Every use of the model holds
+        one of the busy flags, so seeing none for long enough means idle. The
+        next recording loads the model again (_wake_idle_model).
+        """
+        try:
+            now = time.monotonic() if now is None else now
+            minutes = self._get_float_setting('model_idle_unload_minutes', 0)
+            with self._recording_lock:
+                busy = self._model_busy_locked()
+            manager = self.whisper_manager
+            if (minutes <= 0 or busy or not manager.is_ready()
+                    or not manager.active_backend_is_local()):
+                self._model_idle_since = now
+                return False
+            idle_since = getattr(self, '_model_idle_since', None)
+            if idle_since is None:
+                self._model_idle_since = now
+                return False
+            if now - idle_since < minutes * 60:
+                return False
+            self._model_idle_since = now
+            log(f"[MODEL] Idle for {minutes:g} min - unloading (model_idle_unload_minutes)")
+            self._handle_model_operation("unload", automatic=True)
+            return True
+        except Exception as e:
+            log(f"[MODEL] Idle unload check failed: {e}")
+            return False
+
+    def _wake_idle_model(self):
+        """Reload a model the idle timer unloaded. False if it was unloaded by hand."""
+        with self._recording_lock:
+            if not getattr(self, '_model_idle_unloaded', False):
+                return False
+            if getattr(self, '_model_waking', False):
+                return True
+            self._model_waking = True
+
+        def wake():
+            try:
+                self._handle_model_operation("reload")
+            finally:
+                self._model_waking = False
+
+        log("[MODEL] Loading the idle-unloaded model")
+        threading.Thread(target=wake, daemon=True, name="ModelWake").start()
+        return True
+
+    def _handle_model_operation(self, operation, automatic=False):
         """Load or unload the model without holding the recording lock.
 
         A reload can take minutes, so the lock is only used to claim the
         exclusive flag; recording and file requests reject on that flag while
         the slow work runs instead of blocking on the lock.
+
+        automatic: the idle timer's unload. Silent, and the next recording
+        reloads the model; an unload by hand stays unloaded until `model reload`.
         """
         with self._recording_lock:
-            busy = (self.is_recording or self.is_processing
-                    or self._recording_finalizing.is_set()
-                    or self._file_transcription_active
-                    or self._model_operation_active
-                    or self._model_initializing
-                    or self._longform_active)
+            busy = self._model_busy_locked()
             if not busy:
                 self._model_operation_active = True
+        if busy and automatic:
+            return
         if busy:
             log(f"[CONTROL] Cannot {operation} model while the backend is in use")
             self._notify_user(
@@ -170,15 +234,19 @@ class ControlMixin:
 
         if operation == "unload":
             if succeeded:
+                self._model_idle_unloaded = automatic
                 try:
                     MODEL_UNLOADED_FILE.touch()
                 except Exception:
                     pass
-                self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
-            else:
+                if not automatic:
+                    self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
+            elif not automatic:
                 self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
         else:
             if succeeded:
+                self._model_idle_unloaded = False
+                self._model_idle_since = time.monotonic()
                 try:
                     MODEL_UNLOADED_FILE.unlink(missing_ok=True)
                 except Exception:

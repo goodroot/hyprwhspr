@@ -192,6 +192,12 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         # Set when a start was refused while loading; the next successful init
         # announces Ready even if it was quick
         self._notify_when_ready = False
+        # Idle unload (model_idle_unload_minutes): when the model was last seen
+        # in use, whether the timer (not the user) unloaded it, and whether a
+        # reload for the next recording is already under way
+        self._model_idle_since = None
+        self._model_idle_unloaded = False
+        self._model_waking = False
 
         self._recording_control_server = RecordingControlServer(
             fifo_path=RECORDING_CONTROL_FILE,
@@ -414,6 +420,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                 # Recording control now handled by FIFO listener thread (immediate)
                 # Check for recovery requests from tray script (non-blocking)
                 self._attempt_recovery_if_needed()
+                self._unload_model_if_idle()
                 time.sleep(1)
         except KeyboardInterrupt:
             log("\n[SHUTDOWN] Shutting down hyprwhspr...")

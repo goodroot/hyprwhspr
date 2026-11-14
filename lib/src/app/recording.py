@@ -30,9 +30,14 @@ class RecordingMixin:
         with self._recording_lock:
             busy = self._file_transcription_active or self._model_operation_active
             loading = self._model_initializing or self._backend_init_failed
-            if not (busy or loading):
+            asleep = getattr(self, '_model_idle_unloaded', False)
+            if not (busy or loading or asleep):
                 self._longform_active = True
                 return True
+        if asleep and not busy:
+            # The idle timer unloaded the model: load it, the user retries
+            self._wake_idle_model()
+            self._notify_user("hyprwhspr", "Loading model — try again shortly", urgency="normal")
         if loading:
             # As for a refused normal start: announce Ready later, retry a failed init
             self._notify_when_ready = True
@@ -133,6 +138,7 @@ class RecordingMixin:
                 # Push-to-talk hold is measured from this accepted press
                 self._ptt_press_time = time.monotonic()
                 self._ptt_locked = False
+                self._model_idle_since = self._ptt_press_time  # idle unload counts from here
 
         # A capture client self-triggered this start over the FIFO and is now
         # blocking on completion. Release it here or it waits forever and keeps
@@ -192,6 +198,11 @@ class RecordingMixin:
 
         # Model was deliberately unloaded to free GPU resources
         if blocked == 'unloaded':
+            if self._wake_idle_model():
+                # The idle timer unloaded it: load now, the user retries
+                self._notify_user("hyprwhspr", "Loading model — try again shortly", urgency="normal")
+                log("[CONTROL] Recording blocked: loading the idle-unloaded model")
+                return
             self._notify_user(
                 "hyprwhspr",
                 "Model unloaded — run: hyprwhspr model reload",
