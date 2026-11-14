@@ -92,6 +92,57 @@ class InitLifecycleTests(unittest.TestCase):
         self.assertEqual(results, [True, True])
         self.assertEqual([kind for kind, _ in events].count('create'), 1)
 
+    def _resumable(self, events, **kwargs):
+        cls = make_fake_backend_cls(events, **kwargs)
+        cls.reinit_on_resume = True
+        cls.is_local = True
+        cls.unload = lambda backend: events.append(('unload', id(backend)))
+
+        def reinitialize(backend):
+            events.append(('reinitialize', id(backend)))
+            return True
+        cls.reinitialize = reinitialize
+        return cls
+
+    def test_resume_reinitializes_a_loaded_model(self):
+        events = []
+        manager = self._manager(self._resumable(events))
+        self.assertTrue(manager.initialize())
+        self.assertTrue(manager.reinitialize_after_resume())
+        self.assertEqual([e[0] for e in events].count('reinitialize'), 1)
+
+    def test_resume_leaves_an_unloaded_model_unloaded(self):
+        events = []
+        manager = self._manager(self._resumable(events))
+        self.assertTrue(manager.initialize())
+        with mock.patch.object(wm, 'release_memory', return_value=False):
+            self.assertTrue(manager.unload_model())
+        self.assertTrue(manager.reinitialize_after_resume())
+        self.assertTrue(manager.reinitialize_after_resume(only_if_idle=True))
+        self.assertNotIn('reinitialize', [e[0] for e in events])
+        self.assertFalse(manager.ready)
+
+    def test_resume_waits_for_a_load_in_flight(self):
+        events = []
+        gate = threading.Event()
+        manager = self._manager(self._resumable(events, init_gate=gate))
+        loader = threading.Thread(target=manager.initialize)
+        loader.start()
+        for _ in range(200):
+            if manager._init_in_progress:
+                break
+            threading.Event().wait(0.01)
+        results = []
+        resume = threading.Thread(target=lambda: results.append(manager.reinitialize_after_resume()))
+        resume.start()
+        resume.join(timeout=0.2)
+        self.assertTrue(resume.is_alive())  # parked behind the load
+        gate.set()
+        loader.join(timeout=5)
+        resume.join(timeout=5)
+        self.assertEqual(results, [True])
+        self.assertNotIn('reinitialize', [e[0] for e in events])
+
     def test_failed_initialize_keeps_backend_for_missing_client_gate(self):
         events = []
         manager = self._manager(

@@ -249,6 +249,18 @@ class WhisperManager:
         Returns:
             True if the backend is healthy (or needed no action), False otherwise
         """
+        # A deliberate unload outlives suspend: reinitializing would load the
+        # model again while recording stays refused.
+        if self._model_manually_unloaded:
+            return True
+
+        # A load already in flight builds fresh state; don't start a second.
+        with self._init_cond:
+            if self._init_in_progress:
+                while self._init_in_progress:
+                    self._init_cond.wait()
+                return self._last_init_result
+
         backend = self._backend
         if backend is None or not backend.reinit_on_resume:
             return True
