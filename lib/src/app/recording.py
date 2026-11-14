@@ -620,6 +620,8 @@ class RecordingMixin:
             self._recording_finalizing.set()
             session = self._recording_session
             self._ptt_reset()
+            # Continuous mode: everything since the last paste was silence
+            silent_tail = getattr(self, '_continuous_silent_tail', None) is session
 
         try:
             log("Recording stopped")
@@ -672,7 +674,7 @@ class RecordingMixin:
             else:
                 # Valid audio data - process it
                 self.audio_manager.play_stop_sound()
-                self._process_audio(audio_data)
+                self._process_audio(audio_data, silent_tail=silent_tail)
                 
             # Clear language override after transcription completes
             self._current_language_override = None
@@ -698,8 +700,12 @@ class RecordingMixin:
             self._cancel_live_typing()
             self._recording_finalizing.clear()
 
-    def _process_audio(self, audio_data):
-        """Process captured audio through Whisper"""
+    def _process_audio(self, audio_data, silent_tail=False):
+        """Process captured audio through Whisper.
+
+        silent_tail: the words were already pasted and only silence followed,
+        so an empty result is the expected outcome, not an error.
+        """
         with self._recording_lock:
             if self.is_processing:
                 return
@@ -726,20 +732,26 @@ class RecordingMixin:
                     log(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
                     if self._recording_control_server.is_trace_capture():
                         self._notify_capture(text, final=True)
-                    self.audio_manager.play_error_sound()
-                    success = False
+                    if not silent_tail:
+                        self.audio_manager.play_error_sound()
+                    success = silent_tail
                     # Explicitly handle cleanup before returning to ensure visualizer state is updated
                     with self._recording_lock:
                         self.is_processing = False
-                    self._show_result_and_hide(False)
+                    self._show_result_and_hide(success)
                     return
 
                 # Inject text
                 outcome = self._inject_text(text)
                 success = outcome != InjectionOutcome.FAILED
             else:
-                log("[WARN] No transcription generated")
-                self.audio_manager.play_error_sound()
+                # Empty is the expected result for a silent continuous tail
+                success = silent_tail
+                if silent_tail:
+                    log("[CONTINUOUS] Nothing said since the last paste")
+                else:
+                    log("[WARN] No transcription generated")
+                    self.audio_manager.play_error_sound()
 
         except Exception as e:
             log(f"[ERROR] Error processing audio: {e}")

@@ -104,6 +104,66 @@ class ContinuousAutostopTests(unittest.TestCase):
                 app._stop_recording.assert_not_called()
                 self.assertEqual(app._continuous_flush_audio.call_count, chunks)
 
+    def test_monitor_marks_a_silent_tail_until_speech_returns(self):
+        # Speech, pause (paste), silence: the tail is silent.
+        app = self._app([1.0, 0.0], silence_timeout=0, chunk_seconds=0.002)
+        self._run(app, ticks=100)
+        self.assertIs(app._continuous_silent_tail, app._recording_session)
+        # Speech again after the paste: the tail holds words.
+        app = self._app([1.0, 0.0, 0.0, 0.0, 1.0], silence_timeout=0, chunk_seconds=0.002)
+        self._run(app, ticks=100)
+        self.assertIsNone(app._continuous_silent_tail)
+        # Nothing said, or a paste that could not start: not a silent tail.
+        app = self._app([0.0], silence_timeout=0)
+        self._run(app, ticks=100)
+        self.assertIsNone(app._continuous_silent_tail)
+        app = self._app([1.0, 0.0], silence_timeout=0, chunk_seconds=0.002)
+        app._continuous_flush_audio = mock.Mock(return_value=False)
+        with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+            self._run(app, ticks=100)
+        self.assertIsNone(app._continuous_silent_tail)
+
+    def _process_app(self, transcript, markers=None):
+        app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+        app.config = types.SimpleNamespace(get_hallucination_markers=lambda: markers)
+        app._live_typing = None
+        app._recording_lock = threading.Lock()
+        app.is_processing = False
+        app._current_language_override = None
+        app.audio_capture = types.SimpleNamespace(sample_rate=16000)
+        app.audio_manager = mock.Mock()
+        app._recording_control_server = mock.Mock()
+        app._recording_control_server.is_trace_capture.return_value = False
+        app._notify_capture = mock.Mock()
+        app._show_result_and_hide = mock.Mock()
+        app._clear_mic_osd_preview_text = mock.Mock()
+        app._inject_text = mock.Mock()
+        app.whisper_manager = types.SimpleNamespace(transcribe_audio=mock.Mock(return_value=transcript))
+        return app
+
+    def test_empty_silent_tail_is_not_an_error(self):
+        for transcript, markers in (("", None), ("Thank you.", ["Thank you."])):
+            with self.subTest(transcript=transcript):
+                app = self._process_app(transcript, markers)
+                with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+                    app._process_audio([0.0], silent_tail=True)
+                app.audio_manager.play_error_sound.assert_not_called()
+                app._inject_text.assert_not_called()
+                self.assertEqual({c.args for c in app._show_result_and_hide.call_args_list}, {(True,)})
+                self.assertFalse(app.is_processing)
+
+                app = self._process_app(transcript, markers)   # same result, words expected
+                with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+                    app._process_audio([0.0])
+                app.audio_manager.play_error_sound.assert_called_once()
+                self.assertEqual({c.args for c in app._show_result_and_hide.call_args_list}, {(False,)})
+
+    def test_words_in_a_tail_marked_silent_are_still_pasted(self):
+        app = self._process_app("late words")
+        with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+            app._process_audio([0.0], silent_tail=True)
+        app._inject_text.assert_called_once_with("late words")
+
     def test_busy_flush_keeps_the_chunk_pending_for_a_later_pause(self):
         app = self._app([1.0, 0.0], silence_timeout=0, chunk_seconds=0.002)
         app._continuous_flush_audio = mock.Mock(side_effect=[False, True])

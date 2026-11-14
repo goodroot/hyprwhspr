@@ -27,6 +27,9 @@ class SilenceMixin:
     def _continuous_start_silence_monitor(self):
         """Start monitoring for silence to trigger auto-paste in continuous mode"""
         self._continuous_cancelled = False
+        # The session whose audio since its last paste is all silence, if any.
+        # A stop then expects an empty tail and doesn't call it an error.
+        self._continuous_silent_tail = None
         with self._recording_lock:
             self._continuous_delivery_failure_notified = False
         self._continuous_stop_silence_monitor()
@@ -69,6 +72,7 @@ class SilenceMixin:
                                 # Busy flush? Keep the chunk pending for the next pause.
                                 if self._continuous_flush_audio(session):
                                     speech_since_flush = False
+                                    self._continuous_silent_tail = session
                             silent_count = 0
                         if stop_samples and heard_speech and quiet_count >= stop_samples:
                             self._continuous_autostop(session, stop_timeout)
@@ -77,6 +81,7 @@ class SilenceMixin:
                         silent_count = 0
                         quiet_count = 0
                         heard_speech = speech_since_flush = True
+                        self._continuous_silent_tail = None
                     stop_event.wait(self._POLL_INTERVAL)
             except Exception as e:
                 log(f"[CONTINUOUS] Silence monitor error: {e}")
