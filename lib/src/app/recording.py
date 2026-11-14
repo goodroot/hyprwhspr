@@ -755,11 +755,7 @@ class RecordingMixin:
                     if not silent_tail:
                         self.audio_manager.play_error_sound()
                     success = silent_tail
-                    # Explicitly handle cleanup before returning to ensure visualizer state is updated
-                    with self._recording_lock:
-                        self.is_processing = False
-                    self._show_result_and_hide(success)
-                    return
+                    return  # the finally below shows the result, once
 
                 # Inject text
                 outcome = self._inject_text(text)

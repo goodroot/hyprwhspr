@@ -158,6 +158,40 @@ class ContinuousAutostopTests(unittest.TestCase):
                 app.audio_manager.play_error_sound.assert_called_once()
                 self.assertEqual({c.args for c in app._show_result_and_hide.call_args_list}, {(False,)})
 
+    def test_hallucination_result_is_shown_once(self):
+        app = self._process_app("Thank you.", ["Thank you."])
+        with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+            app._process_audio([0.0])
+        app._show_result_and_hide.assert_called_once_with(False)
+        self.assertFalse(app.is_processing)
+
+    def test_stop_tells_processing_about_a_silent_tail(self):
+        for marked in (True, False):
+            with self.subTest(marked=marked):
+                app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+                app._recording_lock = threading.Lock()
+                app._recording_finalizing = threading.Event()
+                app._recording_session = session = object()
+                app._continuous_silent_tail = session if marked else object()
+                app.is_recording = True
+                app._ptt_press_time = None
+                app._ptt_locked = False
+                app._current_language_override = None
+                app._live_typing = None
+                for name in ('_autostop_stop_silence_monitor', '_clear_mic_osd_preview_text',
+                             '_set_visualizer_state', '_stop_audio_level_monitoring',
+                             '_write_recording_status', '_restore_recording_playback',
+                             '_wait_for_start_settled', '_save_debug_recording', '_process_audio'):
+                    setattr(app, name, mock.Mock())
+                app._is_zero_volume = mock.Mock(return_value=False)
+                app.audio_manager = mock.Mock()
+                app.audio_capture = mock.Mock()
+                app.audio_capture.stop_recording.return_value = audio = [0.1]
+                with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+                    app._stop_recording()
+                app._process_audio.assert_called_once_with(audio, silent_tail=marked)
+                self.assertFalse(app._recording_finalizing.is_set())
+
     def test_words_in_a_tail_marked_silent_are_still_pasted(self):
         app = self._process_app("late words")
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
