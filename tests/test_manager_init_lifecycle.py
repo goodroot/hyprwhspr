@@ -111,6 +111,21 @@ class InitLifecycleTests(unittest.TestCase):
         self.assertTrue(manager.reinitialize_after_resume())
         self.assertEqual([e[0] for e in events].count('reinitialize'), 1)
 
+    def test_resume_reinit_waits_for_a_transcription(self):
+        events = []
+        manager = self._manager(self._resumable(events))
+        self.assertTrue(manager.initialize())
+        results = []
+        with manager._model_lock:   # a transcription in flight
+            resume = threading.Thread(target=lambda: results.append(manager.reinitialize_after_resume()))
+            resume.start()
+            resume.join(timeout=0.2)
+            self.assertTrue(resume.is_alive())
+            self.assertNotIn('reinitialize', [e[0] for e in events])
+        resume.join(timeout=5)
+        self.assertEqual(results, [True])
+        self.assertEqual([e[0] for e in events].count('reinitialize'), 1)
+
     def test_resume_leaves_an_unloaded_model_unloaded(self):
         events = []
         manager = self._manager(self._resumable(events))

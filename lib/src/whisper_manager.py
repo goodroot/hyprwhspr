@@ -273,7 +273,9 @@ class WhisperManager:
                 return True
             log(f"[RECOVERY] Reinitializing {self._current_backend_name()} model after audio recovery (suspend/resume detected)")
 
-        return backend.reinitialize()
+        # Transcriptions hold this lock: never swap the model under one
+        with self._model_lock:
+            return backend.reinitialize()
 
     def is_ready(self) -> bool:
         """Check if whisper is ready for transcription"""
