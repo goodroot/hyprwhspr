@@ -29,6 +29,7 @@ class RecordCommandTests(unittest.TestCase):
             with (
                 mock.patch.object(record, "RECORDING_CONTROL_FILE", control),
                 mock.patch.object(record, "RECORDING_STATUS_FILE", status_file),
+                mock.patch.object(record, "LONGFORM_STATE_FILE", Path(temp) / "longform_state"),
                 mock.patch.object(record, "START_CONFIRM_TIMEOUT", 0.2),
                 mock.patch.object(record.time, "sleep", side_effect=service_tick),
                 mock.patch.object(record, "log_success") as success,
@@ -75,6 +76,26 @@ class RecordCommandTests(unittest.TestCase):
                 success.assert_not_called()
                 info.assert_called_once_with(
                     "Start sent. The service did not confirm; check notifications.")
+
+    def test_long_form_start_is_confirmed_by_its_own_state_file(self):
+        # Long-form never writes the status file.
+        with tempfile.TemporaryDirectory() as temp:
+            control = Path(temp) / "recording_control"
+            control.write_text("")
+            state = Path(temp) / "longform_state"
+            state.write_text("PAUSED")
+            with (
+                mock.patch.object(record, "RECORDING_CONTROL_FILE", control),
+                mock.patch.object(record, "RECORDING_STATUS_FILE", Path(temp) / "recording_status"),
+                mock.patch.object(record, "LONGFORM_STATE_FILE", state),
+                mock.patch.object(record, "START_CONFIRM_TIMEOUT", 0.2),
+                mock.patch.object(record.time, "sleep", side_effect=lambda _s: state.write_text("RECORDING")),
+                mock.patch.object(record, "log_success") as success,
+                mock.patch.object(record, "log_info") as info,
+            ):
+                record.record_command("start")
+        success.assert_called_once_with("Recording started")
+        info.assert_not_called()
 
 
 if __name__ == "__main__":

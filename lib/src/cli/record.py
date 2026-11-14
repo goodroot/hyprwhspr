@@ -9,11 +9,11 @@ import socket
 import time
 
 try:
-    from ..paths import (RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE,
-                         SOCKET_FILE)
+    from ..paths import (LONGFORM_STATE_FILE, RECORDING_CONTROL_FILE,
+                         RECORDING_STATUS_FILE, SOCKET_FILE)
 except ImportError:
-    from paths import (RECORDING_CONTROL_FILE, RECORDING_STATUS_FILE,
-                       SOCKET_FILE)
+    from paths import (LONGFORM_STATE_FILE, RECORDING_CONTROL_FILE,
+                       RECORDING_STATUS_FILE, SOCKET_FILE)
 
 try:
     from ..output_control import log_info, log_success, log_error
@@ -102,10 +102,17 @@ def record_command(action: str, language: str = None):
             log_error(f"Failed to send command: {e}")
             return False
 
+    def longform_recording() -> bool:
+        """Long-form never writes the status file; it keeps a state file."""
+        try:
+            return LONGFORM_STATE_FILE.read_text().strip() == 'RECORDING'
+        except OSError:
+            return False
+
     def report_start():
         """Say "started" only once the service has."""
         deadline = time.monotonic() + START_CONFIRM_TIMEOUT
-        while not is_recording():
+        while not (is_recording() or longform_recording()):
             if time.monotonic() >= deadline:
                 log_info("Start sent. The service did not confirm; check notifications.")
                 return
