@@ -1,5 +1,6 @@
 """Recording-control commands, file transcription and model lifecycle."""
 
+import os
 import threading
 import time
 
@@ -53,12 +54,14 @@ class ControlMixin:
             self._file_transcription_active = True
 
         try:
-            # Decode first: a bad file should fail fast, not load a model
-            audio_data, sample_rate = decode_audio_file(path)
-            with self._recording_lock:
-                wake = self._claim_model_wake_locked()
+            # Load alongside the decode, but not for a path that cannot decode
+            wake = False
+            if os.path.isfile(path):
+                with self._recording_lock:
+                    wake = self._claim_model_wake_locked()
             if wake:
                 self._start_model_wake(quiet=True)
+            audio_data, sample_rate = decode_audio_file(path)
             if not self._await_model_wake():
                 return False, 'The transcription backend failed to load; check the service log'
             text = self.whisper_manager.transcribe_audio(
@@ -246,9 +249,17 @@ class ControlMixin:
         reloads the model; an unload by hand stays unloaded until `model reload`.
         """
         with self._recording_lock:
-            busy = self._model_busy_locked()
-            if not busy:
+            # The CLI cannot see an idle unload, so it asks even when loaded
+            loaded = (operation == "reload" and not MODEL_UNLOADED_FILE.exists()
+                      and not getattr(self, '_model_idle_unloaded', False)
+                      and self.whisper_manager.is_ready())
+            busy = not loaded and self._model_busy_locked()
+            if not (loaded or busy):
                 self._model_operation_active = True
+        if loaded:
+            log("[CONTROL] Model reload requested but the model is loaded")
+            self._notify_user("hyprwhspr", "Model already loaded", urgency="low")
+            return
         if busy and automatic:
             return
         if busy:
@@ -256,15 +267,6 @@ class ControlMixin:
             self._notify_user(
                 "hyprwhspr", "Finish the current recording or transcription first", urgency="normal"
             )
-            return
-        if (operation == "reload" and not MODEL_UNLOADED_FILE.exists()
-                and not getattr(self, '_model_idle_unloaded', False)
-                and self.whisper_manager.is_ready()):
-            # The CLI cannot see an idle unload, so it always asks
-            with self._recording_lock:
-                self._model_operation_active = False
-            log("[CONTROL] Model reload requested but the model is loaded")
-            self._notify_user("hyprwhspr", "Model already loaded", urgency="low")
             return
         self._run_model_operation(operation, automatic=automatic)
 
@@ -291,6 +293,8 @@ class ControlMixin:
                     self._model_waking = False
                     if succeeded:
                         self._model_idle_unloaded = False
+                        # A reload is also how a failed startup load is retried
+                        self._backend_init_failed = False
                 elif succeeded:
                     self._model_idle_unloaded = automatic
                 # Set under the lock: a newer wake's claim clears this event,

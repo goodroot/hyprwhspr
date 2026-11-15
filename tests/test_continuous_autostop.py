@@ -207,15 +207,62 @@ class ContinuousAutostopTests(unittest.TestCase):
                     self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
                 self.assertEqual(app._continuous_pasted is session, delivered)
 
-    def test_an_undelivered_chunk_clears_an_earlier_delivery(self):
-        app = self._flush_app(np.ones(10, dtype=np.float32))
-        session = app._recording_session
-        app._continuous_pasted = session                 # chunk 1 was pasted
-        app.whisper_manager.transcribe_audio.return_value = ""   # chunk 2 comes back empty
+    def test_only_a_lost_chunk_clears_an_earlier_delivery(self):
+        failed = app_global(self.main.hyprwhsprApp, 'InjectionOutcome').FAILED
+        # (transcript or error, injection outcome, delivery record kept)
+        for result, outcome, kept in (("", None, True),                  # a cough: nothing was lost
+                                      ("Thank you.", None, True),        # a hallucination: likewise
+                                      ("words", failed, False),
+                                      (RuntimeError("boom"), None, False)):
+            with self.subTest(result=result, outcome=outcome):
+                app = self._flush_app(np.ones(10, dtype=np.float32))
+                app.config = types.SimpleNamespace(get_hallucination_markers=lambda: ["Thank you."])
+                session = app._recording_session
+                app._continuous_pasted = session                 # chunk 1 was pasted
+                app.whisper_manager.transcribe_audio.side_effect = (
+                    result if isinstance(result, Exception) else lambda *a, **k: result)
+                app._inject_text.return_value = outcome
+                with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+                    self.assertTrue(app._continuous_flush_audio(session))
+                    self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
+                self.assertEqual(app._continuous_pasted is session, kept)
+
+    def test_stop_lets_a_chunk_in_flight_paste_before_the_tail(self):
+        app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
+        app._recording_lock = threading.Lock()
+        app._recording_finalizing = threading.Event()
+        app._recording_session = session = object()
+        app._continuous_silent_tail = session
+        app._continuous_pasted = None
+        app._continuous_transcription_done = threading.Event()   # a chunk is still transcribing
+        app.is_recording = True
+        app._ptt_press_time = None
+        app._ptt_locked = False
+        app._current_language_override = None
+        app._live_typing = None
+        order = []
+        for name in ('_autostop_stop_silence_monitor', '_clear_mic_osd_preview_text',
+                     '_set_visualizer_state', '_stop_audio_level_monitoring',
+                     '_write_recording_status', '_restore_recording_playback',
+                     '_wait_for_start_settled', '_save_debug_recording'):
+            setattr(app, name, mock.Mock())
+        app._process_audio = mock.Mock(side_effect=lambda *a, **k: order.append('tail'))
+        app._is_zero_volume = mock.Mock(return_value=False)
+        app.audio_manager = mock.Mock()
+        app.audio_capture = mock.Mock()
+        app.audio_capture.stop_recording.side_effect = lambda: order.append('mic off') or [0.1]
+
+        def chunk_finishes():
+            order.append('chunk')
+            app._continuous_pasted = session
+            app._continuous_transcription_done.set()
+
+        threading.Timer(0.05, chunk_finishes).start()
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
-            self.assertTrue(app._continuous_flush_audio(session))
-            self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
-        self.assertIsNone(app._continuous_pasted)
+            app._stop_recording()
+        self.assertEqual(order, ['mic off', 'chunk', 'tail'])
+        # ...and the tail is judged with the chunk's delivery known
+        app._process_audio.assert_called_once_with([0.1], silent_tail=True)
 
     def test_stop_does_not_wait_on_a_model_load(self):
         app = self._flush_app(np.ones(10, dtype=np.float32))

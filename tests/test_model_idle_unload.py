@@ -247,9 +247,11 @@ class ModelIdleUnloadTests(unittest.TestCase):
     def test_file_transcription_and_long_form_wake_the_model(self):
         decode = mock.Mock(return_value=(np.zeros(8, dtype=np.float32), 16000))
         with patch_app_global(self.app_cls, 'decode_audio_file', decode):
+            audio = Path(self.marker.parent) / 'audio.wav'
+            audio.touch()
             app = self._idle_unloaded_app()            # asleep: load, then serve the request
             app.whisper_manager.transcribe_audio = mock.Mock(return_value='from a file')
-            self.assertEqual(app._handle_file_transcribe('/tmp/audio.wav'), (True, 'from a file'))
+            self.assertEqual(app._handle_file_transcribe(str(audio)), (True, 'from a file'))
             self._join_wake()
             app.whisper_manager.reload_model.assert_called_once_with()
             self.assertFalse(app._file_transcription_active)
@@ -258,7 +260,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
 
             app = self._idle_unloaded_app()            # the load fails: say so, hold no claim
             app.whisper_manager.reload_model.side_effect = lambda: False
-            ok, message = app._handle_file_transcribe('/tmp/audio.wav')
+            ok, message = app._handle_file_transcribe(str(audio))
             self._join_wake()
             self.assertFalse(ok)
             self.assertIn('failed to load', message)
@@ -305,6 +307,34 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app.whisper_manager.reload_model.assert_called_once_with()
         self.assertEqual(app._notify_user.call_args.args[1], 'Model already loaded')
         self.assertFalse(app._model_operation_active)
+
+        app.is_recording = True                      # loaded and in use: same answer, no claim
+        app._notify_user.reset_mock()
+        app._handle_model_operation('reload')
+        self.assertEqual(app._notify_user.call_args.args[1], 'Model already loaded')
+        self.assertFalse(app._model_operation_active)
+
+    def test_reload_clears_a_failed_startup_load(self):
+        app = self._app()
+        app.whisper_manager.is_ready = lambda: False     # the load at startup failed
+        app._backend_init_failed = True
+        app._handle_model_operation('reload')
+        app.whisper_manager.reload_model.assert_called_once_with()
+        self.assertFalse(app._backend_init_failed)
+
+    def test_unsent_audio_files_never_collide(self):
+        app = self._app()
+        app.audio_capture = mock.Mock()
+        with tempfile.TemporaryDirectory() as temp, \
+             patch_app_global(self.app_cls, 'DEBUG_RECORDINGS_DIR', Path(temp) / 'recordings'), \
+             mock.patch.object(self.app_cls, '_wav_stamp', staticmethod(lambda: 'same-instant')):
+            app._keep_unsent_audio([0.1])
+            app._keep_unsent_audio([0.2])
+            folder = Path(temp) / 'recordings'
+            self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((folder / 'unsent').stat().st_mode & 0o777, 0o700)
+        paths = [call.args[1] for call in app.audio_capture.save_audio_to_wav.call_args_list]
+        self.assertEqual(len(set(paths)), 2)
 
     def test_a_finished_wake_cannot_release_the_next_wakes_waiters(self):
         # The event is set under the lock that the next claim clears it under.

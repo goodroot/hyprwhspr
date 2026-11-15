@@ -30,7 +30,9 @@ class SilenceMixin:
         # The session whose audio since its last paste is all silence, if any.
         # A stop then expects an empty tail and doesn't call it an error.
         self._continuous_silent_tail = None
-        self._continuous_pasted = None   # the session whose newest chunk was delivered
+        # The session that has pasted a chunk and lost none since. Noise that
+        # transcribes to nothing is not a loss.
+        self._continuous_pasted = None
         with self._recording_lock:
             self._continuous_delivery_failure_notified = False
         self._continuous_stop_silence_monitor()
@@ -225,8 +227,6 @@ class SilenceMixin:
 
             log(f"[CONTINUOUS] Flushing {duration:.1f}s of audio for transcription")
             should_transcribe = True
-            # Flushes run one at a time, so this tracks the newest chunk only
-            self._continuous_pasted = None
         except Exception as e:
             log(f"[CONTINUOUS] Flush error: {e}")
             return False
@@ -243,6 +243,7 @@ class SilenceMixin:
         def process():
             try:
                 if not self._await_model_wake():
+                    self._continuous_pasted = None
                     self._keep_unsent_audio(audio_data)
                     return
                 transcription = self.whisper_manager.transcribe_audio(
@@ -261,8 +262,7 @@ class SilenceMixin:
                         log("[CONTINUOUS] Cancelled — discarding transcription")
                         return
                     outcome = self._inject_text(text)
-                    if outcome != InjectionOutcome.FAILED:
-                        self._continuous_pasted = session
+                    self._continuous_pasted = None if outcome == InjectionOutcome.FAILED else session
                     preview = f"{text[:80]}{'...' if len(text) > 80 else ''}"
                     if outcome == InjectionOutcome.INJECTED:
                         log(f"[CONTINUOUS] Pasted: {preview}")
@@ -273,6 +273,7 @@ class SilenceMixin:
                 else:
                     log("[CONTINUOUS] No transcription from flushed audio")
             except Exception as e:
+                self._continuous_pasted = None
                 log(f"[CONTINUOUS] Transcription error: {e}")
             finally:
                 with self._recording_lock:

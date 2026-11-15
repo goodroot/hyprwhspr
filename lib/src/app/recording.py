@@ -1,5 +1,6 @@
 """The recording lifecycle: start, stop, cancel, processing and injection."""
 
+import itertools
 import json
 import threading
 import time
@@ -609,15 +610,24 @@ class RecordingMixin:
         except Exception as e:
             log(f"[ERROR] Error cancelling recording: {e}")
 
+    _unsent_sequence = itertools.count(1)
+
+    @staticmethod
+    def _wav_stamp():
+        """YYYYmmdd-HHMMSS-mmm from one clock reading."""
+        now = time.time_ns()
+        seconds = time.strftime('%Y%m%d-%H%M%S', time.localtime(now // 1_000_000_000))
+        return f"{seconds}-{now // 1_000_000 % 1000:03d}"
+
     def _keep_unsent_audio(self, audio_data):
         """Save a dictation the model never loaded for, and say where it is."""
         try:
-            # Its own directory: the debug-recordings pruner must not count
-            # these. Milliseconds: a chunk and its tail can fail together.
+            # Its own directory: the debug-recordings pruner must not count these
+            DEBUG_RECORDINGS_DIR.mkdir(mode=0o700, exist_ok=True)
             folder = DEBUG_RECORDINGS_DIR / 'unsent'
-            folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-            millis = time.time_ns() // 1_000_000 % 1000
-            path = folder / f"{time.strftime('%Y%m%d-%H%M%S')}-{millis:03d}.wav"
+            folder.mkdir(mode=0o700, exist_ok=True)
+            # A chunk and its tail fail together, in the same millisecond
+            path = folder / f"{self._wav_stamp()}-{next(self._unsent_sequence)}.wav"
             self.audio_capture.save_audio_to_wav(audio_data, str(path))
         except Exception as e:
             log(f"[ERROR] Model failed to load and the audio could not be kept: {e}")
@@ -640,8 +650,7 @@ class RecordingMixin:
             return
         try:
             DEBUG_RECORDINGS_DIR.mkdir(mode=0o700, exist_ok=True)
-            millis = time.time_ns() // 1_000_000 % 1000
-            path = DEBUG_RECORDINGS_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{millis:03d}.wav"
+            path = DEBUG_RECORDINGS_DIR / f"{self._wav_stamp()}.wav"
             self.audio_capture.save_audio_to_wav(audio_data, str(path))
             for old in sorted(DEBUG_RECORDINGS_DIR.glob('*.wav'))[:-self._DEBUG_RECORDINGS_KEEP]:
                 old.unlink(missing_ok=True)
@@ -658,9 +667,6 @@ class RecordingMixin:
             self._recording_finalizing.set()
             session = self._recording_session
             self._ptt_reset()
-            # Continuous mode: a chunk was pasted and only silence followed
-            silent_tail = (getattr(self, '_continuous_silent_tail', None) is session
-                           and getattr(self, '_continuous_pasted', None) is session)
 
         try:
             log("Recording stopped")
@@ -686,6 +692,15 @@ class RecordingMixin:
             self._wait_for_start_settled()
             audio_data = self.audio_capture.stop_recording()
             self._save_debug_recording(audio_data)
+
+            # Continuous mode: a chunk still transcribing (or parked behind a
+            # model load) pastes before the tail. The mic is off by now.
+            chunk_done = getattr(self, '_continuous_transcription_done', None)
+            if chunk_done is not None and not chunk_done.is_set():
+                chunk_done.wait(timeout=self._MODEL_WAKE_TIMEOUT)
+            # ...and with it settled: a chunk was pasted and only silence followed
+            silent_tail = (getattr(self, '_continuous_silent_tail', None) is session
+                           and getattr(self, '_continuous_pasted', None) is session)
 
             # Check for zero-volume or broken stream
             if audio_data is None:
