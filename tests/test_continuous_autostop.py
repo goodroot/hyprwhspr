@@ -252,14 +252,19 @@ class ContinuousAutostopTests(unittest.TestCase):
         app.audio_capture = mock.Mock()
         app.audio_capture.stop_recording.side_effect = lambda: order.append('mic off') or [0.1]
 
-        def chunk_finishes():
+        def chunk_finishes(timeout=None):
             order.append('chunk')
             app._continuous_pasted = session
             app._continuous_transcription_done.set()
+            return True
 
-        threading.Timer(0.05, chunk_finishes).start()
-        with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
+        # Complete the chunk only when stop waits for it. A timer can fire
+        # before capture stops on a busy runner, without any runtime bug.
+        with mock.patch.object(app._continuous_transcription_done, 'wait',
+                               side_effect=chunk_finishes) as wait, \
+             patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
             app._stop_recording()
+        wait.assert_called_once_with(timeout=app._MODEL_WAKE_TIMEOUT)
         self.assertEqual(order, ['mic off', 'chunk', 'tail'])
         # ...and the tail is judged with the chunk's delivery known
         app._process_audio.assert_called_once_with([0.1], silent_tail=True)
