@@ -25,7 +25,7 @@ Whisper figures are model sizes; expect some overhead on top. Qwen3-ASR's contex
 
 - **Smaller model.** Whisper `base` or `small`, Qwen3-ASR `0.6b-q8_0`.
 - **Quantize.** Parakeet runs `int8` by default (`onnx_asr_quantization`); keep it. faster-whisper's `auto` compute type is `int8`; `float16` and `float32` cost more.
-- **Keep Parakeet's batch at 1.** `onnx_asr_vad_batch_size` trades memory for speed on long GPU recordings. At 8, a two-minute dictation holds 4 GB.
+- **Keep Parakeet's batch at 1.** `onnx_asr_vad_batch_size` trades memory for speed on long GPU recordings. Larger batches can hold several GB.
 - **Keep Cohere on bfloat16.** Its GPU default. `float32` doubles the footprint.
 - **Trim Qwen3-ASR's context.** `qwen3_asr_ctx_size` sizes the KV cache, ~112 KiB per token on the 1.7B. `null` means llama.cpp's 32000, ~3.5 GB.
 - **Move to CPU.** Frees VRAM, spends RAM.
@@ -63,8 +63,10 @@ Let the model go on its own:
 }
 ```
 
-After ten quiet minutes the model leaves memory. The next recording brings it back: speak as usual, the model loads while you talk. Text lands once it is ready.
+After ten idle minutes the local model leaves memory. Recording, processing and open long-form sessions keep it loaded. Cloud backends are unaffected.
 
-If the model cannot load, the audio is kept. The notification gives the command to transcribe it.
+The next recording brings it back: speak as usual, the model loads while you talk. Text lands once it is ready. File transcription wakes it too. In long-form mode, the first start requests a reload; try again once the model is ready.
 
-Unloading by hand still holds until `hyprwhspr model reload`.
+If the model cannot load, the audio is kept. The notification gives the command to transcribe it. Cancelled audio is discarded. If saving fails too, the notification says the dictation was lost.
+
+Unloading by hand still holds until `hyprwhspr model reload`, including across suspend and resume. Reload also wakes a model unloaded by the idle timer; if it is already loaded, nothing changes.

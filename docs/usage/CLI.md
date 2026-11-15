@@ -39,6 +39,8 @@ hyprwhspr record capture --lang it   # Capture with language override
 hyprwhspr record capture --trace-processing
 ```
 
+`record start` waits up to 1.5 seconds for confirmation before saying recording started. Without confirmation, it reports that the request was sent and asks you to check notifications. `record status` also recognizes long-form recording.
+
 ## Trace processing
 
 `--trace-processing` prints one UTF-8 JSON document using the running daemon's settings. It reports exact `raw` and
@@ -63,7 +65,6 @@ hyprwhspr transcribe recording.wav --lang fr --clean
 Stdout by default; `-o` writes UTF-8 text. `--lang` sets the language. `--clean`
 applies configured cleanup, without pasting or running hooks.
 
-An idle service lends its loaded model. A busy service says no. No service: the
-command loads the backend itself.
+An idle service lends its model, reloading it if the [idle timer](../backends/MEMORY.md#unload-when-idle) unloaded it. A model unloaded by hand needs `hyprwhspr model reload` first. A busy service says no. No service: the command loads the backend itself.
 
 File transcription does not work with the realtime WebSocket backend.

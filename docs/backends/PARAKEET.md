@@ -19,6 +19,10 @@ Run `hyprwhspr setup` and select **Parakeet → Parakeet v3**. The model (~1 GB)
 }
 ```
 
+Keep `onnx_asr_vad_batch_size` at `1` to limit memory use. Larger batches can speed up long GPU recordings, but use more memory. The setting applies when VAD is enabled and the recording reaches `onnx_asr_vad_min_duration`.
+
+The service log reports the execution provider in use, including CPU fallback. For automatic unloading between recordings, see [Memory management](MEMORY.md#unload-when-idle).
+
 [Orukeet](https://huggingface.co/oruk/orukeet): an optional Parakeet v3
 fine-tune for 25 European languages. Pick **Parakeet → Orukeet** in setup, or:
 
