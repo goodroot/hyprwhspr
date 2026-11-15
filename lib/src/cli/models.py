@@ -150,7 +150,7 @@ def model_command(action: str, model_name: str = None) -> bool:
         log_info("Sending model reload request to service...")
         success = _send_model_control('model_reload')
         if success:
-            log_success("Model reload requested — service will load model back into memory.")
+            log_success("Model reload requested — the service loads it if it is unloaded.")
         return success
 
     if backend == 'parakeet-cpp':

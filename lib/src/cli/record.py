@@ -43,13 +43,16 @@ def record_command(action: str, language: str = None):
     import stat
 
     def is_recording() -> bool:
-        """Check if currently recording (status file exists with 'true')"""
-        if not RECORDING_STATUS_FILE.exists():
-            return False
+        """Whether the service is recording, by its state files."""
         try:
-            content = RECORDING_STATUS_FILE.read_text().strip().lower()
-            return content == 'true'
-        except Exception:
+            if RECORDING_STATUS_FILE.read_text().strip().lower() == 'true':
+                return True
+        except OSError:
+            pass
+        # Long-form never writes the status file; it keeps a state file
+        try:
+            return LONGFORM_STATE_FILE.read_text().strip() == 'RECORDING'
+        except OSError:
             return False
 
     def send_control(command: str) -> bool:
@@ -102,17 +105,10 @@ def record_command(action: str, language: str = None):
             log_error(f"Failed to send command: {e}")
             return False
 
-    def longform_recording() -> bool:
-        """Long-form never writes the status file; it keeps a state file."""
-        try:
-            return LONGFORM_STATE_FILE.read_text().strip() == 'RECORDING'
-        except OSError:
-            return False
-
     def report_start():
         """Say "started" only once the service has."""
         deadline = time.monotonic() + START_CONFIRM_TIMEOUT
-        while not (is_recording() or longform_recording()):
+        while not is_recording():
             if time.monotonic() >= deadline:
                 log_info("Start sent. The service did not confirm; check notifications.")
                 return
@@ -125,7 +121,7 @@ def record_command(action: str, language: str = None):
     # The status file lags the daemon, so it never gates these; the daemon
     # ignores a start while recording and a stop/cancel while idle.
     if action == 'start':
-        expected = not (is_recording() or longform_recording())
+        expected = not is_recording()
         if send_control(start_cmd):
             if expected:
                 report_start()
@@ -162,7 +158,7 @@ def record_command(action: str, language: str = None):
                 report_start()
 
     elif action == 'status':
-        if is_recording() or longform_recording():
+        if is_recording():
             log_info("Status: Recording in progress")
         else:
             log_info("Status: Idle")

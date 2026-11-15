@@ -103,7 +103,8 @@ class RecordCommandTests(unittest.TestCase):
             control.write_text("")
             state = Path(temp) / "longform_state"
             state.write_text("RECORDING")
-            for action, expected in (("start", "Start sent"), ("status", "Status: Recording in progress")):
+            for action, expected in (("start", "Start sent"), ("status", "Status: Recording in progress"),
+                                     ("toggle", None)):
                 with (
                     mock.patch.object(record, "RECORDING_CONTROL_FILE", control),
                     mock.patch.object(record, "RECORDING_STATUS_FILE", Path(temp) / "recording_status"),
@@ -112,6 +113,10 @@ class RecordCommandTests(unittest.TestCase):
                     mock.patch.object(record, "log_info") as info,
                 ):
                     record.record_command(action)
+                if action == "toggle":           # a toggle pauses it; it never claims a start
+                    self.assertEqual(control.read_text(), "stop\n")
+                    success.assert_called_once_with("Recording stopped")
+                    continue
                 success.assert_not_called()      # nothing started: it was already recording
                 info.assert_called_once_with(expected)
 
