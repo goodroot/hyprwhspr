@@ -65,4 +65,6 @@ Let the model go on its own:
 
 After ten quiet minutes the model leaves memory. The next recording brings it back: speak as usual, the model loads while you talk. Text lands once it is ready.
 
+If the model cannot load, the audio is kept. The notification gives the command to transcribe it.
+
 Unloading by hand still holds until `hyprwhspr model reload`.
