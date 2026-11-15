@@ -242,7 +242,14 @@ class SilenceMixin:
         # completes so the next flush is blocked until this one finishes.
         def process():
             try:
-                if not self._await_model_wake():
+                ready = self._await_model_wake()
+                with self._recording_lock:
+                    discarded = (self._continuous_cancelled
+                                 or self._recording_session is not session)
+                if discarded:
+                    log("[CONTINUOUS] Cancelled — discarding audio")
+                    return
+                if not ready:
                     self._continuous_pasted = None
                     self._keep_unsent_audio(audio_data)
                     return

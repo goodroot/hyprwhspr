@@ -1918,8 +1918,8 @@ class AudioCapture:
         except Exception as e:
             log(f"Error querying devices: {e}")
     
-    def save_audio_to_wav(self, audio_data: np.ndarray, filename: str):
-        """Save audio data to a WAV file"""
+    def save_audio_to_wav(self, audio_data: np.ndarray, filename: str) -> bool:
+        """Save audio to WAV; return whether writing and closing succeeded."""
         try:
             # Convert float32 to int16 for WAV format
             if audio_data.dtype == np.float32:
@@ -1935,9 +1935,11 @@ class AudioCapture:
                 wav_file.writeframes(audio_int16.tobytes())
                 
             log(f"Audio saved to {filename}")
+            return True
             
         except Exception as e:
             log(f"ERROR: Failed to save audio: {e}")
+            return False
     
     def __del__(self):
         """Cleanup when object is destroyed"""

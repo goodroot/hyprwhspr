@@ -272,6 +272,52 @@ class ContinuousAutostopTests(unittest.TestCase):
         app._continuous_stop_and_wait()
         app._await_model_wake.assert_not_called()        # capture must stop first
 
+    def test_wake_respects_cancel_replacement_and_normal_stop(self):
+        for state in ('cancelled', 'replaced', 'stopped'):
+            for ready in (False, True):
+                with self.subTest(state=state, ready=ready):
+                    audio = np.ones(10, dtype=np.float32)
+                    app = self._flush_app(audio)
+                    entered = threading.Event()
+                    release = threading.Event()
+                    app._keep_unsent_audio = mock.Mock()
+                    app.whisper_manager.transcribe_audio.return_value = 'words'
+                    delivery = app._continuous_pasted = object()
+
+                    def wake():
+                        entered.set()
+                        release.wait(timeout=2)
+                        return ready
+
+                    app._await_model_wake = wake
+                    self.assertTrue(app._continuous_flush_audio(app._recording_session))
+                    try:
+                        self.assertTrue(entered.wait(timeout=2))
+                        with app._recording_lock:
+                            app.is_recording = False
+                            if state == 'cancelled':
+                                app._continuous_cancelled = True
+                            elif state == 'replaced':
+                                app._recording_session = object()
+                    finally:
+                        release.set()
+                    self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
+                    # The event is set just before releasing the flush lock.
+                    self.assertTrue(app._continuous_flush_lock.acquire(timeout=2))
+                    app._continuous_flush_lock.release()
+                    if state != 'stopped':
+                        app._keep_unsent_audio.assert_not_called()
+                        app.whisper_manager.transcribe_audio.assert_not_called()
+                        app._inject_text.assert_not_called()
+                        app._notify_capture.assert_not_called()
+                        self.assertIs(app._continuous_pasted, delivery)
+                    elif ready:
+                        app._keep_unsent_audio.assert_not_called()
+                        app._inject_text.assert_called_once_with('words')
+                    else:
+                        app._keep_unsent_audio.assert_called_once_with(audio)
+                        app.whisper_manager.transcribe_audio.assert_not_called()
+
     def test_words_in_a_tail_marked_silent_are_still_pasted(self):
         app = self._process_app("late words")
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):

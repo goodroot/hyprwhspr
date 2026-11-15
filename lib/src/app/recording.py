@@ -621,6 +621,7 @@ class RecordingMixin:
 
     def _keep_unsent_audio(self, audio_data):
         """Save a dictation the model never loaded for, and say where it is."""
+        path = None
         try:
             # Its own directory: the debug-recordings pruner must not count these
             DEBUG_RECORDINGS_DIR.mkdir(mode=0o700, exist_ok=True)
@@ -628,8 +629,14 @@ class RecordingMixin:
             folder.mkdir(mode=0o700, exist_ok=True)
             # A chunk and its tail fail together, in the same millisecond
             path = folder / f"{self._wav_stamp()}-{next(self._unsent_sequence)}.wav"
-            self.audio_capture.save_audio_to_wav(audio_data, str(path))
+            if not self.audio_capture.save_audio_to_wav(audio_data, str(path)):
+                raise OSError('WAV writer failed')
         except Exception as e:
+            if path is not None:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    log(f"[ERROR] Could not remove partial recording {path}: {cleanup_error}")
             log(f"[ERROR] Model failed to load and the audio could not be kept: {e}")
             self._notify_user("hyprwhspr", "Model failed to load — dictation lost", urgency="critical")
             return

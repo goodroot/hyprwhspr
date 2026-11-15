@@ -325,6 +325,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
     def test_unsent_audio_files_never_collide(self):
         app = self._app()
         app.audio_capture = mock.Mock()
+        app.audio_capture.save_audio_to_wav.return_value = True
         with tempfile.TemporaryDirectory() as temp, \
              patch_app_global(self.app_cls, 'DEBUG_RECORDINGS_DIR', Path(temp) / 'recordings'), \
              mock.patch.object(self.app_cls, '_wav_stamp', staticmethod(lambda: 'same-instant')):
@@ -335,6 +336,25 @@ class ModelIdleUnloadTests(unittest.TestCase):
             self.assertEqual((folder / 'unsent').stat().st_mode & 0o777, 0o700)
         paths = [call.args[1] for call in app.audio_capture.save_audio_to_wav.call_args_list]
         self.assertEqual(len(set(paths)), 2)
+
+    def test_failed_save_reports_loss_and_removes_partial_audio(self):
+        for partial in (False, True):
+            with self.subTest(partial=partial):
+                app = self._app()
+                app.audio_capture = mock.Mock()
+
+                def fail_save(audio, filename):
+                    if partial:
+                        Path(filename).write_bytes(b'RIFF')
+                    return False
+
+                app.audio_capture.save_audio_to_wav.side_effect = fail_save
+                with tempfile.TemporaryDirectory() as temp, \
+                     patch_app_global(self.app_cls, 'DEBUG_RECORDINGS_DIR', Path(temp)):
+                    app._keep_unsent_audio([0.25])
+                    self.assertEqual(list(Path(temp).rglob('*.wav')), [])
+                app._notify_user.assert_called_once_with(
+                    'hyprwhspr', 'Model failed to load — dictation lost', urgency='critical')
 
     def test_a_finished_wake_cannot_release_the_next_wakes_waiters(self):
         # The event is set under the lock that the next claim clears it under.
@@ -376,6 +396,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app.is_processing = False
         app.audio_manager = mock.Mock()
         app.audio_capture = mock.Mock()
+        app.audio_capture.save_audio_to_wav.return_value = True
         app._notify_capture = mock.Mock()
         app._clear_mic_osd_preview_text = mock.Mock()
         app._show_result_and_hide = mock.Mock()

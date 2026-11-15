@@ -104,11 +104,27 @@ class SaveAudioToWavTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'loud.wav'
-            capture.save_audio_to_wav(np.array([1.5, -1.5, 0.5], dtype=np.float32), str(path))
+            self.assertTrue(capture.save_audio_to_wav(
+                np.array([1.5, -1.5, 0.5], dtype=np.float32), str(path)))
             with wave.open(str(path), 'rb') as wav_file:
                 samples = np.frombuffer(wav_file.readframes(3), dtype=np.int16)
 
         self.assertEqual(samples.tolist(), [32767, -32767, 16383])
+
+    def test_open_write_and_close_failures_return_false(self):
+        with mock.patch.dict(sys.modules, {'sounddevice': mock.Mock()}):
+            import audio_capture
+            capture = audio_capture.AudioCapture.__new__(audio_capture.AudioCapture)
+        capture.channels = 1
+        capture.sample_rate = 16000
+        for stage in ('open', 'write', 'close'):
+            with self.subTest(stage=stage), mock.patch.object(audio_capture.wave, 'open') as open_wav:
+                writer = open_wav.return_value.__enter__.return_value
+                target = {'open': open_wav, 'write': writer.writeframes,
+                          'close': open_wav.return_value.__exit__}[stage]
+                target.side_effect = OSError('disk error')
+                self.assertFalse(capture.save_audio_to_wav(
+                    np.ones(10, dtype=np.float32), '/unused.wav'))
 
 
 if __name__ == '__main__':
