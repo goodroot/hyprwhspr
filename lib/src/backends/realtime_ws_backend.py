@@ -214,6 +214,7 @@ class RealtimeWsBackend(TranscriptionBackend):
         client.set_max_buffer_seconds(self.config.get_setting('realtime_buffer_max_seconds', 5))
         self.apply_partial_callback(self._realtime_partial_callback)
         self.apply_live_listener(getattr(self._manager, '_realtime_live_listener', None))
+        self.apply_connection_listener(getattr(self._manager, '_realtime_connection_listener', None))
         if self.config.get_setting('realtime_live_typing', False):
             conflict = live_typing_conflict(self.config.get_setting)
             if conflict:
@@ -420,6 +421,11 @@ class RealtimeWsBackend(TranscriptionBackend):
         """Route structured live text (committed, tail) to `listener`."""
         if self._realtime_client:
             self._realtime_client.set_live_text_listener(listener)
+
+    def apply_connection_listener(self, listener) -> None:
+        """Route the client's reconnect progress to `listener`."""
+        if self._realtime_client:
+            self._realtime_client.connection_listener = listener
 
     @property
     def live_typing_supported(self) -> bool:

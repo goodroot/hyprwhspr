@@ -654,11 +654,17 @@
       "default": 1400,
       "description": "Hide the preview after this many idle milliseconds. 0 disables the timeout."
     },
+    "notification_level": {
+      "type": "string",
+      "enum": ["all", "action_required", "off"],
+      "default": "all",
+      "description": "Which desktop alerts are sent. 'all' adds model loading/unloading and recovery retries to problems and command results; successful first recovery attempts stay quiet. 'action_required' keeps problems and command results only. 'off' disables service and Waybar click alerts; logs remain available. Recording status is separate: see mic_osd_enabled."
+    },
     "notification_timeout_ms": {
       "type": "integer",
       "minimum": 0,
       "default": 5000,
-      "description": "How long non-critical desktop notifications stay on screen, in milliseconds. These are also marked transient so they never pile up in the notification center. Critical errors ignore this and persist until dismissed. Note: GNOME Shell ignores notification timeouts and uses its own banner duration."
+      "description": "Requested duration of temporary desktop alerts in milliseconds (default 5000). Alerts are explicitly closed after at least 4000 ms; 0 does not make them permanent. Retained errors ignore this setting. Recording status has its own lifecycle. The desktop may use its own banner duration."
     },
     "mute_detection": {
       "type": "boolean",

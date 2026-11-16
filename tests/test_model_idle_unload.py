@@ -31,6 +31,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app = self.app_cls.__new__(self.app_cls)
         app.config = types.SimpleNamespace(get_setting=lambda key, default=None: settings.get(key, default))
         app._recording_lock = threading.Lock()
+        app._cancel_pending_hide_lock = threading.Lock()
         app._recording_finalizing = threading.Event()
         app.is_recording = app.is_processing = False
         app._file_transcription_active = app._longform_active = False
@@ -103,7 +104,9 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app.whisper_manager.unload_model.assert_called_once_with()
         self.assertFalse(self.marker.exists())                       # the marker means "refused"; this is not
         self.assertTrue(app._model_idle_unloaded)
-        app._notify_user.assert_not_called()                         # nobody is watching; stay quiet
+        app._notify_user.assert_called_once_with(                    # a lifecycle notice, in the model's slot
+            'hyprwhspr', 'Model unloaded after inactivity — reloads on next recording',
+            urgency='low', kind='lifecycle', slot='model')
         self.assertFalse(app._unload_model_if_idle(now=5000))        # nothing left to unload
         app.whisper_manager.unload_model.assert_called_once_with()
 
@@ -138,6 +141,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app = self._app(minutes=1)
         app._unload_model_if_idle(now=0)
         self.assertTrue(app._unload_model_if_idle(now=60))
+        app._notify_user.reset_mock()                # the unload notice is not what these tests watch
         return app
 
     def test_wake_reloads_once_and_clears_the_marker(self):
@@ -354,7 +358,8 @@ class ModelIdleUnloadTests(unittest.TestCase):
                     app._keep_unsent_audio([0.25])
                     self.assertEqual(list(Path(temp).rglob('*.wav')), [])
                 app._notify_user.assert_called_once_with(
-                    'hyprwhspr', 'Model failed to load — dictation lost', urgency='critical')
+                    'hyprwhspr', 'Model failed to load — dictation lost',
+                    urgency='critical', retained=True)
 
     def test_a_finished_wake_cannot_release_the_next_wakes_waiters(self):
         # The event is set under the lock that the next claim clears it under.
@@ -411,7 +416,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
         self.assertIn(saved[1], app._notify_user.call_args.args[1])
         app.whisper_manager.transcribe_audio.assert_not_called()
         app.audio_manager.play_error_sound.assert_called_once()
-        app._show_result_and_hide.assert_called_once_with(False)
+        app._show_result_and_hide.assert_called_once_with(False, generation=0)
         self.assertFalse(app.is_processing)
 
 

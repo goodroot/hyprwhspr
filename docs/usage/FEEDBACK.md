@@ -6,8 +6,6 @@ See it listening. Hear it start and stop.
 
 The recording-status indicator — the **mic OSD** — gives visual feedback while recording and auto-matches Noctalia & Omarchy themes.
 
-> Highly recommended!
-
 ```jsonc
 {
   "mic_osd_enabled": true
@@ -19,7 +17,7 @@ The recording-status indicator — the **mic OSD** — gives visual feedback whi
 `mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup:
 
 - **Overlay mode** — compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland) get the animated always-on-top overlay. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
-- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Notifications require `notify-send` (libnotify). "Transcribing…" stays until the text lands; GNOME keeps its own clock.
+- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Requires a desktop notification service and either `notify-send` (libnotify) or `gdbus`. Processing is replaced by the result; banner timing depends on the desktop.
 
 Set `mic_osd_enabled: false` to turn off both. The service log records which mode was selected:
 
@@ -69,6 +67,42 @@ Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` pl
 | `mic_osd_pill_transcript_enabled` | `false` | Enable the pill transcript. |
 | `mic_osd_pill_transcript_word_limit` | `4` | Recent words shown (1–12). |
 | `mic_osd_pill_transcript_idle_timeout_ms` | `1400` | Hide after this much idle time; `0` disables. |
+
+## Notifications
+
+Choose how much the service tells you. These are the defaults; add only the settings you want to change to [your config](../CONFIGURATION.md), then restart hyprwhspr.
+
+```jsonc
+{
+  "notification_level": "all",
+  "notification_timeout_ms": 5000
+}
+```
+
+| Level | Shows |
+|---|---|
+| `all` (default) | Problems, command results, model loading/unloading, and recovery that needs retries. |
+| `action_required` | Problems and command results; quiet automatic lifecycle changes. |
+| `off` | No service or Waybar click alerts. Logs remain available. |
+
+**Recording status is separate.** `mic_osd_enabled` controls the overlay or recording-status bubble at every level, including `off`. To disable all desktop notifications, set both `notification_level: "off"` and `mic_osd_enabled: false`. Audio feedback has its [own toggle](#audio-feedback).
+
+The first automatic recovery attempt, including after suspend, is silent. If retries are needed, one message explains what is recovering; its outcome replaces it. A blocked recording attempt gets immediate feedback. Microphone and connection recovery keep separate alerts.
+
+| When | What you see |
+|---|---|
+| The idle timer unloads the model | “Model unloaded after inactivity — reloads on next recording” |
+| You record while it loads | “Model loading — keep speaking”, then “Model loading — audio captured” if you stop before it is ready |
+| Microphone recovery needs retries | “Recovering microphone…”, then “Microphone recovered” on success |
+| Text reaches only the clipboard | “Text copied — paste to insert” |
+| No speech is recognized | “No speech recognized — try recording again” |
+| A failed model load leaves saved audio | “Transcription failed — audio kept”, with the command to transcribe that file |
+
+A hook that consumes the text shows “Handled by hook”; a capture client shows “✓ Done”. Neither claims the text was inserted. See [memory management](../backends/MEMORY.md#unload-when-idle) for model wake behavior and [long-form recording](RECORDING_MODES.md#long-form-mode) for retrying a saved session.
+
+Temporary alerts use `notification_timeout_ms` (5000 ms by default). The service explicitly closes them after at least four seconds; `0` does not make them permanent. The desktop may use its own banner duration. Recording status has its own lifecycle; clipboard and no-speech results get extra reading time.
+
+Final recovery failures and saved-audio instructions stay until dismissed or resolved. Each saved file keeps its own alert, even after a later successful dictation. Individual microphone-start failures and disconnection notices are temporary, so deliberately muting or unplugging a mic does not leave a permanent warning.
 
 ## Tray icon
 

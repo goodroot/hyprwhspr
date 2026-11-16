@@ -66,6 +66,7 @@ class WhisperManager:
         self._realtime_partial_callback = None
         # Structured live-text listener (committed, tail) for live typing
         self._realtime_live_listener = None
+        self._realtime_connection_listener = None
 
         # Thread safety for model operations
         # Serializes local model use and backend replacement.  An RLock keeps
@@ -180,6 +181,13 @@ class WhisperManager:
         backend = self._backend
         if backend is not None and backend.streams_audio:
             backend.apply_live_listener(listener)
+
+    def set_realtime_connection_listener(self, listener) -> None:
+        """Set the listener for a dropped connection's reconnect progress."""
+        self._realtime_connection_listener = listener
+        backend = self._backend
+        if backend is not None and backend.streams_audio:
+            backend.apply_connection_listener(listener)
 
     def realtime_live_typing_supported(self) -> bool:
         """The active realtime model's live text is append-only."""

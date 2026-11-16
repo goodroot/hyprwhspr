@@ -335,7 +335,8 @@ class ShortcutsMixin:
                 return False
             self._ptt_locked = True
         log(f"[CONTROL] Push-to-talk held {held:.1f}s (>= {lock_seconds:.1f}s) - recording locked")
-        self._notify_user("hyprwhspr", "Push-to-talk locked - press again to stop the recording", urgency="low")
+        self._notify_user("hyprwhspr", "Push-to-talk locked — press again to stop",
+                          urgency="low", kind="result", slot="gate")
         return True
 
     def _on_cancel_shortcut_triggered(self):

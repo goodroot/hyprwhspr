@@ -211,10 +211,22 @@ class _PostTranscriptionHookResult:
 
 
 class InjectionOutcome(Enum):
-    INJECTED = "injected"
-    CONSUMED = "consumed"
+    INJECTED = "injected"    # pasted or typed into the focused app
+    CONSUMED = "consumed"    # a post-transcription hook took the text
+    CLIPBOARD = "clipboard"  # nothing could paste; the text waits on the clipboard
+    CAPTURED = "captured"    # handed to a waiting capture client
+    SKIPPED = "skipped"      # nothing to insert, or injection is off for this app
     FAILED = "failed"
 
+
+# How the recording-status indicator words an outcome that is not a confirmed
+# paste (desktop_notify.STATUS_DETAIL_TEXT). "Inserted" is INJECTED's alone.
+OUTCOME_DETAIL = {
+    InjectionOutcome.CONSUMED: 'consumed',
+    InjectionOutcome.CLIPBOARD: 'clipboard',
+    InjectionOutcome.CAPTURED: 'done',
+    InjectionOutcome.SKIPPED: 'done',
+}
 
 _CLIPBOARD_UNSAVED = object()
 
@@ -1500,6 +1512,7 @@ except Exception:
         """Nothing can paste: hold the dictation so far for a manual paste."""
         log("No paste transport for this window. Text is on the clipboard.")
         if stream is None:
+            self._delivery_note = InjectionOutcome.CLIPBOARD
             return
         stream.not_pasted = True
         stream.clipboard_text = (stream.clipboard_text or '') + text
@@ -1756,7 +1769,14 @@ except Exception:
                 )
             if submit and not session.cancelled.is_set() and not session.failed and not session.not_pasted:
                 self._send_enter_if_auto_submit(cancel_event=session.cancelled, expected_window=session.target)
-            return InjectionOutcome.FAILED if session.failed else InjectionOutcome.INJECTED
+            if session.failed:
+                return InjectionOutcome.FAILED
+            if session.clipboard_text:
+                return InjectionOutcome.CLIPBOARD
+            if session.not_pasted:
+                # Injection is off for the focused app: nothing was typed
+                return InjectionOutcome.SKIPPED
+            return InjectionOutcome.INJECTED
 
     def _deliver_stream_words(self, session: _StreamSession, words: List[str]) -> InjectionOutcome:
         if session.cancelled.is_set():
@@ -1870,7 +1890,7 @@ except Exception:
         """
         if not text or text.strip() == "":
             log("No text to inject (empty or whitespace)")
-            return InjectionOutcome.INJECTED
+            return InjectionOutcome.SKIPPED
 
         # Preprocess; also trim trailing newlines (avoid unwanted Enter)
         processed_text = self._preprocess_text(text).rstrip("\r\n")
@@ -1879,7 +1899,7 @@ except Exception:
         # than pasting nothing.
         if not processed_text.strip():
             log("No text to inject (empty after preprocessing)")
-            return InjectionOutcome.INJECTED
+            return InjectionOutcome.SKIPPED
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
@@ -1896,8 +1916,13 @@ except Exception:
                 log(f"⚠️  inject_mode='{inject_mode}' is deprecated: direct typing drops characters at speed. "
                       f"Using clipboard+paste instead.")
 
+            # Set by the delivery when it ends short of a paste; _delivery_lock
+            # (held by inject_text) keeps it this dictation's own.
+            self._delivery_note = None
             injected = self._inject_via_clipboard_and_hotkey(processed_text, retain=True)
-            return InjectionOutcome.INJECTED if injected else InjectionOutcome.FAILED
+            if not injected:
+                return InjectionOutcome.FAILED
+            return self._delivery_note or InjectionOutcome.INJECTED
 
         except Exception as e:
             log(f"Primary injection method failed: {e}")
@@ -2004,6 +2029,8 @@ except Exception:
                 if stream is not None:
                     stream.not_pasted = True
                     stream.recovery_allowed = False
+                else:
+                    self._delivery_note = InjectionOutcome.SKIPPED
                 return True
 
             if stream is not None and stream.cancelled.is_set():

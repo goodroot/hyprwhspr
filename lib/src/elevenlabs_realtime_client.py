@@ -414,6 +414,8 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
             if self._reconnecting:
                 return
             self._reconnecting = True
+            self._report_connection('reconnecting')
+            announced_retry = False
 
             while self.reconnect_attempts < self.max_reconnect_attempts:
                 delay = self.reconnect_delays[
@@ -435,9 +437,15 @@ class ElevenLabsRealtimeClient(RealtimeAudioClientBase):
                 if self._connect_internal():
                     self.reconnect_attempts = 0
                     print('[ELEVENLABS] Reconnected successfully', flush=True)
+                    self._report_connection('reconnected')
                     return
 
+                if not announced_retry and self.reconnect_attempts < self.max_reconnect_attempts:
+                    self._report_connection('retrying')
+                    announced_retry = True
+
             print('[ELEVENLABS] Max reconnection attempts reached', flush=True)
+            self._report_connection('failed')
         finally:
             self._reconnecting = False
             try:

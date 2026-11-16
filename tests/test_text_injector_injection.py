@@ -1745,7 +1745,8 @@ class TextInjectorInjectionTests(unittest.TestCase):
         )
 
         with mock.patch.object(injector, "_inject_via_clipboard_and_hotkey") as inject:
-            self.assertEqual(injector.inject_text("Um. Uh."), InjectionOutcome.INJECTED)
+            # Nothing was inserted, and the outcome does not claim otherwise
+            self.assertEqual(injector.inject_text("Um. Uh."), InjectionOutcome.SKIPPED)
 
         inject.assert_not_called()
 

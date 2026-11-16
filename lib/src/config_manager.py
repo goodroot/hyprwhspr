@@ -195,16 +195,19 @@ def build_default_config():
         'stop_sound_path': None,             # Custom path for stop sound (None = built-in ping-down.ogg)
         'error_sound_path': None,            # Custom path for error sound (None = built-in ping-error.ogg)
         # Visual feedback settings
-        'mic_osd_enabled': True,             # Show microphone visualization overlay during recording
+        'mic_osd_enabled': True,             # Show recording status as an overlay or notification
         'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter' or 'pill'
         'tray_icon_enabled': False,          # Show a system tray icon (StatusNotifierItem) while running
         # Live transcript above the pill OSD (ElevenLabs Scribe v2 Realtime)
         'mic_osd_pill_transcript_enabled': False,
         'mic_osd_pill_transcript_word_limit': 4,
         'mic_osd_pill_transcript_idle_timeout_ms': 1400,
-        # Banner duration (ms) for non-critical desktop notifications. These are also
-        # marked transient so they never accumulate in the notification center;
-        # critical errors ignore this and persist. (GNOME Shell ignores -t entirely.)
+        # Which desktop alerts are sent: 'all', 'action_required' (problems and
+        # command results, no automatic lifecycle announcements) or 'off'.
+        # Recording status is separate: mic_osd_enabled.
+        'notification_level': 'all',
+        # Requested temporary-alert duration (ms); explicit close waits at least
+        # 4000 ms, even for 0. Retained errors ignore this; desktop timing may vary.
         'notification_timeout_ms': 5000,
         'mute_detection': True,              # Enable mute detection to cancel recording when mic is muted
         # Audio ducking settings

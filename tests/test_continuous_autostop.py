@@ -126,6 +126,7 @@ class ContinuousAutostopTests(unittest.TestCase):
     def _process_app(self, transcript, markers=None):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
         app.config = types.SimpleNamespace(get_hallucination_markers=lambda: markers)
+        app._cancel_pending_hide_lock = threading.Lock()
         app._live_typing = None
         app._recording_lock = threading.Lock()
         app.is_processing = False
@@ -162,7 +163,7 @@ class ContinuousAutostopTests(unittest.TestCase):
         app = self._process_app("Thank you.", ["Thank you."])
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
             app._process_audio([0.0])
-        app._show_result_and_hide.assert_called_once_with(False)
+        app._show_result_and_hide.assert_called_once_with(False, detail='empty', generation=0)
         self.assertFalse(app.is_processing)
 
     def test_stop_tells_processing_about_a_silent_tail(self):

@@ -67,6 +67,8 @@ After ten idle minutes the local model leaves memory. Recording, processing and 
 
 The next recording brings it back: speak as usual, the model loads while you talk. Text lands once it is ready. File transcription wakes it too. In long-form mode, the first start requests a reload; try again once the model is ready.
 
+By default, an alert marks the unload and recording status explains the wait. [`notification_level`](../usage/FEEDBACK.md#notifications) controls alerts; `mic_osd_enabled` controls recording status.
+
 If the model cannot load, the audio is kept. The notification gives the command to transcribe it. Cancelled audio is discarded. If saving fails too, the notification says the dictation was lost.
 
 Unloading by hand still holds until `hyprwhspr model reload`, including across suspend and resume. Reload also wakes a model unloaded by the idle timer; if it is already loaded, nothing changes.

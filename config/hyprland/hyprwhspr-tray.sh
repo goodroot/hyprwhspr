@@ -368,12 +368,39 @@ is_hyprwhspr_recording() {
 
 
 
+# Click results obey the same level as service alerts, even while it is stopped.
+notification_enabled() {
+    local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/hyprwhspr/config.json"
+    "$SYSTEM_PYTHON" - "$cfg" <<'PYCONFIG'
+import json, sys
+try:
+    with open(sys.argv[1]) as source:
+        level = json.load(source).get("notification_level", "all")
+except (OSError, ValueError, AttributeError):
+    level = "all"
+sys.exit(1 if level == "off" else 0)
+PYCONFIG
+}
+
+service_action() {
+    local action="$1" success="$2" urgency="${3:-normal}"
+    if systemctl --user "$action" hyprwhspr.service; then
+        if [[ -n "$success" ]]; then
+            show_notification "hyprwhspr" "$success" "$urgency"
+        fi
+    else
+        show_notification "hyprwhspr" "Service $action failed — check: journalctl --user -u hyprwhspr.service" "critical"
+        return 1
+    fi
+}
+
 # Function to show notification
 show_notification() {
     local title="$1"
     local message="$2"
     local urgency="${3:-normal}"
 
+    notification_enabled || return 0
     command -v notify-send &> /dev/null || command -v gdbus &> /dev/null || return
 
     if [[ "$urgency" == "critical" ]]; then
@@ -418,7 +445,8 @@ show_notification() {
     fi
 }
 
-# Function to check and show recovery result notification
+# Act on a recovery result from the service. The service announces recovery
+# itself, with or without this script; nothing is notified from here.
 check_recovery_result() {
     local result_file="$RUNTIME_DIR/recovery_result"
     local notification_lock_dir="$RUNTIME_DIR/.recovery_notification_lock"
@@ -519,50 +547,22 @@ check_recovery_result() {
         fi
     fi
 
-    if [[ "$should_show" == "true" ]]; then
-        # Show notification based on status
-        if [[ "$status" == "success" ]]; then
-            case "$reason" in
-                hotplug)
-                    # Auto-restart service after hotplug to ensure clean state
-                    # Only restart if not currently recording (avoid interrupting user)
-                    sleep 1.5  # Let device enumeration fully settle
-                    if ! is_hyprwhspr_recording; then
-                        echo "Auto-restarting service after mic reconnection..." >&2
-                        show_notification "hyprwhspr" "Microphone reconnected - restarting service..." "normal"
-                        systemctl --user restart hyprwhspr.service
-                        # Give service a moment to restart before showing ready notification
-                        sleep 0.5
-                        show_notification "hyprwhspr" "Ready to record" "low"
-                    else
-                        echo "Skipping auto-restart (recording in progress)" >&2
-                        show_notification "hyprwhspr" "Microphone reconnected successfully" "normal"
-                    fi
-                    ;;
-                mic_unavailable|mic_no_audio)
-                    show_notification "hyprwhspr" "Microphone recovered successfully" "normal"
-                    ;;
-                *)
-                    show_notification "hyprwhspr" "Recovery successful" "normal"
-                    ;;
-            esac
-
-            # Clear any cached error states after successful recovery
-            # Give device enumeration a moment to settle before next status check
-            sleep 0.5
-        elif [[ "$status" == "failed" ]]; then
-            case "$reason" in
-                hotplug)
-                    show_notification "hyprwhspr" "Microphone detected but recovery failed - please wait or restart service" "critical"
-                    ;;
-                mic_unavailable|mic_no_audio)
-                    show_notification "hyprwhspr" "Recovery failed - please replug microphone" "critical"
-                    ;;
-                *)
-                    show_notification "hyprwhspr" "Recovery failed - please check microphone connection" "critical"
-                    ;;
-            esac
+    if [[ "$should_show" == "true" && "$status" == "success" ]]; then
+        if [[ "$reason" == "hotplug" ]]; then
+            # Auto-restart service after hotplug to ensure clean state
+            # Only restart if not currently recording (avoid interrupting user)
+            sleep 1.5  # Let device enumeration fully settle
+            if ! is_hyprwhspr_recording; then
+                echo "Auto-restarting service after mic reconnection..." >&2
+                systemctl --user restart hyprwhspr.service
+            else
+                echo "Skipping auto-restart (recording in progress)" >&2
+            fi
         fi
+
+        # Clear any cached error states after successful recovery
+        # Give device enumeration a moment to settle before next status check
+        sleep 0.5
     fi
 
     # Keep result file for short grace period; stale results are cleared above
@@ -573,13 +573,11 @@ check_recovery_result() {
 toggle_hyprwhspr() {
     if is_hyprwhspr_running; then
         echo "Stopping hyprwhspr..." >&2
-        systemctl --user stop hyprwhspr.service
-        show_notification "hyprwhspr" "Stopped" "low"
+        service_action "stop" "Stopped" "low"
     else
         if can_start_recording; then
             echo "Starting hyprwhspr..." >&2
-            systemctl --user start hyprwhspr.service
-            show_notification "hyprwhspr" "Started" "normal"
+            service_action "start" "Started" "normal"
         else
             echo "Cannot start hyprwhspr - no microphone available" >&2
             show_notification "hyprwhspr" "No microphone available" "critical"
@@ -602,7 +600,7 @@ control_recording() {
         if ! is_hyprwhspr_running; then
             if can_start_recording; then
                 echo "Starting hyprwhspr service..." >&2
-                systemctl --user start hyprwhspr.service
+                service_action "start" "" || return 1
                 # Wait a moment for service to initialize
                 sleep 0.5
             else
@@ -784,7 +782,7 @@ get_current_state() {
 # Main menu
 case "${1:-status}" in
     "status")
-        # Check for recovery results and show notifications
+        # Check for recovery results
         check_recovery_result
         probe_once
         IFS=: read -r s r <<<"$(stabilize "$(get_current_state)")"
@@ -809,8 +807,7 @@ case "${1:-status}" in
     "start")
         if ! is_hyprwhspr_running; then
             if can_start_recording; then
-                systemctl --user start hyprwhspr.service
-                show_notification "hyprwhspr" "Started" "normal"
+                service_action "start" "Started" "normal"
             else
                 show_notification "hyprwhspr" "No microphone available" "critical"
             fi
@@ -823,8 +820,7 @@ case "${1:-status}" in
         ;;
     "stop")
         if is_hyprwhspr_running; then
-            systemctl --user stop hyprwhspr.service
-            show_notification "hyprwhspr" "Stopped" "low"
+            service_action "stop" "Stopped" "low"
         fi
         IFS=: read -r s r <<<"$(get_current_state)"
         # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
@@ -833,8 +829,7 @@ case "${1:-status}" in
         fi
         ;;
     "restart")
-        systemctl --user restart hyprwhspr.service
-        show_notification "hyprwhspr" "Restarted" "normal"
+        service_action "restart" "Restarted" "normal"
         IFS=: read -r s r <<<"$(get_current_state)"
         # Only output JSON if stdout is not a TTY (i.e., being called by Waybar)
         if [ ! -t 1 ]; then

@@ -6,12 +6,15 @@ try:
     from .hallucination import is_hallucination
     from .paths import LONGFORM_STATE_FILE
     from .segment_manager import SegmentManager
-    from .text_injector import InjectionOutcome
+    from .text_injector import InjectionOutcome, OUTCOME_DETAIL
 except ImportError:
     from hallucination import is_hallucination
     from paths import LONGFORM_STATE_FILE
     from segment_manager import SegmentManager
-    from text_injector import InjectionOutcome
+    from text_injector import InjectionOutcome, OUTCOME_DETAIL
+
+# A failed session keeps its audio; every alert says so and how to go on.
+_KEPT = "audio kept, submit to retry or cancel to discard"
 
 
 class LongFormController:
@@ -34,9 +37,12 @@ class LongFormController:
         hallucination_markers,
         claim_recording=None,
         release_recording=None,
+        notify_problem=None,
+        clear_problem=None,
         segment_manager_factory=SegmentManager,
         timer_factory=threading.Timer,
         state_file=LONGFORM_STATE_FILE,
+        result_generation=None,
     ):
         self.config = config
         self.audio_capture = audio_capture
@@ -48,10 +54,15 @@ class LongFormController:
         self.show_mic_osd = show_mic_osd
         self.hide_mic_osd = hide_mic_osd
         self.show_result_and_hide = show_result_and_hide
+        self.result_generation = result_generation
         self.write_recording_status = write_recording_status
         self.set_processing = set_processing
         self.claim_recording = claim_recording or (lambda: True)
         self.release_recording = release_recording or (lambda: None)
+        # A retained alert for a session in ERROR, separate from the status
+        # indicator so its cleanup cannot erase the instructions
+        self.notify_problem = notify_problem or (lambda message: None)
+        self.clear_problem = clear_problem or (lambda: None)
         self.hallucination_markers = hallucination_markers
         self.segment_manager_factory = segment_manager_factory
         self.timer_factory = timer_factory
@@ -190,6 +201,7 @@ class LongFormController:
             self._abandon_claim()
             return
 
+        self.clear_problem()
         self._set_state('RECORDING', visualizer='recording')
         self.show_mic_osd()
         self.start_auto_save_timer()
@@ -239,6 +251,7 @@ class LongFormController:
             if not self.audio_capture.resume_recording():
                 print("[LONGFORM] Failed to resume audio capture")
                 self._set_state('ERROR', visualizer='error')
+                self.notify_problem(f"Recording not resumed — {_KEPT}")
                 return
 
             self._set_state('RECORDING', visualizer='recording')
@@ -266,6 +279,7 @@ class LongFormController:
             self._set_state('IDLE')
             self.hide_mic_osd()
             self.write_recording_status(False)
+            self.clear_problem()
             self.audio_manager.play_error_sound()
         except Exception as e:
             print(f"[ERROR] Error cancelling long-form recording: {e}", flush=True)
@@ -281,6 +295,7 @@ class LongFormController:
         self.error_audio = self.segment_manager.concatenate_readable(audio_data)
         self._set_state('ERROR', visualizer='error')
         self.audio_manager.play_error_sound()
+        self.notify_problem(f"Recording not saved to disk — {_KEPT}")
 
     def submit(self, retry=False, audio_data=None):
         # The caller already paused capture for a RECORDING session, but the
@@ -312,6 +327,7 @@ class LongFormController:
                 if self.segment_manager.has_segments():
                     self.error_audio = self.segment_manager.concatenate_readable()
                     self._set_state('ERROR', visualizer='error')
+                    self.notify_problem(f"Transcription failed — {_KEPT}")
                 else:
                     self._set_state('IDLE')
                     self.hide_mic_osd()
@@ -325,6 +341,9 @@ class LongFormController:
             self._abandon_claim()
             raise
 
+        result_kwargs = {}
+        if self.result_generation is not None:
+            result_kwargs['generation'] = self.result_generation()
         try:
             self.set_processing(True)
             transcription = self.whisper_manager.transcribe_audio(
@@ -337,10 +356,13 @@ class LongFormController:
                 text = transcription.strip()
                 if is_hallucination(text, self.hallucination_markers):
                     print(f"[LONGFORM] Whisper hallucination detected: {text!r}")
-                    self._submission_failed(audio_data)
+                    self._submission_failed(audio_data, f"No speech recognized — {_KEPT}")
                     return
 
-                if self.inject_text(text) == InjectionOutcome.FAILED:
+                outcome = self.inject_text(text)
+                if outcome == InjectionOutcome.FAILED:
+                    # inject_text has raised its own alert with the way to get
+                    # the text back; submitting again also retries
                     self._submission_failed(audio_data)
                     return
 
@@ -348,21 +370,29 @@ class LongFormController:
                 self.error_audio = None
                 self.language_override = None
                 self._set_state('IDLE')
-                self.show_result_and_hide(True)
+                self.clear_problem()
+                detail = OUTCOME_DETAIL.get(outcome)
+                if detail is None:
+                    self.show_result_and_hide(True, **result_kwargs)
+                else:
+                    self.show_result_and_hide(True, detail=detail, **result_kwargs)
             else:
                 print("[LONGFORM] No transcription generated")
-                self._submission_failed(audio_data)
+                self._submission_failed(audio_data, f"No speech recognized — {_KEPT}")
         except Exception as e:
             print(f"[LONGFORM] Transcription error: {e}", flush=True)
-            self._submission_failed(audio_data)
+            self._submission_failed(audio_data, f"Transcription failed — {_KEPT}")
         finally:
             self.notify_capture("", final=True)
             self.set_processing(False)
 
-    def _submission_failed(self, audio_data):
+    def _submission_failed(self, audio_data, problem=None):
         self.audio_manager.play_error_sound()
         self.error_audio = audio_data
+        # ERROR replaces the processing state, so it never lingers
         self._set_state('ERROR', visualizer='error')
+        if problem:
+            self.notify_problem(problem)
 
     def start_auto_save_timer(self):
         interval = self.config.get_setting('long_form_auto_save_interval', 300)

@@ -225,17 +225,24 @@ class ControlMixin:
     # A load this slow has hung; give the recording up rather than wedge it
     _MODEL_WAKE_TIMEOUT = 600
 
-    def _await_model_wake(self):
+    def _await_model_wake(self, announce=False):
         """Hold a transcription until a reload in flight has finished.
 
         False if the idle-unloaded model is still not loaded: the reload
         failed, whether just now or while the recording was still running.
+
+        announce: a finished recording is waiting; say its audio is safe.
         """
         done = getattr(self, '_model_wake_done', None)
         if done is not None and not done.is_set():
             log("[MODEL] Waiting for the model to load")
+            if announce:
+                self._announce_model_loading('captured')
             if not done.wait(timeout=self._MODEL_WAKE_TIMEOUT):
                 log(f"[MODEL] Model still loading after {self._MODEL_WAKE_TIMEOUT}s")
+            if announce and done.is_set():
+                # The load may have finished before the notice went up
+                self._settle_model_wait()
         return not getattr(self, '_model_idle_unloaded', False)
 
     def _handle_model_operation(self, operation, automatic=False):
@@ -245,8 +252,8 @@ class ControlMixin:
         exclusive flag; recording and file requests reject on that flag while
         the slow work runs instead of blocking on the lock.
 
-        automatic: the idle timer's unload. Silent, and the next recording
-        reloads the model; an unload by hand stays unloaded until `model reload`.
+        automatic: the idle timer's unload. The next recording reloads the
+        model; an unload by hand stays unloaded until `model reload`.
         """
         with self._recording_lock:
             # The CLI cannot see an idle unload, so it asks even when loaded
@@ -258,14 +265,17 @@ class ControlMixin:
                 self._model_operation_active = True
         if loaded:
             log("[CONTROL] Model reload requested but the model is loaded")
-            self._notify_user("hyprwhspr", "Model already loaded", urgency="low")
+            self._model_load_confirmed()
+            self._notify_user("hyprwhspr", "Model already loaded", urgency="low",
+                              kind="result", slot="model")
             return
         if busy and automatic:
             return
         if busy:
             log(f"[CONTROL] Cannot {operation} model while the backend is in use")
             self._notify_user(
-                "hyprwhspr", "Finish the current recording or transcription first", urgency="normal"
+                "hyprwhspr", "Model busy — finish the recording or transcription first",
+                urgency="normal", kind="result", slot="model",
             )
             return
         self._run_model_operation(operation, automatic=automatic)
@@ -273,8 +283,11 @@ class ControlMixin:
     def _run_model_operation(self, operation, automatic=False, quiet=False):
         """The work of a model operation whose _model_operation_active claim is held.
 
-        quiet: a reload that a recording is already waiting on; success needs
-        no announcement.
+        quiet: a reload that a recording is already waiting on; it only
+        retires the notice that recording put up.
+
+        One alert per operation: every message here goes to the model slot and
+        replaces the last.
         """
         log(f"[CONTROL] Model {operation} requested")
         succeeded = False
@@ -312,9 +325,15 @@ class ControlMixin:
                     MODEL_UNLOADED_FILE.touch()
                 except Exception:
                     pass
-                self._notify_user("hyprwhspr", "Model unloaded — GPU resources freed", urgency="low")
-            elif not succeeded and not automatic:
-                self._notify_user("hyprwhspr", "Unload not applicable for this backend", urgency="normal")
+                self._notify_user("hyprwhspr", "Model unloaded — run: hyprwhspr model reload",
+                                  urgency="low", kind="result", slot="model")
+            elif succeeded:
+                self._notify_user(
+                    "hyprwhspr", "Model unloaded after inactivity — reloads on next recording",
+                    urgency="low", kind="lifecycle", slot="model")
+            elif not automatic:
+                self._notify_user("hyprwhspr", "Model not unloaded — see logs",
+                                  urgency="normal", kind="result", slot="model")
         else:
             if succeeded:
                 self._model_idle_since = time.monotonic()
@@ -322,10 +341,18 @@ class ControlMixin:
                     MODEL_UNLOADED_FILE.unlink(missing_ok=True)
                 except Exception:
                     pass
-                if not quiet:
-                    self._notify_user("hyprwhspr", "Model reloaded — ready to record", urgency="low")
+                self._model_load_confirmed()
+                if quiet:
+                    self._announce_model_loaded()
+                else:
+                    # A recording may have joined this load and put up a wait
+                    self._clear_status_detail()
+                    self._model_loading_alerted = False
+                    self._notify_user("hyprwhspr", "Model ready", urgency="low",
+                                      kind="result", slot="model")
             else:
-                self._notify_user("hyprwhspr", "Model reload failed — check logs", urgency="critical")
+                self._report_model_load_failed(
+                    "Model failed to load — check logs, then run: hyprwhspr model reload")
 
     def _start_backend_init_background(self):
         """Initialize the transcription backend in a background thread.
@@ -346,10 +373,17 @@ class ControlMixin:
             self._model_initializing = False
             if ok:
                 log("[READY] Model ready — recording now available")
-                if self._notify_when_ready or time.monotonic() - started >= READY_NOTIFY_AFTER_S:
+                requested = self._notify_when_ready
+                if requested or time.monotonic() - started >= READY_NOTIFY_AFTER_S:
                     self._notify_when_ready = False
-                    self._notify_user("hyprwhspr", "Ready", urgency="low")
+                    self._announce_backend_ready(requested)
+                else:
+                    self._model_load_confirmed()
             else:
                 log("[ERROR] Failed to initialize backend in background")
+                if self._notify_when_ready:
+                    # Someone was told to wait: tell them it did not come back
+                    self._notify_when_ready = False
+                    self._report_backend_load_failed()
 
         threading.Thread(target=_bg_init, daemon=True, name="BackendInit").start()

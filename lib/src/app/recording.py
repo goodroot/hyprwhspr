@@ -6,7 +6,7 @@ import threading
 import time
 
 from paths import DEBUG_RECORDINGS_DIR
-from text_injector import InjectionOutcome
+from text_injector import InjectionOutcome, OUTCOME_DETAIL
 from processing_trace import build_processing_trace
 from hallucination import is_hallucination
 from live_typing import LiveTypingSession
@@ -40,11 +40,13 @@ class RecordingMixin:
                 return True
         if unloaded and not (busy or loading):
             self._notify_user(
-                "hyprwhspr", "Model unloaded — run: hyprwhspr model reload", urgency="normal")
+                "hyprwhspr", "Model unloaded — run: hyprwhspr model reload",
+                urgency="normal", kind="result", slot="model")
         if asleep and not busy:
             # The idle timer unloaded the model: load it, the user retries
             self._wake_idle_model()
-            self._notify_user("hyprwhspr", "Loading model — try again shortly", urgency="normal")
+            self._notify_user("hyprwhspr", "Model loading — try again when ready",
+                              urgency="normal", kind="result", slot="model")
         if loading:
             # As for a refused normal start: announce Ready later, retry a failed init
             self._notify_when_ready = True
@@ -166,47 +168,55 @@ class RecordingMixin:
 
         if blocked == 'text-delivery':
             self._notify_user(
-                "hyprwhspr", "Text delivery is still stopping — try again.", urgency="normal")
+                "hyprwhspr", "Text delivery is still stopping — try again.",
+                urgency="normal", kind="result", slot="gate")
             return
 
         if blocked == 'starting':
-            self._notify_user("hyprwhspr", "Still stopping — try again", urgency="normal")
+            self._notify_user("hyprwhspr", "Still stopping — try again",
+                              urgency="normal", kind="result", slot="gate")
             log("[CONTROL] Recording blocked: previous start still settling")
             return
 
         if blocked == 'initializing':
-            self._notify_user("hyprwhspr", "Model still loading, please wait…", urgency="normal")
+            self._notify_user("hyprwhspr", "Model loading — try again when ready",
+                              urgency="normal", kind="result", slot="model")
             log("[CONTROL] Recording blocked: model is still initializing")
             return
 
         # Backend init failed (e.g. deps missing at boot): retry it instead
         # of recording audio that can never be transcribed
         if blocked == 'init-failed':
-            self._notify_user("hyprwhspr", "Backend failed to load — retrying, try again shortly", urgency="normal")
+            self._notify_user("hyprwhspr", "Model failed to load — retrying, try again when ready",
+                              urgency="normal", kind="result", slot="model")
             log("[CONTROL] Recording blocked: backend init failed - retrying")
             self._start_backend_init_background()
             return
 
         if blocked == 'file-transcription':
-            self._notify_user("hyprwhspr", "File transcription in progress", urgency="normal")
+            self._notify_user("hyprwhspr", "File transcription in progress — try again when it finishes",
+                              urgency="normal", kind="result", slot="gate")
             log("[CONTROL] Recording blocked: file transcription in progress")
             return
 
         if blocked == 'model-operation':
-            self._notify_user("hyprwhspr", "Model load in progress — try again shortly", urgency="normal")
+            self._notify_user("hyprwhspr", "Model load in progress — try again shortly",
+                              urgency="normal", kind="result", slot="model")
             log("[CONTROL] Recording blocked: model load/unload in progress")
             return
 
         # Realtime client was torn down; rebuild in background instead of blocking
         if blocked == 'realtime-reconnect':
-            self._notify_user("hyprwhspr", "Reconnecting — try again in a moment", urgency="normal")
+            # The press is the reason to answer, even mid-episode
+            self._recovery_begin('service', kind="result", repeat=True, track='link')
             log("[CONTROL] Recording blocked: realtime client not connected - reconnecting")
             self._start_backend_init_background()
             return
 
         # One-stream-per-recording protocols can't start until the last transcript lands
         if blocked == 'realtime-busy':
-            self._notify_user("hyprwhspr", "Still transcribing — try again in a moment", urgency="normal")
+            self._notify_user("hyprwhspr", "Still transcribing — try again in a moment",
+                              urgency="normal", kind="result", slot="gate")
             log("[CONTROL] Recording blocked: previous realtime transcript still pending")
             return
 
@@ -215,7 +225,7 @@ class RecordingMixin:
             self._notify_user(
                 "hyprwhspr",
                 "Model unloaded — run: hyprwhspr model reload",
-                urgency="normal",
+                urgency="normal", kind="result", slot="model",
             )
             log("[CONTROL] Recording blocked: model is unloaded. Run: hyprwhspr model reload")
             return
@@ -336,6 +346,12 @@ class RecordingMixin:
                 # Stream is verified working - show mic-osd visualization
                 log("Recording started")
                 self._show_mic_osd()
+                if getattr(self, '_model_waking', False):
+                    # After the indicator is up: its bubble carries the notice
+                    self._announce_model_loading('recording')
+                    if not getattr(self, '_model_waking', False):
+                        # The load ended while the notice went up
+                        self._settle_model_wait()
                 
                 # Additional stability check - verify stream continues working
                 stable = verify_stream_stable()
@@ -482,10 +498,7 @@ class RecordingMixin:
         outcome = session.finish(text or '')
         if outcome == InjectionOutcome.FAILED:
             log("[ERROR] Live-typed text delivery failed")
-            self._notify_user(
-                "hyprwhspr", "Text delivery failed. Recover with hyprwhspr record copy-last or record paste-last",
-                urgency="normal",
-            )
+            self._report_delivery_failed()
         elif outcome is not None:
             log(f"[LIVE] Dictation finished ({len((text or '').split())} words)")
             self._mark_delivery_healthy()
@@ -554,7 +567,7 @@ class RecordingMixin:
             # notify must not let us stop the next session's monitor.
             monitor = (self._continuous_silence_stop, self._continuous_silence_thread)
         log("[AUDIO] Capture stalled mid-recording - transcribing what was captured")
-        self._notify_user("hyprwhspr", "Microphone stalled - kept what was heard. See Troubleshooting.", "normal")
+        self._notify_user("hyprwhspr", "Microphone stalled — kept what was heard. See Troubleshooting.", "normal")
         self._stall_notified = True
         # Same route as a user stop (control.py)
         if self.config.get_setting("recording_mode", "toggle") == "continuous":
@@ -580,7 +593,7 @@ class RecordingMixin:
             self.audio_capture.stop_recording()
             self.whisper_manager.discard_realtime_audio()
             self.audio_manager.play_error_sound()
-            self._notify_user("hyprwhspr", "Audio server restarted - recording discarded", "normal")
+            self._notify_user("hyprwhspr", "Audio server restarted — recording discarded", "normal")
         except Exception as e:
             log(f"[ERROR] Error ending orphaned recording: {e}")
 
@@ -638,12 +651,14 @@ class RecordingMixin:
                 except OSError as cleanup_error:
                     log(f"[ERROR] Could not remove partial recording {path}: {cleanup_error}")
             log(f"[ERROR] Model failed to load and the audio could not be kept: {e}")
-            self._notify_user("hyprwhspr", "Model failed to load — dictation lost", urgency="critical")
+            self._notify_user("hyprwhspr", "Model failed to load — dictation lost",
+                              urgency="critical", retained=True)
             return
         log(f"[ERROR] Model failed to load; audio kept at {path}")
+        # Each saved file owns its alert; a later dictation must not retire it.
         self._notify_user(
-            "hyprwhspr", f"Model failed to load. Audio kept: hyprwhspr transcribe {path}",
-            urgency="critical")
+            "hyprwhspr", f"Transcription failed — audio kept\nRun: hyprwhspr transcribe {path}",
+            urgency="critical", retained=True, slot=f"audio:{path}")
 
     _DEBUG_RECORDINGS_KEEP = 3
 
@@ -768,13 +783,20 @@ class RecordingMixin:
         so an empty result is the expected outcome, not an error.
         """
         with self._recording_lock:
-            if self.is_processing:
-                return
+            dropped = self.is_processing
             self.is_processing = True
+        if dropped:
+            # The stop put "processing" up; nothing else would take it down
+            log("[WARN] Still transcribing the previous recording - this one was dropped")
+            self.audio_manager.play_error_sound()
+            self._show_result_and_hide(False)
+            return
 
+        generation = getattr(self, '_osd_generation', 0)
         success = False
+        detail = None  # what happened, when it was not a plain paste or error
         try:
-            if not self._await_model_wake():
+            if not self._await_model_wake(announce=True):
                 self._keep_unsent_audio(audio_data)
                 self.audio_manager.play_error_sound()
                 return
@@ -789,6 +811,7 @@ class RecordingMixin:
             live_outcome = self._finish_live_typing(transcription)
             if live_outcome is not None:
                 success = live_outcome != InjectionOutcome.FAILED
+                detail = OUTCOME_DETAIL.get(live_outcome)
             elif transcription and transcription.strip():
                 text = transcription.strip()
 
@@ -800,14 +823,17 @@ class RecordingMixin:
                     if not silent_tail:
                         self.audio_manager.play_error_sound()
                     success = silent_tail
+                    detail = 'done' if silent_tail else 'empty'
                     return  # the finally below shows the result, once
 
                 # Inject text
                 outcome = self._inject_text(text)
                 success = outcome != InjectionOutcome.FAILED
+                detail = OUTCOME_DETAIL.get(outcome)
             else:
                 # Empty is the expected result for a silent continuous tail
                 success = silent_tail
+                detail = 'done' if silent_tail else 'empty'
                 if silent_tail:
                     log("[CONTINUOUS] Nothing said since the last paste")
                 else:
@@ -818,11 +844,23 @@ class RecordingMixin:
             log(f"[ERROR] Error processing audio: {e}")
         finally:
             self._notify_capture("", final=True)
-            self._clear_mic_osd_preview_text()
+            with self._cancel_pending_hide_lock:
+                if getattr(self, '_osd_generation', 0) == generation:
+                    self._clear_mic_osd_preview_text()
             with self._recording_lock:
                 self.is_processing = False
-            # Show success/error state and hide OSD after delay
-            self._show_result_and_hide(success)
+            # Show success/error state and hide OSD after delay. Processing
+            # never outlives this: the state it set is replaced here.
+            if detail is None:
+                self._show_result_and_hide(success, generation=generation)
+            else:
+                self._show_result_and_hide(success, detail=detail, generation=generation)
+
+    def _report_delivery_failed(self):
+        """The text reached nothing. Stays up until a dictation lands again."""
+        self._notify_user(
+            "hyprwhspr", "Text not delivered — run: hyprwhspr record paste-last or hyprwhspr record copy-last",
+            urgency="critical", kind="action", slot="delivery", retained=True)
 
     def _notify_capture(self, text="", final=True):
         """Complete a capture request, encoding trace requests as one JSON document."""
@@ -845,7 +883,7 @@ class RecordingMixin:
         # Capture mode: route text to client instead of injecting into active app
         if self._recording_control_server.has_capture_subscriber():
             self._notify_capture(text, final=True)
-            return InjectionOutcome.INJECTED
+            return InjectionOutcome.CAPTURED
 
         try:
             outcome = self.text_injector.inject_text(text)
@@ -857,14 +895,15 @@ class RecordingMixin:
                         notify = not self._continuous_delivery_failure_notified
                         self._continuous_delivery_failure_notified = True
                 if notify:
-                    self._notify_user(
-                        "hyprwhspr", "Text delivery failed. Recover with hyprwhspr record copy-last or record paste-last",
-                        urgency="normal",
-                    )
+                    self._report_delivery_failed()
                 return InjectionOutcome.FAILED
 
             if outcome == InjectionOutcome.CONSUMED:
                 log("[INJECT] Post-transcription hook consumed transcription")
+            elif outcome == InjectionOutcome.CLIPBOARD:
+                log(f"[INJECT] Left on the clipboard for a manual paste ({len(text)} chars)")
+            elif outcome == InjectionOutcome.SKIPPED:
+                log("[INJECT] Nothing inserted")
             else:
                 log(f"[INJECT] Injection dispatched ({len(text)} chars)")
 
@@ -876,6 +915,10 @@ class RecordingMixin:
 
     def _mark_delivery_healthy(self):
         """A dictation landed (or was consumed): the system is fully healthy."""
+        # Confirmed resolved: retire what an earlier failure left up
+        self._clear_alert("delivery")
+        self._recovery_confirmed()
+        self._recovery_confirmed(track='link')
         # Cancel any pending background recovery
         if self._background_recovery_needed.is_set():
             log("[HEALTH] Successful recording detected - canceling background recovery")

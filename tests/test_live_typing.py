@@ -602,8 +602,10 @@ class TextInjectorStreamClipboardTests(unittest.TestCase):
             mock.patch.object(injector, "_restore_clipboard") as restore,
         ):
             injector.inject_stream_chunk(handle, "hunter two", final=True)
-            injector.end_stream(handle)
+            outcome = injector.end_stream(handle)
 
+        # Nothing was typed, so it is not reported as inserted
+        self.assertEqual(outcome, InjectionOutcome.SKIPPED)
         paste.assert_not_called()
         enter.assert_not_called()
         restore.assert_not_called()
@@ -660,6 +662,7 @@ class RecordingLifecycleTests(unittest.TestCase):
         app.text_injector.stream_busy.return_value = False
         app._live_typing = None
         app._recording_lock = threading.Lock()
+        app._cancel_pending_hide_lock = threading.Lock()
         app.is_processing = False
         app._current_language_override = None
         app.audio_capture = types.SimpleNamespace(sample_rate=16000, abort_recovery=mock.Mock())
@@ -694,7 +697,7 @@ class RecordingLifecycleTests(unittest.TestCase):
         session.finish.assert_called_once_with("hello there friend")
         app._inject_text.assert_not_called()
         app._mark_delivery_healthy.assert_called_once_with()
-        app._show_result_and_hide.assert_called_once_with(True)
+        app._show_result_and_hide.assert_called_once_with(True, generation=0)
         self.assertIsNone(app._live_typing)
 
     def test_failed_live_typing_reports_failure_once(self):
@@ -705,7 +708,7 @@ class RecordingLifecycleTests(unittest.TestCase):
         app._notify_user.assert_called_once()
         app._mark_delivery_healthy.assert_not_called()
         app.audio_manager.play_error_sound.assert_not_called()
-        app._show_result_and_hide.assert_called_once_with(False)
+        app._show_result_and_hide.assert_called_once_with(False, generation=0)
 
     def test_nothing_typed_falls_back_to_the_normal_path(self):
         app = self._app(transcript="Thank you.")

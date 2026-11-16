@@ -63,6 +63,19 @@ class RealtimeAudioClientBase:
     # finish a commit after the server has closed the socket.
     commit_after_disconnect = False
 
+    # Each loop reports 'reconnecting', optional 'retrying' after its first
+    # failure, then 'reconnected' or 'failed'. Cancellation has no final event.
+    connection_listener = None
+
+    def _report_connection(self, state):
+        listener = self.connection_listener
+        if listener is None:
+            return
+        try:
+            listener(state)
+        except Exception as e:
+            print(f'[REALTIME] Connection listener failed: {e}', flush=True)
+
     @property
     def needs_fresh_session(self) -> bool:
         return False
@@ -621,6 +634,8 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
             return False
         try:
             self._reconnecting = True
+            self._report_connection('reconnecting')
+            announced_retry = False
             while not self._stop_event.is_set() and self.reconnect_attempts < self.max_reconnect_attempts:
                 delay = self.reconnect_delays[min(self.reconnect_attempts, len(self.reconnect_delays) - 1)]
                 self.reconnect_attempts += 1
@@ -639,9 +654,15 @@ class WebSocketRealtimeClientBase(RealtimeAudioClientBase):
                     return False
 
                 if self._connect_internal():
+                    self._report_connection('reconnected')
                     return True
 
+                if not announced_retry and self.reconnect_attempts < self.max_reconnect_attempts:
+                    self._report_connection('retrying')
+                    announced_retry = True
+
             self._log('Max reconnection attempts reached')
+            self._report_connection('failed')
             return False
         finally:
             self._reconnecting = False

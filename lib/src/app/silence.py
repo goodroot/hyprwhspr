@@ -275,8 +275,15 @@ class SilenceMixin:
                         log(f"[CONTINUOUS] Pasted: {preview}")
                     elif outcome == InjectionOutcome.CONSUMED:
                         log(f"[CONTINUOUS] Consumed by hook: {preview}")
-                    else:
+                    elif outcome == InjectionOutcome.CLIPBOARD:
+                        log(f"[CONTINUOUS] Left on the clipboard: {preview}")
+                        # Mid-recording the bubble is busy; the slot keeps
+                        # one alert however many chunks follow
+                        self._alert_result('clipboard')
+                    elif outcome == InjectionOutcome.FAILED:
                         log(f"[CONTINUOUS] Injection failed: {preview}")
+                    else:
+                        log(f"[CONTINUOUS] Not inserted ({getattr(outcome, 'value', outcome)}): {preview}")
                 else:
                     log("[CONTINUOUS] No transcription from flushed audio")
             except Exception as e:

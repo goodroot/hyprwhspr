@@ -82,7 +82,7 @@ class TeardownDeadlineTests(unittest.TestCase):
         self.tick(30.0)
         self.exit.assert_called_once_with(1)
         self.app._notify_user.assert_called_once_with(
-            "hyprwhspr", "Audio system wedged - restarting service", "critical")
+            "hyprwhspr", "Audio system wedged — restarting service", "critical")
 
     def test_restart_after_a_stall_notice_stays_quiet(self):
         # The stall toast already told the user (#282); one alarm per event
@@ -212,8 +212,9 @@ class MidRecordingWedgeTests(unittest.TestCase):
         self.app._on_pulse_server_restarted()
 
         self.assertEqual([c[0] for c in order.mock_calls], ['interrupt', 'recover'])
-        self.app._notify_user.assert_called_once_with(
-            "hyprwhspr", "Audio server restarted - long-form interrupted", "normal")
+        self.assertEqual(
+            self.app._notify_user.call_args_list[0],
+            mock.call("hyprwhspr", "Audio server restarted — long-form interrupted", "normal"))
 
     def test_no_longform_notice_when_nothing_was_interrupted(self):
         self.app.is_recording = False
@@ -222,7 +223,8 @@ class MidRecordingWedgeTests(unittest.TestCase):
 
         self.app._on_pulse_server_restarted()
 
-        self.app._notify_user.assert_not_called()
+        messages = [c.args[1] for c in self.app._notify_user.call_args_list]
+        self.assertFalse([m for m in messages if 'long-form' in m])
 
     def test_recovered_server_still_ends_the_orphaned_session(self):
         self.app._on_pulse_server_restarted()

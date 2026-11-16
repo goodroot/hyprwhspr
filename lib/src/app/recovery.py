@@ -119,6 +119,7 @@ class RecoveryMixin:
                     time.sleep(0.1)
 
                 log(f"[HOTPLUG] Microphone detected - recovering...")
+                episode = self._recovery_start('microphone')
                 time.sleep(0.5)  # Let drivers settle
 
                 # Trigger recovery
@@ -128,11 +129,18 @@ class RecoveryMixin:
                     with self._mic_state_lock:
                         self._mic_disconnected = False
                     self._background_recovery_needed.clear()
+                    self._recovery_confirmed(token=episode, component='microphone')
                 else:
                     log(f"[HOTPLUG] Recovery failed - will retry in background")
                     self._write_recovery_result(False, 'hotplug')
                     # Re-set flag so background recovery can retry
                     self._background_recovery_needed.set()
+                    retry = getattr(self, '_background_recovery_thread', None)
+                    if retry is None or not retry.is_alive():
+                        # Nothing is retrying: this was the last attempt
+                        self._recovery_exhausted('microphone', token=episode)
+                    else:
+                        self._recovery_begin('microphone', token=episode)
         except Exception as e:
             log(f"[HOTPLUG] Error: {e}")
 
@@ -166,8 +174,7 @@ class RecoveryMixin:
                     self._mic_disconnected = True
                 log(f"[HOTPLUG] Microphone disconnected")
                 
-                # Send notification on disconnect
-                self._notify_user("hyprwhspr", "Microphone disconnected", "normal")
+                self._recovery_note("Microphone disconnected — reconnect it to record")
 
             # If currently recording, this will fail gracefully in next audio callback
         except Exception as e:
@@ -206,7 +213,7 @@ class RecoveryMixin:
                 return True
             log("[RECOVERY] Wedged audio stream cannot be reclaimed - exiting for systemd restart")
             if not self._stall_notified:
-                self._notify_user("hyprwhspr", "Audio system wedged - restarting service", "critical")
+                self._notify_user("hyprwhspr", "Audio system wedged — restarting service", "critical")
             sys.stdout.flush()
             sys.stderr.flush()
             os._exit(1)
@@ -219,8 +226,9 @@ class RecoveryMixin:
             # Save long-form audio before recovery clears the capture buffer
             longform = getattr(self, '_longform', None)
             if longform is not None and longform.interrupt():
-                self._notify_user("hyprwhspr", "Audio server restarted - long-form interrupted", "normal")
+                self._notify_user("hyprwhspr", "Audio server restarted — long-form interrupted", "normal")
 
+            episode = self._recovery_start('microphone')
             # Give audio server time to fully initialize
             time.sleep(1)
 
@@ -235,9 +243,11 @@ class RecoveryMixin:
             if recovered:
                 log("[PULSE] Recovery successful after server restart")
                 self._write_recovery_result(True, 'pulse_restart')
+                self._recovery_confirmed(token=episode, component='microphone')
             else:
                 log("[PULSE] Recovery failed after server restart")
                 self._write_recovery_result(False, 'pulse_restart')
+                self._recovery_exhausted('microphone', token=episode)
         except Exception as e:
             log(f"[PULSE] Error handling server restart: {e}")
 
@@ -341,6 +351,7 @@ class RecoveryMixin:
         
         # Mark that we're attempting recovery for this error state
         self.recovery_attempted.set()
+        episode = self._recovery_start('microphone')
         
         # Attempt recovery (will handle stopping current recording if needed)
         if self.audio_capture.recover_audio_capture(f"tray_script_request_{reason}"):
@@ -359,8 +370,10 @@ class RecoveryMixin:
             # permanently drop the user's active recording state.
             if model_reinit_success:
                 self._write_recovery_result(True, reason)
+                self._recovery_confirmed(token=episode)
             else:
                 self._write_recovery_result(False, 'suspend_resume_model')
+                self._recovery_exhausted(self._backend_component(), token=episode)
 
             # Clear disconnected flag - microphone is back
             with self._mic_state_lock:
@@ -394,6 +407,7 @@ class RecoveryMixin:
 
             # Write recovery failure result for tray script
             self._write_recovery_result(False, reason)
+            self._recovery_exhausted('microphone', token=episode)
 
             # Keep flag set - recovery was attempted and failed, don't retry
 
@@ -411,6 +425,7 @@ class RecoveryMixin:
         """Called when system resumes from suspend (D-Bus PrepareForSleep signal)"""
         try:
             log("[SUSPEND] System resumed - recovering audio and backends...")
+            episode = self._recovery_start('microphone')
             time.sleep(2)  # Give audio/GPU drivers time to reinitialize
 
             # Re-attach the shortcut keyboard if suspend dropped it without a udev
@@ -430,6 +445,7 @@ class RecoveryMixin:
                     with self._mic_state_lock:
                         self._mic_disconnected = False
                     self._background_recovery_needed.clear()
+                    self._recovery_confirmed(token=episode)
                 else:
                     # Backend reinitialization failed - signal that recovery is still needed
                     if self.whisper_manager.active_backend_is_local():
@@ -437,10 +453,12 @@ class RecoveryMixin:
                     else:
                         self._write_recovery_result(False, 'suspend_resume_websocket')
                     self._background_recovery_needed.set()
+                    self._recovery_begin(self._backend_component(), token=episode)
                     # Start background recovery thread
                     if self._background_recovery_thread is None or not self._background_recovery_thread.is_alive():
                         self._background_recovery_thread = threading.Thread(
                             target=self._background_recovery_retry,
+                            kwargs={"episode": episode},
                             daemon=True
                         )
                         self._background_recovery_thread.start()
@@ -448,24 +466,29 @@ class RecoveryMixin:
                 # Immediate recovery failed - start background retry
                 log("[SUSPEND] Recovery failed - will retry in background (6 attempts over 30s)")
                 self._background_recovery_needed.set()
+                self._recovery_begin('microphone', token=episode)
 
                 # Start background recovery thread
                 if self._background_recovery_thread is None or not self._background_recovery_thread.is_alive():
                     self._background_recovery_thread = threading.Thread(
                         target=self._background_recovery_retry,
+                        kwargs={"episode": episode},
                         daemon=True
                     )
                     self._background_recovery_thread.start()
         except Exception as e:
             log(f"[SUSPEND] Error handling resume: {e}")
 
-    def _background_recovery_retry(self):
+    def _background_recovery_retry(self, episode=None):
         """
         Background thread that retries recovery after suspend/resume.
         Retries every 2 seconds for up to 12 seconds (6 attempts).
         """
+        if episode is None:
+            episode = getattr(self, '_recovery_token', None)
         max_attempts = 6
         retry_interval = 2  # seconds
+        failed_component = 'microphone'
 
         for attempt in range(1, max_attempts + 1):
             # Check if we should stop (service shutting down or recovery no longer needed)
@@ -501,11 +524,14 @@ class RecoveryMixin:
                     with self._mic_state_lock:
                         self._mic_disconnected = False
                     self._background_recovery_needed.clear()
+                    self._recovery_confirmed(token=episode)
                     return  # Success, exit
                 else:
                     # Backend reinitialization failed - continue retrying
                     # Don't write result yet - will retry or write failure after all attempts
-                    pass
+                    failed_component = self._backend_component()
+            else:
+                failed_component = 'microphone'
 
             # Recovery failed, wait before next attempt (unless this was the last attempt)
             if attempt < max_attempts:
@@ -523,3 +549,8 @@ class RecoveryMixin:
         log("[RECOVERY] Background recovery exhausted - microphone may need manual reseat")
         self._write_recovery_result(False, 'background_retry_exhausted')
         self._background_recovery_needed.clear()
+        self._recovery_exhausted(failed_component, token=episode)
+
+    def _backend_component(self):
+        """What a failed backend recovery should be reported as."""
+        return 'model' if self.whisper_manager.active_backend_is_local() else 'service'

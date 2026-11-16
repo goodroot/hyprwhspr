@@ -22,19 +22,287 @@ from service_log import log
 class FeedbackMixin:
     """Notifications, status files, mic OSD and the audio-level feed."""
 
-    def _notify_user(self, title: str, message: str, urgency: str = "normal"):
-        """Send desktop notification if notify-send is available.
+    def _notify_user(self, title: str, message: str, urgency: str = "normal",
+                     kind: str = "action", slot: str = None, retained: bool = False):
+        """Send a desktop alert, subject to notification_level.
 
-        Non-critical notifications auto-dismiss so they don't accumulate in the
-        notification center; only genuine (critical) errors persist there until
-        the user dismisses them. See desktop_notify for the why.
+        kind: 'lifecycle' (an automatic announcement), 'result' (the outcome
+        of something the user asked for) or 'action' (a problem to act on).
+        slot: the subject it belongs to; a new message replaces the slot's
+        last one instead of stacking. See _clear_alert.
+        retained: an unresolved problem; stays until dismissed, replaced or
+        cleared. Everything else auto-dismisses so it doesn't accumulate in
+        the notification center. See desktop_notify for the why.
         """
         try:
-            from desktop_notify import notify
             timeout = self.config.get_setting('notification_timeout_ms', 5000)
-            notify(title, message, urgency=urgency, timeout_ms=timeout)
+            if slot is not None:
+                self._alert_slots().show(
+                    slot, message, kind=kind, retained=retained, urgency=urgency,
+                    timeout_ms=timeout, title=title)
+                return
+            from desktop_notify import notify
+            notify(title, message, urgency="critical" if retained else urgency,
+                   timeout_ms=timeout, kind=kind)
         except Exception:
             pass  # Silently fail if notify-send not available
+
+    def _alert_slots(self):
+        slots = getattr(self, '_notification_slots', None)
+        if slots is None:
+            from desktop_notify import NotificationSlots
+            slots = self._notification_slots = NotificationSlots()
+        return slots
+
+    def _clear_alert(self, slot: str):
+        """Close a slot's alert once what it reported is confirmed resolved."""
+        try:
+            self._alert_slots().clear(slot)
+        except Exception:
+            pass
+
+    # ------------------------ Model lifecycle notices ------------------------
+
+    def _announce_model_loading(self, phase: str):
+        """Say a recording is waiting on a model load.
+
+        The recording-status bubble says it when it can; a second alert would
+        compete with it. Overlays and a disabled mic OSD have no text, so
+        there it is an alert of its own.
+        """
+        detail = 'loading_' + phase
+        if self._set_status_detail(detail):
+            return
+        from desktop_notify import STATUS_DETAIL_TEXT
+        self._model_loading_alerted = True
+        self._notify_user("hyprwhspr", STATUS_DETAIL_TEXT[detail],
+                          urgency="low", kind="lifecycle", slot="model")
+
+    def _announce_model_loaded(self):
+        """A load a recording waited on finished: retire its notice."""
+        self._clear_status_detail()
+        if getattr(self, '_model_loading_alerted', False):
+            self._model_loading_alerted = False
+            self._notify_user("hyprwhspr", "Model ready", urgency="low",
+                              kind="lifecycle", slot="model")
+
+    def _report_model_load_failed(self, message: str):
+        """A load failed: retire any wait notice and keep the failure up."""
+        self._clear_status_detail()
+        self._model_loading_alerted = False
+        self._model_failure_message = message
+        self._notify_user("hyprwhspr", message, urgency="critical", kind="action",
+                          slot="model", retained=True)
+
+    def _model_load_confirmed(self):
+        """The model loaded: a failure alert left up by an earlier load is over."""
+        if getattr(self, '_model_failure_message', None) is not None:
+            self._model_failure_message = None
+            self._clear_alert("model")
+        # The command a failed recovery pointed at has worked
+        self._recovery_resolved('model')
+
+    def _settle_model_wait(self):
+        """A load ended while a wait notice for it was going up.
+
+        The load's own announcement may have run first and found nothing to
+        retire, so retire the notice here; both orders end the same way.
+        """
+        if not getattr(self, '_model_idle_unloaded', False):
+            self._announce_model_loaded()
+            return
+        self._clear_status_detail()
+        failure = getattr(self, '_model_failure_message', None)
+        if getattr(self, '_model_loading_alerted', False) and failure is not None:
+            # The wait notice replaced the failure in the model slot
+            self._report_model_load_failed(failure)
+        self._model_loading_alerted = False
+
+    def _announce_backend_ready(self, requested: bool):
+        """The backend finished loading. requested: someone was told to wait."""
+        kind = "result" if requested else "lifecycle"
+        self._model_failure_message = None
+        if self._recovery_announced('link') is not None:
+            self._recovery_confirmed(kind=kind, track='link')
+        else:
+            self._notify_user("hyprwhspr", "Model ready", urgency="low", kind=kind, slot="model")
+
+    def _report_backend_load_failed(self):
+        """A load someone was told to wait for failed. The next record press retries."""
+        if self._recovery_announced('link') is not None:
+            self._recovery_exhausted('service', track='link')
+        else:
+            self._report_model_load_failed("Model failed to load — check logs, then record to retry")
+
+    # ------------------------ Recovery episodes ------------------------
+    #
+    # One alert per episode, in one slot: announced once however many retries
+    # follow, then replaced by the outcome. Success is only reported for an
+    # episode the user was told about, so a quiet self-heal stays quiet.
+    #
+    # Two tracks run independently, each with its own slot: 'system' is the
+    # service's own recovery (hotplug, audio server, resume and its retries);
+    # 'link' is the realtime connection, driven by the client's reconnect
+    # loop. Every attempt on a track joins the episode already open there, so
+    # whichever attempt ends it reports for all of them.
+
+    _RECOVERY_SLOTS = {'system': 'recovery', 'link': 'connection'}
+    _RECOVERY_UNDERWAY = {
+        'microphone': "Recovering microphone…",
+        'model': "Reloading model…",
+        'service': "Reconnecting to transcription service…",
+    }
+    _RECOVERY_CONFIRMED = {
+        'microphone': "Microphone recovered",
+        'model': "Model ready",
+        'service': "Transcription service reconnected",
+    }
+    _RECOVERY_EXHAUSTED = {
+        'microphone': "Microphone not recovered — replug it, then record again",
+        'model': "Model not recovered — run: hyprwhspr model reload",
+        'service': "Transcription service unreachable — check network, then record again",
+    }
+
+    def _recovery_episode_lock(self):
+        lock = getattr(self, '_recovery_episode_guard', None)
+        if lock is None:
+            lock = self._recovery_episode_guard = threading.Lock()
+        return lock
+
+    def _recovery_track(self, track: str) -> dict:
+        """A track's episode state (call under _recovery_episode_lock)."""
+        tracks = getattr(self, '_recovery_tracks', None)
+        if tracks is None:
+            tracks = self._recovery_tracks = {}
+        state = tracks.get(track)
+        if state is None:
+            state = tracks[track] = {}
+            self._recovery_reset(state)
+        return state
+
+    @staticmethod
+    def _recovery_reset(state: dict):
+        state.update(token=None, component=None, phase=None, visible=False, kind='lifecycle')
+
+    @staticmethod
+    def _recovery_owned(state: dict, token) -> bool:
+        """Whether a caller holding token may still report on this episode."""
+        return token is None or token is state['token']
+
+    def _recovery_announced(self, track: str = 'system'):
+        """The component of the track's open episode, or None."""
+        with self._recovery_episode_lock():
+            return self._recovery_track(track)['component']
+
+    def _recovery_start(self, component: str, track: str = 'system'):
+        """Start a silent automatic attempt and return its notification ownership.
+
+        An episode still open on the track is joined, not replaced: what the
+        user was already told stays up until an attempt actually succeeds, and
+        the attempts already running keep their say in the outcome.
+        """
+        with self._recovery_episode_lock():
+            state = self._recovery_track(track)
+            if state['token'] is None:
+                state.update(token=object(), component=component, phase='quiet',
+                             visible=False, kind='lifecycle')
+            return state['token']
+
+    def _recovery_begin(self, component: str, kind: str = "lifecycle", repeat: bool = False,
+                        token=None, track: str = 'system'):
+        """Announce retries or a refused press once, without changing recovery work."""
+        from desktop_notify import allowed
+        with self._recovery_episode_lock():
+            state = self._recovery_track(track)
+            if not self._recovery_owned(state, token):
+                return
+            underway = state['component'] == component and state['phase'] == 'underway'
+            if state['token'] is None:
+                state['token'] = object()
+            state['component'] = component
+            state['phase'] = 'underway'
+            if underway and not repeat:
+                return
+            if kind == 'result':
+                state['kind'] = 'result'
+            state['visible'] = state['visible'] or allowed(kind)
+            self._notify_user("hyprwhspr", self._RECOVERY_UNDERWAY[component],
+                              urgency="low", kind=kind, slot=self._RECOVERY_SLOTS[track])
+
+    def _recovery_note(self, message: str):
+        """Report a disconnection without promising automatic recovery."""
+        with self._recovery_episode_lock():
+            state = self._recovery_track('system')
+            if state['token'] is None:
+                state['token'] = object()
+            state['component'] = 'microphone'
+            state['phase'] = 'noted'
+            self._notify_user("hyprwhspr", message, urgency="normal", kind="action",
+                              slot=self._RECOVERY_SLOTS['system'])
+
+    def _recovery_confirmed(self, kind: str = "lifecycle", token=None, track: str = 'system',
+                            component=None):
+        """Clear resolved problems; only announce a previously visible recovery."""
+        with self._recovery_episode_lock():
+            state = self._recovery_track(track)
+            if not self._recovery_owned(state, token):
+                return
+            # Audio-only recovery cannot confirm a model or network repair.
+            if component is not None and state['component'] != component:
+                return
+            component, visible = state['component'], state['visible']
+            if state['kind'] == 'result':
+                kind = 'result'
+            self._recovery_reset(state)
+            if component is None:
+                return
+            slot = self._RECOVERY_SLOTS[track]
+            if not visible:
+                self._clear_alert(slot)
+                return
+            self._notify_user("hyprwhspr", self._RECOVERY_CONFIRMED[component],
+                              urgency="low", kind=kind, slot=slot)
+
+    def _recovery_exhausted(self, component: str, token=None, track: str = 'system'):
+        """Retain a final failure. The episode stays open until something recovers."""
+        from desktop_notify import allowed
+        with self._recovery_episode_lock():
+            state = self._recovery_track(track)
+            if not self._recovery_owned(state, token):
+                return
+            if state['token'] is None:
+                state['token'] = object()
+            state['component'] = component
+            state['phase'] = 'failed'
+            state['visible'] = allowed('action')
+            self._notify_user("hyprwhspr", self._RECOVERY_EXHAUSTED[component],
+                              urgency="critical", kind="action",
+                              slot=self._RECOVERY_SLOTS[track], retained=True)
+
+    def _recovery_resolved(self, component: str):
+        """Close an episode whose component was fixed by hand, without a notice.
+
+        Whatever fixed it reports for itself (a model reload says "Model ready").
+        """
+        with self._recovery_episode_lock():
+            state = self._recovery_track('system')
+            if state['component'] != component:
+                return
+            self._recovery_reset(state)
+            self._clear_alert(self._RECOVERY_SLOTS['system'])
+
+    def _on_realtime_connection(self, state: str):
+        """A realtime client's reconnect loop (its thread): underway, back, or given up."""
+        if state == 'reconnecting':
+            self._realtime_recovery_token = self._recovery_start('service', track='link')
+            return
+        token = getattr(self, '_realtime_recovery_token', None)
+        if state == 'retrying':
+            self._recovery_begin('service', token=token, track='link')
+        elif state == 'reconnected':
+            self._recovery_confirmed(token=token, track='link')
+        elif state == 'failed':
+            self._recovery_exhausted('service', token=token, track='link')
 
     def _report_missing_dependencies(self):
         """Log and notify about Python modules the configured backend cannot import.
@@ -161,15 +429,7 @@ class FeedbackMixin:
         # Direct desktop notification: environments without the waybar tray
         # (e.g. Niri) otherwise never see mic failures. Reusing replaces_id
         # coalesces repeats into a single replaced banner instead of stacking.
-        try:
-            from desktop_notify import send_notification_with_id
-            nid = send_notification_with_id(
-                "hyprwhspr", message, urgency="normal", timeout_ms=6000,
-                replaces_id=self._mic_error_nid)
-            if nid is not None:
-                self._mic_error_nid = nid
-        except Exception:
-            pass  # Silently fail if no notification daemon
+        self._notify_user("hyprwhspr", message, urgency="normal", kind="action", slot="mic")
 
         # Write waybar signal file (atomic, no conflicts)
         # This allows waybar to detect when mic is present but not recording properly
@@ -191,14 +451,7 @@ class FeedbackMixin:
 
         # Retire the mic-error banner: recording works (or is being retried),
         # so a stale error notification would just be noise
-        nid = self._mic_error_nid
-        self._mic_error_nid = None
-        if nid is not None:
-            try:
-                from desktop_notify import close_notification
-                close_notification(nid)
-            except Exception:
-                pass
+        self._clear_alert("mic")
 
     def _write_recording_status(self, is_recording):
         """Write recording status to file for tray script"""
@@ -364,10 +617,11 @@ class FeedbackMixin:
         # so we don't hide the visualizer for this new recording
         with self._cancel_pending_hide_lock:
             self._cancel_pending_hide = True
-        if self._mic_osd_runner and self._mic_osd_runner.is_available():
-            self._mic_osd_runner.clear_preview_text()
-            self._mic_osd_runner.set_state('recording')
-            self._mic_osd_runner.show()
+            self._osd_generation = getattr(self, '_osd_generation', 0) + 1
+            if self._mic_osd_runner and self._mic_osd_runner.is_available():
+                self._mic_osd_runner.clear_preview_text()
+                self._mic_osd_runner.set_state('recording')
+                self._mic_osd_runner.show()
 
     def _hide_mic_osd(self):
         """Hide mic-osd visualization overlay"""
@@ -406,27 +660,79 @@ class FeedbackMixin:
             except Exception:
                 pass
 
-    def _show_result_and_hide(self, success: bool):
-        """Show success/error state then hide the OSD after a delay."""
-        state = 'success' if success else 'error'
-        self._set_visualizer_state(state)
+    def _set_status_detail(self, detail: str) -> bool:
+        """Reword the recording-status bubble. False if it shows no text."""
+        runner = getattr(self, '_mic_osd_runner', None)
+        set_detail = getattr(runner, 'set_detail', None)
+        if set_detail is None:
+            return False  # an overlay, or no status indicator at all
+        try:
+            return bool(set_detail(detail))
+        except Exception:
+            return False
 
-        # Clear cancel so this scheduled hide is allowed to run (avoids inheriting
-        # cancel from an earlier _show_mic_osd that already completed)
+    def _clear_status_detail(self):
+        clear_detail = getattr(getattr(self, '_mic_osd_runner', None), 'clear_detail', None)
+        if clear_detail is not None:
+            try:
+                clear_detail()
+            except Exception:
+                pass
+
+    # Results the user has to act on. The bubble words them when there is
+    # one, and holds them as long as an alert would; otherwise they are alerts.
+    _RESULT_ALERTS = ('clipboard', 'empty')
+
+    def _alert_result(self, detail: str):
+        from desktop_notify import STATUS_DETAIL_TEXT
+        self._notify_user("hyprwhspr", STATUS_DETAIL_TEXT[detail],
+                          urgency="normal", kind="result", slot="result")
+
+    def _show_result_and_hide(self, success: bool, detail: str = None, generation=None):
+        """Show success/error state then hide the OSD after a delay.
+
+        detail: what happened when it was not a plain paste or a plain error
+        (see desktop_notify.STATUS_DETAIL_TEXT). The bubble words it; where
+        there is no bubble text, the ones worth an alert get one.
+        """
+        actionable = detail in self._RESULT_ALERTS
+        delay = 1.25  # matches the overlay's fade
+        worded = False
         with self._cancel_pending_hide_lock:
-            self._cancel_pending_hide = False
+            current = getattr(self, '_osd_generation', 0)
+            stale = (getattr(self, 'is_recording', False)
+                     or (generation is not None and generation != current))
+            if not stale:
+                # One update: the bubble never shows "Inserted" for anything else
+                worded = detail is not None and self._set_status_detail(detail)
+                if not worded:
+                    self._set_visualizer_state('success' if success else 'error')
+                elif actionable:
+                    delay = max(delay, self._notification_timeout_s())
+                self._cancel_pending_hide = False
+                generation = current
+        if stale or not worded:
+            if actionable:
+                self._alert_result(detail)
+        if stale:
+            return
 
-        # Schedule hiding after 1.25 seconds (matches animation fade duration)
         def delayed_hide():
-            time.sleep(1.25)
+            time.sleep(delay)
             with self._cancel_pending_hide_lock:
-                should_hide = not self._cancel_pending_hide
-            if not should_hide:
-                return  # New recording started; don't hide
-            self._hide_mic_osd()
+                should_hide = (not self._cancel_pending_hide
+                               and getattr(self, '_osd_generation', 0) == generation)
+                if should_hide:
+                    self._hide_mic_osd()
 
         hide_thread = threading.Thread(target=delayed_hide, daemon=True)
         hide_thread.start()
+
+    def _notification_timeout_s(self) -> float:
+        try:
+            return float(self.config.get_setting('notification_timeout_ms', 5000)) / 1000.0
+        except Exception:
+            return 5.0
 
     def _start_audio_level_monitoring(self):
         """Start monitoring and writing audio levels to file"""

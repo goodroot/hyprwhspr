@@ -215,7 +215,7 @@ class ResumeBackendFailureTests(unittest.TestCase):
         app._background_recovery_needed = threading.Event()
         app._background_recovery_thread = None
         app._resync_shortcut_keyboards = lambda reason: None
-        app._background_recovery_retry = lambda: None
+        app._background_recovery_retry = lambda episode=None: None
         app.results = []
         app._write_recovery_result = lambda ok, reason: app.results.append((ok, reason))
         return app

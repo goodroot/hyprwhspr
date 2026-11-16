@@ -99,6 +99,15 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
 
         # Initialize core components
         self.config = ConfigManager()
+        # Some backends import the module as src.desktop_notify: a second
+        # module object, with its own provider.
+        for module_name in ('desktop_notify', 'src.desktop_notify'):
+            try:
+                import importlib
+                importlib.import_module(module_name).set_level_provider(
+                    lambda: self.config.get_setting('notification_level', 'all'))
+            except Exception:
+                pass
 
         # Initialize audio capture with configured device
         audio_device_id = self.config.get_setting('audio_device_id', None)
@@ -140,7 +149,6 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self.last_recovery_time = 0.0  # Track when recovery last completed (for cooldown)
         self._last_mic_error_log_time = 0.0  # Track when we last logged mic error (prevent duplicates)
         self._last_mic_error_message = None  # Last mic error message (dedupe identical repeats only)
-        self._mic_error_nid = None  # Desktop notification id for coalescing mic-error banners
         self._mic_disconnected = False  # Track if microphone was disconnected via hotplug event
         self._last_hotplug_add_time = float('-inf')  # Track last USB add event (for debouncing multiple events)
         
@@ -172,6 +180,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
 
         # Lock for recovery result writes (prevents race conditions when multiple threads write results)
         self._recovery_result_lock = threading.Lock()
+        self._recovery_episode_guard = threading.Lock()
 
         # Cancel pending delayed-hide from _show_result_and_hide when a new recording starts
         self._cancel_pending_hide = False
@@ -254,6 +263,11 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             show_mic_osd=self._show_mic_osd,
             hide_mic_osd=self._hide_mic_osd,
             show_result_and_hide=self._show_result_and_hide,
+            result_generation=lambda: getattr(self, '_osd_generation', 0),
+            notify_problem=lambda message: self._notify_user(
+                "hyprwhspr", message, urgency="critical", kind="action",
+                slot="longform", retained=True),
+            clear_problem=lambda: self._clear_alert("longform"),
             write_recording_status=self._write_recording_status,
             set_processing=self._set_longform_processing,
             claim_recording=self._claim_longform_recording,
@@ -327,6 +341,8 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
         if hasattr(self.whisper_manager, 'set_realtime_live_listener'):
             self.whisper_manager.set_realtime_live_listener(self._on_live_text)
+        if hasattr(self.whisper_manager, 'set_realtime_connection_listener'):
+            self.whisper_manager.set_realtime_connection_listener(self._on_realtime_connection)
 
         # Set up global shortcuts (needed for headless operation)
         self._setup_global_shortcuts()
@@ -405,7 +421,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             elif self._notify_when_ready:
                 # A record attempt was refused during the load
                 self._notify_when_ready = False
-                self._notify_user("hyprwhspr", "Ready", urgency="low")
+                self._announce_backend_ready(True)
 
         if external_bindings:
             log("\n[READY] hyprwhspr ready - using external bindings")
