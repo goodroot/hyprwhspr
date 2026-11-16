@@ -73,9 +73,8 @@ virtual-keyboard protocol (notably GNOME/Mutter), hyprwhspr falls back to its
 **own private `ydotoold`** — a child process on a dedicated socket
 (`$XDG_RUNTIME_DIR/hyprwhspr-ydotool.sock`), launched lazily and torn down with the
 service. The optional Hyprland ydotool backend uses the same private daemon.
-It runs rootless via the `uaccess` ACL on `/dev/uinput`; the `input`
-group and udev rule from setup are the fallback, and mainly serve the global
-hotkey (evdev reads of `/dev/input/event*`).
+It runs rootless: setup adds a udev rule that gives your session `/dev/uinput`.
+The `input` group is only for the keyboard shortcut. Compositor bindings need neither.
 
 ### Service starts but doesn't work until restarted
 
@@ -149,8 +148,13 @@ Run `hyprwhspr validate` to confirm the session is configured correctly.
 ```bash
 # Fix uinput permissions
 hyprwhspr setup
+```
 
-# Log out and back in
+Setup says when a logout is needed. Only a new `input` group membership needs one.
+
+```bash
+# See what is missing
+hyprwhspr validate
 ```
 
 ### No audio input

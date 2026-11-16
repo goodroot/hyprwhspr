@@ -1349,8 +1349,8 @@ def setup_command(python_path: Optional[str] = None):
     print("\n" + "="*60)
     print("Permissions Setup")
     print("="*60)
-    print("\nAdds you to required groups (input, audio, tty)")
-    print("and configures uinput device permissions.")
+    print("\nLets hyprwhspr type for you. Adds you to the input group")
+    print("only when the shortcut is read straight from the keyboard.")
     print("Note: Requires sudo access.")
     setup_permissions_choice = Confirm.ask("Set up permissions?", default=True)
     
@@ -1588,8 +1588,11 @@ def setup_command(python_path: Optional[str] = None):
                 pass
         
         # Step 4: Permissions
+        relogin_needed = False
         if setup_permissions_choice:
-            setup_permissions()
+            # A compositor binding needs no keyboard access, so no group.
+            relogin_needed = setup_permissions(
+                need_input_group=not ConfigManager().get_setting('external_bindings', False))
         else:
             log_info("Skipping permissions setup")
         
@@ -1616,8 +1619,8 @@ def setup_command(python_path: Optional[str] = None):
         log_success("Setup completed!")
         print("="*60)
         print("\nNext steps:")
-        if setup_permissions_choice:
-            print("  If initial install, log out and back in (for group permissions)")
+        if relogin_needed:
+            print("  Log out and back in (the shortcut needs your new group)")
         if setup_systemd_choice:
             print("  Press hotkey to start dictation!")
         else:
@@ -1638,6 +1641,12 @@ def setup_command(python_path: Optional[str] = None):
 # ==================== Permissions Setup ====================
 
 UINPUT_RULE_CONTENT = '# Allow members of the input group to access uinput device\nKERNEL=="uinput", GROUP="input", MODE="0660"\n'
+# uaccess grants the active session an ACL on the next device event, so typing
+# works with no group and no logout. systemd applies it in 73-seat-late.rules;
+# the file must sort before that. The group rule above stays as the fallback
+# for sessions logind does not consider active.
+UACCESS_RULE_PATH = Path('/etc/udev/rules.d/70-hyprwhspr-uinput.rules')
+UACCESS_RULE_CONTENT = '# Let the active session use uinput without a group\nKERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"\n'
 
 
 def _select_uinput_rule(rules_dir=Path('/etc/udev/rules.d')):
@@ -1666,8 +1675,56 @@ def _select_uinput_rule(rules_dir=Path('/etc/udev/rules.d')):
     return legacy
 
 
-def setup_permissions():
-    """Setup permissions (requires sudo)"""
+def _input_group_state(username):
+    """(member on record, active in this process); None where it cannot be told."""
+    import grp
+    import pwd
+    try:
+        gid = grp.getgrnam('input').gr_gid
+    except KeyError:
+        log_warning('Could not establish prior membership in input; preserving permission ownership uncertainty')
+        return None, None
+    active = gid in os.getgroups() or gid == os.getegid()
+    try:
+        primary_gid = pwd.getpwnam(username).pw_gid
+        return gid in set(os.getgrouplist(username, primary_gid)) | {primary_gid}, active
+    except (KeyError, OSError) as exc:
+        log_warning(f'Could not inspect prior groups for {username}: {exc}; continuing without claiming group ownership')
+        return None, active
+
+
+def _write_udev_rule(path, content) -> bool:
+    """Create a rule file and record that this install added it."""
+    result = run_sudo_command(['tee', str(path)], input_data=content.encode(), check=False)
+    if result.returncode != 0:
+        log_warning(f"Failed to create udev rule (exit code {result.returncode})")
+        log_info(f"You may need to run manually: sudo tee {path}")
+        return False
+    # The rule exists and works; failing to record ownership is not a failed
+    # rule. Unmanaged uninstall reads this receipt too, so record it regardless
+    # of whether a managed generation is active.
+    try:
+        try:
+            from ..managed_install import record_ownership, digest
+        except ImportError:
+            from managed_install import record_ownership, digest
+        if not record_ownership('permission', {'kind': 'rule', 'path': str(path),
+                                               'added': True, 'sha256': digest(path)}):
+            raise record_ownership.last_error
+    except (OSError, ValueError, TypeError, ImportError) as exc:
+        log_warning(f'Created the udev rule but could not record ownership: {exc}')
+    return True
+
+
+def setup_permissions(need_input_group: bool = True) -> bool:
+    """Set up device permissions (requires sudo).
+
+    need_input_group: the hotkey is read from the keyboard devices through
+    evdev, which only the input group can open. A compositor binding needs
+    neither that nor a logout.
+
+    Returns True when a new group membership still needs a fresh login.
+    """
     log_info("Setting up permissions...")
 
     # Safer way to get username
@@ -1677,48 +1734,41 @@ def setup_permissions():
         return False
 
     any_failures = False
+    relogin_needed = False
 
-    # Add user to required groups
-    try:
-        before_groups = None
-        # Establish prior membership for every install flavour, so uninstall can
-        # tell a membership we added from one the user already had.
-        import grp
-        import pwd
+    if not need_input_group:
+        log_info("Shortcut comes from your compositor; no group changes needed")
+    else:
         try:
-            primary_gid = pwd.getpwnam(username).pw_gid
-            gids = set(os.getgrouplist(username, primary_gid)) | {primary_gid}
-            before_groups = {}
-            for group in ('input', 'audio', 'tty'):
-                try:
-                    before_groups[group] = grp.getgrnam(group).gr_gid in gids
-                except KeyError:
-                    log_warning(f'Could not establish prior membership in {group}; preserving permission ownership uncertainty')
-        except (KeyError, OSError) as exc:
-            log_warning(f'Could not inspect prior groups for {username}: {exc}; continuing without claiming group ownership')
-        result = run_sudo_command(['usermod', '-a', '-G', 'input,audio,tty', username], check=False)
-        if result.returncode == 0:
-            if before_groups is not None:
-                # Recorded for every install flavour: both uninstallers drive
-                # group removal purely from this receipt.
-                try:
-                    try:
-                        from ..managed_install import record_ownership
-                    except ImportError:
-                        from managed_install import record_ownership
-                    for group, present in before_groups.items():
-                        record_ownership('permission', {'kind': 'group', 'user': username,
-                                                        'group': group, 'added': not present})
-                except ImportError as exc:
-                    log_warning(f'Groups added, but ownership could not be recorded: {exc}')
-            log_success("Added user to required groups")
-        else:
-            log_warning(f"Failed to add user to groups (exit code {result.returncode})")
-            log_info("You may need to run manually: sudo usermod -a -G input,audio,tty $USER")
+            # Establish prior membership for every install flavour, so uninstall
+            # can tell a membership we added from one the user already had.
+            member, active = _input_group_state(username)
+            if member:
+                log_info("Already in the input group")
+                relogin_needed = active is False
+            else:
+                result = run_sudo_command(['usermod', '-a', '-G', 'input', username], check=False)
+                if result.returncode == 0:
+                    if member is not None:
+                        # Both uninstallers drive group removal purely from this receipt.
+                        try:
+                            try:
+                                from ..managed_install import record_ownership
+                            except ImportError:
+                                from managed_install import record_ownership
+                            record_ownership('permission', {'kind': 'group', 'user': username,
+                                                            'group': 'input', 'added': True})
+                        except ImportError as exc:
+                            log_warning(f'Group added, but ownership could not be recorded: {exc}')
+                    log_success("Added user to the input group")
+                    relogin_needed = active is not True
+                else:
+                    log_warning(f"Failed to add user to the input group (exit code {result.returncode})")
+                    log_info("You may need to run manually: sudo usermod -a -G input $USER")
+                    any_failures = True
+        except Exception as e:
+            log_warning(f"Failed to add user to the input group: {e}")
             any_failures = True
-    except Exception as e:
-        log_warning(f"Failed to add user to groups: {e}")
-        any_failures = True
 
     # Load uinput module
     if not Path('/dev/uinput').exists():
@@ -1734,51 +1784,34 @@ def setup_permissions():
         import time
         time.sleep(2)
 
-    # Create udev rule.
-    # On modern systemd the active-session user already gets /dev/uinput via a
-    # `uaccess` ACL (so user-scope ydotoold runs rootless without this). This rule
-    # is a stable fallback: uaccess only covers the *active* session. The `input`
-    # group is needed mainly for the global hotkey, which reads /dev/input/event*
-    # via evdev (no uaccess ACL there) — not for the ydotool paste path.
-    udev_rule = _select_uinput_rule()
+    # Two rules. The uaccess rule gives the active session /dev/uinput at once,
+    # so the private ydotoold types with no group and no logout. The group rule
+    # is the fallback where logind does not see an active session. The input
+    # group itself is for the evdev hotkey, which reads /dev/input/event*.
     udev_rule_created = False
-    if not udev_rule.exists():
-        log_info("Creating udev rule...")
-        rule_content = UINPUT_RULE_CONTENT
+    for udev_rule, rule_content in ((UACCESS_RULE_PATH, UACCESS_RULE_CONTENT),
+                                    (_select_uinput_rule(), UINPUT_RULE_CONTENT)):
+        if udev_rule.exists():
+            continue
+        log_info(f"Creating udev rule {udev_rule.name}...")
         try:
-            result = run_sudo_command(['tee', str(udev_rule)], input_data=rule_content.encode(), check=False)
-            if result.returncode == 0:
-                # The rule exists and works; failing to record ownership is not a
-                # failed rule. Unmanaged uninstall reads this receipt too, so record
-                # it regardless of whether a managed generation is active.
-                try:
-                    try:
-                        from ..managed_install import record_ownership, digest
-                    except ImportError:
-                        from managed_install import record_ownership, digest
-                    if not record_ownership('permission', {'kind': 'rule', 'path': str(udev_rule),
-                                                           'added': True, 'sha256': digest(udev_rule)}):
-                        raise record_ownership.last_error
-                except (OSError, ValueError, TypeError, ImportError) as exc:
-                    log_warning(f'Created the udev rule but could not record ownership: {exc}')
+            if _write_udev_rule(udev_rule, rule_content):
                 log_success("udev rule created")
                 udev_rule_created = True
             else:
-                log_warning(f"Failed to create udev rule (exit code {result.returncode})")
-                log_info("You may need to run manually: sudo tee /etc/udev/rules.d/99-hyprwhspr-uinput.rules")
                 any_failures = True
         except Exception as e:
             log_warning(f"Failed to create udev rule: {e}")
             any_failures = True
-    else:
-        log_info("udev rule already exists")
+    if not udev_rule_created:
+        log_info("udev rules already exist")
 
     # Reload udev when this run changed the rules, or when /dev/uinput is still
-    # not writable. udev only applies GROUP=/MODE= on a device event, so a rule
-    # left by an earlier failed run — or written by hand, as the hint above asks
-    # — does nothing for the already-present node until it is re-triggered. This
-    # is the documented repair path ("re-run hyprwhspr setup"), so it must not be
-    # skipped just because the rule file happens to exist.
+    # not writable. udev only applies GROUP=/MODE=/uaccess on a device event, so
+    # a rule left by an earlier failed run — or written by hand, as the hint
+    # above asks — does nothing for the already-present node until it is
+    # re-triggered. This is the documented repair path ("re-run hyprwhspr
+    # setup"), so it must not be skipped just because the rule file exists.
     uinput_device = Path('/dev/uinput')
     if udev_rule_created or (uinput_device.exists() and not os.access(uinput_device, os.W_OK)):
         try:
@@ -1800,4 +1833,6 @@ def setup_permissions():
 
     if any_failures:
         log_warning("Some permission setup commands failed. You may need to run them manually as root.")
-    log_warning("You may need to log out/in for new group memberships to apply")
+    if relogin_needed:
+        log_warning("Log out and back in so the input group applies; the shortcut needs it")
+    return relogin_needed

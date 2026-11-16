@@ -337,6 +337,18 @@ def _verify_model_downloaded(model_name: str = 'base') -> bool:
     return model_file.exists() and model_file.is_file()
 
 
+def _shortcut_lacks_keyboard_access(config) -> bool:
+    """The evdev hotkey needs the input group active in this session."""
+    if config.get_setting('external_bindings', False):
+        return False
+    import grp
+    try:
+        gid = grp.getgrnam('input').gr_gid
+    except KeyError:
+        return False
+    return gid not in os.getgroups() and gid != os.getegid()
+
+
 def omarchy_command(args=None):
     """
     Automated setup
@@ -611,12 +623,14 @@ def omarchy_command(args=None):
     print("="*60)
     print("\nAutomated setup completed successfully!")
     print("\nNext steps:")
-    print("  1. Log out and back in (for group permissions)")
-    print("  2. Press Super+Alt+D to start dictating")
+    print("  1. Press Super+Alt+D to start dictating")
     if config.get_setting('recording_mode') == 'auto':
-        print("  3. Tap (<400ms) to toggle, hold (>=400ms) for push-to-talk")
+        print("  2. Tap (<400ms) to toggle, hold (>=400ms) for push-to-talk")
     else:
-        print(f"  3. Recording mode kept as '{config.get_setting('recording_mode')}'")
+        print(f"  2. Recording mode kept as '{config.get_setting('recording_mode')}'")
+    if _shortcut_lacks_keyboard_access(config):
+        print("\nThe shortcut cannot read your keyboard yet. Run: hyprwhspr setup")
+        print("Or bind 'hyprwhspr record toggle' in your compositor.")
     print("\nFor help: hyprwhspr --help")
 
     return True

@@ -131,7 +131,7 @@ We'd appreciate [issue reports and requests](https://github.com/goodroot/hyprwhs
 
 > Ensure your microphone of choice is available in audio settings!
 
-1. **Log out and back in** (for group permissions)
+1. **Log out and back in** if setup asked you to
 2. **Press `Super+Alt+D`** to start dictation - _beep!_
 3. **Speak naturally**
 4. **Press `Super+Alt+D`** again to stop dictation - _boop!_

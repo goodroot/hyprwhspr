@@ -699,9 +699,7 @@ main() {
     echo "     cd ~/hyprwhspr"
     echo "     ./bin/hyprwhspr setup"
     echo ""
-    echo "  3. Log out and back in (for group permissions)"
-    echo ""
-    echo "  4. Press Super+Alt+D to start dictating!"
+    echo "  3. Press Super+Alt+D to start dictating!"
     echo ""
 }
 

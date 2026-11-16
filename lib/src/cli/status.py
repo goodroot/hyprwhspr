@@ -139,6 +139,13 @@ def status_command():
     check_permissions()
 
 
+def _external_bindings_enabled() -> bool:
+    try:
+        return bool(ConfigManager().get_setting('external_bindings', False))
+    except Exception:
+        return False
+
+
 def check_permissions():
     """Check user permissions"""
     import grp
@@ -153,12 +160,13 @@ def check_permissions():
     user_groups = [g.gr_name for g in grp.getgrall() if username in g.gr_mem]
     user_groups.append(grp.getgrgid(os.getgid()).gr_name)
     
-    required_groups = ['input'] if is_nix_install() else ['input', 'audio', 'tty']
-    for group in required_groups:
-        if group in user_groups:
-            log_success(f"User in '{group}' group")
-        else:
-            log_warning(f"User NOT in '{group}' group")
+    # Only the evdev hotkey reads keyboard devices; a compositor binding needs no group.
+    if _external_bindings_enabled():
+        log_success("Shortcut comes from your compositor; no group needed")
+    elif 'input' in user_groups:
+        log_success("User in 'input' group")
+    else:
+        log_warning("User NOT in 'input' group; the shortcut cannot read the keyboard")
     
     # Check uinput
     uinput_path = Path('/dev/uinput')

@@ -113,7 +113,7 @@ def _validate_uinput_access(ydotool_available: bool) -> bool:
         print(f"  Add your user to the input group: {input_group_hint()}")
     else:
         print("  Run 'hyprwhspr setup' to configure uinput permissions.")
-    print("  If you were just added to the input group, log out and back in (or reboot) so membership becomes active.")
+    print("  Still blocked after setup? Log out and back in (or reboot).")
     return not required
 
 

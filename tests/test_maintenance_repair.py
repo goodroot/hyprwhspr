@@ -152,7 +152,7 @@ class MaintenanceUinputValidationTests(unittest.TestCase):
         ):
             self.assertFalse(maintenance._validate_uinput_access(True))
         self.assertIn("does not exist", error.call_args.args[0])
-        self.assertIn("log out and back in (or reboot)", output.getvalue())
+        self.assertIn("Log out and back in (or reboot)", output.getvalue())
 
     def test_inaccessible_uinput_warns_when_another_path_exists(self):
         with (

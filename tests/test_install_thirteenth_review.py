@@ -89,46 +89,92 @@ class ThirteenthReviewTests(fixtures.ManagedFixture):
             with self.assertRaisesRegex(RuntimeError, 'Conflicting command'):
                 self.install.check_integrations()
 
-    def permission_setup(self, missing_user=False, rule_exists=True, uinput_writable=True):
+    def permission_setup(self, missing_user=False, rule_exists=True, uinput_writable=True,
+                         member=False, active=False, need_input_group=True):
         import pwd
         import grp
         with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}', 'SUDO_USER': 'target'}), \
                 mock.patch.object(pwd, 'getpwnam', side_effect=KeyError('target') if missing_user else None,
                                   return_value=mock.Mock(pw_gid=777)), \
-                mock.patch.object(os, 'getgrouplist', return_value=[777, 888, 999]) as groups, \
-                mock.patch.object(grp, 'getgrnam', side_effect=lambda name: mock.Mock(gr_gid={'input': 777, 'audio': 888, 'tty': 444}[name])), \
+                mock.patch.object(os, 'getgrouplist', return_value=[777, 888] + ([555] if member else [])) as groups, \
+                mock.patch.object(os, 'getgroups', return_value=[555] if active else []), \
+                mock.patch.object(os, 'getegid', return_value=777), \
+                mock.patch.object(grp, 'getgrnam', side_effect=lambda name: mock.Mock(gr_gid={'input': 555}[name])), \
                 mock.patch.object(grp, 'getgrgid', side_effect=AssertionError('Do not resolve unrelated GIDs')), \
                 mock.patch.object(setup, 'run_sudo_command', return_value=mock.Mock(returncode=0)) as sudo, \
                 mock.patch.object(setup, '_select_uinput_rule', return_value=mock.Mock(exists=lambda: rule_exists)), \
+                mock.patch.object(setup, 'UACCESS_RULE_PATH', mock.Mock(exists=lambda: rule_exists)), \
+                mock.patch.object(setup, '_write_udev_rule', return_value=True) as write_rule, \
                 mock.patch.object(Path, 'exists', return_value=True), \
                 mock.patch.object(os, 'access', return_value=uinput_writable), \
                 mock.patch.object(managed, 'record_permission') as record:
-            setup.setup_permissions()
+            self.relogin = setup.setup_permissions(need_input_group=need_input_group)
+        self.write_rule = write_rule
         return groups, sudo, record
 
-    def test_permission_snapshot_uses_target_primary_gid_and_ignores_unknown_gids(self):
+    USERMOD = ['usermod', '-a', '-G', 'input', 'target']
+
+    def test_permission_snapshot_uses_target_primary_gid_and_adds_only_input(self):
         groups, sudo, record = self.permission_setup()
         groups.assert_called_once_with('target', 777)
-        self.assertIn(mock.call(['usermod', '-a', '-G', 'input,audio,tty', 'target'], check=False), sudo.call_args_list)
-        self.assertEqual({c.args[0]['group']: c.args[0]['added'] for c in record.call_args_list},
-                         {'input': False, 'audio': False, 'tty': True})
+        self.assertIn(mock.call(self.USERMOD, check=False), sudo.call_args_list)
+        self.assertEqual([c.args[0] for c in record.call_args_list],
+                         [{'kind': 'group', 'user': 'target', 'group': 'input', 'added': True}])
+        self.assertTrue(self.relogin)
 
     def test_unknown_user_snapshot_does_not_skip_usermod_or_claim_ownership(self):
         _, sudo, record = self.permission_setup(missing_user=True)
-        self.assertIn(mock.call(['usermod', '-a', '-G', 'input,audio,tty', 'target'], check=False), sudo.call_args_list)
+        self.assertIn(mock.call(self.USERMOD, check=False), sudo.call_args_list)
         record.assert_not_called()
+
+    def test_existing_member_is_not_re_added_and_needs_no_login(self):
+        _, sudo, record = self.permission_setup(member=True, active=True)
+        self.assertEqual(sudo.call_args_list, [])
+        record.assert_not_called()
+        self.assertFalse(self.relogin)
+
+    def test_member_added_by_an_earlier_run_still_needs_a_login(self):
+        _, sudo, _ = self.permission_setup(member=True, active=False)
+        self.assertEqual(sudo.call_args_list, [])
+        self.assertTrue(self.relogin)
+
+    def test_compositor_shortcut_changes_no_groups_and_needs_no_login(self):
+        groups, sudo, record = self.permission_setup(need_input_group=False)
+        groups.assert_not_called()
+        self.assertEqual(sudo.call_args_list, [])
+        record.assert_not_called()
+        self.assertFalse(self.relogin)
 
     UDEV_RELOAD = [['udevadm', 'control', '--reload-rules'], ['udevadm', 'trigger', '--name-match=uinput']]
 
     def test_existing_uinput_rule_with_usable_device_is_not_reloaded_or_retriggered(self):
         _, sudo, _ = self.permission_setup()
         commands = [call.args[0] for call in sudo.call_args_list]
-        self.assertEqual(commands, [['usermod', '-a', '-G', 'input,audio,tty', 'target']])
+        self.assertEqual(commands, [self.USERMOD])
+        self.write_rule.assert_not_called()
 
-    def test_new_uinput_rule_is_reloaded_and_retriggered(self):
+    def test_new_uinput_rules_are_written_reloaded_and_retriggered(self):
         _, sudo, _ = self.permission_setup(rule_exists=False)
         commands = [call.args[0] for call in sudo.call_args_list]
         self.assertEqual(commands[-2:], self.UDEV_RELOAD)
+        self.assertEqual([c.args[1] for c in self.write_rule.call_args_list],
+                         [setup.UACCESS_RULE_CONTENT, setup.UINPUT_RULE_CONTENT])
+
+    def test_uaccess_rule_sorts_before_the_seat_rules_that_apply_it(self):
+        # systemd runs the uaccess builtin from 73-seat-late.rules; a later file never gets the ACL.
+        self.assertLess(setup.UACCESS_RULE_PATH.name, '73-seat-late.rules')
+        self.assertIn('TAG+="uaccess"', setup.UACCESS_RULE_CONTENT)
+
+    def test_written_rule_is_recorded_as_added(self):
+        rule = self.root / '70-test.rules'
+        def tee(command, input_data=None, check=False):
+            rule.write_bytes(input_data)
+            return mock.Mock(returncode=0)
+        with mock.patch.object(setup, 'run_sudo_command', side_effect=tee), \
+                mock.patch.object(managed, 'record_permission') as record:
+            self.assertTrue(setup._write_udev_rule(rule, setup.UACCESS_RULE_CONTENT))
+        self.assertEqual(record.call_args.args[0],
+                         {'kind': 'rule', 'path': str(rule), 'added': True, 'sha256': managed.digest(rule)})
 
     def test_existing_rule_is_retriggered_when_device_is_still_unwritable(self):
         # The documented repair path: the rule was left by a failed run or written
