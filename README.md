@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-    instant performance | top local models and API connectors / REST API | stylish visuals
+    instant performance | Cohere / Parakeet / Whisper / Qwen3-ASR / ElevenLabs / REST API | stylish visuals
 </p>
 
  <p align="center">
