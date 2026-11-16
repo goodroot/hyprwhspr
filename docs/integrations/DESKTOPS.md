@@ -2,6 +2,8 @@
 
 Both need the AT-SPI accessibility bridge to see which window has focus. `hyprwhspr setup` offers to enable it.
 
+The shortcut works best as a desktop shortcut. Setup adds it on GNOME and prints the steps on KDE. See [Hotkeys](../usage/HOTKEYS.md#compositor-bindings).
+
 ## GNOME/Mutter
 
 GNOME/Mutter lacks layer-shell, so visual feedback uses notifications. Injection depends on the session:

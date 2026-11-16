@@ -94,7 +94,23 @@ Enable in config (`~/.config/hyprwhspr/config.json`):
 }
 ```
 
-Then bind your keys. The examples below use Hyprland's `~/.config/hypr/hyprland.conf`; elsewhere, bind the same commands.
+`hyprwhspr setup` does both steps on Hyprland, niri, Sway and GNOME. It checks the config before saving. No `input` group, no logout.
+
+To bind by hand:
+
+```kdl
+// niri: inside binds { } in ~/.config/niri/config.kdl
+Mod+Alt+D { spawn "hyprwhspr" "record" "toggle"; }
+```
+
+```bash
+# Sway: ~/.config/sway/config
+bindsym Mod4+Mod1+d exec hyprwhspr record toggle
+```
+
+GNOME and KDE: add a custom shortcut that runs `hyprwhspr record toggle`.
+
+The examples below use Hyprland's `~/.config/hypr/hyprland.conf`; elsewhere, bind the same commands.
 
 With `hyprland.lua`, Hyprland ignores `.conf` files. Setup prints the line; add it yourself:
 

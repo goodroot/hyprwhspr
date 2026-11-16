@@ -79,6 +79,7 @@ from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, USER_HOME,
                       _accessibility_bridge_enabled,
                       _is_gnome_or_mutter_session, _is_kde_plasma_session,
                       _is_x11_session)
+from .bindings import LABELS as COMPOSITOR_LABELS, detect_compositor, setup_compositor_binding
 from .config import setup_config
 from .install import _hypr_config_dir, _hyprland_uses_lua, _setup_hyprland_bindings
 from .keyboard import _run_keyboard_selection
@@ -1326,6 +1327,20 @@ def setup_command(python_path: Optional[str] = None):
         # Not a Hyprland system - skip this section entirely
         setup_hyprland_choice = False
 
+    # Step 3d-ii: the same offer for the other compositors setup can configure.
+    compositor = None if setup_hyprland_choice else detect_compositor()
+    setup_compositor_choice = False
+    if compositor:
+        label = COMPOSITOR_LABELS[compositor]
+        print("\n" + "="*60)
+        print(f"{label} Shortcut")
+        print("="*60)
+        print(f"\nLet {label} own Super+Alt+D instead of reading the keyboard directly.")
+        print("No input group, no logout.")
+        setup_compositor_choice = Confirm.ask(
+            f"Add the shortcut to {label}?",
+            default=_bool_default(existing_cfg, 'external_bindings', True))
+
     # Step 3e: Keyboard device allowlist (which keyboards the shortcut listens to).
     # Gate this so routine setup re-runs do not always show the device table.
     keyboard_cfg = existing_cfg
@@ -1420,6 +1435,8 @@ def setup_command(python_path: Optional[str] = None):
     else:
         print("Audio ducking: No")
     print(f"Hyprland compositor bindings: {'Yes' if setup_hyprland_choice else 'No'}")
+    if compositor:
+        print(f"{COMPOSITOR_LABELS[compositor]} shortcut: {'Yes' if setup_compositor_choice else 'No'}")
     if keyboard_allowlist_choice:
         print(f"Keyboard allowlist: {', '.join(keyboard_allowlist_choice)}")
     elif keyboard_allowlist_choice == []:
@@ -1547,8 +1564,17 @@ def setup_command(python_path: Optional[str] = None):
             else:
                 log_warning("Could not add Hyprland bindings automatically")
                 log_warning("See README for manual setup instructions")
+        elif setup_compositor_choice:
+            # Only a binding that is really in place may switch evdev off.
+            if setup_compositor_binding(compositor):
+                config = ConfigManager()
+                config.set_setting('external_bindings', True)
+                config.set_setting('grab_keys', False)
+                config.save_config()
+            else:
+                log_info("Keeping the keyboard shortcut until the binding is added")
         else:
-            log_info("Skipping Hyprland compositor bindings setup")
+            log_info("Skipping compositor bindings setup")
         
         # Step 3: Systemd
         if setup_systemd_choice:

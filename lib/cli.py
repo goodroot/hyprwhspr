@@ -86,7 +86,8 @@ def main():
     auto_parser.add_argument('--no-waybar', action='store_true', help='Skip bar integration (Waybar/Noctalia)')
     auto_parser.add_argument('--no-mic-osd', action='store_true', help='Disable mic-osd visualization (otherwise the current setting is kept)')
     auto_parser.add_argument('--no-systemd', action='store_true', help='Skip systemd service setup')
-    auto_parser.add_argument('--hypr-bindings', action='store_true', help='Enable Hyprland compositor bindings')
+    auto_parser.add_argument('--compositor-bindings', '--hypr-bindings', dest='hypr_bindings', action='store_true',
+                             help='Let the compositor own the shortcut (Hyprland, niri, Sway, GNOME)')
     auto_parser.add_argument('--python', dest='python_path', metavar='PATH',
                              help='Path to Python executable for venv (e.g., /usr/bin/python3.14)')
 

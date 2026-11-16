@@ -373,7 +373,7 @@ def omarchy_command(args=None):
             - no_waybar: Skip bar integration (Waybar/Noctalia)
             - no_mic_osd: Disable mic-osd visualization
             - no_systemd: Skip systemd service setup
-            - hypr_bindings: Enable Hyprland compositor bindings
+            - hypr_bindings: Enable compositor bindings (Hyprland, niri, Sway, GNOME)
             - python_path: Path to Python executable for venv creation
 
     Note: Hyprland compositor bindings are NOT configured by default.
@@ -516,11 +516,15 @@ def omarchy_command(args=None):
     if skip_mic_osd:
         config.set_setting('mic_osd_enabled', False)
 
-    # Configure Hyprland bindings if requested
+    # Configure compositor bindings if requested. Hyprland keeps its historical
+    # behaviour (the flag alone enables them); elsewhere the binding must land.
     if enable_hypr_bindings:
-        config.set_setting('external_bindings', True)
-        config.set_setting('grab_keys', False)
-        log_info("Hyprland compositor bindings enabled")
+        from .bindings import detect_compositor, setup_compositor_binding
+        compositor = None if os.environ.get('HYPRLAND_INSTANCE_SIGNATURE') else detect_compositor()
+        if compositor is None or setup_compositor_binding(compositor):
+            config.set_setting('external_bindings', True)
+            config.set_setting('grab_keys', False)
+            log_info("Compositor bindings enabled")
 
     if not config.save_config():
         log_error('Could not save configuration; retry setup. Downloaded files are retained.')
