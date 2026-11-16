@@ -37,6 +37,10 @@ Only 2 essential options:
 }
 ```
 
+## Feedback and notifications
+
+Use [notification levels](usage/FEEDBACK.md#notifications) to reduce alerts or turn them off. Recording status (`mic_osd_enabled`) and sounds (`audio_feedback`) have separate toggles. Defaults stay out of your config unless you override them.
+
 ## Environment variable substitution
 
 Both `config.json` and `credentials.json` support `${VAR}` tokens.
