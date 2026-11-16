@@ -89,7 +89,7 @@ hyprwhspr setup
 curl -fsSL https://hyprwhspr.com/install.sh | bash
 ```
 
-Installs dependencies, clones to `~/.local/share/hyprwhspr/src`, and walks you through setup.
+Installs dependencies and the latest release, then walks you through setup.
 
 <details>
 <summary>Manual install</summary>
@@ -147,10 +147,10 @@ Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues
 # Arch: update via your AUR helper
 yay -Syu hyprwhspr
 
-# Managed release installs
+# Installed with install.sh
 hyprwhspr update
 
-# Legacy bootstrap installs: re-run the installer
+# Old git-clone installs: re-run the installer once to move to releases
 curl -fsSL https://hyprwhspr.com/install.sh | bash
 
 # Either way, setup is idempotent if you need to re-run it

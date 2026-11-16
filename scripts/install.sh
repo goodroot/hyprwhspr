@@ -5,14 +5,14 @@
 # Usage:
 #   curl -fsSL https://hyprwhspr.com/install.sh | bash
 #
-# Clones (or updates) hyprwhspr to a managed location, installs distro
-# dependencies, then runs interactive setup. Re-running is the update path.
+# Installs the latest verified release, its distro dependencies, then runs
+# interactive setup. Updates afterwards: hyprwhspr update.
 
 set -euo pipefail
 
-# Rollout gate: enable the release default only after a compatible tag is published
-# and desktop VM acceptance passes. Explicit lifecycle flags and existing managed
-# installs already select the release path, without repeating onboarding.
+# The release path is the default. An old git-clone install that reruns this
+# script is migrated by it. HYPRWHSPR_LEGACY_BOOTSTRAP=1 keeps the clone path
+# for one more release, as a way out if a release install misbehaves.
 release_bootstrap() {
 # A fresh managed install still runs scripts/install-deps.sh, which prompts on
 # /dev/tty. Without this pre-flight the failure surfaces minutes later as an
@@ -34,7 +34,6 @@ if [[ -f /etc/os-release ]]; then
         *) echo "Unsupported bootstrap distro: ${ID:-unknown}" >&2; exit 1 ;;
     esac
 fi
-# Release bootstrap. Kept opt-in until the first compatible release is published.
 set -euo pipefail
 unset PYTHONHOME PYTHONPATH
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
@@ -110,9 +109,12 @@ with tempfile.TemporaryDirectory(prefix='hyprwhspr-bootstrap-') as temporary:
 PY
 
 }
-if [[ "${HYPRWHSPR_RELEASE_BOOTSTRAP:-0}" == 1 || $# -gt 0 || -f "${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/current.json" ]]; then
+# Lifecycle flags and an existing release install always take the release path.
+if [[ "${HYPRWHSPR_LEGACY_BOOTSTRAP:-0}" != 1 || $# -gt 0 || -f "${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/current.json" ]]; then
     release_bootstrap "$@"
 fi
+
+# Legacy git-clone install, reached only with HYPRWHSPR_LEGACY_BOOTSTRAP=1.
 
 REPO_URL="https://github.com/goodroot/hyprwhspr.git"
 CLONE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/src"
@@ -176,6 +178,6 @@ log "Starting interactive setup..."
 echo ""
 ok "Done!"
 echo "  Installed at:  $CLONE_DIR"
-echo "  Update:        re-run this installer"
+echo "  Update:        re-run this installer (moves you to release installs)"
 echo "  Uninstall:     hyprwhspr uninstall"
 echo ""

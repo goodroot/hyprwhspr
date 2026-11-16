@@ -92,14 +92,15 @@ udev rules are not treated as installation-owned.
 
 ## Release rollout
 
-Fresh website bootstraps still use the legacy installer. Explicit `--version`,
-`--python`, `--repair`, `HYPRWHSPR_RELEASE_BOOTSTRAP=1`, or an existing managed
-installation select the release path.
+The website installer installs the latest published release. An old git-clone
+install that reruns it is migrated.
 
-Before changing that default, publish the first compatible application release
-and test install, CPU/GPU selection, update, interrupted recovery, interpreter
-replacement, migration and uninstall in disposable distro desktop VMs. Container
-smoke tests and mocked tests do not validate live Wayland/X11 service behavior.
+`HYPRWHSPR_LEGACY_BOOTSTRAP=1` keeps the old clone install for one more release.
+`--version`, `--python`, `--repair` and existing release installs ignore it.
+
+Container smoke tests and mocked tests do not validate live Wayland/X11 service
+behavior. Before a release, test install, CPU/GPU selection, update, interrupted
+recovery, interpreter replacement, migration and uninstall in a desktop VM.
 
 Release archives and recovery helpers use HTTPS and SHA-256 checksums. Extraction
 rejects unsafe archives. Checksums verify publisher-asset consistency, not an
