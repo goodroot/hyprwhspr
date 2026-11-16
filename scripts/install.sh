@@ -168,7 +168,7 @@ fi
 ok "Source ready at $CLONE_DIR"
 
 log "Installing distro dependencies..."
-bash "$CLONE_DIR/scripts/install-deps.sh"
+HYPRWHSPR_BOOTSTRAP=1 bash "$CLONE_DIR/scripts/install-deps.sh"
 
 log "Starting interactive setup..."
 "$CLONE_DIR/bin/hyprwhspr" setup </dev/tty

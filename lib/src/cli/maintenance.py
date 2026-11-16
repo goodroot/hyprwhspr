@@ -853,7 +853,7 @@ def validate_command():
         log_error("  Paste injection will output garbage with this version.")
         log_error("  Ubuntu/Debian users: Run scripts/install-deps.sh to fix this,")
         log_error("  or manually install ydotool 1.0+ from Debian backports:")
-        log_error("  wget http://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb")
+        log_error("  wget https://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb")
         log_error("  sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb")
         all_ok = False
     else:

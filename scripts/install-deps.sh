@@ -27,6 +27,9 @@ NC='\033[0m' # No Color
 
 # Minimum required ydotool version
 MIN_YDOTOOL_VERSION="1.0.0"
+# Debian trixie-backports build; the checksum is the one in Debian's Packages index.
+YDOTOOL_DEB_URL="https://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb"
+YDOTOOL_DEB_SHA256="f79b830d4048f9a3ea7549e80a6801bb50576774e3eb3c101cfb2f10cfe258a2"
 
 # Detected distro info
 DISTRO=""
@@ -317,14 +320,27 @@ check_ydotool_version() {
 install_ydotool_backports() {
     log_info "Installing ydotool from Debian trixie-backports..."
 
+    # The backport is published for amd64 only.
+    local arch
+    arch=$(dpkg --print-architecture 2>/dev/null || echo unknown)
+    if [[ "$arch" != "amd64" ]]; then
+        log_warning "No ydotool 1.0 package for $arch. Build it from source: https://github.com/ReimuNotMoe/ydotool"
+        return 1
+    fi
+
     local tmp_dir
     tmp_dir=$(mktemp -d)
-    local deb_url="http://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb"
     local deb_file="$tmp_dir/ydotool.deb"
 
     log_info "Downloading ydotool 1.0.4..."
-    if ! wget -q --show-progress -O "$deb_file" "$deb_url"; then
+    if ! wget -q --show-progress -O "$deb_file" "$YDOTOOL_DEB_URL"; then
         log_error "Failed to download ydotool package"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    # dpkg -i runs the package's scripts as root, so check it first.
+    if ! echo "$YDOTOOL_DEB_SHA256  $deb_file" | sha256sum -c --status; then
+        log_error "ydotool package checksum mismatch; not installing it"
         rm -rf "$tmp_dir"
         return 1
     fi
@@ -392,6 +408,7 @@ install_deps_apt() {
         python3-sounddevice
         python3-pyperclip
         python3-websocket
+        wtype
     )
     local available_packages=()
     local pkg
@@ -451,6 +468,7 @@ install_deps_dnf() {
     local optional_packages=(
         python3-sounddevice
         python3-pyperclip
+        wtype
     )
     local available_packages=()
     local pkg
@@ -493,6 +511,13 @@ install_deps_zypper() {
         pipewire-pulseaudio \
         ydotool \
         wl-clipboard
+
+    # wtype is the primary Wayland typing path; ydotool covers it where unpublished.
+    if zypper info -t package wtype &> /dev/null; then
+        sudo zypper install -y wtype
+    else
+        log_warning "wtype is unavailable in enabled repositories; typing falls back to ydotool"
+    fi
 
     # X11/XWayland package availability varies between Leap and Tumbleweed. Install the
     # native equivalents when published, without adding unsupported repositories.
@@ -564,13 +589,13 @@ handle_ydotool_debian() {
         echo ""
 
         if [[ $REPLY == "1" ]]; then
-            install_ydotool_backports
+            install_ydotool_backports || log_warning "ydotool 1.0 was not installed; GNOME typing needs it. Other desktops use wtype."
         else
             log_warning "Skipping ydotool installation."
             log_warning "You must install ydotool 1.0+ manually before using hyprwhspr."
             echo ""
             echo "Manual installation options:"
-            echo "  - Debian backports: wget http://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb && sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb"
+            echo "  - Debian backports: wget $YDOTOOL_DEB_URL && sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb"
             echo "  - Build from source: https://github.com/ReimuNotMoe/ydotool"
         fi
     elif ! check_ydotool_version; then
@@ -589,7 +614,7 @@ handle_ydotool_debian() {
         echo ""
 
         if [[ $REPLY == "1" ]]; then
-            install_ydotool_backports
+            install_ydotool_backports || log_warning "ydotool 1.0 was not installed; GNOME typing needs it. Other desktops use wtype."
         else
             log_warning "Keeping old ydotool version."
             log_warning "hyprwhspr paste injection WILL NOT WORK until you upgrade to ydotool 1.0+"
@@ -604,8 +629,10 @@ handle_ydotool_other() {
     echo "------------------------------------------------------------"
 
     if ! command -v ydotool &> /dev/null; then
-        log_error "ydotool was not installed. Please install it manually."
-        return 1
+        # Not fatal: wtype types on most Wayland compositors without it.
+        log_warning "ydotool is not installed. GNOME needs it for typing."
+        log_info "Install it with: sudo $PKG_MANAGER install ydotool"
+        return 0
     fi
 
     check_ydotool_version || {
@@ -617,6 +644,11 @@ handle_ydotool_other() {
 
 # Main installation flow
 main() {
+    # set -e would otherwise end the script with no word on why. -E carries the
+    # trap into the functions below.
+    set -E
+    trap 'log_error "Dependency installation stopped (line $LINENO, exit $?). See the output above, fix it, then run this again."' ERR
+
     print_header
 
     # Detect distribution
@@ -643,6 +675,7 @@ main() {
     echo ""
     echo -e "${BLUE}Step 1: System Dependencies${NC}"
     echo "------------------------------------------------------------"
+    log_info "Installing packages with sudo; it may ask for your password. This takes a minute."
 
     case "$PKG_MANAGER" in
         apt)
@@ -690,16 +723,15 @@ main() {
         echo ""
         return 0
     fi
-    echo "Next steps:"
+    # The bootstrap installer runs setup itself right after this.
+    if [[ -n "${HYPRWHSPR_BOOTSTRAP:-}" ]]; then
+        return 0
+    fi
+    local root
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    echo "Next: run setup, then press Super+Alt+D to dictate."
     echo ""
-    echo "  1. Clone hyprwhspr (if you haven't already):"
-    echo "     git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr"
-    echo ""
-    echo "  2. Run the setup wizard:"
-    echo "     cd ~/hyprwhspr"
-    echo "     ./bin/hyprwhspr setup"
-    echo ""
-    echo "  3. Press Super+Alt+D to start dictating!"
+    echo "  $root/bin/hyprwhspr setup"
     echo ""
 }
 
