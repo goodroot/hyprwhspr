@@ -65,15 +65,15 @@ cd hyprwhspr
 
 </details>
 
-**Setup then walks you through:**
+**Setup is short:** pick a backend, accept recommended settings. It asks before touching your bar or compositor config. Then it downloads the model, starts the service and checks the install.
 
-1. ✅ Configure transcription backend (Cohere Transcribe, Parakeet TDT V3, Whisper, Qwen3-ASR, REST API, or Realtime WebSocket)
-2. ✅ Download models
-3. ✅ Configure themed visualizer for maximum coolness (optional)
-4. ✅ Configure bar integration for your shell -- Waybar or Noctalia (optional)
-5. ✅ Set up systemd user services 
-6. ✅ Set up permissions
-7. ✅ Validate installation
+Want to choose everything? Answer no to recommended settings.
+
+No questions at all:
+
+```bash
+hyprwhspr setup auto
+```
 
 ## First use
 

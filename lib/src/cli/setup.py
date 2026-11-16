@@ -115,10 +115,12 @@ def _bool_default(cfg: dict, key: str, fallback: bool) -> bool:
     return val if isinstance(val, bool) else fallback
 
 
-def _prompt_tray_icon(cfg: dict, bar_chosen: bool) -> Optional[bool]:
+def _prompt_tray_icon(cfg: dict, bar_chosen: bool, express: bool = False) -> Optional[bool]:
     """Offer the tray icon when no bar integration was chosen; None leaves it as is."""
     if bar_chosen:
         return None
+    if express:
+        return _bool_default(cfg, 'tray_icon_enabled', True)
     print("\nA tray icon shows state and a record/model menu in any system tray")
     print("(KDE, XFCE, Waybar's tray, GNOME with AppIndicator).")
     return Confirm.ask("Show a system tray icon?", default=_bool_default(cfg, 'tray_icon_enabled', True))
@@ -1158,6 +1160,26 @@ def setup_command(python_path: Optional[str] = None):
                 log_warning(f"Model download failed. You can download it later with:")
                 log_warning(f"  hyprwhspr model download {faster_whisper_model}")
     
+    # Recommended settings: every preference below takes the answer Enter would
+    # give. Steps that edit files outside hyprwhspr (bars, compositor shortcut,
+    # accessibility bridge) still ask.
+    print("\n" + "="*60)
+    print("Preferences")
+    print("="*60)
+    print("\nRecommended: recording indicator, audio ducking, background service, permissions.")
+    print("Existing settings are kept. Change any of it later with: hyprwhspr setup")
+    express = Confirm.ask("Use recommended settings?", default=True)
+
+    def say(*args, **kwargs):
+        if not express:
+            print(*args, **kwargs)
+
+    def confirm(question, default):
+        return default if express else Confirm.ask(question, default=default)
+
+    def choose(question, default, choices=None):
+        return default if express else Prompt.ask(question, choices=choices, default=default)
+
     # Step 3: Bar integration - offer whichever supported shells are detected
     print("\n" + "="*60)
     print("Bar Integration")
@@ -1180,12 +1202,12 @@ def setup_command(python_path: Optional[str] = None):
     if not waybar_installed and not noctalia_installed:
         print("\nNo supported bar detected (Waybar, Noctalia).")
         setup_waybar_choice = Confirm.ask("Set up Waybar integration anyway?", default=False)
-    setup_tray_choice = _prompt_tray_icon(existing_cfg, setup_waybar_choice or setup_noctalia_choice)
+    setup_tray_choice = _prompt_tray_icon(existing_cfg, setup_waybar_choice or setup_noctalia_choice, express)
     
     # Step 3b: Recording status indicator setup
-    print("\n" + "="*60)
-    print("Recording Status Indicator")
-    print("="*60)
+    say("\n" + "="*60)
+    say("Recording Status Indicator")
+    say("="*60)
 
     # GNOME/Mutter does not implement the layer-shell protocol the animated
     # overlay needs. There the overlay degrades to a focus-stealing toplevel
@@ -1194,12 +1216,12 @@ def setup_command(python_path: Optional[str] = None):
     is_mutter_session = _is_gnome_or_mutter_session()
 
     if is_mutter_session:
-        print("\nGNOME/Mutter detected. The animated overlay needs the layer-shell")
-        print("protocol, which Mutter does not support, so recording status is shown")
-        print("as desktop notifications instead (they never steal keyboard focus).")
-        print("This needs 'notify-send' (libnotify) — no GTK4/gtk4-layer-shell required.")
-        print("Note: ASCII text is typed directly on US layouts; set prefer_clipboard_paste: true")
-        print("to route dictation through clipboard managers such as Cliphist or CopyQ.")
+        say("\nGNOME/Mutter detected. The animated overlay needs the layer-shell")
+        say("protocol, which Mutter does not support, so recording status is shown")
+        say("as desktop notifications instead (they never steal keyboard focus).")
+        say("This needs 'notify-send' (libnotify) — no GTK4/gtk4-layer-shell required.")
+        say("Note: ASCII text is typed directly on US layouts; set prefer_clipboard_paste: true")
+        say("to route dictation through clipboard managers such as Cliphist or CopyQ.")
 
         if shutil.which('notify-send') is None:
             if Path('/etc/debian_version').exists():
@@ -1210,22 +1232,22 @@ def setup_command(python_path: Optional[str] = None):
                 notify_pkg = "libnotify-tools"
             else:
                 notify_pkg = "libnotify (Arch naming)"
-            print(f"\nNote: 'notify-send' not found. Install: {notify_pkg}")
+            say(f"\nNote: 'notify-send' not found. Install: {notify_pkg}")
 
-        setup_mic_osd_choice = Confirm.ask("Show recording status as desktop notifications?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
+        setup_mic_osd_choice = confirm("Show recording status as desktop notifications?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
     else:
-        print("\nShows a visual overlay during recording with animated bars")
-        print("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
-        print("(On compositors without layer-shell support — e.g. GNOME/Mutter — the")
-        print("status automatically falls back to desktop notifications instead.)")
+        say("\nShows a visual overlay during recording with animated bars")
+        say("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
+        say("(On compositors without layer-shell support — e.g. GNOME/Mutter — the")
+        say("status automatically falls back to desktop notifications instead.)")
 
         # Check if dependencies are available using service's Python
         mic_osd_available, mic_osd_reason = _check_mic_osd_availability()
         if not mic_osd_available:
-            print(f"\nNote: {mic_osd_reason}")
+            say(f"\nNote: {mic_osd_reason}")
 
         if mic_osd_available:
-            setup_mic_osd_choice = Confirm.ask("Enable mic-osd visualization?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
+            setup_mic_osd_choice = confirm("Enable mic-osd visualization?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
         else:
             # Provide distro-appropriate package names
             if Path('/etc/debian_version').exists():
@@ -1236,8 +1258,8 @@ def setup_command(python_path: Optional[str] = None):
                 pkg_hint = "python3-gobject python3-pycairo typelib-1_0-Gtk-4_0 (gtk4-layer-shell from community repo)"
             else:
                 pkg_hint = "python-gobject python-cairo gtk4 gtk4-layer-shell (Arch naming)"
-            print(f"\nDependencies not found. Install: {pkg_hint}")
-            setup_mic_osd_choice = Confirm.ask("Enable mic-osd anyway (will work after installing deps)?", default=_bool_default(existing_cfg, 'mic_osd_enabled', False))
+            say(f"\nDependencies not found. Install: {pkg_hint}")
+            setup_mic_osd_choice = confirm("Enable mic-osd anyway (will work after installing deps)?", default=_bool_default(existing_cfg, 'mic_osd_enabled', False))
 
     # Step 3b-ii: Focused-window detection for paste-shortcut auto-selection.
     # Compositors we can query directly (Hyprland, niri) and XWayland windows need
@@ -1264,34 +1286,34 @@ def setup_command(python_path: Optional[str] = None):
         a11y_bridge_enabled = _offer_accessibility_bridge("KDE Plasma", desktop_is_gnome=False)
 
     # Step 3c: Audio ducking setup
-    print("\n" + "="*60)
-    print("Audio Ducking")
-    print("="*60)
-    print("\nAutomatically reduces system volume while recording to prevent")
-    print("audio interference with your microphone.")
+    say("\n" + "="*60)
+    say("Audio Ducking")
+    say("="*60)
+    say("\nAutomatically reduces system volume while recording to prevent")
+    say("audio interference with your microphone.")
 
-    setup_audio_ducking_choice = Confirm.ask("Enable audio ducking?", default=_bool_default(existing_cfg, 'audio_ducking', True))
+    setup_audio_ducking_choice = confirm("Enable audio ducking?", default=_bool_default(existing_cfg, 'audio_ducking', True))
     audio_ducking_percent = 50  # Default
     audio_ducking_mode = 'duck'
     if setup_audio_ducking_choice:
-        print("\nHow should other audio be quieted?")
-        print("  duck  = lower the volume of every app (recommended)")
-        print("  pause = pause media players (browser, Spotify, mpv) and resume after,")
-        print("          then duck whatever has no player controls")
+        say("\nHow should other audio be quieted?")
+        say("  duck  = lower the volume of every app (recommended)")
+        say("  pause = pause media players (browser, Spotify, mpv) and resume after,")
+        say("          then duck whatever has no player controls")
         existing_mode = str(existing_cfg.get('audio_ducking_mode', 'duck')).lower()
         if existing_mode not in ('duck', 'pause'):
             existing_mode = 'duck'
-        audio_ducking_mode = Prompt.ask("Mode", choices=['duck', 'pause'], default=existing_mode)
+        audio_ducking_mode = choose("Mode", choices=['duck', 'pause'], default=existing_mode)
 
         if audio_ducking_mode == 'pause':
             # Pause mode still ducks apps without MPRIS controls (PlaybackSuppressor)
-            print("\nApps without player controls are lowered instead. By how much?")
+            say("\nApps without player controls are lowered instead. By how much?")
         else:
-            print("\nHow much to reduce volume BY during recording?")
-        print("  50 = reduce to 50% of original (recommended)")
-        print("  70 = reduce to 30% of original (aggressive)")
-        print("  30 = reduce to 70% of original (subtle)")
-        ducking_input = Prompt.ask("Reduction percentage", default=str(existing_cfg.get('audio_ducking_percent', 50)))
+            say("\nHow much to reduce volume BY during recording?")
+        say("  50 = reduce to 50% of original (recommended)")
+        say("  70 = reduce to 30% of original (aggressive)")
+        say("  30 = reduce to 70% of original (subtle)")
+        ducking_input = choose("Reduction percentage", default=str(existing_cfg.get('audio_ducking_percent', 50)))
         try:
             audio_ducking_percent = max(0, min(100, int(ducking_input)))
         except ValueError:
@@ -1346,28 +1368,28 @@ def setup_command(python_path: Optional[str] = None):
     keyboard_cfg = existing_cfg
     current_allowlist = keyboard_cfg.get('keyboard_device_names') or []
     keyboard_allowlist_choice = None
-    if Confirm.ask("Configure keyboard allowlist?",
-                   default=not bool(current_allowlist)):
+    if not express and Confirm.ask("Configure keyboard allowlist?",
+                                   default=not bool(current_allowlist)):
         # Returns names / [] (auto-detect) / None (unchanged). Prints its own header.
         keyboard_allowlist_choice = _run_keyboard_selection(keyboard_cfg)
 
     # Step 4: Systemd setup
-    print("\n" + "="*60)
-    print("Systemd Service")
-    print("="*60)
-    print("\nSystemd user service will run hyprwhspr in the background.")
-    print("This will enable/configure:")
-    print("  • hyprwhspr.service (main application)")
-    setup_systemd_choice = Confirm.ask("Set up systemd user service?", default=True)
+    say("\n" + "="*60)
+    say("Systemd Service")
+    say("="*60)
+    say("\nSystemd user service will run hyprwhspr in the background.")
+    say("This will enable/configure:")
+    say("  • hyprwhspr.service (main application)")
+    setup_systemd_choice = confirm("Set up systemd user service?", default=True)
     
     # Step 5: Permissions setup
-    print("\n" + "="*60)
-    print("Permissions Setup")
-    print("="*60)
-    print("\nLets hyprwhspr type for you. Adds you to the input group")
-    print("only when the shortcut is read straight from the keyboard.")
-    print("Note: Requires sudo access.")
-    setup_permissions_choice = Confirm.ask("Set up permissions?", default=True)
+    say("\n" + "="*60)
+    say("Permissions Setup")
+    say("="*60)
+    say("\nLets hyprwhspr type for you. Adds you to the input group")
+    say("only when the shortcut is read straight from the keyboard.")
+    say("Note: Requires sudo access.")
+    setup_permissions_choice = confirm("Set up permissions?", default=True)
     
     # Summary
     print("\n" + "="*60)
