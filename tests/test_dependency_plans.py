@@ -361,7 +361,7 @@ class DependencyPlanTests(unittest.TestCase):
         self.assertEqual(
             backend_installer._repair_requirement_specs(
                 plan, ['numpy', 'sounddevice', 'soxr']),
-            ['numpy>=1.26.0', 'sounddevice>=0.5.0', 'soxr>=0.5.0'],
+            ['numpy>=1.26.0', 'sounddevice>=0.5.6', 'soxr>=0.5.0'],
         )
 
     def test_combined_timeout_retries_and_accepts_isolated_success(self):
@@ -444,7 +444,7 @@ class DependencyPlanTests(unittest.TestCase):
         self.assertEqual(len(repair_calls), 1)
         self.assertEqual(
             repair_calls[0].args[0][-2:],
-            ['sounddevice>=0.5.0', 'soxr>=0.5.0'],
+            ['sounddevice>=0.5.6', 'soxr>=0.5.0'],
         )
         self.assertEqual(verify.call_count, 2)
         commit.assert_called_once_with(plan)

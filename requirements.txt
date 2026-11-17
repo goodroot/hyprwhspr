@@ -1,5 +1,5 @@
 # Audio processing
-sounddevice>=0.5.0
+sounddevice>=0.5.6
 numpy>=1.26.0
 soxr>=0.5.0
 soundfile>=0.12.1
@@ -9,7 +9,7 @@ evdev>=1.9.0
 pyperclip>=1.11.0
 
 # System integration
-pyudev>=0.24.4
+pyudev>=0.24.5
 pulsectl>=24.12.0
 
 # CLI formatting and logging
@@ -21,4 +21,4 @@ rich>=14.0.0
 # install of the core runtime deps above.
 
 # Read-only configuration validation
-jsonschema>=4.18.0
+jsonschema>=4.26.0

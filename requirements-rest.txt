@@ -1,2 +1,2 @@
 -r requirements.txt
-requests>=2.32.0
+requests>=2.34.2
