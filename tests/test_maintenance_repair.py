@@ -30,13 +30,13 @@ class MaintenanceDependencyRepairTests(unittest.TestCase):
 
     def test_default_pywhispercpp_repair_uses_recorded_local_variant(self):
         config = mock.Mock()
-        with (
-            mock.patch.object(maintenance, 'get_state', return_value='nvidia'),
-            mock.patch.object(maintenance, 'install_backend', return_value=True) as install,
-        ):
-            self.assertTrue(maintenance._reinstall_configured_dependencies(
-                config, 'pywhispercpp'))
-        install.assert_called_once_with('nvidia', force_rebuild=True)
+        for recorded, selected in (('nvidia', 'nvidia'), ('rocm', 'amd'), ('cpu', 'cpu')):
+            with self.subTest(recorded=recorded), \
+                    mock.patch.object(maintenance, 'get_state', return_value=recorded), \
+                    mock.patch.object(maintenance, 'install_backend', return_value=True) as install:
+                self.assertTrue(maintenance._reinstall_configured_dependencies(
+                    config, 'pywhispercpp'))
+            install.assert_called_once_with(selected, force_rebuild=True)
 
     def test_corrupt_venv_repair_does_not_delete_before_transaction(self):
         config = mock.Mock()

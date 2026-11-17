@@ -476,6 +476,8 @@ def _reinstall_configured_dependencies(config_manager, configured_backend: str) 
     """Repair the configured dependency family through its normal transaction."""
     if configured_backend == 'pywhispercpp':
         installed = get_state('installed_backend')
+        if installed == 'rocm':
+            installed = 'amd'
         configured_backend = installed if installed in LOCAL_INSTALL_BACKENDS else 'cpu'
 
     if configured_backend in LOCAL_INSTALL_BACKENDS:
