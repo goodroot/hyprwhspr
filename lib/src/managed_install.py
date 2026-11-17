@@ -925,7 +925,7 @@ class Installation:
                     if read_json(root / 'release.json')['version'] != metadata['version']:
                         raise ValueError('Archive version does not match release metadata')
                 if selection is None:
-                    selection = (old or {}).get('selection') or self.legacy_selection()
+                    selection = (old or {}).get('selection') or self.legacy_selection(root)
                 available = shutil.disk_usage(self.data).free
                 print(f'Staging space available: {available // 1048576} MiB. '
                       'Replacements temporarily coexist with active environments; '
@@ -1041,7 +1041,7 @@ class Installation:
                         original.add_note(f'Recovery also incomplete: {recovery_error}')
                 raise
 
-    def legacy_selection(self):
+    def legacy_selection(self, root=None):
         if not (self.data / 'src/.git').exists():
             return None
         try:
@@ -1052,11 +1052,74 @@ class Installation:
         if upstream not in (f'https://github.com/{REPOSITORY}.git', f'https://github.com/{REPOSITORY}'):
             raise RuntimeError('Legacy location is an unrelated checkout; refusing to adopt it')
         state = read_json(self.state / 'install-state.json', {})
-        backend = state.get('installed_backend') or state.get('backend_type') or state.get('backend')
+        config = read_json(self.config_home() / 'hyprwhspr/config.json', {})
+        # The config identifies the active family; installed_backend historically
+        # described only whisper.cpp and could survive a switch to another family.
+        backend = (config.get('transcription_backend') or state.get('installed_backend')
+                   or state.get('backend_type') or state.get('backend'))
         if not backend:
-            config = self.config_home() / 'hyprwhspr/config.json'
-            backend = read_json(config, {}).get('transcription_backend')
-        return {'backend': backend, 'variant': state.get('accelerated_variant') or (backend if backend in ('cpu', 'nvidia', 'amd', 'vulkan') else None)} if backend else None
+            return None
+        if backend in ('pywhispercpp', 'cpu', 'nvidia', 'amd', 'vulkan'):
+            backend = state.get('installed_backend') or backend
+        if backend == 'rocm':
+            backend = 'amd'
+        variant = state.get('accelerated_variant')
+        if variant == 'rocm':
+            variant = 'amd'
+        allowed = {'onnx-asr': ('gpu', 'cuda'), 'faster-whisper': ('gpu', 'cuda')}
+        if backend in ('cpu', 'nvidia', 'amd', 'vulkan', 'pywhispercpp'):
+            allowed[backend] = ('cpu', 'nvidia', 'amd', 'vulkan')
+        if variant not in allowed.get(backend, ()):
+            variant = None
+        variant = (variant
+                   or (backend if backend in ('cpu', 'nvidia', 'amd', 'vulkan') else None)
+                   or self.legacy_gpu_variant(backend, state, root))
+        selection = {'backend': backend, 'variant': variant}
+        if backend in ('realtime-ws', 'rest-api', 'remote'):
+            key = 'websocket_provider' if backend == 'realtime-ws' else 'rest_api_provider'
+            selection['provider'] = config.get(key)
+        return selection
+
+    # Legacy installs recorded a variant for whisper.cpp only (#303). Without one,
+    # onnx-asr and faster-whisper migrate to their CPU plan and nothing fails.
+    LEGACY_GPU = {'onnx-asr': ('gpu', 'onnxruntime_gpu-*.dist-info'),
+                  'faster-whisper': ('cuda', 'nvidia_cudnn_cu12-*.dist-info')}
+
+    def legacy_gpu_variant(self, backend, state, root=None):
+        """The GPU variant a legacy install was built with, or None for CPU.
+
+        Two independent witnesses: the recorded plan fingerprint, checked against
+        the GPU manifest of the old checkout and of the release being installed,
+        and the GPU-only distribution in the old environment.
+        """
+        if backend not in self.LEGACY_GPU:
+            return None
+        variant, distribution = self.LEGACY_GPU[backend]
+        recorded = state.get('dependency_plan_fingerprint') or state.get('dependency_manifest_hash')
+        if recorded:
+            root = Path(root) if root is not None else Path(__file__).resolve().parents[2]
+            original_path = sys.path[:]
+            try:
+                sys.path.insert(0, str(root / 'lib/src'))
+                from dependency_plan import resolve
+                for manifests in (self.data / 'src', Path(root)):
+                    for candidate in (variant, None):
+                        try:
+                            if resolve(manifests, backend, None, candidate, ValueError).fingerprint == recorded:
+                                # A recorded CPU plan outranks a GPU package left behind.
+                                return candidate
+                        except (OSError, ValueError):
+                            continue
+            except ImportError:
+                pass
+            finally:
+                sys.path[:] = original_path
+        try:
+            if any((self.data / 'venv').glob(f'lib/python*/site-packages/{distribution}')):
+                return variant
+        except OSError:
+            pass
+        return None
 
     def legacy_bar_paths(self):
         config = self.config_home()

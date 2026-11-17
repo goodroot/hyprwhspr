@@ -682,6 +682,13 @@ def commit_dependency_state(plan: DependencyPlan):
     })
     if plan.family == 'pywhispercpp' and plan.accelerated_variant:
         data['installed_backend'] = plan.accelerated_variant
+    elif plan.family != 'pywhispercpp':
+        data.pop('installed_backend', None)
+    # Migration to a release install reads this to keep a GPU build a GPU build (#303).
+    if plan.accelerated_variant:
+        data['accelerated_variant'] = plan.accelerated_variant
+    else:
+        data.pop('accelerated_variant', None)
     temp_path = STATE_DIR / f'.{STATE_FILE.name}.{uuid.uuid4().hex}.tmp'
     try:
         temp_path.write_text(json.dumps(data, indent=2), encoding='utf-8')
