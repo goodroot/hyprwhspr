@@ -117,15 +117,17 @@ We'd appreciate [issue reports and requests](https://github.com/goodroot/hyprwhs
 
 ---
 
-**Setup is short:** pick a backend, accept recommended settings. It asks before touching your bar or compositor config. Then it downloads the model, starts the service and checks the install.
+**Setup:** pick a backend, review your preferences and choose desktop integrations. Setup asks before changing your bar or desktop shortcuts. Backend and model downloads can take several minutes. Follow the final checks and any remaining steps before trying dictation.
 
 Want to choose everything? Answer no to recommended settings.
 
-No questions at all:
+For automatic backend selection and default settings:
 
 ```bash
 hyprwhspr setup auto
 ```
+
+Authentication may still ask for your password.
 
 ### First use
 
@@ -137,7 +139,7 @@ hyprwhspr setup auto
 4. **Press `Super+Alt+D`** again to stop dictation - _boop!_
 5. **Bam!** Text appears in active buffer!
 
-> **What you'll see while recording:** on layer-shell compositors (Hyprland, Sway, niri, KDE) the animated mic OSD overlay -- on Noctalia / Omarchy it auto-matches your live shell theme; GNOME/Mutter and X11 use a recording-status notification. See [Themed visualizer](docs/usage/FEEDBACK.md#themed-visualizer) for details.
+> **Recording indicator:** when enabled and its dependencies are available, supported desktops show an overlay or a status notification. Noctalia / Omarchy can match the overlay to your shell theme. See [Themed visualizer](docs/usage/FEEDBACK.md#themed-visualizer) for details.
 
 Any snags, please [create an issue](https://github.com/goodroot/hyprwhspr/issues/new/choose).
 

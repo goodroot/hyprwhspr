@@ -82,6 +82,10 @@ configuration, reconcile reported references, then retry cleanup.
 recorded personal files; `--keep-models` overrides model removal. Shared model
 directories and unrecorded or external models remain.
 
+GNOME custom shortcuts require manual removal in Keyboard Settings. On unmanaged
+installs, niri and Sway shortcuts also require manual removal from your compositor
+config. Managed installs record those edits for removal.
+
 Modified integrations and customized services are preserved. Remove reported bar
 references before retrying integration removal. Customized services retain their
 runtime and launcher until reconciled. Receipts remain for cleanup retries.

@@ -94,7 +94,7 @@ Enable in config (`~/.config/hyprwhspr/config.json`):
 }
 ```
 
-`hyprwhspr setup` does both steps on Hyprland, niri, Sway and GNOME. It checks the config before saving. No `input` group, no logout.
+`hyprwhspr setup` offers automatic shortcuts on Hyprland, niri, Sway and GNOME. When it cannot safely add one, it prints manual instructions. Desktop shortcuts do not need the `input` group; typing permissions are checked separately.
 
 To bind by hand:
 
