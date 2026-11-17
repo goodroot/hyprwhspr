@@ -15,7 +15,7 @@ concurrency:
 
 env:
   COMMENT_MARKER: "<!-- continue-pr-review -->"
-  CONTINUE_CLI_VERSION: ${{ vars.CONTINUE_CLI_VERSION || '1.5.45' }}
+  CONTINUE_CLI_VERSION: ${{ vars.CONTINUE_CLI_VERSION || '1.5.47' }}
   OPUB_PROJECT: ${{ vars.OPUB_PROJECT || 'goodroot/hyprwhspr' }}
   OPUB_PROJECT_ID: ${{ vars.OPUB_PROJECT_ID || '5' }}
   OPUB_COMPUTE_KEY_ID: ${{ vars.OPUB_COMPUTE_KEY_ID || '5' }}
