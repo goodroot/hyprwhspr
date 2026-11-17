@@ -287,7 +287,12 @@ def systemd_restart():
     """Restart systemd service"""
     log_info("Restarting service...")
     try:
-        run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
+        result = run_command(['systemctl', '--user', 'restart', SERVICE_NAME], check=False)
+        if result.returncode != 0:
+            log_error(f"Failed to restart service (exit {result.returncode})")
+            return False
         log_success("Service restarted")
+        return True
     except subprocess.CalledProcessError as e:
         log_error(f"Failed to restart service: {e}")
+        return False

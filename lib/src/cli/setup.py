@@ -971,6 +971,7 @@ def setup_command(python_path: Optional[str] = None):
     # Load the existing config (if any) so each prompt below can default to the
     # current value — re-running setup then keeps settings on Enter.
     existing_cfg = _load_existing_setup_config()
+    remaining_steps = []
 
     # Step 1: Backend selection (now returns tuple: (backend, cleanup_venv))
     backend_result = _prompt_backend_selection(existing_cfg)
@@ -1043,6 +1044,7 @@ def setup_command(python_path: Optional[str] = None):
                 log_warning("Skipping backend installation. You can install it later.")
                 log_warning("Backend installation is required for local transcription to work.")
                 backend_install_skipped = True
+                remaining_steps.append('Install the selected backend with: hyprwhspr setup')
             else:
                 backend_install_skipped = False
 
@@ -1159,6 +1161,7 @@ def setup_command(python_path: Optional[str] = None):
             else:
                 log_warning(f"Model download failed. You can download it later with:")
                 log_warning(f"  hyprwhspr model download {faster_whisper_model}")
+                remaining_steps.append(f'Download the model: hyprwhspr model download {faster_whisper_model}')
     
     # Recommended settings: every preference below takes the answer Enter would
     # give. Steps that edit files outside hyprwhspr (bars, compositor shortcut,
@@ -1166,8 +1169,10 @@ def setup_command(python_path: Optional[str] = None):
     print("\n" + "="*60)
     print("Preferences")
     print("="*60)
-    print("\nRecommended: recording indicator, audio ducking, background service, permissions.")
-    print("Existing settings are kept. Change any of it later with: hyprwhspr setup")
+    print("\nUse your current preferences where available, with defaults for anything new.")
+    print("Set up the background service and typing permissions; permissions may ask for your password.")
+    print("Bar and desktop shortcut changes are confirmed separately.")
+    print("Choose no to review each preference. Change them later with: hyprwhspr setup")
     express = Confirm.ask("Use recommended settings?", default=True)
 
     def say(*args, **kwargs):
@@ -1232,9 +1237,11 @@ def setup_command(python_path: Optional[str] = None):
                 notify_pkg = "libnotify-tools"
             else:
                 notify_pkg = "libnotify (Arch naming)"
-            say(f"\nNote: 'notify-send' not found. Install: {notify_pkg}")
+            print(f"\nRecording notifications need 'notify-send'. Install: {notify_pkg}")
 
         setup_mic_osd_choice = confirm("Show recording status as desktop notifications?", default=_bool_default(existing_cfg, 'mic_osd_enabled', True))
+        if setup_mic_osd_choice and shutil.which('notify-send') is None:
+            remaining_steps.append(f'Install {notify_pkg} for recording notifications.')
     else:
         say("\nShows a visual overlay during recording with animated bars")
         say("and a pulsing indicator. Requires GTK4, PyCairo, and gtk4-layer-shell.")
@@ -1258,8 +1265,10 @@ def setup_command(python_path: Optional[str] = None):
                 pkg_hint = "python3-gobject python3-pycairo typelib-1_0-Gtk-4_0 (gtk4-layer-shell from community repo)"
             else:
                 pkg_hint = "python-gobject python-cairo gtk4 gtk4-layer-shell (Arch naming)"
-            say(f"\nDependencies not found. Install: {pkg_hint}")
+            print(f"\nRecording overlay dependencies not found. Install: {pkg_hint}")
             setup_mic_osd_choice = confirm("Enable mic-osd anyway (will work after installing deps)?", default=_bool_default(existing_cfg, 'mic_osd_enabled', False))
+            if setup_mic_osd_choice:
+                remaining_steps.append(f'Install recording overlay dependencies: {pkg_hint}')
 
     # Step 3b-ii: Focused-window detection for paste-shortcut auto-selection.
     # Compositors we can query directly (Hyprland, niri) and XWayland windows need
@@ -1447,7 +1456,7 @@ def setup_command(python_path: Optional[str] = None):
         print(f"Noctalia integration: {'Yes' if setup_noctalia_choice else 'No'}")
     if setup_tray_choice is not None:
         print(f"Tray icon: {'Yes' if setup_tray_choice else 'No'}")
-    _status_label = "Recording status (notifications)" if is_mutter_session else "Mic-OSD visualization"
+    _status_label = "Recording indicator (notifications)" if is_mutter_session else "Recording indicator"
     if setup_mic_osd_choice and not is_mutter_session and not mic_osd_available:
         print(f"{_status_label}: Yes (enabled, but dependencies missing: {mic_osd_reason})")
     else:
@@ -1456,7 +1465,8 @@ def setup_command(python_path: Optional[str] = None):
         print(f"Audio ducking: Yes ({audio_ducking_mode} mode, {audio_ducking_percent}% reduction)")
     else:
         print("Audio ducking: No")
-    print(f"Hyprland compositor bindings: {'Yes' if setup_hyprland_choice else 'No'}")
+    if is_hyprland_session or hypr_config_exists or 'hyprland' in current_desktop:
+        print(f"Hyprland shortcut: {'Yes' if setup_hyprland_choice else 'No'}")
     if compositor:
         print(f"{COMPOSITOR_LABELS[compositor]} shortcut: {'Yes' if setup_compositor_choice else 'No'}")
     if keyboard_allowlist_choice:
@@ -1464,10 +1474,10 @@ def setup_command(python_path: Optional[str] = None):
     elif keyboard_allowlist_choice == []:
         print("Keyboard allowlist: cleared (auto-detect)")
     if setup_systemd_choice:
-        print("Systemd service: Yes (hyprwhspr)")
+        print("Background service: Yes")
     else:
-        print("Systemd service: No")
-    print(f"Permissions: {'Yes' if setup_permissions_choice else 'No'}")
+        print("Background service: No")
+    print(f"Typing permissions (requires sudo): {'Yes' if setup_permissions_choice else 'No'}")
 
     # Paste mode detection notice — only shown when auto-detection won't work at runtime.
     # Per-app paste detection: Hyprland uses hyprctl, Niri uses niri msg
@@ -1521,11 +1531,13 @@ def setup_command(python_path: Optional[str] = None):
         
         # Step 2: Bar integration
         if setup_waybar_choice:
-            setup_waybar('install')
+            if setup_waybar('install') is False:
+                remaining_steps.append('Finish Waybar integration using the instructions above.')
         else:
             log_info("Skipping Waybar integration")
         if setup_noctalia_choice:
-            setup_noctalia('install')
+            if setup_noctalia('install') is False:
+                remaining_steps.append('Finish Noctalia integration using the instructions above.')
         elif noctalia_installed:
             log_info("Skipping Noctalia integration")
         if setup_tray_choice is not None:
@@ -1582,10 +1594,11 @@ def setup_command(python_path: Optional[str] = None):
             if _setup_hyprland_bindings():
                 log_success("Hyprland bindings added to config file")
             elif _hyprland_uses_lua():
-                pass  # Manual Lua step already printed
+                remaining_steps.append('Add the Hyprland shortcut shown above to your Lua config.')
             else:
                 log_warning("Could not add Hyprland bindings automatically")
                 log_warning("See README for manual setup instructions")
+                remaining_steps.append('Add your Hyprland shortcut; see the Hotkeys guide.')
         elif setup_compositor_choice:
             # Only a binding that is really in place may switch evdev off.
             if setup_compositor_binding(compositor):
@@ -1595,12 +1608,14 @@ def setup_command(python_path: Optional[str] = None):
                 config.save_config()
             else:
                 log_info("Keeping the keyboard shortcut until the binding is added")
+                remaining_steps.append(f'Add the {COMPOSITOR_LABELS[compositor]} shortcut using the instructions above.')
         else:
             log_info("Skipping compositor bindings setup")
         
         # Step 3: Systemd
         if setup_systemd_choice:
-            setup_systemd('install')
+            if setup_systemd('install') is False:
+                remaining_steps.append('Fix the background service errors above, then rerun: hyprwhspr setup')
             
             # Check if service was already running and restart to pick up config changes
             try:
@@ -1614,7 +1629,8 @@ def setup_command(python_path: Optional[str] = None):
                 if result.returncode == 0:
                     # Service was already running, restart it
                     log_info("Restarting hyprwhspr service to apply configuration changes...")
-                    systemd_restart()
+                    if systemd_restart() is False:
+                        remaining_steps.append('Restart the background service: systemctl --user restart hyprwhspr')
             except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
                 pass  # Service check failed, continue
         else:
@@ -1640,7 +1656,8 @@ def setup_command(python_path: Optional[str] = None):
         if setup_permissions_choice:
             # A compositor binding needs no keyboard access, so no group.
             relogin_needed = setup_permissions(
-                need_input_group=not ConfigManager().get_setting('external_bindings', False))
+                need_input_group=not ConfigManager().get_setting('external_bindings', False),
+                issues=remaining_steps)
         else:
             log_info("Skipping permissions setup")
         
@@ -1656,24 +1673,35 @@ def setup_command(python_path: Optional[str] = None):
             else:
                 log_warning(f"Model download failed. You can download it later with:")
                 log_warning(f"  hyprwhspr model download {selected_model}")
+                remaining_steps.append(f'Download the model: hyprwhspr model download {selected_model}')
         
         # Step 6: Validation
         print("\n" + "="*60)
         print("Validation")
         print("="*60 + "\n")
-        validate_command()
+        if not validate_command():
+            remaining_steps.append('Resolve the failed checks above, then run: hyprwhspr validate')
         
         print("\n" + "="*60)
-        log_success("Setup completed!")
+        if relogin_needed:
+            remaining_steps.append('Log out and back in so the keyboard shortcut can use your new group.')
+        if remaining_steps:
+            log_warning("Setup finished with steps remaining.")
+        else:
+            log_success("Setup finished.")
         print("="*60)
         print("\nNext steps:")
-        if relogin_needed:
-            print("  Log out and back in (the shortcut needs your new group)")
-        if setup_systemd_choice:
-            print("  Press hotkey to start dictation!")
+        for step in dict.fromkeys(remaining_steps):
+            print(f"  {step}")
+        if not setup_systemd_choice:
+            print("  Start hyprwhspr in a terminal with: hyprwhspr")
+        if remaining_steps:
+            print("  After these steps, try dictation with your recording shortcut.")
+        elif ConfigManager().get_setting('external_bindings', False):
+            print("  Use your desktop dictation shortcut to try recording.")
         else:
-            print("  Run hyprwhspr manually or set up systemd service later")
-            print("  Press hotkey to start dictation!")
+            shortcut = ConfigManager().get_setting('primary_shortcut', 'SUPER+ALT+D')
+            print(f"  Press {shortcut} to try recording.")
         print()
         
     except KeyboardInterrupt:
@@ -1764,7 +1792,7 @@ def _write_udev_rule(path, content) -> bool:
     return True
 
 
-def setup_permissions(need_input_group: bool = True) -> bool:
+def setup_permissions(need_input_group: bool = True, *, issues=None) -> bool:
     """Set up device permissions (requires sudo).
 
     need_input_group: the hotkey is read from the keyboard devices through
@@ -1772,6 +1800,7 @@ def setup_permissions(need_input_group: bool = True) -> bool:
     neither that nor a logout.
 
     Returns True when a new group membership still needs a fresh login.
+    Optional issues collects actions for the setup completion summary.
     """
     log_info("Setting up permissions...")
 
@@ -1779,6 +1808,8 @@ def setup_permissions(need_input_group: bool = True) -> bool:
     username = os.environ.get('SUDO_USER') or os.environ.get('USER') or getpass.getuser()
     if not username:
         log_error("Could not determine username for permissions setup.")
+        if issues is not None:
+            issues.append('Set USER to your login name, then rerun: hyprwhspr setup')
         return False
 
     any_failures = False
@@ -1881,6 +1912,8 @@ def setup_permissions(need_input_group: bool = True) -> bool:
 
     if any_failures:
         log_warning("Some permission setup commands failed. You may need to run them manually as root.")
+        if issues is not None:
+            issues.append('Resolve the permission errors above, then rerun: hyprwhspr setup')
     if relogin_needed:
         log_warning("Log out and back in so the input group applies; the shortcut needs it")
     return relogin_needed

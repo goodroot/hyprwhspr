@@ -6,19 +6,21 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
-from cli import setup  # noqa: E402
+from tests.test_setup_command_scope import setup, systemd  # noqa: E402
 
 PREFERENCE_PROMPTS = ('audio ducking', 'Mode', 'Reduction percentage', 'mic-osd', 'tray icon',
                       'keyboard allowlist', 'systemd user service', 'Set up permissions')
 
 
 class ExpressSetupTests(unittest.TestCase):
-    def _run(self, express, existing=None):
+    def _run(self, express, existing=None, complete=False, validation=True,
+             service_ok=True, relogin=False, permission_error=False, indicator=True,
+             compositor=None, binding_ok=True, service_choice=True):
         """Run setup to the summary; save_selection raises before any host change.
 
         Every prompt answers with its own default, as pressing Enter would.
@@ -28,6 +30,8 @@ class ExpressSetupTests(unittest.TestCase):
 
         def confirm(prompt, default=True, **_):
             asked.append(prompt)
+            if prompt == 'Set up systemd user service?':
+                return service_choice
             return express if 'recommended settings' in prompt else default
 
         def choose(prompt, default=None, **_):
@@ -44,21 +48,40 @@ class ExpressSetupTests(unittest.TestCase):
                                 ('_run_keyboard_selection', None), ('_load_existing_setup_config', existing),
                                 ('_prompt_backend_selection', ('onnx-asr', False, False, None)),
                                 ('_detect_current_backend', 'onnx-asr'), ('_noctalia_detected', False),
-                                ('detect_compositor', None), ('_is_gnome_or_mutter_session', False),
+                                ('detect_compositor', compositor), ('_is_gnome_or_mutter_session', False),
                                 ('_is_kde_plasma_session', False), ('_hypr_config_dir', Path(home.name) / 'hypr'),
-                                ('_check_mic_osd_availability', (True, ''))):
+                                ('_check_mic_osd_availability', (indicator, 'GTK missing'))):
                 stack.enter_context(patch.object(setup, name, return_value=value))
             stack.enter_context(patch.object(setup.Path, 'home', return_value=Path(home.name)))
             stack.enter_context(patch.object(setup, 'Prompt', types.SimpleNamespace(ask=choose)))
             stack.enter_context(patch.object(setup, 'Confirm', types.SimpleNamespace(ask=confirm)))
-            stack.enter_context(patch.object(setup, 'save_selection', side_effect=RuntimeError('stop')))
-            service = stack.enter_context(patch.object(setup, 'setup_systemd'))
-            permissions = stack.enter_context(patch.object(setup, 'setup_permissions'))
+            stack.enter_context(patch.object(setup, 'save_selection', side_effect=None if complete else RuntimeError('stop')))
+            service = stack.enter_context(patch.object(setup, 'setup_systemd', return_value=service_ok))
+            def permissions_result(*args, issues=None, **kwargs):
+                if permission_error and issues is not None:
+                    issues.append('Resolve the permission errors above, then rerun: hyprwhspr setup')
+                return relogin
+            permissions = stack.enter_context(patch.object(setup, 'setup_permissions', side_effect=permissions_result))
+            if complete:
+                config = Mock()
+                config.get_setting.side_effect = lambda key, default=None: existing.get(key, default)
+                config.set_setting.side_effect = lambda key, value: existing.update({key: value})
+                stack.enter_context(patch.object(setup, 'ConfigManager', return_value=config))
+                for name, result in (('mic_osd_enable', None), ('mic_osd_disable', None),
+                                     ('validate_command', validation), ('setup_compositor_binding', binding_ok),
+                                     ('systemd_restart', service_ok)):
+                    stack.enter_context(patch.object(setup, name, return_value=result))
+                stack.enter_context(patch.object(setup.subprocess, 'run', return_value=Mock(returncode=1)))
+                stack.enter_context(patch.object(setup, '_is_running_manually', return_value=False))
             stack.enter_context(contextlib.redirect_stdout(output))
-            with self.assertRaises(SystemExit):
+            if complete:
                 setup.setup_command(python_path='/tmp/mock-python')
-        service.assert_not_called()
-        permissions.assert_not_called()
+            else:
+                with self.assertRaises(SystemExit):
+                    setup.setup_command(python_path='/tmp/mock-python')
+        if not complete:
+            service.assert_not_called()
+            permissions.assert_not_called()
         return asked, output.getvalue()
 
     @staticmethod
@@ -87,6 +110,43 @@ class ExpressSetupTests(unittest.TestCase):
         _, text = self._run(express=True)
         for heading in ('Audio Ducking', 'Systemd Service', 'Permissions Setup', 'Recording Status Indicator'):
             self.assertNotIn(heading, text)
+
+    def test_completed_flow_names_configured_keyboard_shortcut(self):
+        _, text = self._run(True, {'primary_shortcut': 'CTRL+F9'}, complete=True)
+        self.assertIn('Setup finished.', text)
+        self.assertIn('Press CTRL+F9 to try recording.', text)
+        self.assertIn('permissions may ask for your password', text)
+
+    def test_external_shortcut_does_not_assume_default_chord(self):
+        _, text = self._run(True, {'external_bindings': True}, complete=True)
+        self.assertIn('Use your desktop dictation shortcut', text)
+        self.assertNotIn('Press SUPER+ALT+D', text)
+
+    def test_incomplete_flows_report_actions_without_ready_message(self):
+        for options, expected in (({'validation': False}, 'hyprwhspr validate'),
+                                  ({'service_ok': False}, 'background service errors'),
+                                  ({'permission_error': True}, 'permission errors'),
+                                  ({'relogin': True}, 'Log out and back in'),
+                                  ({'compositor': 'niri', 'binding_ok': False}, 'Add the niri shortcut')):
+            with self.subTest(options=options):
+                _, text = self._run(True, complete=True, **options)
+                self.assertIn('Setup finished with steps remaining.', text)
+                self.assertIn(expected, text)
+                self.assertNotIn('to try recording.', text)
+
+    def test_recommended_keeps_dependency_warning_visible(self):
+        _, text = self._run(True, complete=True, indicator=False)
+        self.assertIn('Recording overlay dependencies not found.', text)
+
+    def test_declined_service_explains_manual_start(self):
+        _, text = self._run(False, complete=True, service_choice=False)
+        self.assertIn('Start hyprwhspr in a terminal with: hyprwhspr', text)
+
+    def test_restart_failure_is_not_reported_as_success(self):
+        with patch.object(systemd, 'run_command', return_value=Mock(returncode=1)), \
+                patch.object(systemd, 'log_success') as success:
+            self.assertFalse(systemd.systemd_restart())
+        success.assert_not_called()
 
 
 if __name__ == '__main__':

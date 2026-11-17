@@ -90,7 +90,7 @@ class ThirteenthReviewTests(fixtures.ManagedFixture):
                 self.install.check_integrations()
 
     def permission_setup(self, missing_user=False, rule_exists=True, uinput_writable=True,
-                         member=False, active=False, need_input_group=True):
+                         member=False, active=False, need_input_group=True, sudo_code=0, issues=None):
         import pwd
         import grp
         with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}', 'SUDO_USER': 'target'}), \
@@ -101,18 +101,24 @@ class ThirteenthReviewTests(fixtures.ManagedFixture):
                 mock.patch.object(os, 'getegid', return_value=777), \
                 mock.patch.object(grp, 'getgrnam', side_effect=lambda name: mock.Mock(gr_gid={'input': 555}[name])), \
                 mock.patch.object(grp, 'getgrgid', side_effect=AssertionError('Do not resolve unrelated GIDs')), \
-                mock.patch.object(setup, 'run_sudo_command', return_value=mock.Mock(returncode=0)) as sudo, \
+                mock.patch.object(setup, 'run_sudo_command', return_value=mock.Mock(returncode=sudo_code)) as sudo, \
                 mock.patch.object(setup, '_select_uinput_rule', return_value=mock.Mock(exists=lambda: rule_exists)), \
                 mock.patch.object(setup, 'UACCESS_RULE_PATH', mock.Mock(exists=lambda: rule_exists)), \
                 mock.patch.object(setup, '_write_udev_rule', return_value=True) as write_rule, \
                 mock.patch.object(Path, 'exists', return_value=True), \
                 mock.patch.object(os, 'access', return_value=uinput_writable), \
                 mock.patch.object(managed, 'record_permission') as record:
-            self.relogin = setup.setup_permissions(need_input_group=need_input_group)
+            self.relogin = setup.setup_permissions(need_input_group=need_input_group, issues=issues)
         self.write_rule = write_rule
         return groups, sudo, record
 
     USERMOD = ['usermod', '-a', '-G', 'input', 'target']
+
+    def test_permission_failure_reports_action_without_claiming_logout_will_fix_it(self):
+        issues = []
+        self.permission_setup(sudo_code=1, issues=issues)
+        self.assertFalse(self.relogin)
+        self.assertEqual(issues, ['Resolve the permission errors above, then rerun: hyprwhspr setup'])
 
     def test_permission_snapshot_uses_target_primary_gid_and_adds_only_input(self):
         groups, sudo, record = self.permission_setup()
