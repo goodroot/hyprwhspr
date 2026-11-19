@@ -231,7 +231,7 @@ class TransactionAcceptanceTests(ManagedFixture):
         for path in (old_root, old_cli, old_backend):
             path.mkdir(parents=True)
         old = {'format': 1, 'version': 'v1.0.0', 'root': str(old_root),
-               'python': {'path': '/recorded/python'}, 'cli': {'path': str(old_cli)},
+               'python': {'path': '/recorded/python', 'version': [3, 14, 0]}, 'cli': {'path': str(old_cli)},
                'backend': {'path': str(old_backend)}, 'selection': {'backend': 'cpu'}}
         if not fresh:
             managed.atomic_json(self.install.current, old)

@@ -184,6 +184,7 @@ def _check_python_compatibility() -> tuple[bool, str, str]:
         Tuple of (is_compatible, current_version_str, guidance_message)
     """
     max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
+    previous = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1] - 1}"
 
     # Get current system Python version
     python_path = shutil.which('python3') or shutil.which('python') or sys.executable
@@ -199,9 +200,7 @@ def _check_python_compatibility() -> tuple[bool, str, str]:
 
     # Python is too new - search for a compatible alternative directly
     # (Don't call _find_compatible_python() as it prints errors and exits on failure)
-    for minor in [15, 14, 13, 12, 11]:
-        if (3, minor) > MAX_COMPATIBLE_PYTHON:
-            continue
+    for minor in range(MAX_COMPATIBLE_PYTHON[1], 10, -1):
         for prefix in ['/usr/bin', '/usr/local/bin']:
             alt_path = f"{prefix}/python3.{minor}"
             if os.path.isfile(alt_path) and os.access(alt_path, os.X_OK):
@@ -221,16 +220,16 @@ def _check_python_compatibility() -> tuple[bool, str, str]:
         f"Local transcription backends require Python {max_str} or earlier.\n"
         f"\n"
         f"Options:\n"
-        f"  1. Install Python 3.14 or 3.13:\n"
-        f"     Fedora:     sudo dnf install python3.14\n"
-        f"     Arch:       yay -S python314  # or python313\n"
-        f"     Ubuntu/Deb: sudo apt install python3.13\n"
+        f"  1. Install Python {max_str} or {previous} (if available for your distro):\n"
+        f"     Fedora:     sudo dnf install python{max_str}\n"
+        f"     Arch:       yay -S python{max_str.replace('.', '')}  # or python{previous.replace('.', '')}\n"
+        f"     Ubuntu/Deb: sudo apt install python{max_str}\n"
         f"\n"
         f"  2. Use cloud transcription (no local Python requirement):\n"
         f"     Select 'REST API' or 'Realtime WS' during backend selection\n"
         f"\n"
         f"  3. Specify Python path manually:\n"
-        f"     hyprwhspr setup --python /path/to/python3.14"
+        f"     hyprwhspr setup --python /path/to/python{max_str}"
     )
     return (False, version_str, guidance)
 

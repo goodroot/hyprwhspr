@@ -926,6 +926,12 @@ class Installation:
                         raise ValueError('Archive version does not match release metadata')
                 if selection is None:
                     selection = (old or {}).get('selection') or self.legacy_selection(root)
+                if selection:
+                    sys.path.insert(0, str(root / 'lib/src'))
+                    from dependency_plan import PLAN_SPECS, plan_key, check_backend_python
+                    key = plan_key(selection['backend'], selection.get('provider'),
+                                   selection.get('variant'), ValueError)
+                    check_backend_python(PLAN_SPECS[key][2], identity['version'])
                 available = shutil.disk_usage(self.data).free
                 print(f'Staging space available: {available // 1048576} MiB. '
                       'Replacements temporarily coexist with active environments; '

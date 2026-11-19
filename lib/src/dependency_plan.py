@@ -35,6 +35,25 @@ PLAN_SPECS = {
 }
 
 
+# Remove a limit only after every variant passes dependency smoke on the new Python.
+BACKEND_PYTHON_LIMITS = {'onnx': (3, 14), 'faster-whisper': (3, 14)}
+
+
+def python_ceiling(family, application_ceiling):
+    return min(application_ceiling, BACKEND_PYTHON_LIMITS.get(family, application_ceiling))
+
+
+def check_backend_python(family, version):
+    """Reject known unsupported backend interpreters before changing environments."""
+    ceiling = BACKEND_PYTHON_LIMITS.get(family)
+    if ceiling and tuple(version[:2]) > ceiling:
+        detected = '.'.join(map(str, version[:2]))
+        supported = '.'.join(map(str, ceiling))
+        raise ValueError(
+            f'{family} requires Python {supported} or earlier; selected Python {detected}. '
+            f'Retry with --python /path/to/python{supported}.')
+
+
 @dataclass(frozen=True)
 class DependencyPlan:
     manifest: Path

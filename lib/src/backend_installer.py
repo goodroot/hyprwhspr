@@ -127,9 +127,9 @@ except ImportError:
     )
 
 try:
-    from .dependency_plan import DependencyPlan, PLAN_SPECS as _PLAN_SPECS, plan_key as _dependency_plan_key, resolve as _resolve_plan
+    from .dependency_plan import BACKEND_PYTHON_LIMITS, check_backend_python, DependencyPlan, PLAN_SPECS as _PLAN_SPECS, plan_key as _dependency_plan_key, resolve as _resolve_plan
 except ImportError:
-    from dependency_plan import DependencyPlan, PLAN_SPECS as _PLAN_SPECS, plan_key as _dependency_plan_key, resolve as _resolve_plan
+    from dependency_plan import BACKEND_PYTHON_LIMITS, check_backend_python, DependencyPlan, PLAN_SPECS as _PLAN_SPECS, plan_key as _dependency_plan_key, resolve as _resolve_plan
 
 def _plan_key(backend: str, provider: Optional[str], accelerated_variant: Optional[str]) -> str:
     return _dependency_plan_key(backend, provider, accelerated_variant, DependencyPlanError)
@@ -180,7 +180,7 @@ def _safe_decode(output) -> str:
     return output
 
 
-# Maximum Python version compatible with ML packages (onnxruntime, etc.)
+# Application Python ceiling; dependency_plan defines lower backend limits.
 MAX_COMPATIBLE_PYTHON = (3, 15)
 SYSTEM_PYTHON_CANDIDATES = (
     '/usr/bin/python3',
@@ -238,19 +238,20 @@ def _python_compatibility_error(current_version: Optional[Tuple[int, int]]) -> N
     """
     version_str = f"{current_version[0]}.{current_version[1]}" if current_version else "unknown"
     max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
+    previous = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1] - 1}"
 
     log_error(f"System Python {version_str} is not compatible with ML packages (onnxruntime, etc.)")
     print(f"\nhyprwhspr requires Python {max_str} or earlier. No compatible Python found.", flush=True)
-    print("\nInstall Python 3.14 or 3.13:", flush=True)
+    print(f"\nInstall Python {max_str} or {previous} (if available for your distro):", flush=True)
     print("", flush=True)
-    print("  Fedora:     sudo dnf install python3.14", flush=True)
-    print("  Arch:       yay -S python314  # or python313", flush=True)
-    print("  Ubuntu/Deb: sudo apt install python3.13", flush=True)
+    print(f"  Fedora:     sudo dnf install python{max_str}", flush=True)
+    print(f"  Arch:       yay -S python{max_str.replace('.', '')}  # or python{previous.replace('.', '')}", flush=True)
+    print(f"  Ubuntu/Deb: sudo apt install python{max_str}", flush=True)
     print("", flush=True)
     print("Then re-run: hyprwhspr setup", flush=True)
     print("", flush=True)
     print("Or specify Python explicitly:", flush=True)
-    print("  hyprwhspr setup --python /path/to/python3.14", flush=True)
+    print(f"  hyprwhspr setup --python /path/to/python{max_str}", flush=True)
     print("", flush=True)
     print("Alternative: Use cloud transcription (no local Python requirement):", flush=True)
     print("  hyprwhspr setup  # Select 'REST API'", flush=True)
@@ -1255,7 +1256,7 @@ def setup_python_venv(force_rebuild: bool = False, custom_python: Optional[str] 
             max_str = f"{MAX_COMPATIBLE_PYTHON[0]}.{MAX_COMPATIBLE_PYTHON[1]}"
             log_error(f"Specified Python {version_str} is not compatible (requires {max_str} or earlier)")
             log_error("ML packages like onnxruntime do not have wheels for this Python version yet.")
-            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python3.14")
+            log_error(f"Please specify a compatible Python, e.g.: --python /usr/bin/python{max_str}")
             sys.exit(1)
         log_info(f"Using specified Python: {custom_python} ({version_str})")
     else:
@@ -1787,6 +1788,16 @@ def execute_dependency_plan(plan: DependencyPlan, custom_python: Optional[str] =
             except Exception as exc:
                 log_warning(f'Could not migrate dependency state: {exc}')
         return VENV_DIR / 'bin' / 'pip'
+
+    if plan.family in BACKEND_PYTHON_LIMITS:
+        custom_python = custom_python or _find_compatible_python()[0]
+        version = _get_python_version(custom_python)
+        if version is None:
+            raise DependencyPlanError(f'Cannot determine Python version: {custom_python}')
+        try:
+            check_backend_python(plan.family, version)
+        except ValueError as exc:
+            raise DependencyPlanError(str(exc)) from exc
 
     transaction = VenvTransaction(VENV_DIR).begin()
     try:

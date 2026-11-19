@@ -1,0 +1,53 @@
+name: Python dependency smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plans:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plans.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Generate plans from runtime contracts
+        id: plans
+        run: echo "matrix=$(python3 .github/scripts/smoke_python_dependencies.py --matrix)" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    needs: plans
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plans.outputs.matrix) }}
+    name: ${{ matrix.plan }} (Python ${{ matrix.python }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install native prerequisites on disposable runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config libevdev-dev libportaudio2 libsndfile1 libpulse0
+      - name: Install, check and import dependencies
+        env:
+          PLAN: ${{ matrix.plan }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            git rev-parse HEAD
+            python .github/scripts/smoke_python_dependencies.py "$PLAN"
+          } 2>&1 | tee dependency-smoke.log
+      - name: Retain dependency validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependency-smoke-${{ matrix.plan }}-${{ matrix.python }}-${{ github.sha }}
+          path: dependency-smoke.log

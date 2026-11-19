@@ -23,8 +23,10 @@ before activation. There is no retained instant rollback command.
 
 ## Python and storage
 
-Python 3.11–3.15 is required. Updates retain the recorded interpreter, falling back
-to a compatible system Python if it disappears. `update --python PATH` selects a
+Python 3.11–3.15 is required. ONNX and faster-whisper currently require Python
+3.14 or earlier; select it with `--python /path/to/python3.14`. Setup reports
+an incompatible selection before replacing environments. Updates retain the
+recorded interpreter, falling back to a compatible system Python if it disappears. `update --python PATH` selects a
 replacement explicitly. Paths from uv, mise and pyenv work without activation;
 hyprwhspr never installs Python or changes manager settings.
 
@@ -67,6 +69,25 @@ recovery references preserve files rather than authorizing deletion. Inspect pat
 listed by `install status` before deleting recovery evidence; it is not expired
 automatically. Failure to save recovery state retains the transaction journal.
 
+### After a distro Python upgrade
+
+An older installed launcher can reject the new system Python before
+`hyprwhspr update` runs. Bootstrap `--repair` without `--version` retains the
+installed application release, so it can select the same incompatible recovery
+helper. Select a published release that supports your new Python explicitly:
+
+```sh
+# Replace the placeholder with a published version supporting your Python.
+curl -fsSL https://hyprwhspr.com/install.sh | bash -s -- \
+  --repair --version '<release-with-3.15-support>' --python /usr/bin/python3
+```
+
+Replace the entire `<release-with-3.15-support>` placeholder, including angle
+brackets, with the release tag from the release notes. This rebuilds the managed
+environments for the selected interpreter while preserving settings and models.
+If that release is not yet published, use an installed Python supported by the
+old release with `--repair --python /absolute/path/to/python` instead.
+
 ## Migration and removal
 
 Migration recognizes the old `~/.local/share/hyprwhspr/src` bootstrap checkout and
@@ -95,6 +116,18 @@ installation added. `--skip-permissions` preserves them. Recognized pre-existing
 udev rules are not treated as installation-owned.
 
 ## Release rollout
+
+Before merging a change that expands the Python range, every CLI/backend plan
+must install, pass `pip check`, and import successfully at its advertised ceiling.
+ONNX and faster-whisper variants currently run on 3.14; all other plans run on
+3.15. Remove either exception only after all its variants pass on 3.15.
+Run the dependency-smoke helper in disposable containers, or the **Python
+dependency smoke** workflow when it is already available on the default branch.
+Retain the candidate revision or source fingerprint, logs and package versions.
+Investigate failures before claiming support; do not skip failing backends.
+Validate before merging. Dependency-plan installation already restores the old
+venv when installation fails; managed updates also preserve the active generation.
+The compatibility guard avoids attempting known unsupported installations.
 
 The website installer installs the latest published release. An old git-clone
 install that reruns it is migrated.

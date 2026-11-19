@@ -961,7 +961,7 @@ def setup_command(python_path: Optional[str] = None):
                 print()
                 if not Confirm.ask("Continue anyway? (Cloud backends will still work)", default=True):
                     log_info("Setup cancelled.")
-                    log_info("Install Python 3.14 or 3.13, then re-run: hyprwhspr setup")
+                    log_info("Install a supported Python using the guidance above, then re-run: hyprwhspr setup")
                     return
                 print()
 

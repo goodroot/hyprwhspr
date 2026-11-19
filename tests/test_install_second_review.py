@@ -82,7 +82,7 @@ class SecondReviewTests(ManagedFixture):
         old_backend = self.install.data / 'environments/old-backend'
         old_cli.mkdir(parents=True)
         old_backend.mkdir()
-        old = {'version': 'v1.2.3', 'root': str(root), 'python': {'path': '/python'},
+        old = {'version': 'v1.2.3', 'root': str(root), 'python': {'path': '/python', 'version': [3, 14, 0]},
                'cli': {'path': str(old_cli)}, 'backend': {'path': str(old_backend)},
                'selection': {'backend': 'onnx-asr', 'variant': 'gpu'}}
         managed.atomic_json(self.install.current, old)

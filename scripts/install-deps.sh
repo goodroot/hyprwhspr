@@ -218,13 +218,13 @@ check_python_version() {
         echo "  1) Install Python ${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR} or ${MAX_PYTHON_MAJOR}.$((MAX_PYTHON_MINOR-1)) alongside your current Python:"
         case "$PKG_MANAGER" in
             dnf)
-                echo "     sudo dnf install python3.14  # or python3.13"
+                echo "     sudo dnf install python${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR}  # or python${MAX_PYTHON_MAJOR}.$((MAX_PYTHON_MINOR-1))"
                 ;;
             apt)
-                echo "     sudo apt install python3.13  # or use deadsnakes PPA for newer"
+                echo "     sudo apt install python${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR}  # if available for your distro"
                 ;;
             zypper)
-                echo "     sudo zypper install python314  # or python313"
+                echo "     sudo zypper install python${MAX_PYTHON_MAJOR}${MAX_PYTHON_MINOR}  # or python${MAX_PYTHON_MAJOR}$((MAX_PYTHON_MINOR-1))"
                 ;;
         esac
         echo ""
@@ -242,7 +242,7 @@ check_python_version() {
         fi
         echo ""
         log_warning "Continuing with Python $python_version - local backends may not work."
-        log_info "You can specify an alternative Python during setup: hyprwhspr setup --python /path/to/python3.14"
+        log_info "You can specify an alternative Python during setup: hyprwhspr setup --python /path/to/python${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR}"
         echo ""
     else
         log_success "Python version $python_version is compatible"
