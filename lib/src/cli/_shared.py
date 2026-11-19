@@ -177,7 +177,7 @@ def _check_python_compatibility() -> tuple[bool, str, str]:
     """
     Check if a compatible Python version is available for local ML backends.
 
-    ML packages (onnxruntime, etc.) require Python 3.14 or earlier.
+    ML packages (onnxruntime, etc.) require Python 3.15 or earlier.
     This check warns users early if their system Python is too new.
 
     Returns:
@@ -199,7 +199,7 @@ def _check_python_compatibility() -> tuple[bool, str, str]:
 
     # Python is too new - search for a compatible alternative directly
     # (Don't call _find_compatible_python() as it prints errors and exits on failure)
-    for minor in [14, 13, 12, 11]:
+    for minor in [15, 14, 13, 12, 11]:
         if (3, minor) > MAX_COMPATIBLE_PYTHON:
             continue
         for prefix in ['/usr/bin', '/usr/local/bin']:

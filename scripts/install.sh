@@ -56,7 +56,7 @@ if [[ -z "$python_path" ]]; then
         if [[ -x "$candidate" ]]; then python_path="$candidate"; break; fi
     done
 fi
-[[ -n "$python_path" ]] || { echo 'Install Python 3.11–3.14 or pass --python PATH.' >&2; exit 1; }
+[[ -n "$python_path" ]] || { echo 'Install Python 3.11–3.15 or pass --python PATH.' >&2; exit 1; }
 exec "$python_path" -I -B - "$version" "$python_path" "$repair" "$explicit_python" <<'PY'
 import hashlib,json,os,pathlib,re,subprocess,sys,tempfile,urllib.request,urllib.error
 version,python,repair,explicit_python=sys.argv[1:]

@@ -23,7 +23,7 @@ before activation. There is no retained instant rollback command.
 
 ## Python and storage
 
-Python 3.11–3.14 is required. Updates retain the recorded interpreter, falling back
+Python 3.11–3.15 is required. Updates retain the recorded interpreter, falling back
 to a compatible system Python if it disappears. `update --python PATH` selects a
 replacement explicitly. Paths from uv, mise and pyenv work without activation;
 hyprwhspr never installs Python or changes manager settings.

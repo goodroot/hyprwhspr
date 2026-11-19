@@ -181,7 +181,7 @@ def _safe_decode(output) -> str:
 
 
 # Maximum Python version compatible with ML packages (onnxruntime, etc.)
-MAX_COMPATIBLE_PYTHON = (3, 14)
+MAX_COMPATIBLE_PYTHON = (3, 15)
 SYSTEM_PYTHON_CANDIDATES = (
     '/usr/bin/python3',
     '/usr/bin/python',
@@ -1231,7 +1231,7 @@ def setup_python_venv(force_rebuild: bool = False, custom_python: Optional[str] 
     Args:
         force_rebuild: If True, delete and recreate venv even if it exists and Python version matches.
         custom_python: Optional path to Python executable to use for venv creation.
-                       If None, auto-detects a compatible Python (3.14 or earlier).
+                       If None, auto-detects a compatible Python (3.15 or earlier).
     """
     log_info("Setting up Python virtual environment…")
 
@@ -2800,7 +2800,7 @@ def install_backend(backend_type: str, cleanup_on_failure: bool = True, force_re
         cleanup_on_failure: Whether to clean up partial installations on failure
         force_rebuild: If True, delete and recreate venv even if it exists
         custom_python: Optional path to Python executable to use for venv creation.
-                       If None, auto-detects a compatible Python (3.14 or earlier).
+                       If None, auto-detects a compatible Python (3.15 or earlier).
 
     Returns:
         True if installation succeeded, False otherwise

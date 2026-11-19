@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Linux** with systemd (Arch, Debian, Ubuntu, Fedora, openSUSE, etc.)
-- **Python 3.11-3.14**
+- **Python 3.11-3.15**
 - **Wayland or X11 session** (GNOME, KDE Plasma, Sway, Hyprland, Niri, etc.).
 - **Clipboard/window tools:**
     - `wl-clipboard` and `wtype` on Wayland

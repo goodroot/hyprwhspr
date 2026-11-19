@@ -214,11 +214,11 @@ def interpreter(path=None, fallback=False):
                           '"version":list(sys.version_info[:3]),"identity":sys.version}))'],
                          capture_output=True, text=True, timeout=10)
             identity = json.loads(result.stdout)
-            if (3, 11) <= tuple(identity['version'][:2]) <= (3, 14):
+            if (3, 11) <= tuple(identity['version'][:2]) <= (3, 15):
                 return identity
         except (OSError, subprocess.SubprocessError, ValueError):
             pass
-    raise RuntimeError('No compatible Python (3.11–3.14). Use --python PATH; keep that interpreter installed.')
+    raise RuntimeError('No compatible Python (3.11–3.15). Use --python PATH; keep that interpreter installed.')
 
 
 def group_membership_present(user, group):

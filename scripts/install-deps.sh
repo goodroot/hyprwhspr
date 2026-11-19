@@ -147,7 +147,7 @@ detect_distro() {
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=11
 MAX_PYTHON_MAJOR=3
-MAX_PYTHON_MINOR=14
+MAX_PYTHON_MINOR=15
 
 # Check Python version compatibility
 check_python_version() {
