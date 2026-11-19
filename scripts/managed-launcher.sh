@@ -8,7 +8,7 @@ base="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr"
 recorded_python=""
 if [[ -f "$base/interpreter" ]]; then IFS= read -r recorded_python < "$base/interpreter" || true; fi
 for python in "$recorded_python" /usr/bin/python3 /usr/local/bin/python3; do
-    if [[ -x "$python" ]] && "$python" -I -B -c 'import sys; sys.exit(not ((3, 11) <= sys.version_info[:2] <= (3, 14)))' 2>/dev/null; then
+    if [[ -x "$python" ]] && "$python" -I -B -c 'import sys; sys.exit(not ((3, 11) <= sys.version_info[:2] <= (3, 15)))' 2>/dev/null; then
         exec "$python" -I -B -c '
 import json,os,runpy,sys
 from pathlib import Path

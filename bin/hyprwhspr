@@ -49,12 +49,12 @@ SYSTEM_PYTHON_CANDIDATES=(
     /usr/local/bin/python
 )
 
-# hyprwhspr requires 3.11-3.14, matching managed_install.interpreter(),
+# hyprwhspr requires 3.11-3.15, matching managed_install.interpreter(),
 # scripts/install.sh and scripts/managed-launcher.sh. Reject older interpreters
 # here so the user gets this message instead of an AttributeError from
 # hashlib.file_digest deeper in the CLI.
 supported_python() {
-    "$1" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] <= (3, 14) else 1)' 2>/dev/null
+    "$1" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] <= (3, 15) else 1)' 2>/dev/null
 }
 
 get_system_python() {
@@ -89,7 +89,7 @@ else
     CLI_PYTHON="$(get_system_python)"
 fi
 if [[ -z "$CLI_PYTHON" ]]; then
-    echo "Error: No supported system Python found (need 3.11-3.14)." >&2
+    echo "Error: No supported system Python found (need 3.11-3.15)." >&2
     echo "hyprwhspr requires system Python with distro packages (python-rich, etc.)." >&2
     echo "Install a supported Python via your package manager, for example:" >&2
     echo "  pacman -S python     apt install python3.12     dnf install python3.12" >&2

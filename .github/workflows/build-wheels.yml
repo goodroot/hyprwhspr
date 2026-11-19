@@ -28,7 +28,7 @@ concurrency:
 env:
   CUDA_BUILD_VERSION: '12.6'  # one 12.x build serves all CUDA 12
   # Keep in sync with every build/verify matrix below (checked by the tests).
-  PYTHON_VERSIONS: '3.11 3.12 3.13 3.14'
+  PYTHON_VERSIONS: '3.11 3.12 3.13 3.14 3.15'
 
 jobs:
   preflight:
@@ -82,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
 
     steps:
       - name: Checkout hyprwhspr
@@ -194,7 +194,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
 
     steps:
       - name: Install build dependencies
@@ -300,7 +300,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
 
     steps:
       - name: Install Vulkan runtime (Mesa lavapipe)
@@ -361,7 +361,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
 
     steps:
       - name: Checkout hyprwhspr

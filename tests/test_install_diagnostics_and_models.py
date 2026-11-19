@@ -63,8 +63,8 @@ class InterpreterContractTests(unittest.TestCase):
         self.assertEqual(selected, '/usr/bin/python3')
 
     def test_over_new_default_falls_back_to_versioned_system_python(self):
-        available = {'/usr/bin/python3', '/usr/bin/python3.14'}
-        versions = {'/usr/bin/python3': (3, 15), '/usr/bin/python3.14': (3, 14)}
+        available = {'/usr/bin/python3', '/usr/bin/python3.15'}
+        versions = {'/usr/bin/python3': (3, 16), '/usr/bin/python3.15': (3, 15)}
         with (
             mock.patch.object(backend_installer, 'SYSTEM_PYTHON_CANDIDATES',
                               ('/usr/bin/python3',)),
@@ -75,8 +75,8 @@ class InterpreterContractTests(unittest.TestCase):
                               side_effect=lambda path: versions[path]),
         ):
             selected, description = backend_installer._find_compatible_python()
-        self.assertEqual(selected, '/usr/bin/python3.14')
-        self.assertEqual(description, 'Python 3.14')
+        self.assertEqual(selected, '/usr/bin/python3.15')
+        self.assertEqual(description, 'Python 3.15')
 
     def test_install_deps_is_sourceable(self):
         result = subprocess.run(

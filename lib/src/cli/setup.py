@@ -932,7 +932,7 @@ def setup_command(python_path: Optional[str] = None):
 
     Args:
         python_path: Optional path to Python executable to use for venv creation.
-                     If None, auto-detects a compatible Python (3.14 or earlier).
+                     If None, auto-detects a compatible Python (3.15 or earlier).
     """
     print("\n" + "="*60)
     print("hyprwhspr setup")

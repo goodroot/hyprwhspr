@@ -19,9 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # hyprwhspr requires 3.11-3.14 (managed_install.interpreter, install.sh,
+        # hyprwhspr requires 3.11-3.15 (managed_install.interpreter, install.sh,
         # managed-launcher.sh). Test the floor and the ceiling.
-        python-version: ['3.11', '3.14']
+        python-version: ['3.11', '3.15']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
