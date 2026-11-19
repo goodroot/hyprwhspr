@@ -46,8 +46,18 @@ with (root / 'calls').open('a') as log:
 if name == 'git':
     if args[:2] == ['rev-parse', '--verify']:
         sys.exit(0 if os.environ.get('EXISTING_TAG') else 1)
+    if args == ['rev-parse', 'HEAD']:
+        print('a' * 40)
+    elif args[:1] == ['rev-parse'] and args[-1].endswith('^{commit}'):
+        print(('b' if os.environ.get('WRONG_TAG') else 'a') * 40)
+    elif args[:1] == ['status'] and os.environ.get('DIRTY'):
+        print(' M candidate.py')
     if args[:1] == ['push']:
         sys.exit(int(os.environ.get('PUSH_EXIT', '0')))
+if name == 'gh':
+    sys.exit(int(os.environ.get('AUTH_EXIT', '0')))
+if name == 'python' and args[:1] == ['scripts/release-checks.py']:
+    sys.exit(int(os.environ.get('PREFLIGHT_EXIT' if args[1] == 'preflight' else 'WAIT_EXIT', '0')))
 if name == 'curl':
     counter = root / 'attempts'
     attempt = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -62,7 +72,7 @@ if name == 'curl':
     else:
         shutil.copyfile(root / 'fixture.tar.gz', output)
 '''
-        for name in ('git', 'curl', 'python', 'sleep', 'makepkg'):
+        for name in ('git', 'gh', 'curl', 'python', 'sleep', 'makepkg'):
             path = self.bin / name
             path.write_text(f'#!{sys.executable}\n' + stub)
             path.chmod(0o755)
@@ -112,3 +122,45 @@ if name == 'curl':
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('curl ', self.calls())
         self.assertEqual((self.aur / 'PKGBUILD').read_text(), self.recipe)
+
+    def test_preflight_failures_never_create_or_push_tag(self):
+        for settings in ({'DIRTY': '1'}, {'AUTH_EXIT': '1'}, {'PREFLIGHT_EXIT': '1'},
+                         {'EXISTING_TAG': '1', 'WRONG_TAG': '1'}):
+            with self.subTest(settings=settings):
+                (self.root / 'calls').write_text('')
+                result = self.run_bump(**settings)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('git tag ', self.calls())
+                self.assertNotIn('git push ', self.calls())
+                self.assertEqual((self.aur / 'PKGBUILD').read_text(), self.recipe)
+
+    def test_missing_tool_stops_before_github_or_tag_changes(self):
+        isolated = self.root / 'isolated-bin'
+        isolated.mkdir()
+        for name in ('dirname', 'git'):
+            (isolated / name).symlink_to(self.bin / name if name == 'git' else shutil.which(name))
+        result = subprocess.run(['/bin/bash', str(self.repo / 'bump-version.sh'), '1.1.0'],
+                                env=dict(os.environ, PATH=str(isolated), FIXTURE_ROOT=str(self.root)),
+                                capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Required command missing: gh', result.stderr)
+        self.assertEqual(self.calls(), '')
+
+    def test_workflow_failure_stops_before_archive_or_aur_changes(self):
+        result = self.run_bump(WAIT_EXIT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('git push origin refs/tags/v1.1.0', self.calls())
+        self.assertNotIn('curl ', self.calls())
+        self.assertEqual((self.aur / 'PKGBUILD').read_text(), self.recipe)
+        self.assertFalse((self.aur / '.SRCINFO').exists())
+
+    def test_success_orders_checks_before_release_and_aur_updates(self):
+        result = self.run_bump()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        self.assertLess(calls.index('release-checks.py preflight'), calls.index('git tag '))
+        self.assertLess(calls.index('git push '), calls.index('release-checks.py wait'))
+        self.assertIn('--tag v1.1.0 --commit ' + 'a' * 40, calls)
+        self.assertLess(calls.index('release-checks.py wait'), calls.index('curl '))
+        self.assertLess(calls.index('curl '), calls.index('makepkg --printsrcinfo'))
+        self.assertIn('publish it manually', result.stdout)

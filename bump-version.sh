@@ -4,9 +4,9 @@
 # Example: ./bump-version.sh 1.8.7
 #
 # This script:
-# 1. Creates and pushes git tag in hyprwhspr repo
-# 2. Updates PKGBUILD version and SHA256 in aur-hyprwhspr repo
-# 3. Updates .SRCINFO
+# 1. Checks the candidate and wheel publication, then creates/pushes its tag
+# 2. Waits for application release and Python dependency validation
+# 3. Updates local AUR metadata for manual review and publication
 
 set -euo pipefail
 
@@ -24,6 +24,10 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HYPRWHSPR_REPO="$SCRIPT_DIR"
 AUR_REPO="$SCRIPT_DIR/../aur-hyprwhspr"
+
+for tool in git gh python curl tar sha256sum makepkg; do
+    command -v "$tool" >/dev/null || { echo "Error: Required command missing: $tool" >&2; exit 1; }
+done
 
 # Validate we're in the right directory
 if [ ! -f "$HYPRWHSPR_REPO/lib/cli.py" ]; then
@@ -59,20 +63,27 @@ fi
 
 # Check tracked and untracked release inputs. In particular, do not create a
 # tag that omits a newly-added packaging validator or dependency manifest.
-if [ -n "$(git status --porcelain)" ]; then
-    echo "   ⚠ Warning: You have uncommitted changes"
-    echo "   Consider committing them before creating a release tag"
-    read -p "   Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+WORKTREE_STATUS=$(git status --porcelain)
+if [ -n "$WORKTREE_STATUS" ]; then
+    echo "Error: Commit or set aside application changes before bumping; the worktree must be clean." >&2
+    exit 1
+fi
+
+CANDIDATE_SHA=$(git rev-parse HEAD)
+if git rev-parse --verify "refs/tags/v$NEW_VERSION" >/dev/null 2>&1; then
+    TAG_SHA=$(git rev-parse "refs/tags/v$NEW_VERSION^{commit}")
+    if [ "$TAG_SHA" != "$CANDIDATE_SHA" ]; then
+        echo "Error: v$NEW_VERSION points to $TAG_SHA, not HEAD ($CANDIDATE_SHA). Check out the tagged commit to resume; tags are never moved." >&2
         exit 1
     fi
 fi
+gh auth status --hostname github.com
 
 echo "   Validating release payload and installer syntax..."
 python scripts/validate-package-payload.py "$HYPRWHSPR_REPO"
 bash -n scripts/install.sh scripts/install-deps.sh
 echo "   ✓ Release payload contracts valid"
+python scripts/release-checks.py preflight
 
 # Step 2: Create and push git tag
 echo "2. Creating git tag v$NEW_VERSION..."
@@ -88,6 +99,9 @@ fi
 echo "3. Pushing tag to origin..."
 git push origin "refs/tags/v$NEW_VERSION"
 echo "   ✓ Tag pushed to origin"
+
+echo "   Waiting for release validation on v$NEW_VERSION ($CANDIDATE_SHA)..."
+python scripts/release-checks.py wait --tag "v$NEW_VERSION" --commit "$CANDIDATE_SHA"
 
 # Step 4: Get SHA256 from GitHub
 echo "4. Fetching SHA256 from GitHub..."
@@ -153,6 +167,8 @@ echo "=========================================="
 echo "Old version: $OLD_VERSION"
 echo "New version: $NEW_VERSION"
 echo "SHA256:      $NEW_SHA256"
+echo "Release:     https://github.com/goodroot/hyprwhspr/releases/tag/v$NEW_VERSION"
+echo "Review the draft release and publish it manually after reviewing validation results."
 echo ""
 echo "Next steps:"
 echo "1. Review changes:"

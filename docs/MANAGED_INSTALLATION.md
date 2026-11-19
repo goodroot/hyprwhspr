@@ -129,6 +129,37 @@ Validate before merging. Dependency-plan installation already restores the old
 venv when installation fails; managed updates also preserve the active generation.
 The compatibility guard avoids attempting known unsupported installations.
 
+For releases, use the existing tag flow from a clean, committed checkout:
+
+```sh
+./bump-version.sh MAJOR.MINOR.PATCH
+```
+
+The script checks tools, GitHub authentication, payload validity, and publication
+of every required CUDA/Vulkan wheel with a valid checksum entry before pushing
+the tag. If wheels are missing, finish **Build PyWhisperCPP Wheels** and rerun.
+Adding new Python-tagged filenames alone does not require a wheel build-number
+bump; published wheel contents are never overwritten.
+
+After pushing the tag, the script waits for **Application release** and triggers
+**Python dependency smoke** against that same tag and commit. Both must pass
+before it updates local AUR metadata. Both workflows must be active on the default
+branch before the first automated bump. Dependency coverage remains ceiling-only;
+it checks installation and imports, not GPU execution, native sidecars, model
+loading, microphone capture or transcription accuracy.
+
+Rerun the same command from the tagged commit to resume. Existing tags must match
+`HEAD` and are never moved; active or successful matching checks are reused, and
+failed/cancelled checks are rerun once per invocation. Discovery waits up to two
+minutes and completion up to three hours. A timeout leaves remote runs active.
+Failures print run links; inspect them and resolve the problem before retrying.
+If the tagged source needs a code fix, use a new release version.
+
+Review and publish the draft manually, then review and commit/push AUR changes.
+Include the concrete release tag in the Python-upgrade recovery command in the
+release notes. Direct tag pushes bypass the script's extra checks, and the
+application workflow can prepare a draft before dependency smoke finishes.
+
 The website installer installs the latest published release. An old git-clone
 install that reruns it is migrated.
 
