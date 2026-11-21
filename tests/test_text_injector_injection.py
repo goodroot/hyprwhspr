@@ -1901,6 +1901,60 @@ class SpokenPunctuationPreprocessingTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(preprocess_text(raw), expected)
 
+    def test_french_punctuation_and_formatting(self):
+        config = ConfigStub({"language": "fr"})
+        cases = {
+            "Pistes deux points à la ligne tiret espace vérifier.": "Pistes :\n- vérifier.",
+            "Retour à la ligne. Titre": "Titre",
+            "Un document virgule une photo point": "Un document, une photo.",
+            "Prêt. Point.": "Prêt.",
+            "On confirme point d’interrogation": "On confirme ?",
+            "On confirme point d'exclamation": "On confirme !",
+            "Attends points de suspension": "Attends…",
+            "D’abord point-virgule ensuite": "D’abord ; ensuite",
+            "Crochet ouvrant piste crochet fermant": "[piste]",
+            "Ouvrir la parenthèse source fermer la parenthèse": "(source)",
+            "Tiret espace.": "- ",
+            "Tiré du six espace lire la source": "- lire la source",
+            "ls barre verticale grep test": "ls | grep test",
+            "arobase Oz": "@ Oz",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(preprocess_text(raw, config), expected)
+
+    def test_french_prose_does_not_use_english_symbol_replacements(self):
+        config = ConfigStub({"language": "fr"})
+        for raw in (
+            "Plus de temps pour un point de départ.",
+            "Point de départ.",
+            "Deux points importants à vérifier.",
+            "Relire la phrase point par point.",
+            "Passe à la ligne suivante.",
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(preprocess_text(raw, config), raw)
+
+    def test_french_selection_keeps_existing_english_and_translation_behavior(self):
+        for settings in ({"language": "en"}, {"language": None},
+                         {"language": "fr", "task": "translate"}):
+            with self.subTest(settings=settings):
+                config = ConfigStub(settings)
+                self.assertEqual(preprocess_text("one plus two", config), "one + two")
+
+    def test_french_bullet_injects_exactly_one_space(self):
+        for trailing_space in ("auto", False, True):
+            with self.subTest(trailing_space=trailing_space):
+                injector = make_injector()
+                injector.config_manager = ConfigStub(
+                    {"language": "fr", "append_trailing_space": trailing_space}
+                )
+                with mock.patch.object(
+                    injector, "_inject_via_clipboard_and_hotkey", return_value=True
+                ) as inject:
+                    self.assertEqual(injector.inject_text("tiret espace"), InjectionOutcome.INJECTED)
+                inject.assert_called_once_with("- ", retain=True)
+
     def test_disabled_symbol_replacements_are_unchanged(self):
         config = ConfigStub({"symbol_replacements": False})
         self.assertEqual(

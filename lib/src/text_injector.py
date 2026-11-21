@@ -113,6 +113,29 @@ _SPOKEN_REPLACEMENTS = (
 )
 
 
+_FRENCH_SPOKEN_REPLACEMENTS = (
+    (r"point d['’]interrogation", "?"),
+    (r"point d['’]exclamation", "!"),
+    (r"point[- ]virgule", ";"),
+    (r"points? de suspension", "…"),
+    (r"(?:deux|2) points?(?![ \t]+(?:à|qui|communs|importants|clés|principaux)\b)", ":"),
+    (r"point(?![ \t]+(?:de\b|d['’]|par\b|commun\b))", "."),
+    (r"virgule", ","),
+    (r"tir(?:et|er|é)(?: du (?:6|six))? espace", "- "),
+    (r"crochet ouvrant|ouvrir le crochet", "["),
+    (r"crochet fermant|fermer le crochet", "]"),
+    (r"parenthèse ouvrante|ouvrir la parenthèse", "("),
+    (r"parenthèse fermante|fermer la parenthèse", ")"),
+    (r"arr?obase", "@"),
+    (r"barre verticale|pipe", "|"),
+)
+_FRENCH_NOUN_PREFIX = re.compile(
+    r"\b(?:un|une|le|la|les|ce|ces|chaque|du|des|de|au|aux|mon|ton|son|notre|"
+    r"votre|leur|quel|par|\d+)[ \t]+$",
+    re.IGNORECASE,
+)
+
+
 def _config_setting(config_manager, name, default=None):
     if config_manager is None:
         return default
@@ -148,34 +171,60 @@ def preprocess_text(text: str, config_manager=None) -> str:
     if not _config_setting(config_manager, 'symbol_replacements', True):
         return re.sub(r'[ \t]+', ' ', processed).strip()
 
-    # Recognizers commonly punctuate the spoken command itself. Sentence
-    # punctuation after "new line" is not intended for the new line.
+    french = (
+        _config_setting(config_manager, 'language') == 'fr'
+        and _config_setting(config_manager, 'task', 'transcribe') != 'translate'
+    )
+    if french:
+        line_break = (
+            r'(?:retour[ \t]+)?[àa][ \t]+la[ \t]+ligne\b'
+            r'(?![ \t]+(?:\d|suivante\b|précédente\b))'
+        )
+        replacements = _FRENCH_SPOKEN_REPLACEMENTS
+    else:
+        line_break = r'new[ \t]+line\b'
+        replacements = ((re.escape(command), symbol) for command, symbol in _SPOKEN_REPLACEMENTS)
+
+    # Recognizers commonly punctuate the spoken command itself.
     processed = re.sub(
-        r'\bnew[ \t]+line\b(?:[ \t]*[.!?]+)?', '\n', processed,
+        rf'\b(?:{line_break})(?:[ \t]*[.!?]+)?', '\n', processed,
         flags=re.IGNORECASE,
     )
 
     # Mark commands before spacing them. Identical literal punctuation touching
     # a command is another rendering of the same requested symbol.
     markers = {}
-    for index, (command, symbol) in enumerate(_SPOKEN_REPLACEMENTS):
+    for index, (command, symbol) in enumerate(replacements):
         marker = f'\ue000{index}\ue001'
         markers[marker] = symbol
         escaped_symbol = re.escape(symbol)
-        escaped_command = re.escape(command)
+        command_pattern = rf'(?:{command})'
         single_symbol = rf'{escaped_symbol}(?!{escaped_symbol})'
         pattern = (
-            rf'(?:{escaped_symbol}+[ \t]+\b{escaped_command}\b{single_symbol}'
-            rf'|{escaped_symbol}+\b{escaped_command}\b'
-            rf'|\b{escaped_command}\b{single_symbol}'
-            rf'|\b{escaped_command}\b)'
+            rf'(?:{escaped_symbol}+[ \t]+\b{command_pattern}\b{single_symbol}'
+            rf'|{escaped_symbol}+\b{command_pattern}\b'
+            rf'|\b{command_pattern}\b{single_symbol}'
+            rf'|\b{command_pattern}\b)'
         )
-        processed = re.sub(pattern, marker, processed, flags=re.IGNORECASE)
+        if french and symbol in ('.', ',', ':'):
+            def replace_command(match):
+                if _FRENCH_NOUN_PREFIX.search(processed[:match.start()]):
+                    return match[0]
+                return marker
+
+            processed = re.sub(pattern, replace_command, processed, flags=re.IGNORECASE)
+        else:
+            processed = re.sub(pattern, marker, processed, flags=re.IGNORECASE)
 
     # Only command markers receive punctuation spacing; unrelated raw
     # punctuation, including ellipses and repeated emphasis, stays untouched.
     for marker, symbol in markers.items():
-        if symbol in '.,?!:;':
+        if symbol == '- ':
+            # Keep deliberate spacing on a Markdown list marker through strip().
+            processed = re.sub(rf'{re.escape(marker)}(?:[ \t]*[.,:;?!…]+)?[ \t]*', marker, processed)
+        elif symbol in '.,?!:;…':
+            if french and symbol in '?!:;':
+                symbol = ' ' + symbol
             processed = re.sub(rf'[ \t]*{re.escape(marker)}[ \t]*', marker, processed)
             # Add separation only before following prose. A different raw
             # punctuation mark is preserved directly beside the spoken one.
@@ -195,7 +244,11 @@ def preprocess_text(text: str, config_manager=None) -> str:
 
     processed = re.sub(r'[ \t]+', ' ', processed)
     processed = re.sub(r' *\n *', '\n', processed)
-    return processed.strip()
+    processed = processed.strip()
+    for marker, symbol in markers.items():
+        if symbol == '- ':
+            processed = processed.replace(marker, symbol)
+    return processed
 
 
 class _PostTranscriptionHookOutcome(Enum):
@@ -1900,11 +1953,15 @@ except Exception:
         if not processed_text.strip():
             log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.SKIPPED
+        ends_with_spoken_space = processed_text.endswith(' ')
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
         processed_text = hook_result.text
-        if self._should_append_trailing_space(processed_text):
+        if (
+            self._should_append_trailing_space(processed_text)
+            and not (ends_with_spoken_space and processed_text.endswith(' '))
+        ):
             processed_text += ' '
 
         try:
