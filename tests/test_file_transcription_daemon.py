@@ -68,7 +68,7 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         app._notify_capture = mock.Mock()
         app._inject_text('capture only')
         app.text_injector.inject_text.assert_not_called()
-        app._notify_capture.assert_called_once_with('capture only', final=True)
+        app._notify_capture.assert_called_once_with('capture only', final=True, context=None)
 
         app._recording_control_server.has_capture_subscriber.return_value = False
         app.text_injector.inject_text.return_value = self.outcome.FAILED
@@ -106,6 +106,39 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
         app._inject_text('second recording')
         self.assertEqual(app._notify_user.call_count, 2)
 
+    def test_file_cleanup_uses_override_in_both_directions(self):
+        from tests.text_injector_helpers import ConfigStub
+        for default, override, raw, expected in (
+            ('en', 'fr', 'prêt point d’interrogation', 'prêt ?'),
+            ('fr', 'en', 'ready question mark', 'ready?'),
+        ):
+            with self.subTest(default=default, override=override):
+                app = self._app()
+                app.config = ConfigStub({'language': default})
+                app.whisper_manager.transcribe_audio.return_value = raw
+                with tempfile.TemporaryDirectory() as tempdir, patch_app_global(
+                        self.app, 'MODEL_UNLOADED_FILE', Path(tempdir) / 'unloaded'), patch_app_global(
+                        self.app, 'decode_audio_file', mock.Mock(return_value=(np.array([0.1]), 16000))):
+                    self.assertEqual(app._handle_file_transcribe('/tmp/audio.wav', override, True),
+                                     (True, expected))
+
+    def test_capture_trace_uses_delivery_context(self):
+        import json
+        from tests.text_injector_helpers import ConfigStub
+        from text_processing import resolve_processing_context
+        app = self._app()
+        app.config = ConfigStub({'language': 'en'})
+        app._recording_control_server = mock.Mock()
+        app._recording_control_server.has_capture_subscriber.return_value = True
+        app._recording_control_server.is_trace_capture.return_value = True
+        context = resolve_processing_context(app.config, 'fr')
+        app._inject_text('prêt point d’interrogation', context=context)
+        trace = json.loads(app._recording_control_server.notify_capture.call_args.args[0])
+        self.assertEqual(trace['preprocessed'], 'prêt ?')
+        self.assertEqual(trace['output_language'], 'fr')
+        self.assertEqual(trace['spoken_command_language'], 'fr')
+        app.text_injector.inject_text.assert_not_called()
+
     def test_idle_daemon_transcribes_and_optionally_cleans(self):
         app = self._app()
         preprocess = mock.Mock(return_value='clean transcript')
@@ -126,7 +159,8 @@ class FileTranscriptionDaemonTests(unittest.TestCase):
             app.whisper_manager.transcribe_audio.call_args.kwargs,
             {'sample_rate': 44100, 'language_override': 'fr'},
         )
-        preprocess.assert_called_once_with('raw transcript', app.config)
+        preprocess.assert_called_once_with('raw transcript', app.config, context=mock.ANY)
+        self.assertEqual(preprocess.call_args.kwargs['context'].output_language, 'fr')
         self.assertFalse(app.is_processing)
         self.assertFalse(app._file_transcription_active)
 

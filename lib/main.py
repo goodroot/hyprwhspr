@@ -131,6 +131,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         # Application state
         self.is_recording = False
         self._current_language_override = None  # Language override for current recording session
+        self._current_processing_context = None
         self.is_processing = False
         self._file_transcription_active = False
         # Long-form keeps its own state machine, so it claims this flag under

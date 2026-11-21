@@ -34,6 +34,7 @@ class ModelIdleUnloadTests(unittest.TestCase):
         app._cancel_pending_hide_lock = threading.Lock()
         app._recording_finalizing = threading.Event()
         app.is_recording = app.is_processing = False
+        app._current_language_override = None
         app._file_transcription_active = app._longform_active = False
         app._model_operation_active = app._model_initializing = False
         app._backend_init_failed = False

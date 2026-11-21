@@ -71,7 +71,7 @@ class FakeInjector:
         self.ended = []
         self.fail = fail
 
-    def begin_stream(self):
+    def begin_stream(self, *, context=None):
         return types.SimpleNamespace(cancelled=threading.Event(), failed=False)
 
     def release_stream(self, handle):

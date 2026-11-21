@@ -110,26 +110,59 @@ Automatically converts spoken words to symbols and punctuation:
 - "new line" → new line
 - "tab" → tab character
 
-With `"language": "fr"`, the symbol pass uses French commands for transcription. English commands continue to apply when language is unset or the task is translation.
+The command language follows the recording or file request's language: a secondary
+shortcut or explicit language override takes precedence over `language`. English
+(`en`) and French (`fr`) have built-in commands. Other explicit languages skip
+built-in commands; word overrides and filler filtering still run. An unset language
+keeps the English fallback: the recognizer's automatically detected language is
+not yet passed to text processing.
+
+With `task: "translate"`, pywhispercpp and faster-whisper use English commands for
+their English output. This setting does not change command selection for backends
+that do not implement that translation task.
+
+The same rules apply to ordinary, continuous, long-form, and realtime live dictation,
+and file transcription with cleanup enabled. Live typing holds unfinished command
+phrases until more words arrive. Processing traces report `output_language` and
+`spoken_command_language` alongside the cleaned text.
+
+**French commands:**
 
 | Spoken command | Result |
 | --- | --- |
-| « point », « virgule », « deux points », « point-virgule » | `.`, `,`, `:`, `;` |
+| « insérer un point », « insérer une virgule », « insérer deux points » | `.`, `,`, `:` |
+| « point-virgule » or « point virgule » | `;` |
 | « point d’interrogation », « point d’exclamation », « points de suspension » | `?`, `!`, `…` |
-| « à la ligne », « retour à la ligne » | Line break within a dictation |
+| « retour à la ligne » | Line break within a dictation |
 | « tiret espace » | Markdown list marker with a following space |
 | « crochet ouvrant », « crochet fermant » | `[`, `]` |
 | « ouvrir la parenthèse », « fermer la parenthèse » | `(`, `)` |
-| « arobase », « barre verticale » | `@`, `\|` |
+| « insérer une arobase », « insérer une barre verticale » | `@`, `\|` |
 
-For example, « Pistes deux points à la ligne tiret espace vérifier la source » yields:
+Commands ignore case and accept straight or curly apostrophes. Aliases include
+« insérer 2 points », « point de suspension », « retour a la ligne »,
+« ouvrir le crochet » / « fermer le crochet »,
+« parenthèse ouvrante » / « parenthèse fermante », and « insérer une arrobase ».
+The list marker also accepts « tirer » or « tiré » instead of « tiret », with an
+optional « du six » or « du 6 » before « espace ».
+
+For example, « Pistes insérer deux points retour à la ligne tiret espace vérifier la source » yields:
 
 ```markdown
 Pistes :
 - vérifier la source
 ```
 
-French « plus » stays a word. Common expressions such as « un point de départ » are preserved.
+French commands insert a normal space before `?`, `!`, `:` and `;`. The space in
+« tiret espace » is intentional: it survives even with `append_trailing_space: false`,
+and automatic trailing spacing does not add a second space.
+
+Bare « point », « virgule », « deux points », « à la ligne », « arobase »,
+« barre verticale » and « plus » remain prose. This preserves phrases such as
+« Il marque deux points » and « Je suis à la ligne de départ ». Explicit commands
+can still be converted when quoted or discussed as prose; turn off
+`symbol_replacements` when you need literal dictation. Use `word_overrides` for
+personal shortcuts, understanding that those also replace matching prose.
 
 ## Trailing space
 

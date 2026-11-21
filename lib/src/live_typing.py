@@ -74,7 +74,7 @@ class LiveTypingSession:
 
     FINISH_TIMEOUT_SECS = 10.0
 
-    def __init__(self, injector, markers=None):
+    def __init__(self, injector, markers=None, *, context=None):
         self._injector = injector
         self._typer = LiveTyper(markers)
         self._lock = threading.Lock()
@@ -82,7 +82,7 @@ class LiveTypingSession:
         self._open = True
         self._failed = False
         self._done = threading.Event()
-        self._handle = injector.begin_stream()
+        self._handle = injector.begin_stream(context=context)
         self._outcome = None
         self._started = False
         self._worker = threading.Thread(target=self._run, name='live-typing', daemon=True)

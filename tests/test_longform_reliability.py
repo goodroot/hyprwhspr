@@ -85,6 +85,27 @@ class LongformReliabilityTests(unittest.TestCase):
         controller.state = 'RECORDING'
         return controller, persisted
 
+    def test_longform_preserves_language_context_through_retry(self):
+        from tests.text_injector_helpers import ConfigStub
+        from text_processing import preprocess_text
+        controller, audio = self._controller(timer_factory=mock.Mock())
+        controller.config = ConfigStub({'language': 'en'})
+        controller.state = 'IDLE'
+        controller.start_recording(language_override='fr')
+        context = controller.processing_context
+        controller.config.settings['language'] = 'de'
+        controller.whisper_manager.transcribe_audio.return_value = 'prêt point d’interrogation'
+        controller.inject_text.return_value = InjectionOutcome.FAILED
+        controller.submit(audio_data=audio)
+        self.assertEqual(controller.state, 'ERROR')
+        controller.inject_text.return_value = InjectionOutcome.INJECTED
+        controller.submit(retry=True)
+        self.assertEqual(controller.inject_text.call_count, 2)
+        for call in controller.inject_text.call_args_list:
+            self.assertIs(call.kwargs['context'], context)
+            self.assertEqual(preprocess_text(call.args[0], controller.config, context=context), 'prêt ?')
+        self.assertEqual(context.output_language, 'fr')
+
     def test_start_pause_resume_transitions_are_owned_by_controller(self):
         controller, _ = self._controller(timer_factory=mock.Mock())
         controller.state = 'IDLE'

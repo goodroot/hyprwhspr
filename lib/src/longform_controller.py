@@ -3,11 +3,13 @@
 import threading
 
 try:
+    from .text_processing import resolve_processing_context
     from .hallucination import is_hallucination
     from .paths import LONGFORM_STATE_FILE
     from .segment_manager import SegmentManager
     from .text_injector import InjectionOutcome, OUTCOME_DETAIL
 except ImportError:
+    from text_processing import resolve_processing_context
     from hallucination import is_hallucination
     from paths import LONGFORM_STATE_FILE
     from segment_manager import SegmentManager
@@ -69,6 +71,7 @@ class LongFormController:
         self.state_file = state_file
 
         self.state = 'IDLE'
+        self.processing_context = None
         self.language_override = None
         self.lock = threading.Lock()
         self.segment_manager = None
@@ -179,6 +182,7 @@ class LongFormController:
         lang_info = f" (language: {language_override})" if language_override else ""
         print(f"[LONGFORM] Starting recording session{lang_info}")
         self.language_override = language_override
+        self.processing_context = resolve_processing_context(self.config, language_override)
 
         started = False
         try:
@@ -341,6 +345,7 @@ class LongFormController:
             self._abandon_claim()
             raise
 
+        context = self.processing_context or resolve_processing_context(self.config, self.language_override)
         result_kwargs = {}
         if self.result_generation is not None:
             result_kwargs['generation'] = self.result_generation()
@@ -359,7 +364,7 @@ class LongFormController:
                     self._submission_failed(audio_data, f"No speech recognized — {_KEPT}")
                     return
 
-                outcome = self.inject_text(text)
+                outcome = self.inject_text(text, context=context)
                 if outcome == InjectionOutcome.FAILED:
                     # inject_text has raised its own alert with the way to get
                     # the text back; submitting again also retries

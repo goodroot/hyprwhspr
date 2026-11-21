@@ -163,7 +163,7 @@ class DictationRecoveryTests(unittest.TestCase):
             self.assertEqual(injector.inject_text('raw'), InjectionOutcome.FAILED)
             self.assertTrue(injector.recover_last('copy_last')[0])
             self.assertFalse(injector.recover_last('paste_last')[0])
-            preprocess.assert_called_once_with('raw')
+            preprocess.assert_called_once_with('raw', context=None)
             hook.assert_called_once()
             copy.assert_called_once_with('Café 東京')
             paste.assert_has_calls([

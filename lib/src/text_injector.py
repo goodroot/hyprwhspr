@@ -33,19 +33,26 @@ except ImportError:
     from ydotoold_session import YdotooldSession
 
 try:
-    from .text_script import boundaried_pattern, ends_with_no_space_script
+    from .text_script import ends_with_no_space_script
 except ImportError:
-    from text_script import boundaried_pattern, ends_with_no_space_script
-
-try:
-    from .filler_filter import filter_filler_words
-except ImportError:
-    from filler_filter import filter_filler_words
+    from text_script import ends_with_no_space_script
 
 try:
     from . import keyboard_layout
 except ImportError:
     import keyboard_layout
+
+
+try:
+    from .text_processing import (
+        ProcessingContext, resolve_processing_context, preprocess_text,
+        _config_setting, phrase_word as _phrase_word, line_break_length,
+    )
+except ImportError:
+    from text_processing import (
+        ProcessingContext, resolve_processing_context, preprocess_text,
+        _config_setting, phrase_word as _phrase_word, line_break_length,
+    )
 
 
 class _LazyPyperclip:
@@ -98,158 +105,6 @@ class ClipboardData(bytes):
 
 POST_TRANSCRIPTION_HOOK_CONSUMED_EXIT_CODE = 77
 
-_SPOKEN_REPLACEMENTS = (
-    ('period', '.'), ('comma', ','), ('question mark', '?'),
-    ('exclamation mark', '!'), ('colon', ':'), ('semicolon', ';'),
-    ('tab', '\t'), ('dash', '-'), ('underscore', '_'),
-    ('open paren', '('), ('close paren', ')'), ('open bracket', '['),
-    ('close bracket', ']'), ('open brace', '{'), ('close brace', '}'),
-    ('at symbol', '@'), ('hash', '#'), ('dollar sign', '$'),
-    ('percent', '%'), ('caret', '^'), ('ampersand', '&'),
-    ('asterisk', '*'), ('plus', '+'), ('equals', '='),
-    ('less than', '<'), ('greater than', '>'), ('slash', '/'),
-    ('backslash', '\\'), ('pipe', '|'), ('tilde', '~'), ('grave', '`'),
-    ('quote', '"'), ('apostrophe', "'"),
-)
-
-
-_FRENCH_SPOKEN_REPLACEMENTS = (
-    (r"point d['’]interrogation", "?"),
-    (r"point d['’]exclamation", "!"),
-    (r"point[- ]virgule", ";"),
-    (r"points? de suspension", "…"),
-    (r"(?:deux|2) points?(?![ \t]+(?:à|qui|communs|importants|clés|principaux)\b)", ":"),
-    (r"point(?![ \t]+(?:de\b|d['’]|par\b|commun\b))", "."),
-    (r"virgule", ","),
-    (r"tir(?:et|er|é)(?: du (?:6|six))? espace", "- "),
-    (r"crochet ouvrant|ouvrir le crochet", "["),
-    (r"crochet fermant|fermer le crochet", "]"),
-    (r"parenthèse ouvrante|ouvrir la parenthèse", "("),
-    (r"parenthèse fermante|fermer la parenthèse", ")"),
-    (r"arr?obase", "@"),
-    (r"barre verticale|pipe", "|"),
-)
-_FRENCH_NOUN_PREFIX = re.compile(
-    r"\b(?:un|une|le|la|les|ce|ces|chaque|du|des|de|au|aux|mon|ton|son|notre|"
-    r"votre|leur|quel|par|\d+)[ \t]+$",
-    re.IGNORECASE,
-)
-
-
-def _config_setting(config_manager, name, default=None):
-    if config_manager is None:
-        return default
-    return config_manager.get_setting(name, default)
-
-
-def _apply_configured_word_overrides(text, config_manager):
-    if config_manager is None:
-        return text
-    for original, replacement in (config_manager.get_word_overrides() or {}).items():
-        if original:
-            # A single character is a spelling fix ("ß" -> "ss"), so it applies inside words.
-            pattern = re.escape(original) if len(original) == 1 else boundaried_pattern(original)
-            # Overrides are literal text, including backslashes and regex-like snippets.
-            text = re.sub(
-                pattern, lambda _match: replacement, text, flags=re.IGNORECASE
-            )
-    return re.sub(r' +', ' ', text).strip()
-
-
-def _filter_configured_filler_words(text, config_manager):
-    if config_manager is None or not config_manager.get_filter_filler_words():
-        return text
-    return filter_filler_words(text, config_manager.get_filler_words())
-
-
-def preprocess_text(text: str, config_manager=None) -> str:
-    """Apply dictation corrections without injection or external hooks."""
-    processed = text.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
-    processed = _apply_configured_word_overrides(processed, config_manager)
-    processed = _filter_configured_filler_words(processed, config_manager)
-
-    if not _config_setting(config_manager, 'symbol_replacements', True):
-        return re.sub(r'[ \t]+', ' ', processed).strip()
-
-    french = (
-        _config_setting(config_manager, 'language') == 'fr'
-        and _config_setting(config_manager, 'task', 'transcribe') != 'translate'
-    )
-    if french:
-        line_break = (
-            r'(?:retour[ \t]+)?[àa][ \t]+la[ \t]+ligne\b'
-            r'(?![ \t]+(?:\d|suivante\b|précédente\b))'
-        )
-        replacements = _FRENCH_SPOKEN_REPLACEMENTS
-    else:
-        line_break = r'new[ \t]+line\b'
-        replacements = ((re.escape(command), symbol) for command, symbol in _SPOKEN_REPLACEMENTS)
-
-    # Recognizers commonly punctuate the spoken command itself.
-    processed = re.sub(
-        rf'\b(?:{line_break})(?:[ \t]*[.!?]+)?', '\n', processed,
-        flags=re.IGNORECASE,
-    )
-
-    # Mark commands before spacing them. Identical literal punctuation touching
-    # a command is another rendering of the same requested symbol.
-    markers = {}
-    for index, (command, symbol) in enumerate(replacements):
-        marker = f'\ue000{index}\ue001'
-        markers[marker] = symbol
-        escaped_symbol = re.escape(symbol)
-        command_pattern = rf'(?:{command})'
-        single_symbol = rf'{escaped_symbol}(?!{escaped_symbol})'
-        pattern = (
-            rf'(?:{escaped_symbol}+[ \t]+\b{command_pattern}\b{single_symbol}'
-            rf'|{escaped_symbol}+\b{command_pattern}\b'
-            rf'|\b{command_pattern}\b{single_symbol}'
-            rf'|\b{command_pattern}\b)'
-        )
-        if french and symbol in ('.', ',', ':'):
-            def replace_command(match):
-                if _FRENCH_NOUN_PREFIX.search(processed[:match.start()]):
-                    return match[0]
-                return marker
-
-            processed = re.sub(pattern, replace_command, processed, flags=re.IGNORECASE)
-        else:
-            processed = re.sub(pattern, marker, processed, flags=re.IGNORECASE)
-
-    # Only command markers receive punctuation spacing; unrelated raw
-    # punctuation, including ellipses and repeated emphasis, stays untouched.
-    for marker, symbol in markers.items():
-        if symbol == '- ':
-            # Keep deliberate spacing on a Markdown list marker through strip().
-            processed = re.sub(rf'{re.escape(marker)}(?:[ \t]*[.,:;?!…]+)?[ \t]*', marker, processed)
-        elif symbol in '.,?!:;…':
-            if french and symbol in '?!:;':
-                symbol = ' ' + symbol
-            processed = re.sub(rf'[ \t]*{re.escape(marker)}[ \t]*', marker, processed)
-            # Add separation only before following prose. A different raw
-            # punctuation mark is preserved directly beside the spoken one.
-            processed = re.sub(
-                rf'{re.escape(marker)}(?=[^\s\ue000)\]}}>,.?!:;。，、！？：；])',
-                symbol + ' ', processed,
-            )
-            processed = processed.replace(marker, symbol)
-        elif symbol in '([{':
-            processed = re.sub(rf'{re.escape(marker)}[ \t]*', marker, processed)
-            processed = processed.replace(marker, symbol)
-        elif symbol in ')]}':
-            processed = re.sub(rf'[ \t]*{re.escape(marker)}', marker, processed)
-            processed = processed.replace(marker, symbol)
-        else:
-            processed = processed.replace(marker, symbol)
-
-    processed = re.sub(r'[ \t]+', ' ', processed)
-    processed = re.sub(r' *\n *', '\n', processed)
-    processed = processed.strip()
-    for marker, symbol in markers.items():
-        if symbol == '- ':
-            processed = processed.replace(marker, symbol)
-    return processed
-
 
 class _PostTranscriptionHookOutcome(Enum):
     PRESERVE = "preserve"
@@ -285,13 +140,9 @@ _CLIPBOARD_UNSAVED = object()
 
 # A chunk starting with one of these attaches to the previous chunk: spoken
 # "comma" renders as ",", which must not follow a separating space.
-_NO_SPACE_BEFORE = set(',.?!:;)]}\n')
+_NO_SPACE_BEFORE = set(',.?!:;…)]}\n')
 # ...and nothing follows these with a space.
-_NO_SPACE_AFTER = set('([{\n\t')
-
-
-def _phrase_word(word: str) -> str:
-    return re.sub(r'[^\w]', '', word.lower())
+_NO_SPACE_AFTER = set('([{ \n\t')
 
 
 @dataclass
@@ -302,6 +153,7 @@ class _StreamSession:
     Enter, retaining text for recovery - happens once per session, not once
     per chunk. Ported from Jacob Banghart's incremental injection (#261).
     """
+    context: ProcessingContext = field(default_factory=ProcessingContext)
     saved_clipboard: Any = _CLIPBOARD_UNSAVED
     last_pasted: Optional[str] = None
     last_char: str = ''
@@ -1698,7 +1550,7 @@ except Exception:
         with self._stream_lock:
             return self._stream is not None
 
-    def begin_stream(self) -> _StreamSession:
+    def begin_stream(self, *, context=None) -> _StreamSession:
         """Reserve delivery before launching a live-typing worker."""
         if not self._delivery_lock.acquire(blocking=False):
             raise RuntimeError('Text delivery is busy')
@@ -1706,7 +1558,8 @@ except Exception:
             with self._stream_lock:
                 if self._stream is not None:
                     raise RuntimeError('Text delivery is busy')
-                self._stream = _StreamSession()
+                self._stream = _StreamSession(
+                    context=context or resolve_processing_context(self.config_manager))
                 return self._stream
         finally:
             self._delivery_lock.release()
@@ -1717,14 +1570,14 @@ except Exception:
             if self._stream is session:
                 self._stream = None
 
-    def inject_text(self, text: str) -> InjectionOutcome:
+    def inject_text(self, text: str, *, context=None) -> InjectionOutcome:
         """Prepare, retain and deliver one dictation at a time."""
         if self.stream_busy():
             return InjectionOutcome.FAILED
         with self._delivery_lock:
             if self.stream_busy():
                 return InjectionOutcome.FAILED
-            return self._prepare_and_inject_text(text)
+            return self._prepare_and_inject_text(text, context=context)
 
     def inject_stream_chunk(self, session: _StreamSession, text: str, final: bool = False) -> InjectionOutcome:
         """Deliver one chunk of a dictation typed while recording.
@@ -1744,7 +1597,7 @@ except Exception:
             if session is not self._stream or session.cancelled.is_set():
                 return InjectionOutcome.FAILED
             words = session.held + text.split()
-            hold = self._stream_holdback(words, final)
+            hold = self._stream_holdback(words, final, context=session.context)
             deliver, session.held = words[:len(words) - hold], words[len(words) - hold:]
             if not deliver:
                 return InjectionOutcome.INJECTED
@@ -1767,7 +1620,7 @@ except Exception:
             try:
                 if session.recovery_text is not None and session.recovery_allowed:
                     with self._last_text_lock:
-                        self._last_text = self._preprocess_text(session.recovery_text)
+                        self._last_text = self._preprocess_text(session.recovery_text, context=session.context)
             finally:
                 self.release_stream(session)
 
@@ -1785,7 +1638,7 @@ except Exception:
                 else:
                     # Never typed, but spoken: recovery must still have it.
                     session.raw_parts.append(' '.join(session.held))
-            full_text = self._preprocess_text(' '.join(session.raw_parts))
+            full_text = self._preprocess_text(' '.join(session.raw_parts), context=session.context)
             if not session.injected_any:
                 if session.failed and session.recovery_allowed:
                     with self._last_text_lock:
@@ -1843,11 +1696,12 @@ except Exception:
         # Preprocessing strips a chunk's edges, which would drop the newline
         # of a "new line" that starts it, so render leading ones here.
         newlines = 0
+        profile = session.context.profile
         if _config_setting(self.config_manager, 'symbol_replacements', True):
-            while [_phrase_word(w) for w in words[:2]] == ['new', 'line']:
-                words = words[2:]
+            while (length := line_break_length(words, profile)):
+                words = words[length:]
                 newlines += 1
-        processed = self._preprocess_text(' '.join(words))
+        processed = self._preprocess_text(' '.join(words), context=session.context)
         if not processed:
             # Includes a "new line" with nothing after it: like the trailing
             # newline inject_text trims, it would only act as Enter.
@@ -1856,7 +1710,8 @@ except Exception:
         if (
             session.injected_any
             and session.last_char not in _NO_SPACE_AFTER
-            and processed[0] not in _NO_SPACE_BEFORE
+            and (processed[0] not in _NO_SPACE_BEFORE
+                 or (profile is not None and processed[0] in profile.space_before))
             and not ends_with_no_space_script(session.last_char)
         ):
             processed = ' ' + processed
@@ -1867,7 +1722,7 @@ except Exception:
         session.failed = True
         return InjectionOutcome.FAILED
 
-    def _stream_holdback(self, words: List[str], final: bool = False) -> int:
+    def _stream_holdback(self, words: List[str], final: bool = False, *, context=None) -> int:
         """How many trailing words to hold for the next chunk.
 
         A trailing "new line" is always held, to start the next chunk; if
@@ -1877,30 +1732,46 @@ except Exception:
         """
         symbols = _config_setting(self.config_manager, 'symbol_replacements', True)
         tail = [_phrase_word(w) for w in words]
+        profile = (context or resolve_processing_context(self.config_manager)).profile
+        commands = profile.phrases if symbols and profile is not None else ()
+        command_tokens = [tuple(_phrase_word(w) for w in phrase.split()) for phrase in commands]
+        complete = max((len(tokens) for tokens in command_tokens
+                        if tuple(tail[-len(tokens):]) == tokens), default=0)
         phrases = []
-        if symbols:
-            phrases.append(('new', 'line'))
-            phrases.extend(tuple(command.split()) for command, _ in _SPOKEN_REPLACEMENTS)
         config = self.config_manager
         if config is not None:
             phrases.extend(config.get_word_overrides() or {})
             if config.get_filter_filler_words():
                 phrases.extend(config.get_filler_words() or [])
         longest = 0
-        for phrase in (() if final else phrases):
-            if isinstance(phrase, str):
-                phrase = tuple(_phrase_word(w) for w in phrase.split())
-            for k in range(min(len(phrase) - 1, len(tail)), longest, -1):
-                if tuple(tail[-k:]) == phrase[:k]:
-                    longest = k
-                    break
+        if not final:
+            for tokens in command_tokens:
+                # The final "point" in "insérer un point" belongs to the
+                # complete command, not to a new "point virgule" prefix.
+                for k in range(min(len(tokens) - 1, len(tail)), max(longest, complete - 1), -1):
+                    if tuple(tail[-k:]) == tokens[:k]:
+                        longest = k
+                        break
+            for phrase in phrases:
+                tokens = tuple(_phrase_word(w) for w in phrase.split())
+                for k in range(min(len(tokens) - 1, len(tail)), 0, -1):
+                    if tuple(tail[-k:]) == tokens[:k]:
+                        # Overrides/fillers run first. Retain the entire
+                        # overlapping command until their match is known.
+                        longest = max(longest, k, complete)
+                        break
         # Keep the whole trailing run, including before an unfinished phrase:
         # preprocessing strips every newline left at the end of a chunk.
-        if symbols:
+        if symbols and profile is not None:
             end = len(tail) - longest
-            while end >= 2 and tail[end - 2:end] == ['new', 'line']:
-                longest += 2
-                end -= 2
+            while end:
+                length = next((len(phrase.split()) for phrase in profile.line_breaks
+                               if end >= len(phrase.split()) and
+                               line_break_length(words[end - len(phrase.split()):end], profile)), 0)
+                if not length:
+                    break
+                longest += length
+                end -= length
         return longest
 
     def recover_last(self, action):
@@ -1930,7 +1801,7 @@ except Exception:
         finally:
             self._delivery_lock.release()
 
-    def _prepare_and_inject_text(self, text: str) -> InjectionOutcome:
+    def _prepare_and_inject_text(self, text: str, *, context=None) -> InjectionOutcome:
         """
         Inject text into the currently focused application
 
@@ -1946,7 +1817,7 @@ except Exception:
             return InjectionOutcome.SKIPPED
 
         # Preprocess; also trim trailing newlines (avoid unwanted Enter)
-        processed_text = self._preprocess_text(text).rstrip("\r\n")
+        processed_text = self._preprocess_text(text, context=context).rstrip("\r\n")
         # Filtering can empty a transcript outright -- an utterance that was
         # nothing but filler words. Pasting the trailing space alone is worse
         # than pasting nothing.
@@ -2001,11 +1872,11 @@ except Exception:
             return setting
         return not ends_with_no_space_script(text)
 
-    def _preprocess_text(self, text: str) -> str:
+    def _preprocess_text(self, text: str, *, context=None) -> str:
         """
         Preprocess text to handle common speech-to-text corrections and remove unwanted line breaks
         """
-        return preprocess_text(text, self.config_manager)
+        return preprocess_text(text, self.config_manager, context=context)
 
     def _run_post_transcription_hook(self, text: str) -> _PostTranscriptionHookResult:
         """Run the user's post_transcription_hook shell command.

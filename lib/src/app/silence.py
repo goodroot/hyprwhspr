@@ -217,6 +217,7 @@ class SilenceMixin:
                 if not self.is_recording or self._recording_session is not session:
                     return False
                 language_override = self._current_language_override
+                context = self._get_processing_context()
                 audio_data = self.audio_capture.flush_buffer()
             if audio_data is None or len(audio_data) == 0:
                 return True
@@ -268,7 +269,7 @@ class SilenceMixin:
                     if self._continuous_cancelled or current_session is not session:
                         log("[CONTINUOUS] Cancelled — discarding transcription")
                         return
-                    outcome = self._inject_text(text)
+                    outcome = self._inject_text(text, context=context)
                     self._continuous_pasted = None if outcome == InjectionOutcome.FAILED else session
                     preview = f"{text[:80]}{'...' if len(text) > 80 else ''}"
                     if outcome == InjectionOutcome.INJECTED:

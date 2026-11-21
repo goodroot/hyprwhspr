@@ -8,6 +8,7 @@ import time
 from paths import DEBUG_RECORDINGS_DIR
 from text_injector import InjectionOutcome, OUTCOME_DETAIL
 from processing_trace import build_processing_trace
+from text_processing import resolve_processing_context
 from hallucination import is_hallucination
 from live_typing import LiveTypingSession
 from service_log import log
@@ -148,6 +149,7 @@ class RecordingMixin:
                 self._stall_notified = False  # an earlier stall's notice covers only its own restart
                 # Store language override for this recording session
                 self._current_language_override = language_override
+                self._current_processing_context = resolve_processing_context(self.config, language_override)
                 # Push-to-talk hold is measured from this accepted press
                 self._ptt_press_time = time.monotonic()
                 self._ptt_locked = False
@@ -468,7 +470,8 @@ class RecordingMixin:
         if self._live_typing_eligible():
             try:
                 self._live_typing = LiveTypingSession(
-                    self.text_injector, self.config.get_hallucination_markers())
+                    self.text_injector, self.config.get_hallucination_markers(),
+                    context=self._get_processing_context())
             except RuntimeError as e:
                 # The previous dictation is still pasting: this one records
                 # anyway and is delivered whole at stop.
@@ -776,6 +779,11 @@ class RecordingMixin:
             self._cancel_live_typing()
             self._recording_finalizing.clear()
 
+    def _get_processing_context(self):
+        return (getattr(self, '_current_processing_context', None)
+                or resolve_processing_context(
+                    self.config, getattr(self, '_current_language_override', None)))
+
     def _process_audio(self, audio_data, silent_tail=False):
         """Process captured audio through Whisper.
 
@@ -792,6 +800,8 @@ class RecordingMixin:
             self._show_result_and_hide(False)
             return
 
+        context = self._get_processing_context()
+        language_override = self._current_language_override
         generation = getattr(self, '_osd_generation', 0)
         success = False
         detail = None  # what happened, when it was not a plain paste or error
@@ -804,7 +814,7 @@ class RecordingMixin:
             transcription = self.whisper_manager.transcribe_audio(
                 audio_data,
                 sample_rate=self.audio_capture.sample_rate,
-                language_override=self._current_language_override,
+                language_override=language_override,
             )
 
             # Words already typed live: type the rest, no hallucination re-check
@@ -819,7 +829,7 @@ class RecordingMixin:
                 if is_hallucination(text, self.config.get_hallucination_markers()):
                     log(f"[INFO] Whisper hallucination detected: {text!r} - ignoring")
                     if self._recording_control_server.is_trace_capture():
-                        self._notify_capture(text, final=True)
+                        self._notify_capture(text, final=True, context=context)
                     if not silent_tail:
                         self.audio_manager.play_error_sound()
                     success = silent_tail
@@ -827,7 +837,7 @@ class RecordingMixin:
                     return  # the finally below shows the result, once
 
                 # Inject text
-                outcome = self._inject_text(text)
+                outcome = self._inject_text(text, context=context)
                 success = outcome != InjectionOutcome.FAILED
                 detail = OUTCOME_DETAIL.get(outcome)
             else:
@@ -862,11 +872,11 @@ class RecordingMixin:
             "hyprwhspr", "Text not delivered — run: hyprwhspr record paste-last or hyprwhspr record copy-last",
             urgency="critical", kind="action", slot="delivery", retained=True)
 
-    def _notify_capture(self, text="", final=True):
+    def _notify_capture(self, text="", final=True, *, context=None):
         """Complete a capture request, encoding trace requests as one JSON document."""
         if self._recording_control_server.is_trace_capture():
             text = json.dumps(
-                build_processing_trace(text, self.config),
+                build_processing_trace(text, self.config, context=context or self._get_processing_context()),
                 ensure_ascii=False,
                 separators=(',', ':'),
             ) + '\n'
@@ -877,16 +887,16 @@ class RecordingMixin:
         if self._recording_control_server.has_capture_subscriber():
             self._notify_capture("", final=True)
 
-    def _inject_text(self, text):
+    def _inject_text(self, text, *, context=None):
         """Inject transcribed text into active application"""
 
         # Capture mode: route text to client instead of injecting into active app
         if self._recording_control_server.has_capture_subscriber():
-            self._notify_capture(text, final=True)
+            self._notify_capture(text, final=True, context=context)
             return InjectionOutcome.CAPTURED
 
         try:
-            outcome = self.text_injector.inject_text(text)
+            outcome = self.text_injector.inject_text(text, context=context)
             if outcome == InjectionOutcome.FAILED:
                 log(f"[ERROR] Text injection failed ({len(text)} chars)")
                 notify = True

@@ -9,6 +9,7 @@ from paths import MODEL_UNLOADED_FILE
 from service_log import log
 from backend_utils import normalize_backend
 from text_injector import preprocess_text
+from text_processing import resolve_processing_context
 
 # Announce readiness when the load took long enough to be noticed, or when
 # someone was told to wait for it.
@@ -54,6 +55,7 @@ class ControlMixin:
             self._file_transcription_active = True
 
         try:
+            context = resolve_processing_context(self.config, language)
             # Load alongside the decode, but not for a path that cannot decode
             wake = False
             if os.path.isfile(path):
@@ -73,7 +75,7 @@ class ControlMixin:
             if not text:
                 return False, 'Transcription produced no text'
             if clean:
-                text = preprocess_text(text, self.config)
+                text = preprocess_text(text, self.config, context=context)
                 if not text.strip():
                     return False, 'Transcription produced no text after cleanup'
             return True, text

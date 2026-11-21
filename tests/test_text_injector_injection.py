@@ -1904,10 +1904,10 @@ class SpokenPunctuationPreprocessingTests(unittest.TestCase):
     def test_french_punctuation_and_formatting(self):
         config = ConfigStub({"language": "fr"})
         cases = {
-            "Pistes deux points à la ligne tiret espace vérifier.": "Pistes :\n- vérifier.",
+            "Pistes insérer deux points retour à la ligne tiret espace vérifier.": "Pistes :\n- vérifier.",
             "Retour à la ligne. Titre": "Titre",
-            "Un document virgule une photo point": "Un document, une photo.",
-            "Prêt. Point.": "Prêt.",
+            "Un document insérer une virgule une photo insérer un point": "Un document, une photo.",
+            "Prêt. Insérer un point.": "Prêt.",
             "On confirme point d’interrogation": "On confirme ?",
             "On confirme point d'exclamation": "On confirme !",
             "Attends points de suspension": "Attends…",
@@ -1916,8 +1916,8 @@ class SpokenPunctuationPreprocessingTests(unittest.TestCase):
             "Ouvrir la parenthèse source fermer la parenthèse": "(source)",
             "Tiret espace.": "- ",
             "Tiré du six espace lire la source": "- lire la source",
-            "ls barre verticale grep test": "ls | grep test",
-            "arobase Oz": "@ Oz",
+            "ls insérer une barre verticale grep test": "ls | grep test",
+            "insérer une arobase Oz": "@ Oz",
         }
         for raw, expected in cases.items():
             with self.subTest(raw=raw):

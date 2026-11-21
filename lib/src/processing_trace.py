@@ -6,12 +6,12 @@ try:
     from .backend_utils import normalize_backend
     from .openai_realtime_models import uses_manual_commit
     from .realtime_protocols import resolve_protocol
-    from .text_injector import preprocess_text
+    from .text_processing import preprocess_text, resolve_processing_context
 except ImportError:
     from backend_utils import normalize_backend
     from openai_realtime_models import uses_manual_commit
     from realtime_protocols import resolve_protocol
-    from text_injector import preprocess_text
+    from text_processing import preprocess_text, resolve_processing_context
 
 
 def _setting(config, name, default=None):
@@ -93,12 +93,16 @@ def classify_boundary_mode(config):
     return 'manual_stop'
 
 
-def build_processing_trace(raw, config):
+def build_processing_trace(raw, config, *, context=None):
     """Return JSON-serializable processing output and active daemon settings."""
     backend = normalize_backend(_setting(config, 'transcription_backend', 'pywhispercpp'))
+    context = context or resolve_processing_context(config)
+    profile = context.profile if _setting(config, 'symbol_replacements', True) else None
     trace = {
         'raw': raw,
-        'preprocessed': preprocess_text(raw, config),
+        'preprocessed': preprocess_text(raw, config, context=context),
+        'output_language': context.output_language,
+        'spoken_command_language': profile.language if profile else None,
         'backend': backend,
         'model': _backend_model(config, backend),
         'recording_mode': _setting(config, 'recording_mode', 'toggle'),

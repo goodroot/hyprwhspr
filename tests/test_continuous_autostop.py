@@ -64,7 +64,7 @@ class ContinuousAutostopTests(unittest.TestCase):
         app.audio_capture = mock.Mock()
         app.audio_capture.sample_rate = 10
         app.audio_capture.flush_buffer.return_value = audio
-        app.config = types.SimpleNamespace(get_hallucination_markers=lambda: [])
+        app.config = types.SimpleNamespace(get_setting=lambda key, default=None: default, get_hallucination_markers=lambda: [])
         app.whisper_manager = mock.Mock()
         app._is_zero_volume = mock.Mock(return_value=False)
         app._save_debug_recording = mock.Mock()
@@ -125,7 +125,7 @@ class ContinuousAutostopTests(unittest.TestCase):
 
     def _process_app(self, transcript, markers=None):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
-        app.config = types.SimpleNamespace(get_hallucination_markers=lambda: markers)
+        app.config = types.SimpleNamespace(get_setting=lambda key, default=None: default, get_hallucination_markers=lambda: markers)
         app._cancel_pending_hide_lock = threading.Lock()
         app._live_typing = None
         app._recording_lock = threading.Lock()
@@ -194,6 +194,33 @@ class ContinuousAutostopTests(unittest.TestCase):
                 app._process_audio.assert_called_once_with(audio, silent_tail=marked)
                 self.assertFalse(app._recording_finalizing.is_set())
 
+    def test_batch_and_continuous_keep_request_language_until_delivery(self):
+        for continuous in (False, True):
+            for default, override in (('en', 'fr'), ('fr', 'en')):
+                with self.subTest(continuous=continuous, default=default, override=override):
+                    app = (self._flush_app(np.ones(10, dtype=np.float32)) if continuous
+                           else self._process_app('words'))
+                    app.config.get_setting = lambda key, fallback=None: default if key == 'language' else fallback
+                    app._current_language_override = override
+                    app._current_processing_context = app._get_processing_context()
+                    captured = app._current_processing_context
+
+                    def transcribe(*args, **kwargs):
+                        self.assertEqual(kwargs['language_override'], override)
+                        # Cleanup or a changed configuration cannot relabel this result.
+                        app._current_language_override = None
+                        app._current_processing_context = None
+                        return 'words'
+
+                    app.whisper_manager.transcribe_audio.side_effect = transcribe
+                    if continuous:
+                        self.assertTrue(app._continuous_flush_audio(app._recording_session))
+                        self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
+                    else:
+                        app._process_audio([0.1])
+                    app._inject_text.assert_called_once_with('words', context=captured)
+                    self.assertEqual(captured.output_language, override)
+
     def test_silent_tail_needs_a_chunk_that_was_delivered(self):
         failed = app_global(self.main.hyprwhsprApp, 'InjectionOutcome').FAILED
         for transcript, outcome, delivered in (("words", None, True), ("words", failed, False), ("", None, False)):
@@ -217,7 +244,7 @@ class ContinuousAutostopTests(unittest.TestCase):
                                       (RuntimeError("boom"), None, False)):
             with self.subTest(result=result, outcome=outcome):
                 app = self._flush_app(np.ones(10, dtype=np.float32))
-                app.config = types.SimpleNamespace(get_hallucination_markers=lambda: ["Thank you."])
+                app.config = types.SimpleNamespace(get_setting=lambda key, default=None: default, get_hallucination_markers=lambda: ["Thank you."])
                 session = app._recording_session
                 app._continuous_pasted = session                 # chunk 1 was pasted
                 app.whisper_manager.transcribe_audio.side_effect = (
@@ -319,7 +346,7 @@ class ContinuousAutostopTests(unittest.TestCase):
                         self.assertIs(app._continuous_pasted, delivery)
                     elif ready:
                         app._keep_unsent_audio.assert_not_called()
-                        app._inject_text.assert_called_once_with('words')
+                        app._inject_text.assert_called_once_with('words', context=mock.ANY)
                     else:
                         app._keep_unsent_audio.assert_called_once_with(audio)
                         app.whisper_manager.transcribe_audio.assert_not_called()
@@ -328,7 +355,7 @@ class ContinuousAutostopTests(unittest.TestCase):
         app = self._process_app("late words")
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
             app._process_audio([0.0], silent_tail=True)
-        app._inject_text.assert_called_once_with("late words")
+        app._inject_text.assert_called_once_with("late words", context=mock.ANY)
 
     def test_busy_flush_keeps_the_chunk_pending_for_a_later_pause(self):
         app = self._app([1.0, 0.0], silence_timeout=0, chunk_seconds=0.002)
