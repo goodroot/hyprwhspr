@@ -67,20 +67,24 @@ class CommandProfile:
         return self.line_breaks + tuple(command for command, _ in self.replacements)
 
 
+def _prefixed(prefix, commands):
+    return tuple((f'{prefix} {command}', symbol) for command, symbol in commands)
+
+
+# Words French uses every day ("point", "virgule", "deux points") convert only
+# after "insérer"; names nobody says in prose stand alone.
 _FRENCH_REPLACEMENTS = (
-    ("point d'interrogation", '?'), ("point d’interrogation", '?'),
-    ("point d'exclamation", '!'), ("point d’exclamation", '!'),
+    ("point d'interrogation", '?'), ("point d'exclamation", '!'),
     ('point-virgule', ';'), ('point virgule', ';'),
     ('point de suspension', '…'), ('points de suspension', '…'),
-    ('insérer deux points', ':'), ('insérer 2 points', ':'),
-    ('insérer un point', '.'), ('insérer une virgule', ','),
     ('crochet ouvrant', '['), ('ouvrir le crochet', '['),
     ('crochet fermant', ']'), ('fermer le crochet', ']'),
     ('parenthèse ouvrante', '('), ('ouvrir la parenthèse', '('),
     ('parenthèse fermante', ')'), ('fermer la parenthèse', ')'),
-    ('insérer une arobase', '@'), ('insérer une arrobase', '@'),
-    ('insérer une barre verticale', '|'),
-) + tuple(
+) + _prefixed('insérer', (
+    ('un point', '.'), ('une virgule', ','),
+    ('deux points', ':'), ('2 points', ':'),
+)) + tuple(
     (f'{word}{number} espace', '- ')
     for word in ('tiret', 'tirer', 'tiré')
     for number in ('', ' du 6', ' du six')
@@ -117,7 +121,9 @@ def resolve_processing_context(config=None, language_override=None):
 
 
 def command_pattern(command):
-    return r'[ \t]+'.join(re.escape(word) for word in command.split())
+    # Recognizers write either apostrophe: "d'exclamation" or "d’exclamation".
+    return r'[ \t]+'.join(
+        re.escape(word).replace("'", "['’]") for word in command.split())
 
 
 def phrase_word(word):

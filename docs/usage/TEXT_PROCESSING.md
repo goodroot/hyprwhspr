@@ -74,19 +74,19 @@ Automatically converts spoken words to symbols and punctuation:
 
 ```jsonc
 {
-    "symbol_replacements": true  // default: true (set false to disable speech-to-symbol replacements)
+    "symbol_replacements": true  // default; false keeps spoken words as text
 }
 ```
 
 ### Command language
 
-English (`en`) and French (`fr`) have built-in commands:
+English and French have built-in commands. `language` picks which set runs:
 
-- A [secondary shortcut](HOTKEYS.md#secondary-shortcut-with-language) or `--lang` takes precedence over `language`
-- Region codes follow their base language: `fr-FR` uses French commands
-- With `language: null`, uses English commands even when recognition detects another language
-- Other explicit languages skip built-in commands; [word overrides](#word-overrides) and [filler filtering](#filler-word-filtering) still apply
-- [Translation](../backends/LANGUAGE.md#translation) with pywhispercpp or faster-whisper uses English commands. `task: "translate"` does not change command selection on other backends
+- A [secondary shortcut](HOTKEYS.md#secondary-shortcut-with-language) or `--lang` overrides it
+- Region codes follow their base language: `fr-FR` uses French
+- `language: null` uses English, even when another language is detected
+- Other languages skip built-in commands. [Word overrides](#word-overrides) and [filler filtering](#filler-word-filtering) still apply
+- [Translation](../backends/LANGUAGE.md#translation) with pywhispercpp or faster-whisper uses English
 
 These rules also apply to [file transcription with `--clean`](CLI.md#file-transcription).
 
@@ -126,39 +126,48 @@ These rules also apply to [file transcription with `--clean`](CLI.md#file-transc
 
 ### French commands
 
-| Spoken command | Result |
-| --- | --- |
-| « insérer un point », « insérer une virgule », « insérer deux points » | `.`, `,`, `:` |
-| « point-virgule » or « point virgule » | `;` |
-| « point d’interrogation », « point d’exclamation », « points de suspension » | `?`, `!`, `…` |
-| « retour à la ligne » | Line break within a dictation |
-| « tiret espace » | Markdown list marker with a following space |
-| « crochet ouvrant », « crochet fermant » | `[`, `]` |
-| « ouvrir la parenthèse », « fermer la parenthèse » | `(`, `)` |
-| « insérer une arobase », « insérer une barre verticale » | `@`, `\|` |
+Everyday words need « insérer » first. Names of punctuation stand alone.
 
-Commands ignore case and accept straight or curly apostrophes. Aliases include
-« insérer 2 points », « point de suspension », « retour a la ligne »,
-« ouvrir le crochet » / « fermer le crochet »,
-« parenthèse ouvrante » / « parenthèse fermante », and « insérer une arrobase ».
-The list marker also accepts « tirer » or « tiré » instead of « tiret », with an
-optional « du six » or « du 6 » before « espace ».
+**Punctuation:**
 
-For example, « Pistes insérer deux points retour à la ligne tiret espace vérifier la source » yields:
+- « insérer un point » → "."
+- « insérer une virgule » → ","
+- « insérer deux points » → ":"
+- « point-virgule » → ";"
+- « point d'interrogation » → "?"
+- « point d'exclamation » → "!"
+- « points de suspension » → "…"
+
+**Brackets:**
+
+- « ouvrir la parenthèse » or « parenthèse ouvrante » → "("
+- « fermer la parenthèse » or « parenthèse fermante » → ")"
+- « crochet ouvrant » or « ouvrir le crochet » → "["
+- « crochet fermant » or « fermer le crochet » → "]"
+
+**Special commands:**
+
+- « retour à la ligne » → new line
+- « tiret espace » or « tiret du six espace » → "- " list marker
+
+Case and apostrophe style don't matter. A space goes before "?", "!", ":" and ";".
+
+« Pistes insérer deux points retour à la ligne tiret espace vérifier la source » yields:
 
 ```markdown
 Pistes :
 - vérifier la source
 ```
 
-French commands insert a normal space before `?`, `!`, `:` and `;`.
+Bare « point », « virgule », « deux points », « à la ligne » and « plus » stay words. « Il marque deux points » is preserved.
 
-Bare « point », « virgule », « deux points », « à la ligne », « arobase »,
-« barre verticale » and « plus » stay words. « Il marque deux points » and
-« Je suis à la ligne de départ » are preserved.
+Quoting a command still converts it. Set `symbol_replacements: false` for literal dictation.
 
-Quoting a command still converts it. Set `symbol_replacements: false` for literal
-dictation. Use [word overrides](#word-overrides) for personal shortcuts.
+Add your own commands with [word overrides](#word-overrides). They replace prose too:
+
+```jsonc
+{ "word_overrides": { "arobase": "@", "barre verticale": "|" } }
+```
 
 ## Trailing space
 

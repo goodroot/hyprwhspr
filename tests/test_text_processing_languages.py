@@ -81,7 +81,8 @@ class ProcessingLanguageTests(unittest.TestCase):
         for raw in ('Il marque deux points.', 'Je suis à la ligne de départ.',
                     'un point de départ', 'plus de temps', 'une virgule',
                     'une arobase', 'la barre verticale', 'retour à la lignée',
-                    'insérer un pointage', 'les deux points sont importants'):
+                    'insérer un pointage', 'les deux points sont importants',
+                    'insérer une arobase', 'insérer une barre verticale'):
             with self.subTest(raw=raw):
                 self.assertEqual(preprocess_text(raw, config), raw)
         self.assertEqual(preprocess_text('a new liner'), 'a new liner')
@@ -152,6 +153,24 @@ class FrenchStreamTests(unittest.TestCase):
                         pasted, retained = self._stream(chunks)
                         self.assertEqual(pasted, expected)
                         self.assertEqual(retained, expected)
+
+    def test_either_apostrophe_matches_in_batch_and_stream(self):
+        for raw, expected in (("prêt point d'interrogation", 'prêt ?'),
+                              ('prêt point d’interrogation', 'prêt ?'),
+                              ('oui point d’exclamation', 'oui !')):
+            with self.subTest(raw=raw):
+                self.assertEqual(preprocess_text(raw, context=ProcessingContext('fr')), expected)
+                words = raw.split()
+                pasted, _ = self._stream([' '.join(words[:2]), ' '.join(words[2:])])
+                self.assertEqual(pasted, expected)
+
+    def test_prefixed_commands_are_held_while_incomplete(self):
+        for chunks, expected in ((['titre insérer', 'deux points suite'], 'titre : suite'),
+                                 (['oui insérer une', 'virgule non'], 'oui, non'),
+                                 (['fin insérer', 'un', 'point'], 'fin.')):
+            with self.subTest(chunks=chunks):
+                pasted, _ = self._stream(chunks)
+                self.assertEqual(pasted, expected)
 
     def test_list_spacing_and_line_breaks(self):
         for setting in ('auto', False, True):

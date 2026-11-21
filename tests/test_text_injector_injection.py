@@ -1916,8 +1916,6 @@ class SpokenPunctuationPreprocessingTests(unittest.TestCase):
             "Ouvrir la parenthèse source fermer la parenthèse": "(source)",
             "Tiret espace.": "- ",
             "Tiré du six espace lire la source": "- lire la source",
-            "ls insérer une barre verticale grep test": "ls | grep test",
-            "insérer une arobase Oz": "@ Oz",
         }
         for raw, expected in cases.items():
             with self.subTest(raw=raw):
