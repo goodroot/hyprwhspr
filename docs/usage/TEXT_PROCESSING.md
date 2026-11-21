@@ -110,7 +110,26 @@ Automatically converts spoken words to symbols and punctuation:
 - "new line" → new line
 - "tab" → tab character
 
-The table is English-only. See [Non-Latin scripts](#non-latin-scripts).
+With `"language": "fr"`, the symbol pass uses French commands for transcription. English commands continue to apply when language is unset or the task is translation.
+
+| Spoken command | Result |
+| --- | --- |
+| « point », « virgule », « deux points », « point-virgule » | `.`, `,`, `:`, `;` |
+| « point d’interrogation », « point d’exclamation », « points de suspension » | `?`, `!`, `…` |
+| « à la ligne », « retour à la ligne » | Line break within a dictation |
+| « tiret espace » | Markdown list marker with a following space |
+| « crochet ouvrant », « crochet fermant » | `[`, `]` |
+| « ouvrir la parenthèse », « fermer la parenthèse » | `(`, `)` |
+| « arobase », « barre verticale » | `@`, `\|` |
+
+For example, « Pistes deux points à la ligne tiret espace vérifier la source » yields:
+
+```markdown
+Pistes :
+- vérifier la source
+```
+
+French « plus » stays a word. Common expressions such as « un point de départ » are preserved.
 
 ## Trailing space
 
@@ -133,7 +152,7 @@ Chinese, Japanese and Korean write without spaces between words:
 
 - Trailing spaces are handled by [`append_trailing_space`](#trailing-space); the default needs no configuration
 - Realtime and long-form segments are joined without a space after a CJK character, so sentences aren't broken up
-- The symbol replacements and [hallucination markers](#hallucination-markers) ship English entries only — add your own
+- Built-in spoken symbol commands cover English and French. [Hallucination markers](#hallucination-markers) ship English entries only — add your own
 - Spoken punctuation goes in `word_overrides`, which match anywhere in CJK text:
 
 ```jsonc
