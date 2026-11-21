@@ -78,6 +78,19 @@ Automatically converts spoken words to symbols and punctuation:
 }
 ```
 
+### Command language
+
+English (`en`) and French (`fr`) have built-in commands:
+
+- A [secondary shortcut](HOTKEYS.md#secondary-shortcut-with-language) or `--lang` takes precedence over `language`
+- With `language: null`, uses English commands even when recognition detects another language
+- Other explicit languages skip built-in commands; [word overrides](#word-overrides) and [filler filtering](#filler-word-filtering) still apply
+- [Translation](../backends/LANGUAGE.md#translation) with pywhispercpp or faster-whisper uses English commands. `task: "translate"` does not change command selection on other backends
+
+These rules also apply to [file transcription with `--clean`](CLI.md#file-transcription).
+
+### English commands
+
 **Punctuation:**
 
 - "period" → "."
@@ -110,23 +123,7 @@ Automatically converts spoken words to symbols and punctuation:
 - "new line" → new line
 - "tab" → tab character
 
-The command language follows the recording or file request's language: a secondary
-shortcut or explicit language override takes precedence over `language`. English
-(`en`) and French (`fr`) have built-in commands. Other explicit languages skip
-built-in commands; word overrides and filler filtering still run. An unset language
-keeps the English fallback: the recognizer's automatically detected language is
-not yet passed to text processing.
-
-With `task: "translate"`, pywhispercpp and faster-whisper use English commands for
-their English output. This setting does not change command selection for backends
-that do not implement that translation task.
-
-The same rules apply to ordinary, continuous, long-form, and realtime live dictation,
-and file transcription with cleanup enabled. Live typing holds unfinished command
-phrases until more words arrive. Processing traces report `output_language` and
-`spoken_command_language` alongside the cleaned text.
-
-**French commands:**
+### French commands
 
 | Spoken command | Result |
 | --- | --- |
@@ -153,16 +150,14 @@ Pistes :
 - vérifier la source
 ```
 
-French commands insert a normal space before `?`, `!`, `:` and `;`. The space in
-« tiret espace » is intentional: it survives even with `append_trailing_space: false`,
-and automatic trailing spacing does not add a second space.
+French commands insert a normal space before `?`, `!`, `:` and `;`.
 
 Bare « point », « virgule », « deux points », « à la ligne », « arobase »,
-« barre verticale » and « plus » remain prose. This preserves phrases such as
-« Il marque deux points » and « Je suis à la ligne de départ ». Explicit commands
-can still be converted when quoted or discussed as prose; turn off
-`symbol_replacements` when you need literal dictation. Use `word_overrides` for
-personal shortcuts, understanding that those also replace matching prose.
+« barre verticale » and « plus » stay words. « Il marque deux points » and
+« Je suis à la ligne de départ » are preserved.
+
+Quoting a command still converts it. Set `symbol_replacements: false` for literal
+dictation. Use [word overrides](#word-overrides) for personal shortcuts.
 
 ## Trailing space
 
@@ -178,6 +173,7 @@ Each transcription is followed by a space so the next word you type doesn't coll
 - Everything else gets one, Thai included — it has no spaces between words, but does use them between phrases
 - Set `true` or `false` to fix the answer regardless of content
 - The check runs after [`post_transcription_hook`](#post-transcription-hook), on the final text
+- The space requested by French [« tiret espace »](#french-commands) survives `false`; automatic spacing does not add a second one
 
 ## Non-Latin scripts
 
@@ -185,7 +181,7 @@ Chinese, Japanese and Korean write without spaces between words:
 
 - Trailing spaces are handled by [`append_trailing_space`](#trailing-space); the default needs no configuration
 - Realtime and long-form segments are joined without a space after a CJK character, so sentences aren't broken up
-- Built-in spoken symbol commands cover English and French. [Hallucination markers](#hallucination-markers) ship English entries only — add your own
+- [Hallucination markers](#hallucination-markers) ship English entries only — add your own
 - Spoken punctuation goes in `word_overrides`, which match anywhere in CJK text:
 
 ```jsonc

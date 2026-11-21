@@ -47,6 +47,9 @@ hyprwhspr record capture --trace-processing
 `preprocessed` text, backend/model, recording and silence settings, symbol/hook state, `vad_mode`, and `boundary_mode`.
 It does not run hooks, append space, save the transcript, or inject text.
 
+- `output_language`: the requested output language, or `null` when unset; English for supported translation tasks
+- `spoken_command_language`: the selected [command language](TEXT_PROCESSING.md#command-language), or `null` when replacements are disabled or the language has no built-in commands
+
 `vad_mode`: `none`; `silero_filter` (pre-inference filtering); `silero_segmented` (ONNX segmentation after the reported
 duration gate); `server_vad`; `manual_commit`; or `provider_managed`. `boundary_mode` is `manual_stop`,
 `silence_auto_stop`, or `continuous_silence`. Continuous silence flushing and realtime server VAD can turn pauses into
