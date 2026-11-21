@@ -56,6 +56,26 @@ class ProcessingLanguageTests(unittest.TestCase):
                     self.assertEqual(trace['spoken_command_language'],
                                      ('en' if english else 'fr') if enabled and language in (None, '', 'en', 'fr') else None)
 
+    def test_region_codes_use_base_language_commands(self):
+        for language, raw, expected in (
+            ('fr-FR', 'prêt point d’interrogation', 'prêt ?'),
+            ('fr_CA', 'prêt point d’interrogation', 'prêt ?'),
+            ('en-US', 'ready question mark', 'ready?'),
+            ('de-DE', 'one plus two', 'one plus two'),
+        ):
+            with self.subTest(language=language):
+                config = ConfigStub({'language': language})
+                self.assertEqual(preprocess_text(raw, config), expected)
+
+    def test_english_command_absorbs_recognizer_punctuation_before_it(self):
+        for raw, expected in (
+            ('Really? question mark', 'Really?'),
+            ("That's it. period", "That's it."),
+            ('a - dash b', 'a - - b'),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(preprocess_text(raw), expected)
+
     def test_french_prose_and_command_word_boundaries(self):
         config = ConfigStub({'language': 'fr'})
         for raw in ('Il marque deux points.', 'Je suis à la ligne de départ.',
@@ -78,6 +98,10 @@ class ProcessingLanguageTests(unittest.TestCase):
             ('Un point d\'interrogation', 'Un ?'),
             ('TIRET DU SIX ESPACE.', '- '),
             ('attends... vraiment!!!', 'attends... vraiment!!!'),
+            ('ATTENDS POINTS DE SUSPENSION.', 'ATTENDS…'),
+            ('Attends... points de suspension ensuite', 'Attends… ensuite'),
+            ('Prêt. insérer un point', 'Prêt.'),
+            ('Ok ? point d’interrogation', 'Ok ?'),
         ):
             with self.subTest(raw=raw):
                 self.assertEqual(preprocess_text(raw, config), expected)

@@ -100,7 +100,9 @@ class ProcessingContext:
 
     @property
     def profile(self):
-        return _PROFILES.get(self.output_language or 'en')
+        # Commands follow the base language: "fr-FR" and "fr_CA" speak French.
+        language = re.split(r'[-_]', self.output_language or 'en', maxsplit=1)[0]
+        return _PROFILES.get(language)
 
 
 def resolve_processing_context(config=None, language_override=None):
@@ -160,11 +162,17 @@ def preprocess_text(text: str, config_manager=None, *, context=None) -> str:
     for index, (command, symbol) in enumerate(replacements):
         marker = f'\ue000{index}\ue001'
         markers[marker] = symbol
-        escaped_symbol = re.escape(symbol)
+        # Recognizers render a spoken ellipsis as periods too: "Attends... points
+        # de suspension." is one ellipsis.
+        escaped_symbol = r'(?:…|\.+)' if symbol == '…' else re.escape(symbol)
         pattern_command = rf'(?:{command_pattern(command)})'
-        single_symbol = rf'{escaped_symbol}(?!{escaped_symbol})'
+        single_symbol = (r'(?:…|\.+)(?![.…])' if symbol == '…'
+                         else rf'{escaped_symbol}(?!{escaped_symbol})')
+        # Sentence punctuation the recognizer put before the command is the
+        # command's own, even with nothing after it: "Prêt. Insérer un point".
+        echo_after = '?' if symbol in '.,?!:;…' else ''
         pattern = (
-            rf'(?:{escaped_symbol}+[ \t]+\b{pattern_command}\b{single_symbol}'
+            rf'(?:{escaped_symbol}+[ \t]+\b{pattern_command}\b(?:{single_symbol}){echo_after}'
             rf'|{escaped_symbol}+\b{pattern_command}\b'
             rf'|\b{pattern_command}\b{single_symbol}'
             rf'|\b{pattern_command}\b)'

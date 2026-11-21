@@ -83,6 +83,7 @@ Automatically converts spoken words to symbols and punctuation:
 English (`en`) and French (`fr`) have built-in commands:
 
 - A [secondary shortcut](HOTKEYS.md#secondary-shortcut-with-language) or `--lang` takes precedence over `language`
+- Region codes follow their base language: `fr-FR` uses French commands
 - With `language: null`, uses English commands even when recognition detects another language
 - Other explicit languages skip built-in commands; [word overrides](#word-overrides) and [filler filtering](#filler-word-filtering) still apply
 - [Translation](../backends/LANGUAGE.md#translation) with pywhispercpp or faster-whisper uses English commands. `task: "translate"` does not change command selection on other backends
