@@ -201,7 +201,7 @@ PY
     # qwen3-asr runs a llama.cpp sidecar: check the binary, not a venv import
     # or the pywhispercpp models dir.
     if [[ "$backend" == "qwen3-asr" ]]; then
-        local runtime_root="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/runtime/llama-cpp"
+        local runtime_root="${HYPRWHSPR_QWEN3_ASR_RUNTIME:-${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/runtime/llama-cpp}"
         local server
         for server in "$runtime_root"/*/*/llama-server; do
             [[ -x "$server" ]] && return 0

@@ -86,7 +86,30 @@ def model_paths(model_name: str) -> tuple[Path, Path]:
             QWEN3_ASR_MODELS_DIR / metadata["projector"][0])
 
 
+def nix_runtime_root() -> Optional[Path]:
+    raw = os.environ.get("HYPRWHSPR_QWEN3_ASR_RUNTIME")
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def packaged_devices() -> tuple[str, ...]:
+    if nix_runtime_root() is None:
+        return QWEN3_ASR_DEVICES
+    raw = os.environ.get("HYPRWHSPR_QWEN3_ASR_DEVICES", "")
+    chosen = tuple(dict.fromkeys(
+        part.strip() for part in raw.split(",") if part.strip() in QWEN3_ASR_DEVICES
+    ))
+    if chosen:
+        return chosen
+    present = tuple(device for device in DEVICE_PREFERENCE if runtime_installed(device))
+    return present or ("cpu",)
+
+
 def runtime_dir(device: str) -> Path:
+    root = nix_runtime_root()
+    if root is not None:
+        return root / LLAMA_CPP_RELEASE / device
     return QWEN3_ASR_RUNTIMES_DIR / LLAMA_CPP_RELEASE / device
 
 
@@ -116,6 +139,15 @@ def resolve_device(config, force_probe: bool = False) -> str:
     can move from the CPU runtime to Vulkan.
     """
     requested = config.get_setting("qwen3_asr_device", "auto")
+    if nix_runtime_root() is not None:
+        packaged = packaged_devices()
+        if requested in packaged:
+            return requested
+        for device in DEVICE_PREFERENCE:
+            if device in packaged and runtime_installed(device):
+                return device
+        return packaged[0]
+
     if requested in QWEN3_ASR_DEVICES:
         return requested
     if force_probe:

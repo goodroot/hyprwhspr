@@ -2094,6 +2094,18 @@ def install_qwen3_asr_runtime(device: str, force: bool = False) -> bool:
             f'Qwen3-ASR ships pinned x86_64 llama.cpp binaries; this host is '
             f'{platform.machine()}. Select a different backend.')
         return False
+    if qwen3_asr_runtime.nix_runtime_root() is not None:
+        if qwen3_asr_runtime.runtime_installed(device):
+            log_success(
+                f'Qwen3-ASR runtime present: {qwen3_asr_runtime.LLAMA_CPP_RELEASE} ({device})'
+            )
+            return True
+        log_error(
+            'Nix owns the Qwen3-ASR sidecar. The Ubuntu llama.cpp tarball is not downloaded. '
+            f'Packaged devices: {", ".join(qwen3_asr_runtime.packaged_devices())}. '
+            'Set qwen3_asr_device to one of them and rebuild the Nix package if it is missing.'
+        )
+        return False
 
     target = qwen3_asr_runtime.runtime_dir(device)
     if not force and qwen3_asr_runtime.runtime_installed(device):
