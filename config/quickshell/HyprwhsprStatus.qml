@@ -8,8 +8,9 @@ Scope {
     property string installRoot: Quickshell.env("HYPRWHSPR_ROOT") || "/usr/lib/hyprwhspr"
     property int refreshInterval: 2000
     readonly property bool busy: pendingAction !== "" || (runner.running && runner.action !== "status")
-    readonly property string state: result.state === "ready" && visualizerState === "processing"
-        ? "processing" : result.state
+    readonly property string state: ["recording", "processing"].includes(visualizerState)
+            && ["ready", "recording"].includes(result.state)
+        ? visualizerState : result.state
     readonly property string tooltip: state === "processing"
         ? "hyprwhspr: Transcribing…" : result.tooltip
 
@@ -17,6 +18,8 @@ Scope {
     property string pendingAction: ""
     readonly property string runtimeDirectory: Quickshell.env("XDG_RUNTIME_DIR")
     readonly property string visualizerState: visualizer.loaded ? visualizer.text().trim() : ""
+    readonly property real audioLevel: state === "recording" && meter.loaded
+        ? Math.min(1, Math.max(0, Number(meter.text().trim()) || 0)) : 0
 
     function toggleRecording() {
         request("record")
@@ -99,6 +102,21 @@ Scope {
         watchChanges: path !== ""
         printErrors: false
         onFileChanged: reload()
+    }
+
+    FileView {
+        id: meter
+        path: root.state === "recording" && root.runtimeDirectory
+            ? root.runtimeDirectory + "/hyprwhspr/audio_level" : ""
+        printErrors: false
+        blockLoading: false
+    }
+
+    Timer {
+        interval: 100
+        running: meter.path !== ""
+        repeat: true
+        onTriggered: meter.reload()
     }
 
     Timer {

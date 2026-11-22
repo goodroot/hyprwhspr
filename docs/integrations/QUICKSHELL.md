@@ -4,7 +4,9 @@ Add a microphone button to a custom [Quickshell](https://quickshell.org/)
 bar with the [QML components](https://github.com/goodroot/hyprwhspr/tree/main/config/quickshell).
 The button shows whether hyprwhspr is ready, recording, stopped, unloaded, or
 reporting a problem. If hyprwhspr's recording indicator provides a processing
-signal, the button also shows when transcription is in progress.
+signal, the button also shows when transcription is in progress. During
+dictation the microphone changes into a level meter, then into a spinner
+while the text is being transcribed.
 
 ## Add the button
 
