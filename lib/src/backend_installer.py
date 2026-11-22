@@ -2095,13 +2095,13 @@ def install_qwen3_asr_runtime(device: str, force: bool = False) -> bool:
             f'{platform.machine()}. Select a different backend.')
         return False
     if qwen3_asr_runtime.nix_runtime_root() is not None:
+        # Nix owns the sidecar; never download the Ubuntu tarball beside it.
         if qwen3_asr_runtime.runtime_installed(device):
-            log_success(f'Qwen3-ASR runtime present ({device})')
+            log_success(f'Qwen3-ASR runtime present: {qwen3_asr_runtime.runtime_release()} ({device})')
             return True
         log_error(
-            'Nix owns the Qwen3-ASR sidecar. The Ubuntu llama.cpp tarball is not downloaded. '
-            f'Packaged devices: {", ".join(qwen3_asr_runtime.packaged_devices())}. '
-            'Set qwen3_asr_device to one of them and rebuild the Nix package if it is missing.'
+            f'The Nix package has no {device} runtime. '
+            f'Set qwen3_asr_device to: {", ".join(qwen3_asr_runtime.packaged_devices())}.'
         )
         return False
 

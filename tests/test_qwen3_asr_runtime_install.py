@@ -248,21 +248,55 @@ class NixRuntimeTests(unittest.TestCase):
                     backend_installer.install_qwen3_asr_runtime("vulkan", force=True))
             download.assert_not_called()
 
-    def test_resolve_device_stays_inside_packaged_devices(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            server = root / "cpu" / "bin" / "llama-server"
+    @staticmethod
+    def _store(tmp, devices, version=None):
+        root = Path(tmp) / "store"
+        for device in devices:
+            server = root / device / "bin" / "llama-server"
             server.parent.mkdir(parents=True)
             server.write_bytes(b"ELF")
             server.chmod(0o755)
-            with mock.patch.dict(os.environ, {
-                    "HYPRWHSPR_QWEN3_ASR_RUNTIME": str(root),
-                    "HYPRWHSPR_QWEN3_ASR_DEVICES": "cpu",
-                 }), mock.patch.object(qwen3_asr_runtime, "detect_device", return_value="vulkan"):
-                self.assertEqual(
-                    qwen3_asr_runtime.resolve_device(
-                        DeviceResolutionTests.Config("auto"), force_probe=True),
-                    "cpu")
+        if version is not None:
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "version").write_text(version + "\n")
+        return root
+
+    def test_auto_probes_the_hardware_when_every_device_is_packaged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp, ("cpu", "vulkan"))
+            for detected in ("cpu", "vulkan"):
+                with self.subTest(detected=detected), \
+                        mock.patch.dict(os.environ, {"HYPRWHSPR_QWEN3_ASR_RUNTIME": str(root)}), \
+                        mock.patch.object(qwen3_asr_runtime, "detect_device", return_value=detected):
+                    self.assertEqual(
+                        qwen3_asr_runtime.resolve_device(DeviceResolutionTests.Config("auto")),
+                        detected)
+
+    def test_resolve_device_stays_inside_packaged_devices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp, ("cpu",))
+            with mock.patch.dict(os.environ, {"HYPRWHSPR_QWEN3_ASR_RUNTIME": str(root)}), \
+                    mock.patch.object(qwen3_asr_runtime, "detect_device", return_value="vulkan"):
+                self.assertEqual(qwen3_asr_runtime.packaged_devices(), ("cpu",))
+                for requested in ("auto", "vulkan"):
+                    with self.subTest(requested=requested):
+                        self.assertEqual(
+                            qwen3_asr_runtime.resolve_device(
+                                DeviceResolutionTests.Config(requested), force_probe=True),
+                            "cpu")
+
+    def test_runtime_release_reports_the_packaged_llama_cpp(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("HYPRWHSPR_QWEN3_ASR_RUNTIME", None)
+            self.assertEqual(qwen3_asr_runtime.runtime_release(),
+                             qwen3_asr_runtime.LLAMA_CPP_RELEASE)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp, ("cpu",), version="1.0.0")
+            with mock.patch.dict(os.environ, {"HYPRWHSPR_QWEN3_ASR_RUNTIME": str(root)}):
+                self.assertEqual(qwen3_asr_runtime.runtime_release(), "1.0.0")
+                (root / "version").unlink()
+                self.assertEqual(qwen3_asr_runtime.runtime_release(), "nixpkgs")
+
 
 if __name__ == "__main__":
     unittest.main()

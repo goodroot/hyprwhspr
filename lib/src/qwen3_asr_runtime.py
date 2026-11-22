@@ -87,6 +87,7 @@ def model_paths(model_name: str) -> tuple[Path, Path]:
 
 
 def nix_runtime_root() -> Optional[Path]:
+    """The Nix store runtime, with one llama.cpp prefix per device."""
     raw = os.environ.get("HYPRWHSPR_QWEN3_ASR_RUNTIME")
     if not raw:
         return None
@@ -94,16 +95,24 @@ def nix_runtime_root() -> Optional[Path]:
 
 
 def packaged_devices() -> tuple[str, ...]:
+    """Devices the Nix package ships; every device elsewhere."""
     if nix_runtime_root() is None:
         return QWEN3_ASR_DEVICES
-    raw = os.environ.get("HYPRWHSPR_QWEN3_ASR_DEVICES", "")
-    chosen = tuple(dict.fromkeys(
-        part.strip() for part in raw.split(",") if part.strip() in QWEN3_ASR_DEVICES
-    ))
-    if chosen:
-        return chosen
-    present = tuple(device for device in DEVICE_PREFERENCE if runtime_installed(device))
-    return present or ("cpu",)
+    return tuple(device for device in QWEN3_ASR_DEVICES if runtime_installed(device))
+
+
+def runtime_release() -> str:
+    """The llama.cpp release actually in use, for status output.
+
+    Nix packages llama.cpp from nixpkgs, not the pinned Ubuntu release.
+    """
+    root = nix_runtime_root()
+    if root is None:
+        return LLAMA_CPP_RELEASE
+    try:
+        return (root / "version").read_text(encoding="utf-8").strip() or "nixpkgs"
+    except OSError:
+        return "nixpkgs"
 
 
 def runtime_dir(device: str) -> Path:
@@ -144,13 +153,13 @@ def resolve_device(config, force_probe: bool = False) -> str:
     """
     requested = config.get_setting("qwen3_asr_device", "auto")
     if nix_runtime_root() is not None:
+        # Nix ships every device, so what is on disk says nothing about the
+        # hardware: probe it, as setup does.
         packaged = packaged_devices()
         if requested in packaged:
             return requested
-        for device in DEVICE_PREFERENCE:
-            if device in packaged and runtime_installed(device):
-                return device
-        return packaged[0]
+        detected = detect_device()
+        return detected if detected in packaged else "cpu"
 
     if requested in QWEN3_ASR_DEVICES:
         return requested
