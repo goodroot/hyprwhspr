@@ -143,6 +143,30 @@ class CohereAndModelCommandTests(unittest.TestCase):
             self.assertTrue(models.model_command('status'))
         report.assert_called_once_with(config)
 
+    def test_missing_qwen3_runtime_hint_matches_the_install(self):
+        import qwen3_asr_runtime
+        config = mock.Mock()
+        config.get_setting.side_effect = lambda key, default=None: default
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = (
+                ({'HYPRWHSPR_INSTALL_METHOD': 'nix', 'HYPRWHSPR_QWEN3_ASR_RUNTIME': tmp},
+                 'Rebuild the hyprwhspr Nix package'),
+                ({'HYPRWHSPR_INSTALL_METHOD': 'nix'}, 'extraBackends, or install .#hyprwhspr-qwen'),
+                ({}, "Run 'hyprwhspr setup'"),
+            )
+            for env, hint in cases:
+                with (
+                    self.subTest(hint=hint),
+                    mock.patch.dict('os.environ', env, clear=True),
+                    mock.patch.object(qwen3_asr_runtime, 'runtime_installed', return_value=False),
+                    mock.patch.object(qwen3_asr_runtime, 'model_installed', return_value=True),
+                    mock.patch.object(models, 'log_success'),
+                    mock.patch.object(models, 'log_warning'),
+                    mock.patch.object(models, 'log_info') as info,
+                ):
+                    models.qwen3_asr_model_status(config)
+                    self.assertIn(hint, info.call_args_list[0].args[0])
+
     def test_whisper_download_is_not_shadowed_by_parakeet_import(self):
         config = mock.Mock()
         config.get_setting.side_effect = lambda key, default=None: 'cpu' if key == 'transcription_backend' else default
