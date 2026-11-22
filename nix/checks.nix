@@ -75,7 +75,7 @@ in {
       echo 'Nix model download accepted an unsupported backend' >&2
       exit 1
     fi
-    grep 'CPU transcription' "$TMPDIR/download-output"
+    grep 'Packaged backends' "$TMPDIR/download-output"
     setBackend pywhispercpp
 
     # Use an editor subprocess as a harmless way to inspect the actual wrapper

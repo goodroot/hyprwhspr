@@ -30,7 +30,7 @@ class NixInstallationTests(unittest.TestCase):
             for backend in ('cpu', 'pywhispercpp'):
                 require_supported_backend(backend)
             for backend in ('nvidia', 'vulkan', 'rest-api', 'onnx-asr', 'unknown'):
-                with self.subTest(backend=backend), self.assertRaisesRegex(ValueError, 'CPU transcription'):
+                with self.subTest(backend=backend), self.assertRaisesRegex(ValueError, 'Packaged backends'):
                     require_supported_backend(backend)
 
     def run_cli(self, arguments, config=None, entrypoint='cli.py'):
@@ -78,12 +78,45 @@ class NixInstallationTests(unittest.TestCase):
     def test_unsupported_backend_cannot_download(self):
         result = self.run_cli(['model', 'download', 'base'], {'transcription_backend': 'nvidia'})
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn('CPU transcription', result.stdout + result.stderr)
+        self.assertIn('Packaged backends', result.stdout + result.stderr)
         self.assertNotIn('Configuration loaded', result.stdout)
 
     def test_legacy_local_backend_is_supported(self):
         with mock.patch.dict(os.environ, {'HYPRWHSPR_INSTALL_METHOD': 'nix'}):
             require_supported_backend('local')
+
+    def test_nix_backends_env_is_closed(self):
+        def assert_default_closed():
+            for backend in ('cpu', 'pywhispercpp', 'local'):
+                require_supported_backend(backend)
+            with self.assertRaises(ValueError) as caught:
+                require_supported_backend('qwen3-asr')
+            self.assertIn('Packaged backends: cpu, pywhispercpp', str(caught.exception))
+
+        saved_method = os.environ.get('HYPRWHSPR_INSTALL_METHOD')
+        saved_backends = os.environ.get('HYPRWHSPR_NIX_BACKENDS')
+        had_backends = 'HYPRWHSPR_NIX_BACKENDS' in os.environ
+        try:
+            os.environ['HYPRWHSPR_INSTALL_METHOD'] = 'nix'
+            os.environ.pop('HYPRWHSPR_NIX_BACKENDS', None)
+            assert_default_closed()
+            for raw in ('', ' , '):
+                os.environ['HYPRWHSPR_NIX_BACKENDS'] = raw
+                assert_default_closed()
+            os.environ['HYPRWHSPR_NIX_BACKENDS'] = 'cpu,pywhispercpp,qwen3-asr'
+            require_supported_backend('qwen3-asr')
+            with self.assertRaises(ValueError) as caught:
+                require_supported_backend('nvidia')
+            self.assertIn('qwen3-asr', str(caught.exception))
+        finally:
+            if saved_method is None:
+                os.environ.pop('HYPRWHSPR_INSTALL_METHOD', None)
+            else:
+                os.environ['HYPRWHSPR_INSTALL_METHOD'] = saved_method
+            if had_backends:
+                os.environ['HYPRWHSPR_NIX_BACKENDS'] = saved_backends
+            else:
+                os.environ.pop('HYPRWHSPR_NIX_BACKENDS', None)
 
     def test_rejected_download_does_not_migrate_legacy_config(self):
         result = self.run_cli(['model', 'download', 'base'], {
@@ -91,7 +124,7 @@ class NixInstallationTests(unittest.TestCase):
             'push_to_talk': True,
         })
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn('CPU transcription', result.stderr)
+        self.assertIn('Packaged backends', result.stderr)
 
     def test_non_installation_commands_are_not_blocked(self):
         with mock.patch.dict(os.environ, {'HYPRWHSPR_INSTALL_METHOD': 'nix'}):
@@ -332,7 +365,7 @@ class NixIntegrationTests(unittest.TestCase):
             self.assertEqual(feedback.FeedbackMixin._report_missing_dependencies(app), [])
         # WhisperManager logs the same error when it refuses the backend.
         log.assert_not_called()
-        self.assertIn('CPU transcription', app._notify_user.call_args.args[1])
+        self.assertIn('Packaged backends', app._notify_user.call_args.args[1])
         self.assertEqual(app._notify_user.call_args.kwargs['urgency'], 'critical')
 
 
