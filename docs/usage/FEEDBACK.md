@@ -26,7 +26,8 @@ journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status 
 ```
 
 Custom bars can still read `${XDG_RUNTIME_DIR}/hyprwhspr/visualizer_state`
-for recording and processing status when the OSD is disabled. The file is
+for recording and processing status in overlay and notification modes, and
+when the OSD is disabled. The file is
 removed when the recording feedback ends. The separate `audio_level` file
 contains the normalized microphone level during regular dictation.
 

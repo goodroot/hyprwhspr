@@ -299,6 +299,41 @@ class AppCase(unittest.TestCase):
 
 
 class HeadlessVisualizerTests(AppCase):
+    def test_notification_results_update_bar_state_without_rewording_the_bubble(self):
+        app = self._app()
+        presenter = NotificationPresenter()
+        app._mic_osd_runner = presenter
+        state = self.temp / 'visualizer_state'
+        thread = mock.Mock()
+        with (mock.patch.object(presenter, 'is_available', return_value=True),
+              mock.patch.object(presenter, '_send') as send,
+              mock.patch.object(presenter, '_close'),
+              patch_app_global(self.app_cls, 'threading', SimpleNamespace(Thread=thread)),
+              patch_app_global(self.app_cls, 'time', SimpleNamespace(sleep=lambda _: None))):
+            app._show_mic_osd()
+            self.assertEqual(state.read_text(), 'recording')
+            presenter._nid = 1
+            app._set_visualizer_state('processing')
+            self.assertEqual(state.read_text(), 'processing')
+            send.reset_mock()
+            app._show_result_and_hide(True, detail='clipboard')
+            self.assertEqual(state.read_text(), 'success')
+            send.assert_called_once_with('Text copied — paste to insert', 5000)
+            thread.call_args.kwargs['target']()
+            self.assertFalse(state.exists())
+
+    def test_unavailable_presenter_and_failed_hide_still_publish_and_clear(self):
+        app = self._app()
+        app._mic_osd_runner = mock.Mock()
+        app._mic_osd_runner.is_available.return_value = False
+        app._mic_osd_runner.hide.side_effect = RuntimeError('presenter unavailable')
+        state = self.temp / 'new-runtime' / 'visualizer_state'
+        with patch_app_global(self.app_cls, 'VISUALIZER_STATE_FILE', state):
+            app._show_mic_osd()
+            self.assertEqual(state.read_text(), 'recording')
+            app._hide_mic_osd()
+            self.assertFalse(state.exists())
+
     def test_visualizer_state_has_the_same_lifecycle_without_an_overlay(self):
         app = self._app(mic_osd_enabled=False)
         state = self.temp / 'visualizer_state'
@@ -1031,6 +1066,7 @@ class ResultTests(AppCase):
 
         self._run_hide(app, newer_recording_starts_and_ends)
         app._mic_osd_runner.hide.assert_not_called()
+        self.assertEqual((self.temp / 'visualizer_state').read_text(), 'recording')
 
     def test_a_late_result_leaves_a_live_recording_alone(self):
         app = self._app()
