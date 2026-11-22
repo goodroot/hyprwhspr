@@ -86,37 +86,21 @@ class NixInstallationTests(unittest.TestCase):
             require_supported_backend('local')
 
     def test_nix_backends_env_is_closed(self):
-        def assert_default_closed():
-            for backend in ('cpu', 'pywhispercpp', 'local'):
-                require_supported_backend(backend)
-            with self.assertRaises(ValueError) as caught:
-                require_supported_backend('qwen3-asr')
-            self.assertIn('Packaged backends: cpu, pywhispercpp', str(caught.exception))
-
-        saved_method = os.environ.get('HYPRWHSPR_INSTALL_METHOD')
-        saved_backends = os.environ.get('HYPRWHSPR_NIX_BACKENDS')
-        had_backends = 'HYPRWHSPR_NIX_BACKENDS' in os.environ
-        try:
-            os.environ['HYPRWHSPR_INSTALL_METHOD'] = 'nix'
-            os.environ.pop('HYPRWHSPR_NIX_BACKENDS', None)
-            assert_default_closed()
-            for raw in ('', ' , '):
-                os.environ['HYPRWHSPR_NIX_BACKENDS'] = raw
-                assert_default_closed()
+        with mock.patch.dict(os.environ, {'HYPRWHSPR_INSTALL_METHOD': 'nix'}):
+            for raw in (None, '', ' , '):
+                with self.subTest(raw=raw):
+                    if raw is None:
+                        os.environ.pop('HYPRWHSPR_NIX_BACKENDS', None)
+                    else:
+                        os.environ['HYPRWHSPR_NIX_BACKENDS'] = raw
+                    for backend in ('cpu', 'pywhispercpp', 'local'):
+                        require_supported_backend(backend)
+                    with self.assertRaisesRegex(ValueError, 'Packaged backends: cpu, pywhispercpp'):
+                        require_supported_backend('qwen3-asr')
             os.environ['HYPRWHSPR_NIX_BACKENDS'] = 'cpu,pywhispercpp,qwen3-asr'
             require_supported_backend('qwen3-asr')
-            with self.assertRaises(ValueError) as caught:
+            with self.assertRaisesRegex(ValueError, 'qwen3-asr'):
                 require_supported_backend('nvidia')
-            self.assertIn('qwen3-asr', str(caught.exception))
-        finally:
-            if saved_method is None:
-                os.environ.pop('HYPRWHSPR_INSTALL_METHOD', None)
-            else:
-                os.environ['HYPRWHSPR_INSTALL_METHOD'] = saved_method
-            if had_backends:
-                os.environ['HYPRWHSPR_NIX_BACKENDS'] = saved_backends
-            else:
-                os.environ.pop('HYPRWHSPR_NIX_BACKENDS', None)
 
     def test_rejected_download_does_not_migrate_legacy_config(self):
         result = self.run_cli(['model', 'download', 'base'], {
