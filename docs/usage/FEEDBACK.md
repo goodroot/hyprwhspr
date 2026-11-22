@@ -125,7 +125,7 @@ Click it for a menu to start or stop recording, unload or load the model, and re
 
 The icon disappears when the service stops, so no icon means hyprwhspr isn't running. It needs PyGObject, which the visualizer also uses.
 
-It's off by default; setup offers it when you skip the bar integrations. Using the [Waybar module](../integrations/WAYBAR.md) or [Noctalia's widget](../integrations/NOCTALIA.md)? You don't need it. To turn it on:
+It's off by default; setup offers it when you skip the bar integrations. If you use the [Waybar module](../integrations/WAYBAR.md), [Noctalia widget](../integrations/NOCTALIA.md), or [Quickshell button](../integrations/QUICKSHELL.md), you can leave it off. To turn it on:
 
 ```jsonc
 {
