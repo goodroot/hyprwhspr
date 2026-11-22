@@ -149,6 +149,22 @@ class FrenchStreamTests(unittest.TestCase):
         self.assertEqual(self._stream(['bonjour,']), ('bonjour,', 'bonjour,'))
         self.assertEqual(self._stream(['bonjour,', 'suite']), ('bonjour, suite', 'bonjour, suite'))
 
+    def test_closing_parenthesis_chunk_keeps_trailing_punctuation(self):
+        for mark in (',', '.'):
+            raw = f'Ouvrez la parenthèse exemple fermez la parenthèse{mark}'
+            expected = f'(exemple){mark}'
+            words = raw.split()
+            self.assertEqual(preprocess_text(raw, context=ProcessingContext('fr')), expected)
+            for split in range(1, len(words)):
+                with self.subTest(mark=mark, split=split):
+                    pasted, retained = self._stream([' '.join(words[:split]), ' '.join(words[split:])])
+                    self.assertEqual(pasted, expected)
+                    self.assertEqual(retained, expected)
+        # Dictated alone, the command still sheds a recognizer period.
+        self.assertEqual(self._stream(['fermez la parenthèse.']), (')', ')'))
+        self.assertEqual(preprocess_text('fermez la parenthèse.', context=ProcessingContext('fr'),
+                                         continuation=True), ').')
+
     def test_edge_and_repeated_breaks_at_every_chunk_boundary(self):
         for raw, expected in (
             ('retour à la ligne', '\n'),

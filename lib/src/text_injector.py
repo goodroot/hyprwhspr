@@ -1702,7 +1702,8 @@ except Exception:
             while (length := line_break_length(words, profile)):
                 words = words[length:]
                 newlines += 1
-        processed = self._preprocess_text(' '.join(words), context=session.context)
+        processed = self._preprocess_text(' '.join(words), context=session.context,
+                                          continuation=session.injected_any)
         if not processed:
             return InjectionOutcome.INJECTED
         processed = '\n' * newlines + processed
@@ -1877,11 +1878,12 @@ except Exception:
             return setting
         return not ends_with_no_space_script(text)
 
-    def _preprocess_text(self, text: str, *, context=None) -> str:
+    def _preprocess_text(self, text: str, *, context=None, continuation=False) -> str:
         """
         Preprocess text to handle common speech-to-text corrections and remove unwanted line breaks
         """
-        return preprocess_text(text, self.config_manager, context=context)
+        return preprocess_text(text, self.config_manager, context=context,
+                               continuation=continuation)
 
     def _run_post_transcription_hook(self, text: str) -> _PostTranscriptionHookResult:
         """Run the user's post_transcription_hook shell command.

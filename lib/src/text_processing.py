@@ -144,8 +144,12 @@ def line_break_length(words, profile):
     return 0
 
 
-def preprocess_text(text: str, config_manager=None, *, context=None) -> str:
-    """Apply dictation corrections without injection or external hooks."""
+def preprocess_text(text: str, config_manager=None, *, context=None, continuation=False) -> str:
+    """Apply dictation corrections without injection or external hooks.
+
+    continuation: the text continues an already pasted stream, so a chunk that
+    is only a command is not a dictation of that command alone.
+    """
     processed = text.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
     processed = _apply_configured_word_overrides(processed, config_manager)
     processed = _filter_configured_filler_words(processed, config_manager)
@@ -215,8 +219,10 @@ def preprocess_text(text: str, config_manager=None, *, context=None) -> str:
                 before = r'(?:[ \t]*,)?[ \t]*'
                 # A closing-parenthesis command on its own may pick up a
                 # recognizer period even though nothing follows the bracket.
-                processed = re.sub(rf'^\s*{re.escape(marker)}[ \t]*[.,:;!?…]+\s*$',
-                                   marker, processed)
+                # A stream chunk continuing pasted text keeps it, as batch does.
+                if not continuation:
+                    processed = re.sub(rf'^\s*{re.escape(marker)}[ \t]*[.,:;!?…]+\s*$',
+                                       marker, processed)
             processed = re.sub(before + re.escape(marker), symbol, processed)
         else:
             processed = processed.replace(marker, symbol)
