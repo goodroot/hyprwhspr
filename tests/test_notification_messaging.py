@@ -235,6 +235,7 @@ class AppCase(unittest.TestCase):
                             ('RECOVERY_RESULT_FILE', self.temp / 'recovery_result'),
                             ('RECOVERY_REQUESTED_FILE', self.temp / 'recovery_requested'),
                             ('MIC_ZERO_VOLUME_FILE', self.temp / 'mic_zero_volume'),
+                            ('VISUALIZER_STATE_FILE', self.temp / 'visualizer_state'),
                             ('log', mock.Mock())):
             patcher = patch_app_global(self.app_cls, name, value)
             patcher.start()
@@ -295,6 +296,23 @@ class AppCase(unittest.TestCase):
     @classmethod
     def messages(cls, app):
         return [alert[0] for alert in cls.alerts(app)]
+
+
+class HeadlessVisualizerTests(AppCase):
+    def test_visualizer_state_has_the_same_lifecycle_without_an_overlay(self):
+        app = self._app(mic_osd_enabled=False)
+        state = self.temp / 'visualizer_state'
+        app._show_mic_osd()
+        self.assertEqual(state.read_text(), 'recording')
+        app._set_visualizer_state('processing')
+        self.assertEqual(state.read_text(), 'processing')
+        thread = mock.Mock()
+        with (patch_app_global(self.app_cls, 'threading', SimpleNamespace(Thread=thread)),
+              patch_app_global(self.app_cls, 'time', SimpleNamespace(sleep=lambda _: None))):
+            app._show_result_and_hide(True)
+            self.assertEqual(state.read_text(), 'success')
+            thread.call_args.kwargs['target']()
+        self.assertFalse(state.exists())
 
 
 class NotifyUserTests(AppCase, LevelCase):
