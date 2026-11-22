@@ -25,6 +25,11 @@ Set `mic_osd_enabled: false` to turn off both. The service log records which mod
 journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status via notifications'
 ```
 
+Custom bars can still read `${XDG_RUNTIME_DIR}/hyprwhspr/visualizer_state`
+for recording and processing status when the OSD is disabled. The file is
+removed when the recording feedback ends. The separate `audio_level` file
+contains the normalized microphone level during regular dictation.
+
 ### Overlay styles
 
 In overlay mode, `mic_osd_style` picks one of three visualizations (notification mode ignores it):

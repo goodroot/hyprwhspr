@@ -14,7 +14,7 @@ from installation import is_nix_install, repair_hint, require_supported_backend
 from paths import (
     AUDIO_LEVEL_FILE, CONFIG_DIR, LONGFORM_STATE_FILE, MIC_ZERO_VOLUME_FILE, MODEL_UNLOADED_FILE,
     RECORDING_STATUS_FILE, RECOVERY_REQUESTED_FILE, RECOVERY_RESULT_FILE,
-    RUNTIME_DIR, TRANSCRIPT_PREVIEW_FILE,
+    RUNTIME_DIR, TRANSCRIPT_PREVIEW_FILE, VISUALIZER_STATE_FILE,
 )
 from service_log import log
 
@@ -593,6 +593,7 @@ class FeedbackMixin:
             RECOVERY_RESULT_FILE,
             MODEL_UNLOADED_FILE,
             TRANSCRIPT_PREVIEW_FILE,
+            VISUALIZER_STATE_FILE,
         ]
         for f in stale_files:
             try:
@@ -622,11 +623,18 @@ class FeedbackMixin:
                 self._mic_osd_runner.clear_preview_text()
                 self._mic_osd_runner.set_state('recording')
                 self._mic_osd_runner.show()
+            elif self._mic_osd_runner is None:
+                self._set_visualizer_state('recording')
 
     def _hide_mic_osd(self):
         """Hide mic-osd visualization overlay"""
         runner = getattr(self, '_mic_osd_runner', None)
-        if runner:
+        if runner is None:
+            try:
+                VISUALIZER_STATE_FILE.unlink(missing_ok=True)
+            except OSError as exc:
+                log(f"[WARN] Failed to clear visualizer state: {exc}")
+        else:
             try:
                 runner.hide()
                 runner.clear_state()
@@ -654,7 +662,13 @@ class FeedbackMixin:
     def _set_visualizer_state(self, state: str):
         """Set the visualizer state (recording, paused, processing, error, success)"""
         runner = getattr(self, '_mic_osd_runner', None)
-        if runner:
+        if runner is None:
+            # Status consumers can display this without starting an overlay.
+            try:
+                VISUALIZER_STATE_FILE.write_text(state, encoding='utf-8')
+            except OSError as exc:
+                log(f"[WARN] Failed to publish visualizer state: {exc}")
+        else:
             try:
                 runner.set_state(state)
             except Exception:
