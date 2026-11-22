@@ -47,13 +47,14 @@ jobs:
           test -x "$runtime/cpu/bin/llama-server"
           test -x "$runtime/vulkan/bin/llama-server"
           test -s "$runtime/version"
-          # Qwen3-ASR needs llama.cpp b10516 or newer; nixpkgs versions are bare build numbers.
-          llama_version=$(tr -d '[:space:]' < "$runtime/version")
-          llama_version=${llama_version#b}
-          [[ "$llama_version" =~ ^[0-9]+$ ]] \
-            || { echo "Cannot compare llama.cpp version '$llama_version' to b10516" >&2; exit 1; }
-          (( llama_version >= 10516 )) \
-            || { echo "llama.cpp b$llama_version is older than the Qwen3-ASR floor b10516" >&2; exit 1; }
+          # Qwen3-ASR needs llama.cpp build b10516 or newer. Upstream tags are
+          # semver now; the build number lives in `llama-server --version`.
+          llama_build=$("$runtime/cpu/bin/llama-server" --version 2>&1 \
+            | sed -n 's/^version: \([0-9][0-9]*\).*/\1/p' | head -n 1)
+          [[ -n "$llama_build" ]] \
+            || { echo "Cannot read the llama.cpp build number from llama-server --version" >&2; exit 1; }
+          (( llama_build >= 10516 )) \
+            || { echo "llama.cpp b$llama_build is older than the Qwen3-ASR floor b10516" >&2; exit 1; }
           # nixpkgs llama.cpp is not the pinned release: keep the flags we pass.
           "$runtime/cpu/bin/llama-server" --help > "$RUNNER_TEMP/llama-help" 2>&1 || true
           for flag in --mmproj --host --threads --parallel --cache-ram --ctx-size; do
