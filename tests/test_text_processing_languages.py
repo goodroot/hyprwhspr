@@ -97,7 +97,7 @@ class ProcessingLanguageTests(unittest.TestCase):
             ('Titre retour a la ligne. Tiret espace. lire', 'Titre\n- lire'),
             ('Un point d’interrogation', 'Un ?'),
             ('Un point d\'interrogation', 'Un ?'),
-            ('TIRET DU SIX ESPACE.', '- '),
+            ('TIRET DU SIX ESPACE.', '-'),
             ('attends... vraiment!!!', 'attends... vraiment!!!'),
             ('ATTENDS POINTS DE SUSPENSION.', 'ATTENDS…'),
             ('Attends... points de suspension ensuite', 'Attends… ensuite'),
@@ -107,9 +107,9 @@ class ProcessingLanguageTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(preprocess_text(raw, config), expected)
 
-    def test_deliberate_space_survives_hooks_without_duplication(self):
+    def test_lone_list_marker_spacing_follows_trailing_space_setting(self):
         for setting in ('auto', False, True):
-            for stdout in ('', '- ', 'changed'):
+            for stdout in ('', 'changed'):
                 with self.subTest(setting=setting, stdout=stdout):
                     injector = make_injector()
                     injector.config_manager = ConfigStub({
@@ -120,7 +120,7 @@ class ProcessingLanguageTests(unittest.TestCase):
                             returncode=0, stdout=stdout, stderr='')), mock.patch.object(
                             injector, '_inject_via_clipboard_and_hotkey', return_value=True) as paste:
                         self.assertEqual(injector.inject_text('tiret espace'), InjectionOutcome.INJECTED)
-                    expected = 'changed' + (' ' if setting is not False else '') if stdout == 'changed' else '- '
+                    expected = ('changed' if stdout else '-') + (' ' if setting is not False else '')
                     paste.assert_called_once_with(expected, retain=True)
 
 
@@ -175,7 +175,7 @@ class FrenchStreamTests(unittest.TestCase):
     def test_list_spacing_and_line_breaks(self):
         for setting in ('auto', False, True):
             for chunks, expected in (
-                (['tiret', 'espace'], '- '),
+                (['tiret', 'espace'], '-'),
                 (['titre retour à', 'la ligne tiret', 'espace lire'], 'titre\n- lire'),
                 (['titre retour à la ligne'], 'titre'),
             ):

@@ -189,8 +189,8 @@ def preprocess_text(text: str, config_manager=None, *, context=None) -> str:
     # punctuation, including ellipses and repeated emphasis, stays untouched.
     for marker, symbol in markers.items():
         if symbol == '- ':
-            # Keep deliberate spacing on a Markdown list marker through strip().
-            processed = re.sub(rf'{re.escape(marker)}(?:[ \t]*[.,:;?!…]+)?[ \t]*', marker, processed)
+            # A list marker swallows recognizer punctuation: "Tiret espace. lire".
+            processed = re.sub(rf'{re.escape(marker)}(?:[ \t]*[.,:;?!…]+)?[ \t]*', symbol, processed)
         elif symbol in '.,?!:;…':
             if symbol in profile.space_before:
                 symbol = ' ' + symbol
@@ -213,8 +213,4 @@ def preprocess_text(text: str, config_manager=None, *, context=None) -> str:
 
     processed = re.sub(r'[ \t]+', ' ', processed)
     processed = re.sub(r' *\n *', '\n', processed)
-    processed = processed.strip()
-    for marker, symbol in markers.items():
-        if symbol == '- ':
-            processed = processed.replace(marker, symbol)
-    return processed
+    return processed.strip()

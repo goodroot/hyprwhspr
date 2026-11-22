@@ -1914,7 +1914,7 @@ class SpokenPunctuationPreprocessingTests(unittest.TestCase):
             "D’abord point-virgule ensuite": "D’abord ; ensuite",
             "Crochet ouvrant piste crochet fermant": "[piste]",
             "Ouvrir la parenthèse source fermer la parenthèse": "(source)",
-            "Tiret espace.": "- ",
+            "Tiret espace.": "-",
             "Tiré du six espace lire la source": "- lire la source",
         }
         for raw, expected in cases.items():
@@ -1940,7 +1940,7 @@ class SpokenPunctuationPreprocessingTests(unittest.TestCase):
                 config = ConfigStub(settings)
                 self.assertEqual(preprocess_text("one plus two", config), "one + two")
 
-    def test_french_bullet_injects_exactly_one_space(self):
+    def test_french_lone_bullet_spacing_follows_trailing_space(self):
         for trailing_space in ("auto", False, True):
             with self.subTest(trailing_space=trailing_space):
                 injector = make_injector()
@@ -1951,7 +1951,8 @@ class SpokenPunctuationPreprocessingTests(unittest.TestCase):
                     injector, "_inject_via_clipboard_and_hotkey", return_value=True
                 ) as inject:
                     self.assertEqual(injector.inject_text("tiret espace"), InjectionOutcome.INJECTED)
-                inject.assert_called_once_with("- ", retain=True)
+                expected = "-" if trailing_space is False else "- "
+                inject.assert_called_once_with(expected, retain=True)
 
     def test_disabled_symbol_replacements_are_unchanged(self):
         config = ConfigStub({"symbol_replacements": False})

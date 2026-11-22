@@ -183,7 +183,6 @@ Each transcription is followed by a space so the next word you type doesn't coll
 - Everything else gets one, Thai included — it has no spaces between words, but does use them between phrases
 - Set `true` or `false` to fix the answer regardless of content
 - The check runs after [`post_transcription_hook`](#post-transcription-hook), on the final text
-- The space requested by French [« tiret espace »](#french-commands) survives `false`; automatic spacing does not add a second one
 
 ## Non-Latin scripts
 

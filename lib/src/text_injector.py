@@ -1824,15 +1824,11 @@ except Exception:
         if not processed_text.strip():
             log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.SKIPPED
-        ends_with_spoken_space = processed_text.endswith(' ')
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
         processed_text = hook_result.text
-        if (
-            self._should_append_trailing_space(processed_text)
-            and not (ends_with_spoken_space and processed_text.endswith(' '))
-        ):
+        if self._should_append_trailing_space(processed_text):
             processed_text += ' '
 
         try:
