@@ -109,17 +109,21 @@ def packaged_devices() -> tuple[str, ...]:
 def runtime_dir(device: str) -> Path:
     root = nix_runtime_root()
     if root is not None:
-        return root / LLAMA_CPP_RELEASE / device
+        return root / device
     return QWEN3_ASR_RUNTIMES_DIR / LLAMA_CPP_RELEASE / device
 
 
 def server_path(device: str) -> Path:
-    """The llama-server binary. The archive is flat, so there is no bin/."""
+    """Nixpkgs installs llama-server in bin/. The Ubuntu archive is flat."""
+    if nix_runtime_root() is not None:
+        return runtime_dir(device) / "bin" / "llama-server"
     return runtime_dir(device) / "llama-server"
 
 
 def library_dir(device: str) -> Path:
-    """Shared objects sit beside the binaries in the same flat directory."""
+    """Nixpkgs shared objects live in lib/. The Ubuntu archive is flat."""
+    if nix_runtime_root() is not None:
+        return runtime_dir(device) / "lib"
     return runtime_dir(device)
 
 

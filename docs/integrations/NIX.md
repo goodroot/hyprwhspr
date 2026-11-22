@@ -80,8 +80,8 @@ services.hyprwhspr = {
 };
 ```
 
-This compiles llama.cpp b10516 for both the CPU and Vulkan devices and points
-the service at those store paths. It does not download a model. After
+This uses `llama-cpp` and `llama-cpp-vulkan` from nixpkgs unstable. It does not
+compile llama.cpp in this repository, and it does not download a model. After
 rebuilding, set the backend yourself and download the GGUF pair:
 
 ```bash

@@ -2,9 +2,10 @@
   gobject-introspection, gtk4, gtk4-layer-shell, glib, wl-clipboard, wtype,
   ydotool, xclip, xdotool, xprop, libnotify, systemd, coreutils, procps,
   bash, gawk, gnugrep, gnused, pulseaudio, alsa-utils,
-  version ? "0-unstable-local", extraBackends ? [ ] }:
+  version ? "0-unstable-local", extraBackends ? [ ],
+  llama-cpp, llama-cpp-vulkan }:
 let
-  registry = import ./backends.nix { inherit pkgs; };
+  registry = import ./backends.nix { inherit pkgs llama-cpp llama-cpp-vulkan; };
   unknown = builtins.filter (name: !builtins.hasAttr name registry) extraBackends;
   selected =
     if unknown != [ ] then

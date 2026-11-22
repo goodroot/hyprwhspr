@@ -203,6 +203,12 @@ PY
     if [[ "$backend" == "qwen3-asr" ]]; then
         local runtime_root="${HYPRWHSPR_QWEN3_ASR_RUNTIME:-${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/runtime/llama-cpp}"
         local server
+        if [[ -n "${HYPRWHSPR_QWEN3_ASR_RUNTIME:-}" ]]; then
+            for server in "$runtime_root"/*/bin/llama-server; do
+                [[ -x "$server" ]] && return 0
+            done
+            return 1
+        fi
         for server in "$runtime_root"/*/*/llama-server; do
             [[ -x "$server" ]] && return 0
         done

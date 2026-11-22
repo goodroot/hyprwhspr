@@ -212,7 +212,7 @@ class NixRuntimeTests(unittest.TestCase):
     def test_nix_runtime_root_replaces_the_xdg_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            server = root / qwen3_asr_runtime.LLAMA_CPP_RELEASE / "vulkan" / "llama-server"
+            server = root / "vulkan" / "bin" / "llama-server"
             server.parent.mkdir(parents=True)
             server.write_bytes(b"ELF")
             server.chmod(0o755)
@@ -237,7 +237,7 @@ class NixRuntimeTests(unittest.TestCase):
     def test_nix_runtime_present_skips_download_when_forced(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "store"
-            server = root / qwen3_asr_runtime.LLAMA_CPP_RELEASE / "vulkan" / "llama-server"
+            server = root / "vulkan" / "bin" / "llama-server"
             server.parent.mkdir(parents=True)
             server.write_bytes(b"ELF")
             server.chmod(0o755)
@@ -251,7 +251,7 @@ class NixRuntimeTests(unittest.TestCase):
     def test_resolve_device_stays_inside_packaged_devices(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            server = root / qwen3_asr_runtime.LLAMA_CPP_RELEASE / "cpu" / "llama-server"
+            server = root / "cpu" / "bin" / "llama-server"
             server.parent.mkdir(parents=True)
             server.write_bytes(b"ELF")
             server.chmod(0o755)

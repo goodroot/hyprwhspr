@@ -2096,9 +2096,7 @@ def install_qwen3_asr_runtime(device: str, force: bool = False) -> bool:
         return False
     if qwen3_asr_runtime.nix_runtime_root() is not None:
         if qwen3_asr_runtime.runtime_installed(device):
-            log_success(
-                f'Qwen3-ASR runtime present: {qwen3_asr_runtime.LLAMA_CPP_RELEASE} ({device})'
-            )
+            log_success(f'Qwen3-ASR runtime present ({device})')
             return True
         log_error(
             'Nix owns the Qwen3-ASR sidecar. The Ubuntu llama.cpp tarball is not downloaded. '

@@ -2,13 +2,17 @@
   description = "hyprwhspr Nix support (beta, Whisper.cpp CPU by default)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.nixpkgs-llama.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, nixpkgs-llama }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
+      llamaPkgs = import nixpkgs-llama { inherit system; };
       mkPackage = extraBackends: pkgs.callPackage ./nix/package.nix {
         inherit extraBackends;
+        llama-cpp = llamaPkgs.llama-cpp;
+        llama-cpp-vulkan = llamaPkgs.llama-cpp-vulkan;
         version = "0-unstable-${self.shortRev or self.dirtyShortRev or "local"}";
       };
       package = mkPackage [ ];

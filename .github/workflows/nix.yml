@@ -44,12 +44,12 @@ jobs:
           nix build .#hyprwhspr-qwen --no-update-lock-file --print-build-logs --no-link
           test "$(nix eval --json .#hyprwhspr-qwen.nixBackends --no-update-lock-file)" = '["cpu","pywhispercpp","qwen3-asr"]'
           runtime=$(nix eval --raw .#hyprwhspr-qwen.qwen3AsrRuntime --no-update-lock-file)
-          test -x "$runtime/b10516/cpu/llama-server"
-          test -x "$runtime/b10516/vulkan/llama-server"
-          test -n "$(find -L "$runtime/b10516/cpu" -name 'libggml*.so' -print -quit)"
-          vulkan_so=$(find -L "$runtime/b10516/vulkan" -name 'libggml-vulkan.so' -print -quit)
+          test -x "$runtime/cpu/bin/llama-server"
+          test -x "$runtime/vulkan/bin/llama-server"
+          test -n "$(find -L "$runtime/cpu" -name 'libggml*.so' -print -quit)"
+          vulkan_so=$(find -L "$runtime/vulkan" -name 'libggml-vulkan.so' -print -quit)
           test -n "$vulkan_so"
-          ldd "$runtime/b10516/cpu/llama-server" | grep -q 'not found' && exit 1
+          ldd "$runtime/cpu/bin/llama-server" | grep -q 'not found' && exit 1
           ldd "$vulkan_so" | grep -q 'not found' && exit 1
           ldd "$vulkan_so" | grep -q libvulkan
           out=$(nix build .#hyprwhspr-qwen --no-update-lock-file --no-link --print-out-paths)
