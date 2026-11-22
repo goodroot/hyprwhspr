@@ -1758,6 +1758,17 @@ except Exception:
                         # overlapping command until their match is known.
                         longest = max(longest, k, complete)
                         break
+            # French closing-parenthesis commands remove a recognizer comma
+            # immediately before them. Keep that word with a possible command;
+            # once pasted, its comma cannot be removed safely.
+            if symbols and profile is not None and profile.language == 'fr':
+                end = len(words) - longest
+                if end and words[end - 1].endswith(',') and not (complete and not longest):
+                    # Do not split a complete command ending at that comma.
+                    preceding = max((len(tokens) for tokens in command_tokens
+                                     if end >= len(tokens)
+                                     and tuple(tail[end - len(tokens):end]) == tokens), default=1)
+                    longest += preceding
         # Keep the whole trailing run, including before an unfinished phrase.
         if symbols and profile is not None:
             end = len(tail) - longest

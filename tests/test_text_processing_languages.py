@@ -134,6 +134,36 @@ class ProcessingLanguageTests(unittest.TestCase):
 
 
 class FrenchStreamTests(unittest.TestCase):
+    def test_parenthesis_inner_comma_at_every_chunk_boundary(self):
+        raw = 'Ouvrez la parenthèse, exemple, fermez la parenthèse, suite'
+        expected = '(exemple), suite'
+        words = raw.split()
+        partitions = [words]
+        partitions.extend([' '.join(words[:split]), ' '.join(words[split:])]
+                          for split in range(1, len(words)))
+        for chunks in partitions:
+            with self.subTest(chunks=chunks):
+                pasted, retained = self._stream(chunks)
+                self.assertEqual(pasted, expected)
+                self.assertEqual(retained, expected)
+        self.assertEqual(self._stream(['bonjour,']), ('bonjour,', 'bonjour,'))
+        self.assertEqual(self._stream(['bonjour,', 'suite']), ('bonjour, suite', 'bonjour, suite'))
+
+    def test_edge_and_repeated_breaks_at_every_chunk_boundary(self):
+        for raw, expected in (
+            ('retour à la ligne', '\n'),
+            ('nouveau paragraphe', '\n\n'),
+            ('nouveau paragraphe titre retour à la ligne', '\n\ntitre\n'),
+            ('titre retour à la ligne nouveau paragraphe suite', 'titre\n\n\nsuite'),
+        ):
+            words = raw.split()
+            for split in range(1, len(words)):
+                with self.subTest(raw=raw, split=split):
+                    self.assertEqual(preprocess_text(raw, context=ProcessingContext('fr')), expected)
+                    pasted, retained = self._stream([' '.join(words[:split]), ' '.join(words[split:])])
+                    self.assertEqual(pasted, expected)
+                    self.assertEqual(retained, expected)
+
     def _stream(self, chunks, settings=None, context=None, cancel=False):
         injector = make_injector()
         injector.config_manager = ConfigStub({'language': 'fr', 'append_trailing_space': False, **(settings or {})})
