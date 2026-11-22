@@ -1,4 +1,4 @@
-{ defaultPackage }:
+{ mkPackage, extraBackendNames }:
 { config, lib, pkgs, ... }:
 let
   cfg = config.services.hyprwhspr;
@@ -10,9 +10,18 @@ let
 in {
   options.services.hyprwhspr = {
     enable = lib.mkEnableOption "hyprwhspr CPU dictation in graphical user sessions (beta)";
+    extraBackends = lib.mkOption {
+      type = lib.types.listOf (lib.types.enum extraBackendNames);
+      default = [ ];
+      example = [ "qwen3-asr" ];
+      description = ''
+        Optional transcription backends to add to the package.
+        Whisper.cpp CPU is always included. Your config.json is not changed.
+      '';
+    };
     package = lib.mkOption {
       type = lib.types.package;
-      default = defaultPackage;
+      default = mkPackage cfg.extraBackends;
       description = "The hyprwhspr Nix package to run.";
     };
     users = lib.mkOption {
@@ -30,6 +39,14 @@ in {
         message = "services.hyprwhspr.users must name users declared in users.users."; }
       { assertion = pkgs.stdenv.hostPlatform.system == "x86_64-linux";
         message = "The hyprwhspr Nix package currently supports x86_64-linux only."; }
+      {
+        assertion = cfg.extraBackends == [ ] || cfg.package == mkPackage cfg.extraBackends;
+        message = ''
+          services.hyprwhspr.extraBackends only applies to the default package.
+          Either leave services.hyprwhspr.package unset, or build your own package
+          with hyprwhspr.lib.mkPackage and set extraBackends back to [].
+        '';
+      }
     ];
     environment.systemPackages = [ cfg.package ];
     boot.kernelModules = [ "uinput" ];

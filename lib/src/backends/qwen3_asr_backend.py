@@ -17,9 +17,11 @@ except ImportError:
 
 try:
     from ..dependencies import require_package
+    from ..installation import repair_hint
     from ..text_script import join_segments
 except ImportError:
     from dependencies import require_package
+    from installation import repair_hint
     from text_script import join_segments
 
 np = require_package('numpy')
@@ -198,10 +200,14 @@ class Qwen3AsrBackend(TranscriptionBackend):
         decoder, projector = model_paths(model_name)
         device = self._device()
         server = server_path(device)
-        for path in (server, decoder, projector):
+        if not server.exists():
+            log(f"[ERROR] Qwen3-ASR component not found: {server}")
+            log("[ERROR] " + repair_hint("Run 'hyprwhspr setup' to install the Qwen3-ASR backend"))
+            return False
+        for path in (decoder, projector):
             if not path.exists():
                 log(f"[ERROR] Qwen3-ASR component not found: {path}")
-                log("[ERROR] Run 'hyprwhspr setup' to install the Qwen3-ASR backend")
+                log("[ERROR] Run 'hyprwhspr model download' to fetch the model")
                 return False
         # AF_UNIX sun_path holds 108 bytes including the NUL. Over that, the
         # bind fails inside llama-server and surfaces only as its own opaque

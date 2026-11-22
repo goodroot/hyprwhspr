@@ -86,17 +86,53 @@ def model_paths(model_name: str) -> tuple[Path, Path]:
             QWEN3_ASR_MODELS_DIR / metadata["projector"][0])
 
 
+def nix_runtime_root() -> Optional[Path]:
+    """The Nix store runtime, with one llama.cpp prefix per device."""
+    raw = os.environ.get("HYPRWHSPR_QWEN3_ASR_RUNTIME")
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def packaged_devices() -> tuple[str, ...]:
+    """Devices the Nix package ships; every device elsewhere."""
+    if nix_runtime_root() is None:
+        return QWEN3_ASR_DEVICES
+    return tuple(device for device in QWEN3_ASR_DEVICES if runtime_installed(device))
+
+
+def runtime_release() -> str:
+    """The llama.cpp release actually in use, for status output.
+
+    Nix packages llama.cpp from nixpkgs, not the pinned Ubuntu release.
+    """
+    root = nix_runtime_root()
+    if root is None:
+        return LLAMA_CPP_RELEASE
+    try:
+        return (root / "version").read_text(encoding="utf-8").strip() or "nixpkgs"
+    except OSError:
+        return "nixpkgs"
+
+
 def runtime_dir(device: str) -> Path:
+    root = nix_runtime_root()
+    if root is not None:
+        return root / device
     return QWEN3_ASR_RUNTIMES_DIR / LLAMA_CPP_RELEASE / device
 
 
 def server_path(device: str) -> Path:
-    """The llama-server binary. The archive is flat, so there is no bin/."""
+    """Nixpkgs installs llama-server in bin/. The Ubuntu archive is flat."""
+    if nix_runtime_root() is not None:
+        return runtime_dir(device) / "bin" / "llama-server"
     return runtime_dir(device) / "llama-server"
 
 
 def library_dir(device: str) -> Path:
-    """Shared objects sit beside the binaries in the same flat directory."""
+    """Nixpkgs shared objects live in lib/. The Ubuntu archive is flat."""
+    if nix_runtime_root() is not None:
+        return runtime_dir(device) / "lib"
     return runtime_dir(device)
 
 
@@ -116,6 +152,15 @@ def resolve_device(config, force_probe: bool = False) -> str:
     can move from the CPU runtime to Vulkan.
     """
     requested = config.get_setting("qwen3_asr_device", "auto")
+    if nix_runtime_root() is not None:
+        # Nix ships every device, so what is on disk says nothing about the
+        # hardware: probe it, as setup does.
+        packaged = packaged_devices()
+        if requested in packaged:
+            return requested
+        detected = detect_device()
+        return detected if detected in packaged else "cpu"
+
     if requested in QWEN3_ASR_DEVICES:
         return requested
     if force_probe:

@@ -298,19 +298,24 @@ def qwen3_asr_model_status(config=None):
     `hyprwhspr status`.
     """
     try:
-        from ..qwen3_asr_runtime import (DEFAULT_MODEL, LLAMA_CPP_RELEASE,
-                                         QWEN3_ASR_DEVICES, model_installed,
-                                         runtime_installed)
+        from ..installation import is_nix_install
+        from ..qwen3_asr_runtime import (DEFAULT_MODEL, QWEN3_ASR_DEVICES,
+                                         model_installed, runtime_installed,
+                                         runtime_release)
     except ImportError:
-        from qwen3_asr_runtime import (DEFAULT_MODEL, LLAMA_CPP_RELEASE,
-                                       QWEN3_ASR_DEVICES, model_installed,
-                                       runtime_installed)
+        from installation import is_nix_install
+        from qwen3_asr_runtime import (DEFAULT_MODEL, QWEN3_ASR_DEVICES,
+                                       model_installed, runtime_installed,
+                                       runtime_release)
     devices = [d for d in QWEN3_ASR_DEVICES if runtime_installed(d)]
     if devices:
-        log_success(f"llama.cpp runtime {LLAMA_CPP_RELEASE}: {', '.join(devices)}")
+        log_success(f"llama.cpp runtime {runtime_release()}: {', '.join(devices)}")
     else:
-        log_warning(f"llama.cpp runtime {LLAMA_CPP_RELEASE} is not installed")
-        log_info("Run 'hyprwhspr setup' to install the Qwen3-ASR sidecar.")
+        log_warning(f"llama.cpp runtime {runtime_release()} is not installed")
+        if is_nix_install():
+            log_info('Add "qwen3-asr" to services.hyprwhspr.extraBackends and rebuild.')
+        else:
+            log_info("Run 'hyprwhspr setup' to install the Qwen3-ASR sidecar.")
 
     # Only the configured pair is a health signal; the others are alternatives,
     # so warning about them made every healthy install look broken.

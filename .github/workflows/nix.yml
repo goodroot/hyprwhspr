@@ -27,3 +27,69 @@ jobs:
           ulimit -s 8192
           nix flake check --no-update-lock-file --print-build-logs
       - run: nix build --no-update-lock-file --no-link
+  qwen-backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Build the optional qwen3-asr package
+        run: |
+          ulimit -s 8192
+          nix build .#hyprwhspr-qwen --no-update-lock-file --print-build-logs --no-link
+          test "$(nix eval --json .#hyprwhspr-qwen.nixBackends --no-update-lock-file)" = '["cpu","pywhispercpp","qwen3-asr"]'
+          runtime=$(nix eval --raw '.#hyprwhspr-qwen.backendRuntimes.qwen3-asr' --no-update-lock-file)
+          test -x "$runtime/cpu/bin/llama-server"
+          test -x "$runtime/vulkan/bin/llama-server"
+          test -s "$runtime/version"
+          # nixpkgs llama.cpp is not the pinned release: keep the flags we pass.
+          "$runtime/cpu/bin/llama-server" --help > "$RUNNER_TEMP/llama-help" 2>&1 || true
+          for flag in --mmproj --host --threads --parallel --cache-ram --ctx-size; do
+            grep -q -- "$flag" "$RUNNER_TEMP/llama-help" || { echo "llama-server lacks $flag" >&2; exit 1; }
+          done
+          test -n "$(find -L "$runtime/cpu" -name 'libggml*.so' -print -quit)"
+          vulkan_so=$(find -L "$runtime/vulkan" -name 'libggml-vulkan.so' -print -quit)
+          test -n "$vulkan_so"
+          ldd "$runtime/cpu/bin/llama-server" | grep -q 'not found' && exit 1
+          ldd "$vulkan_so" | grep -q 'not found' && exit 1
+          ldd "$vulkan_so" | grep -q libvulkan
+          out=$(nix build .#hyprwhspr-qwen --no-update-lock-file --no-link --print-out-paths)
+          grep -F 'HYPRWHSPR_NIX_BACKENDS' "$out/bin/hyprwhspr"
+          grep -F 'HYPRWHSPR_QWEN3_ASR_RUNTIME' "$out/bin/hyprwhspr"
+          grep -F 'HYPRWHSPR_QWEN3_ASR_RUNTIME' "$out/bin/hyprwhspr-tray"
+          grep -F 'vulkan-tools' "$out/bin/hyprwhspr"
+          cpu=$(nix build .#hyprwhspr --no-update-lock-file --no-link --print-out-paths)
+          grep -F 'qwen3-asr' "$cpu/bin/hyprwhspr" && exit 1 || true
+          # One flake object. A path getFlake has no shortRev, so comparing
+          # this ExecStart to `nix eval .#hyprwhspr-qwen` mismatches the version.
+          nix eval --impure --raw --expr '
+            let
+              flake = builtins.getFlake (toString ./.);
+              lib = flake.inputs.nixpkgs.lib;
+              qwen = flake.packages.x86_64-linux.hyprwhspr-qwen;
+              eval = lib.nixosSystem {
+                system = "x86_64-linux";
+                modules = [
+                  flake.nixosModules.default
+                  {
+                    system.stateVersion = "26.05";
+                    users.users.alice.isNormalUser = true;
+                    services.hyprwhspr = {
+                      enable = true;
+                      users = [ "alice" ];
+                      extraBackends = [ "qwen3-asr" ];
+                    };
+                  }
+                ];
+              };
+              execStart = eval.config.systemd.user.services.hyprwhspr.serviceConfig.ExecStart;
+            in
+              if lib.hasPrefix "${qwen}/" execStart
+              then execStart
+              else throw "module ExecStart is not the qwen package: ${execStart} (expected ${qwen})"
+          '

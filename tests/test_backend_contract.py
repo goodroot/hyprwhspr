@@ -34,7 +34,7 @@ class BackendContractTests(unittest.TestCase):
                 mock.patch('whisper_manager.log') as log:
             self.assertFalse(manager.initialize())
         backend.assert_not_called()
-        self.assertIn('CPU transcription', log.call_args.args[0])
+        self.assertIn('Packaged backends', log.call_args.args[0])
 
     def test_every_backend_implements_the_contract(self):
         for name, cls in BACKENDS.items():

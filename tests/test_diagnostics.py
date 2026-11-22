@@ -312,7 +312,8 @@ class ReportTests(unittest.TestCase):
         errors = [f for f in report['findings'] if f['check_id'] == 'dependency.backend']
         self.assertEqual(len(errors), 1)
         self.assertEqual(errors[0]['severity'], 'error')
-        self.assertIn('config edit', errors[0]['next_step'])
+        self.assertIn('does not include', errors[0]['explanation'])
+        self.assertIn('cpu, pywhispercpp', errors[0]['next_step'])
         # A rebuild cannot add an unsupported backend's modules; none are probed.
         self.assertEqual(calls[0][3:], [])
         self.assertFalse([f for f in report['findings'] if f['check_id'].startswith('dependency.')

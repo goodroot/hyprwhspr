@@ -402,6 +402,36 @@ class QwenBackendTests(unittest.TestCase):
             self.assertFalse(self.backend._start())
         popen.assert_not_called()
 
+    def _missing_component_hints(self, server, decoder, nix):
+        env = {"HYPRWHSPR_INSTALL_METHOD": "nix"} if nix else {}
+        with mock.patch.dict(qwen3_asr_backend.os.environ, env), \
+                mock.patch.object(qwen3_asr_backend, "server_path", return_value=server), \
+                mock.patch.object(qwen3_asr_backend, "model_paths",
+                                  return_value=(decoder, self._touch("p.gguf"))), \
+                mock.patch.object(qwen3_asr_backend, "log") as log, \
+                mock.patch.object(qwen3_asr_backend.subprocess, "Popen") as popen:
+            if not nix:
+                qwen3_asr_backend.os.environ.pop("HYPRWHSPR_INSTALL_METHOD", None)
+            self.assertFalse(self.backend._start())
+        popen.assert_not_called()
+        return " ".join(call.args[0] for call in log.call_args_list)
+
+    def test_missing_model_points_at_model_download(self):
+        missing = Path(self._tmp.name) / "absent.gguf"
+        for nix in (False, True):
+            with self.subTest(nix=nix):
+                hint = self._missing_component_hints(self._touch("llama-server"), missing, nix)
+                self.assertIn("model download", hint)
+                self.assertNotIn("setup", hint)
+
+    def test_missing_server_under_nix_does_not_suggest_setup(self):
+        missing = Path(self._tmp.name) / "absent-server"
+        hint = self._missing_component_hints(missing, self._touch("d.gguf"), nix=True)
+        self.assertIn("Rebuild", hint)
+        self.assertNotIn("hyprwhspr setup", hint)
+        hint = self._missing_component_hints(missing, self._touch("d.gguf"), nix=False)
+        self.assertIn("hyprwhspr setup", hint)
+
     def test_default_socket_path_is_within_the_kernel_limit(self):
         self.assertLessEqual(
             len(str(qwen3_asr_backend.QWEN3_ASR_SOCKET).encode()),

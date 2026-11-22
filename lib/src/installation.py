@@ -28,6 +28,14 @@ def repair_hint(default: str) -> str:
     return NIX_REPAIR_HINT if is_nix_install() else default
 
 
+def nix_backends() -> tuple[str, ...]:
+    raw = os.environ.get('HYPRWHSPR_NIX_BACKENDS', '')
+    names = tuple(dict.fromkeys(
+        part.strip() for part in raw.split(',') if part.strip()
+    ))
+    return names or ('cpu', 'pywhispercpp')
+
+
 def is_supported_backend(backend: str) -> bool:
     if not is_nix_install():
         return True
@@ -36,7 +44,7 @@ def is_supported_backend(backend: str) -> bool:
         from .backend_utils import normalize_backend
     except ImportError:
         from backend_utils import normalize_backend
-    return normalize_backend(backend) in ('cpu', 'pywhispercpp')
+    return normalize_backend(backend) in nix_backends()
 
 
 def nix_profile_command(name: str, root=None):
@@ -85,8 +93,9 @@ def require_supported_backend(backend: str):
     """Reject an unavailable Nix backend before loading models or audio devices."""
     if not is_supported_backend(backend):
         raise ValueError(
-            f"The Nix package supports only Whisper.cpp CPU transcription, not {backend!r}. "
-            'Run hyprwhspr config edit and set transcription_backend to "cpu". '
+            f'The Nix package does not include backend {backend!r}. '
+            f'Packaged backends: {", ".join(nix_backends())}. '
+            'Run hyprwhspr config edit and set transcription_backend to one of them. '
             'Your configuration has not been changed.'
         )
 

@@ -15,7 +15,7 @@ from config_manager import (build_default_config, normalize_legacy_config, expan
 from paths import CONFIG_FILE, DATA_DIR, SOCKET_FILE
 from backend_utils import normalize_backend
 from dependency_plan import PLAN_SPECS, plan_key
-from installation import is_nix_install, is_supported_backend, repair_hint
+from installation import is_nix_install, is_supported_backend, nix_backends, repair_hint
 from provider_registry import get_models_for_backend, get_realtime_capabilities, get_realtime_mode
 from realtime_protocols import PROTOCOLS, live_typing_conflict, protocol_for_provider
 from session_environment import classify_display_environment
@@ -277,8 +277,8 @@ def build_report():
         report['configured'] = {'backend': backend, 'recording_mode': config['recording_mode']}
         if not is_supported_backend(backend):
             # A rebuild cannot add this backend's modules; do not probe for them.
-            add('dependency.backend', 'error', 'The Nix package supports only Whisper.cpp CPU transcription.',
-                'Set transcription_backend to "cpu" with hyprwhspr config edit.')
+            add('dependency.backend', 'error', f'The Nix package does not include {backend!r}.',
+                f'Set transcription_backend to one of: {", ".join(nix_backends())}.')
         else:
             modules = PLAN_SPECS[plan_key(backend, config['websocket_provider'], None, ValueError)][1]
     environment = Path(os.environ['HYPRWHSPR_BACKEND_ENV']) if os.environ.get('HYPRWHSPR_BACKEND_ENV') else DATA_DIR / 'venv'

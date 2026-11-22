@@ -4,8 +4,9 @@ Nix support is **beta**. We'd appreciate [issue reports](https://github.com/good
 with your NixOS/distro version, compositor, and steps to reproduce.
 
 The flake provides an `x86_64-linux` package with Whisper.cpp **CPU transcription**,
-desktop integration tools, and the GTK4 mic OSD. GPU backends, other transcription
-backends, ARM packages, and a Home Manager module are not included in this version.
+desktop integration tools, and the GTK4 mic OSD. Qwen3-ASR is
+[optional](#optional-qwen3-asr). Other backends, ARM packages, and a Home Manager
+module are not included in this version.
 The OSD retains its usual compositor requirements; see [desktop integration](DESKTOPS.md).
 
 ## Build or install the package
@@ -116,6 +117,25 @@ Configuration stays in `$XDG_CONFIG_HOME/hyprwhspr` (normally
 `$XDG_DATA_HOME/pywhispercpp/models` (normally `~/.local/share/pywhispercpp/models`).
 Models, credentials, and user settings are never placed in the Nix store.
 
+## Optional qwen3-asr
+
+The default package is Whisper.cpp CPU only. Add Qwen3-ASR with the module:
+
+```nix
+services.hyprwhspr.extraBackends = [ "qwen3-asr" ];
+```
+
+Without the module, build `packages.x86_64-linux.hyprwhspr-qwen`.
+
+Rebuild. Set `"transcription_backend": "qwen3-asr"`, then fetch a model:
+
+```bash
+hyprwhspr config edit
+hyprwhspr model download 1.7b-q8_0
+```
+
+`qwen3_asr_device` stays `auto`: Vulkan with a GPU, CPU without.
+
 ## Updates, removal, and migration
 
 Nix owns the application, Python dependencies, and declarative service.
@@ -123,8 +143,8 @@ Nix owns the application, Python dependencies, and declarative service.
 explain the Nix workflow instead of changing the installation; on NixOS, so do
 service install/enable/disable. Configuration, model commands, recording,
 transcription, service status/restart, and `hyprwhspr install status` remain
-available. With a backend other than CPU, model downloads are refused and the
-service reports the setting at start.
+available. Model downloads are refused for a backend the package does not
+include, and the service reports it at start.
 
 For a NixOS installation, update the `hyprwhspr` input in your system flake and
 rebuild. Disable `services.hyprwhspr.enable` and rebuild to remove the module's
