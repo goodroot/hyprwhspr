@@ -4,7 +4,8 @@ Nix support is **beta**. We'd appreciate [issue reports](https://github.com/good
 with your NixOS/distro version, compositor, and steps to reproduce.
 
 The flake provides an `x86_64-linux` package with Whisper.cpp **CPU transcription**,
-desktop integration tools, and the GTK4 mic OSD. GPU backends, other transcription
+desktop integration tools, and the GTK4 mic OSD. The optional `qwen3-asr` sidecar
+is enabled with `services.hyprwhspr.extraBackends`. GPU backends, other transcription
 backends, ARM packages, and a Home Manager module are not included in this version.
 The OSD retains its usual compositor requirements; see [desktop integration](DESKTOPS.md).
 
@@ -66,6 +67,34 @@ Rebuild NixOS and log out and back in for the group change to apply.
 does not enable PipeWire, replace your compositor, or start a separate ydotool
 service: hyprwhspr manages its own private ydotoold process.
 
+## Optional qwen3-asr
+
+The default package does not include this backend. Enable it with the module
+option, or build `packages.x86_64-linux.hyprwhspr-qwen`:
+
+```nix
+services.hyprwhspr = {
+  enable = true;
+  users = [ "alice" ];
+  extraBackends = [ "qwen3-asr" ];
+};
+```
+
+This compiles llama.cpp b10516 for both the CPU and Vulkan devices and points
+the service at those store paths. It does not download a model. After
+rebuilding, set the backend yourself and download the GGUF pair:
+
+```bash
+hyprwhspr config init
+hyprwhspr config edit
+hyprwhspr model download 1.7b-q8_0
+```
+
+`config edit` must set `transcription_backend` to `qwen3-asr` before the model
+download. `qwen3_asr_device` may be `auto` (prefers Vulkan when that runtime is
+packaged), `vulkan`, or `cpu`. A machine without a GPU should set `cpu`.
+`hyprwhspr setup` stays refused; Nix owns the sidecar binary.
+
 ## First run
 
 Create and edit your user configuration, then download a CPU-sized model:
@@ -123,8 +152,9 @@ Nix owns the application, Python dependencies, and declarative service.
 explain the Nix workflow instead of changing the installation; on NixOS, so do
 service install/enable/disable. Configuration, model commands, recording,
 transcription, service status/restart, and `hyprwhspr install status` remain
-available. With a backend other than CPU, model downloads are refused and the
-service reports the setting at start.
+available. Model downloads are refused for a backend that is not listed in
+`HYPRWHSPR_NIX_BACKENDS`; the default list is `cpu,pywhispercpp`. The service
+reports the setting at start.
 
 For a NixOS installation, update the `hyprwhspr` input in your system flake and
 rebuild. Disable `services.hyprwhspr.enable` and rebuild to remove the module's
