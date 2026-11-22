@@ -4,6 +4,8 @@
 
 Run `hyprwhspr setup`; choose **Qwen3-ASR**. It adds no Python packages—only the runtime (17–34 MB) and model pair.
 
+On Nix, see [Nix and NixOS](../integrations/NIX.md#optional-qwen3-asr).
+
 ```jsonc
 {
     "transcription_backend": "qwen3-asr",
