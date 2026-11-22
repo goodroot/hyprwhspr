@@ -11,6 +11,9 @@ DEFAULT_HALLUCINATION_MARKERS = [
     'blank audio', 'blank', 'silence', 'no speech',
     'you', 'thank you', 'thanks for watching', 'thank you for watching',
     'video playback', 'music', 'music playing', 'keyboard clicking',
+    "merci d'avoir regardé cette vidéo", 'merci d’avoir regardé cette vidéo',
+    'sous-titrage société radio-canada', 'sous-titrage société radio canada',
+    'sous-titrage : société radio-canada', 'sous-titrage: société radio-canada',
 ]
 
 

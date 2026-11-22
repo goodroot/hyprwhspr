@@ -66,7 +66,12 @@ Whisper invents stock subtitle phrases when handed audio with no speech in it. T
 - Setting the key replaces the built-in list; `hyprwhspr config show --all` prints the default
 - Matching ignores case, underscores, brackets and trailing punctuation, so `[Silence]` and `blank_audio` are caught
 - Text starting with `♪` is always discarded
+- The defaults also catch complete French subtitle and outro phrases such as
+  « Sous-titrage Société Radio-Canada » and « Merci d’avoir regardé cette vidéo ! ».
 - `"you"` ships in the list — Whisper's most common phantom, and a real one-word dictation. Drop it if you'd rather keep the phantoms than lose a dictated "you"
+
+On the [Whisper.cpp backend](../backends/WHISPER_CPP.md), optional voice activity
+detection can remove non-speech audio before transcription.
 
 ## Symbol replacements
 
