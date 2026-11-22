@@ -18,7 +18,9 @@ DEFAULT_HALLUCINATION_MARKERS = [
 
 
 def _normalize(text: str) -> str:
-    return text.lower().replace('_', ' ').strip('[]().!?, ')
+    # Recognizers can emit nonbreaking spaces before French punctuation or
+    # wrap a phrase across lines. Match words independently of whitespace.
+    return ' '.join(text.lower().replace('_', ' ').split()).strip('[]().!?, ')
 
 
 def could_be_hallucination(text: str, markers=None) -> bool:

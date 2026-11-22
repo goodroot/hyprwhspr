@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
-from hallucination import DEFAULT_HALLUCINATION_MARKERS, is_hallucination
+from hallucination import DEFAULT_HALLUCINATION_MARKERS, could_be_hallucination, is_hallucination
 
 
 class HallucinationTests(unittest.TestCase):
@@ -36,6 +36,18 @@ class HallucinationTests(unittest.TestCase):
     def test_real_transcriptions_pass_through(self):
         for text in ("hello there", "thank you for the coffee", "you know what I mean"):
             self.assertFalse(is_hallucination(text), text)
+
+    def test_whitespace_variants_match_without_filtering_longer_sentences(self):
+        for space in (' ', '  ', '\t', '\n', '\u00a0', '\u202f'):
+            with self.subTest(space=repr(space)):
+                phrase = space.join('Merci d’avoir regardé cette vidéo'.split())
+                self.assertTrue(is_hallucination(phrase + space + '!'))
+                self.assertTrue(is_hallucination('Sous-titrage' + space + ': Société Radio-Canada'))
+                self.assertTrue(could_be_hallucination('Merci' + space + 'd’avoir'))
+                self.assertFalse(is_hallucination(phrase + space + 'avec moi.'))
+                self.assertFalse(could_be_hallucination('Merci' + space + 'pour votre aide'))
+                self.assertTrue(is_hallucination('custom marker', ['custom' + space + 'marker']))
+                self.assertFalse(is_hallucination(phrase, ['custom marker']))
 
     def test_empty_input_is_safe(self):
         self.assertFalse(is_hallucination(""))
