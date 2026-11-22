@@ -86,6 +86,11 @@ class ProcessingLanguageTests(unittest.TestCase):
             ('Titre: insérer deux points: suite', 'Titre : suite'),
             ('Attends… points de suspension… ensuite', 'Attends… ensuite'),
             ('Titre retour a la ligne. Tiret espace. lire', 'Titre\n- lire'),
+            ('Titre nouveau paragraphe. Suite.', 'Titre\n\nSuite.'),
+            ('Titre nouveau paragraphe, Suite.', 'Titre\n\nSuite.'),
+            ('Ouvrez la parenthèse, exemple, fermez la parenthèse, suite', '(exemple), suite'),
+            ('Ouvrez la parenthèse.', '('),
+            ('Fermez la parenthèse.', ')'),
             ('Un point d’interrogation', 'Un ?'),
             ('Un point d\'interrogation', 'Un ?'),
             ('TIRET DU SIX ESPACE.', '-'),
@@ -109,6 +114,22 @@ class ProcessingLanguageTests(unittest.TestCase):
                             injector, '_inject_via_clipboard_and_hotkey', return_value=True) as paste:
                         self.assertEqual(injector.inject_text('tiret espace'), InjectionOutcome.INJECTED)
                     expected = ('changed' if stdout else '-') + (' ' if setting is not False else '')
+                    paste.assert_called_once_with(expected, retain=True)
+
+    def test_french_spoken_edge_breaks_reach_the_clipboard_without_a_space(self):
+        for setting in ('auto', False, True):
+            for spoken, expected in (
+                ('retour à la ligne', '\n'),
+                ('Nouveau paragraphe.', '\n\n'),
+                ('titre nouveau paragraphe', 'titre\n\n'),
+            ):
+                with self.subTest(setting=setting, spoken=spoken):
+                    injector = make_injector()
+                    injector.config_manager = ConfigStub({'language': 'fr',
+                                                          'append_trailing_space': setting})
+                    with mock.patch.object(injector, '_inject_via_clipboard_and_hotkey',
+                                           return_value=True) as paste:
+                        self.assertEqual(injector.inject_text(spoken), InjectionOutcome.INJECTED)
                     paste.assert_called_once_with(expected, retain=True)
 
 
@@ -165,11 +186,13 @@ class FrenchStreamTests(unittest.TestCase):
             for chunks, expected in (
                 (['tiret', 'espace'], '-'),
                 (['titre retour à', 'la ligne tiret', 'espace lire'], 'titre\n- lire'),
-                (['titre retour à la ligne'], 'titre'),
+                (['titre retour à la ligne'], 'titre\n'),
+                (['nouveau', 'paragraphe'], '\n\n'),
+                (['titre', 'nouveau paragraphe', 'suite'], 'titre\n\nsuite'),
             ):
                 with self.subTest(setting=setting, chunks=chunks):
                     actual, retained = self._stream(chunks, {'append_trailing_space': setting})
-                    if setting is not False and not expected.endswith(' '):
+                    if setting is not False and not expected.endswith((' ', '\n')):
                         expected += ' '
                     self.assertEqual(actual, expected)
                     self.assertEqual(retained, expected)

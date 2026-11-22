@@ -181,7 +181,7 @@
       "type": ["boolean", "string"],
       "enum": [true, false, "auto"],
       "default": "auto",
-      "description": "Append a space after each transcription: true always, false never, 'auto' skips it when the text ends in a CJK character"
+      "description": "Append a space after each transcription: true on, false off, 'auto' skips it when the text ends in a CJK character. A final spoken line break never gets a trailing space."
     },
     "whisper_prompt": {
       "type": "string",

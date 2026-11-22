@@ -140,15 +140,19 @@ Everyday words need « insérer » first. Names of punctuation stand alone.
 
 **Brackets:**
 
-- « ouvrir la parenthèse » or « parenthèse ouvrante » → "("
-- « fermer la parenthèse » or « parenthèse fermante » → ")"
+- « ouvrir la parenthèse », « ouvrez la parenthèse » or « parenthèse ouvrante » → "("
+- « fermer la parenthèse », « fermez la parenthèse » or « parenthèse fermante » → ")"
 - « crochet ouvrant » or « ouvrir le crochet » → "["
 - « crochet fermant » or « fermer le crochet » → "]"
 
 **Special commands:**
 
 - « retour à la ligne » → new line
+- « nouveau paragraphe » → two new lines
 - « tiret espace » or « tiret du six espace » → "- " list marker
+
+Both break commands work on their own, including at the end of a dictation.
+The next line starts without an extra space.
 
 Case and apostrophe style don't matter. A space goes before "?", "!", ":" and ";".
 
@@ -171,7 +175,8 @@ Add your own commands with [word overrides](#word-overrides). They replace prose
 
 ## Trailing space
 
-Each transcription is followed by a space so the next word you type doesn't collide with it:
+A transcription can be followed by a space so the next word you type doesn't
+collide with it. A final spoken line or paragraph break gets no extra space:
 
 ```jsonc
 {

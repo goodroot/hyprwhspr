@@ -1693,18 +1693,17 @@ except Exception:
             # Kept for copy-last; never typed into whatever has focus now.
             session.failed = True
             return InjectionOutcome.FAILED
-        # Preprocessing strips a chunk's edges, which would drop the newline
-        # of a "new line" that starts it, so render leading ones here.
+        # Profiles that trim edge breaks still need leading "new line"
+        # commands when a chunk continues an already pasted dictation.
         newlines = 0
         profile = session.context.profile
-        if _config_setting(self.config_manager, 'symbol_replacements', True):
+        if (profile is not None and not profile.preserve_edge_breaks
+                and _config_setting(self.config_manager, 'symbol_replacements', True)):
             while (length := line_break_length(words, profile)):
                 words = words[length:]
                 newlines += 1
         processed = self._preprocess_text(' '.join(words), context=session.context)
         if not processed:
-            # Includes a "new line" with nothing after it: like the trailing
-            # newline inject_text trims, it would only act as Enter.
             return InjectionOutcome.INJECTED
         processed = '\n' * newlines + processed
         if (
@@ -1725,8 +1724,7 @@ except Exception:
     def _stream_holdback(self, words: List[str], final: bool = False, *, context=None) -> int:
         """How many trailing words to hold for the next chunk.
 
-        A trailing "new line" is always held, to start the next chunk; if
-        nothing follows it, it's dropped like any trailing newline. Unless
+        A trailing line break command is held to start the next chunk. Unless
         `final`, so is any tail that could still grow into a multi-word phrase
         that preprocessing rewrites (spoken commands, word overrides, filler).
         """
@@ -1760,12 +1758,11 @@ except Exception:
                         # overlapping command until their match is known.
                         longest = max(longest, k, complete)
                         break
-        # Keep the whole trailing run, including before an unfinished phrase:
-        # preprocessing strips every newline left at the end of a chunk.
+        # Keep the whole trailing run, including before an unfinished phrase.
         if symbols and profile is not None:
             end = len(tail) - longest
             while end:
-                length = next((len(phrase.split()) for phrase in profile.line_breaks
+                length = next((len(phrase.split()) for phrase, _ in profile.line_breaks
                                if end >= len(phrase.split()) and
                                line_break_length(words[end - len(phrase.split()):end], profile)), 0)
                 if not length:
@@ -1816,12 +1813,11 @@ except Exception:
             log("No text to inject (empty or whitespace)")
             return InjectionOutcome.SKIPPED
 
-        # Preprocess; also trim trailing newlines (avoid unwanted Enter)
-        processed_text = self._preprocess_text(text, context=context).rstrip("\r\n")
+        processed_text = self._preprocess_text(text, context=context)
         # Filtering can empty a transcript outright -- an utterance that was
         # nothing but filler words. Pasting the trailing space alone is worse
         # than pasting nothing.
-        if not processed_text.strip():
+        if not processed_text:
             log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.SKIPPED
         hook_result = self._run_post_transcription_hook(processed_text)
@@ -1861,6 +1857,8 @@ except Exception:
         word; in CJK it is a stray character. "auto" decides from the final
         character alone, true/false override it.
         """
+        if text.endswith('\n'):
+            return False
         setting = 'auto'
         if self.config_manager:
             setting = self.config_manager.get_setting('append_trailing_space', 'auto')

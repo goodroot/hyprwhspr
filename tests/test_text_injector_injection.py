@@ -1905,7 +1905,7 @@ class SpokenPunctuationPreprocessingTests(unittest.TestCase):
         config = ConfigStub({"language": "fr"})
         cases = {
             "Pistes insérer deux points retour à la ligne tiret espace vérifier.": "Pistes :\n- vérifier.",
-            "Retour à la ligne. Titre": "Titre",
+            "Retour à la ligne. Titre": "\nTitre",
             "Un document insérer une virgule une photo insérer un point": "Un document, une photo.",
             "Prêt. Insérer un point.": "Prêt.",
             "On confirme point d’interrogation": "On confirme ?",

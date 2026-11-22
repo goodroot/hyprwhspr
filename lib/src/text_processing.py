@@ -61,10 +61,11 @@ class CommandProfile:
     replacements: tuple
     line_breaks: tuple
     space_before: str = ''
+    preserve_edge_breaks: bool = False
 
     @property
     def phrases(self):
-        return self.line_breaks + tuple(command for command, _ in self.replacements)
+        return tuple(command for command, _ in self.line_breaks + self.replacements)
 
 
 def _prefixed(prefix, commands):
@@ -80,7 +81,9 @@ _FRENCH_REPLACEMENTS = (
     ('crochet ouvrant', '['), ('ouvrir le crochet', '['),
     ('crochet fermant', ']'), ('fermer le crochet', ']'),
     ('parenthèse ouvrante', '('), ('ouvrir la parenthèse', '('),
+    ('ouvrez la parenthèse', '('),
     ('parenthèse fermante', ')'), ('fermer la parenthèse', ')'),
+    ('fermez la parenthèse', ')'),
 ) + _prefixed('insérer', (
     ('un point', '.'), ('une virgule', ','),
     ('deux points', ':'), ('2 points', ':'),
@@ -91,9 +94,10 @@ _FRENCH_REPLACEMENTS = (
 )
 
 _PROFILES = {
-    'en': CommandProfile('en', _SPOKEN_REPLACEMENTS, ('new line',)),
+    'en': CommandProfile('en', _SPOKEN_REPLACEMENTS, (('new line', '\n'),)),
     'fr': CommandProfile('fr', _FRENCH_REPLACEMENTS,
-                         ('retour à la ligne', 'retour a la ligne'), '?!:;'),
+                         (('retour à la ligne', '\n'), ('retour a la ligne', '\n'),
+                          ('nouveau paragraphe', '\n\n')), '?!:;', preserve_edge_breaks=True),
 }
 
 
@@ -133,7 +137,7 @@ def phrase_word(word):
 
 def line_break_length(words, profile):
     if profile is not None:
-        for phrase in profile.line_breaks:
+        for phrase, _ in profile.line_breaks:
             tokens = tuple(phrase_word(w) for w in phrase.split())
             if tuple(phrase_word(w) for w in words[:len(tokens)]) == tokens:
                 return len(tokens)
@@ -153,14 +157,18 @@ def preprocess_text(text: str, config_manager=None, *, context=None) -> str:
     profile = context.profile
     if profile is None:
         return re.sub(r'[ \t]+', ' ', processed).strip()
-    line_break = '|'.join(command_pattern(command) for command in profile.line_breaks)
     replacements = sorted(profile.replacements, key=lambda item: len(item[0]), reverse=True)
 
-    # Recognizers commonly punctuate the spoken command itself.
-    processed = re.sub(
-        rf'\b(?:{line_break})\b(?:[ \t]*[.!?]+)?', '\n', processed,
-        flags=re.IGNORECASE,
-    )
+    # Keep explicitly dictated breaks distinct from whitespace inserted by an
+    # override. A French line or paragraph command can stand on its own.
+    line_marker = '\ue002'
+    break_punctuation = r'[.,:;!?…]' if profile.language == 'fr' else r'[.!?]'
+    for command, breaks in profile.line_breaks:
+        replacement = line_marker * len(breaks) if profile.preserve_edge_breaks else breaks
+        processed = re.sub(
+            rf'\b{command_pattern(command)}\b(?:[ \t]*{break_punctuation}+)?', replacement, processed,
+            flags=re.IGNORECASE,
+        )
 
     # Mark commands before spacing them. Identical literal punctuation touching
     # a command is another rendering of the same requested symbol.
@@ -194,19 +202,26 @@ def preprocess_text(text: str, config_manager=None, *, context=None) -> str:
             # Add separation only before following prose. A different raw
             # punctuation mark is preserved directly beside the spoken one.
             processed = re.sub(
-                rf'{re.escape(marker)}(?=[^\s\ue000)\]}}>,.?!:;。，、！？：；])',
+                rf'{re.escape(marker)}(?=[^\s\ue000\ue002)\]}}>,.?!:;。，、！？：；])',
                 symbol + ' ', processed,
             )
             processed = processed.replace(marker, symbol)
         elif symbol in '([{':
-            processed = re.sub(rf'{re.escape(marker)}[ \t]*', marker, processed)
-            processed = processed.replace(marker, symbol)
+            after = r'[ \t]*[,.]?[ \t]*' if symbol == '(' and profile.language == 'fr' else r'[ \t]*'
+            processed = re.sub(re.escape(marker) + after, symbol, processed)
         elif symbol in ')]}':
-            processed = re.sub(rf'[ \t]*{re.escape(marker)}', marker, processed)
-            processed = processed.replace(marker, symbol)
+            before = r'[ \t]*'
+            if symbol == ')' and profile.language == 'fr':
+                before = r'(?:[ \t]*,)?[ \t]*'
+                # A closing-parenthesis command on its own may pick up a
+                # recognizer period even though nothing follows the bracket.
+                processed = re.sub(rf'^\s*{re.escape(marker)}[ \t]*[.,:;!?…]+\s*$',
+                                   marker, processed)
+            processed = re.sub(before + re.escape(marker), symbol, processed)
         else:
             processed = processed.replace(marker, symbol)
 
-    processed = re.sub(r'[ \t]+', ' ', processed)
-    processed = re.sub(r' *\n *', '\n', processed)
-    return processed.strip()
+    processed = re.sub(r'[ \t]+', ' ', processed).strip()
+    if profile.preserve_edge_breaks:
+        processed = processed.replace(line_marker, '\n')
+    return re.sub(r' *\n *', '\n', processed)
