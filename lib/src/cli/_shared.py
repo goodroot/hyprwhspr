@@ -134,6 +134,18 @@ def _is_kde_plasma_session() -> bool:
     return bool(desktop_tokens & {'kde', 'plasma', 'plasmawayland', 'plasmax11'})
 
 
+def _is_xfce_session() -> bool:
+    """Return true for XFCE sessions using common desktop env vars."""
+    desktop_values = (
+        os.environ.get('XDG_CURRENT_DESKTOP', ''),
+        os.environ.get('XDG_SESSION_DESKTOP', ''),
+        os.environ.get('DESKTOP_SESSION', ''),
+    )
+    desktop = ':'.join(desktop_values).lower()
+    desktop_tokens = set(filter(None, re.split(r'[^a-z0-9]+', desktop)))
+    return bool(desktop_tokens & {'xfce', 'xfce4'})
+
+
 def _check_mise_active() -> tuple[bool, str]:
     """
     Check if MISE (runtime version manager) is active in the current environment.

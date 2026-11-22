@@ -106,6 +106,31 @@ class MaintenanceDependencyRepairTests(unittest.TestCase):
             repair.assert_called_once_with(config, 'realtime-ws')
 
 
+class MaintenancePasteInjectionTests(unittest.TestCase):
+    def test_compatible_ydotool_passes(self):
+        with mock.patch.object(maintenance, 'log_success') as success:
+            self.assertTrue(maintenance._validate_paste_injection(True, '1.0.4', 'ydotool 1.0.4'))
+        success.assert_called_once_with("✓ ydotool 1.0.4")
+
+    def test_native_x11_paste_path_replaces_ydotool(self):
+        with (
+            mock.patch.object(maintenance, '_has_non_ydotool_injection_path', return_value=True),
+            mock.patch.object(maintenance, 'log_error') as error,
+            mock.patch.object(maintenance, 'log_info') as info,
+        ):
+            self.assertTrue(maintenance._validate_paste_injection(False, '', 'ydotool not found'))
+        error.assert_not_called()
+        self.assertIn('native paste backend', info.call_args.args[0])
+
+    def test_missing_ydotool_without_another_path_fails(self):
+        with (
+            mock.patch.object(maintenance, '_has_non_ydotool_injection_path', return_value=False),
+            mock.patch.object(maintenance, 'log_error') as error,
+        ):
+            self.assertFalse(maintenance._validate_paste_injection(False, '', 'ydotool not found'))
+        self.assertTrue(error.called)
+
+
 class MaintenanceUinputValidationTests(unittest.TestCase):
     def _path(self, exists):
         path = mock.Mock()

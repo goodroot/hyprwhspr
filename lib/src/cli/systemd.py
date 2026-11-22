@@ -22,6 +22,9 @@ from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, RESUME_SERVICE_NAME,
                       YDOTOOL_UNIT, _YDOTOOL_MARKERS, USER_SYSTEMD_DIR,
                       _validate_hyprwhspr_root)
 
+AUTOSTART_NAME = 'hyprwhspr.desktop'
+AUTOSTART_MARKER = 'X-hyprwhspr-managed=true'
+
 
 # ==================== Systemd Commands ====================
 
@@ -100,6 +103,79 @@ def _nix_service_content(template: str):
             continue
         lines.append(line)
     return ''.join(lines)
+
+
+def _xdg_config_home() -> Path:
+    return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
+
+
+def x11_autostart_path() -> Path:
+    return _xdg_config_home() / 'autostart' / AUTOSTART_NAME
+
+
+def _graphical_session_active() -> bool:
+    try:
+        result = subprocess.run(
+            ['systemctl', '--user', 'is-active', 'graphical-session.target'],
+            capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.stdout.strip() == 'active'
+
+
+def install_x11_autostart() -> bool:
+    """Start the user service from the X11 desktop session.
+
+    XFCE and other X11 desktops never activate graphical-session.target, so a
+    unit enabled only for that target does not start at login. The autostart
+    entry runs inside the graphical session, where DISPLAY and XAUTHORITY are
+    already present, and imports them into the systemd user manager.
+    """
+    if os.environ.get('XDG_SESSION_TYPE', '').lower() != 'x11':
+        return False
+    if _graphical_session_active():
+        return False
+    path = x11_autostart_path()
+    content = (
+        '[Desktop Entry]\n'
+        'Type=Application\n'
+        'Name=hyprwhspr\n'
+        'Comment=Start the hyprwhspr dictation service with the desktop session\n'
+        'Exec=sh -c "systemctl --user import-environment DISPLAY XAUTHORITY '
+        'XDG_SESSION_TYPE XDG_CURRENT_DESKTOP DESKTOP_SESSION '
+        'DBUS_SESSION_BUS_ADDRESS; systemctl --user start hyprwhspr.service"\n'
+        'Terminal=false\n'
+        'NoDisplay=true\n'
+        'X-GNOME-Autostart-enabled=true\n'
+        f'{AUTOSTART_MARKER}\n'
+    )
+    try:
+        if path.exists() and AUTOSTART_MARKER not in path.read_text(encoding='utf-8'):
+            log_info(f'Leaving existing autostart entry untouched: {path}')
+            return False
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f'.{path.name}.tmp')
+        temporary.write_text(content, encoding='utf-8')
+        os.replace(temporary, path)
+    except (OSError, UnicodeError) as exc:
+        log_warning(f'Could not write the X11 autostart entry: {exc}')
+        return False
+    log_success(f'Added X11 session autostart: {path}')
+    return True
+
+
+def remove_x11_autostart() -> bool:
+    """Delete the autostart entry this installation wrote, and nothing else."""
+    path = x11_autostart_path()
+    try:
+        if not path.is_file() or AUTOSTART_MARKER not in path.read_text(encoding='utf-8'):
+            return False
+        path.unlink()
+    except (OSError, UnicodeError) as exc:
+        log_warning(f'Could not remove the X11 autostart entry: {exc}')
+        return False
+    log_success(f'Removed X11 session autostart: {path}')
+    return True
 
 
 def setup_systemd(mode: str = 'install'):
@@ -206,10 +282,12 @@ def setup_systemd(mode: str = 'install'):
             systemd_restart()
         else:
             log_success("Systemd user services enabled and started")
+        install_x11_autostart()
     elif mode == 'disable':
         run_command(['systemctl', '--user', 'disable', '--now', SERVICE_NAME], check=False)
         # Disable suspend/resume service if it exists
         log_success("Systemd user service disabled")
+        remove_x11_autostart()
     
     return True
 

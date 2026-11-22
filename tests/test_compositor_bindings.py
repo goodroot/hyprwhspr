@@ -161,6 +161,53 @@ class CompositorBindingTests(unittest.TestCase):
             self.assertFalse(bindings.setup_compositor_binding('gnome'))
         self.assertEqual(state['list'], '@as []')
 
+    def xfconf(self, state, fail=()):
+        def run(*args):
+            if '-n' in args:
+                if 'create' in fail:
+                    return None
+                state['property'] = args[args.index('-s') + 1]
+                return ''
+            if '-p' in args:
+                return state.get('property')
+            return None
+        return mock.patch.object(bindings, '_xfconf', side_effect=run)
+
+    def test_xfce_creates_the_shortcut_property(self):
+        state = {}
+        with self.xfconf(state):
+            self.assertTrue(bindings.setup_compositor_binding('xfce'))
+        self.assertEqual(state['property'], f'{TRAY} record')
+
+    def test_xfce_rerun_is_a_no_op(self):
+        state = {'property': f'{TRAY} record'}
+        with self.xfconf(state):
+            self.assertTrue(bindings.setup_compositor_binding('xfce'))
+
+    def test_xfce_users_own_record_binding_is_left_alone(self):
+        state = {'property': 'hyprwhspr record toggle'}
+        with self.xfconf(state):
+            self.assertTrue(bindings.setup_compositor_binding('xfce'))
+        self.assertEqual(state['property'], 'hyprwhspr record toggle')
+
+    def test_xfce_taken_chord_is_manual(self):
+        state = {'property': 'xfce4-popup-applicationsmenu'}
+        with self.xfconf(state):
+            self.assertFalse(bindings.setup_compositor_binding('xfce'))
+        self.assertEqual(state['property'], 'xfce4-popup-applicationsmenu')
+
+    def test_xfce_failed_create_is_manual(self):
+        state = {}
+        with self.xfconf(state, fail=('create',)):
+            self.assertFalse(bindings.setup_compositor_binding('xfce'))
+        self.assertNotIn('property', state)
+
+    def test_xfce_without_xfconf_is_manual(self):
+        state = {}
+        with mock.patch.object(bindings.shutil, 'which', return_value=None), self.xfconf(state):
+            self.assertFalse(bindings.setup_compositor_binding('xfce'))
+        self.assertNotIn('property', state)
+
     def test_kde_and_unknown_never_claim_the_shortcut(self):
         self.assertFalse(bindings.setup_compositor_binding('kde'))
         self.assertFalse(bindings.setup_compositor_binding('cosmic'))
@@ -173,6 +220,14 @@ class CompositorBindingTests(unittest.TestCase):
                 mock.patch.object(bindings, '_is_gnome_or_mutter_session', return_value=False), \
                 mock.patch.object(bindings, '_is_kde_plasma_session', return_value=True):
             self.assertEqual(bindings.detect_compositor(), 'kde')
+
+    def test_detection_reports_xfce(self):
+        with mock.patch.object(bindings, '_is_niri_session', return_value=False), \
+                mock.patch('sway_focus.is_sway_session', return_value=False), \
+                mock.patch.object(bindings, '_is_gnome_or_mutter_session', return_value=False), \
+                mock.patch.object(bindings, '_is_kde_plasma_session', return_value=False), \
+                mock.patch.object(bindings, '_is_xfce_session', return_value=True):
+            self.assertEqual(bindings.detect_compositor(), 'xfce')
 
 
 if __name__ == '__main__':

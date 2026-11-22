@@ -94,7 +94,14 @@ Enable in config (`~/.config/hyprwhspr/config.json`):
 }
 ```
 
-`hyprwhspr setup` offers automatic shortcuts on Hyprland, niri, Sway and GNOME. When it cannot safely add one, it prints manual instructions. Desktop shortcuts do not need the `input` group; typing permissions are checked separately.
+`hyprwhspr setup` offers automatic shortcuts on Hyprland, niri, Sway, GNOME and XFCE. When it cannot safely add one, it prints manual instructions. Desktop shortcuts do not need the `input` group; typing permissions are checked separately.
+
+XFCE's shortcut lives in `xfce4-keyboard-shortcuts`; setup adds it with `xfconf-query`. To bind it by hand:
+
+```bash
+xfconf-query -c xfce4-keyboard-shortcuts -n -t string \
+  -s "hyprwhspr record toggle" -p "/commands/custom/<Super><Alt>d"
+```
 
 To bind by hand:
 

@@ -117,6 +117,33 @@ def _validate_uinput_access(ydotool_available: bool) -> bool:
     return not required
 
 
+def _validate_paste_injection(ydotool_ok: bool, ydotool_version: str, ydotool_msg: str) -> bool:
+    """Whether this session has a usable paste path.
+
+    ydotool is the universal fallback, not a requirement. X11 has xdotool,
+    Wayland desktops have wtype or the compositor's own dispatcher, and those
+    paths paste without ydotool. Missing or outdated ydotool is only fatal
+    when it is the sole detected option.
+    """
+    if ydotool_ok:
+        log_success(f"✓ {ydotool_msg}")
+        return True
+    if _has_non_ydotool_injection_path():
+        log_info(f"ℹ {ydotool_msg}; using the session's native paste backend")
+        return True
+    if ydotool_version:
+        log_error(f"✗ {ydotool_msg}")
+        log_error("  Paste injection will output garbage with this version.")
+        log_error("  Ubuntu/Debian users: Run scripts/install-deps.sh to fix this,")
+        log_error("  or manually install ydotool 1.0+ from Debian backports:")
+        log_error("  wget https://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb")
+        log_error("  sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb")
+    else:
+        log_error(f"✗ {ydotool_msg}")
+        log_error("  ydotool is required for paste injection.")
+    return False
+
+
 # ==================== Backend Management Commands ====================
 
 def _detect_current_backend(existing_cfg: Optional[dict] = None) -> Optional[str]:
@@ -846,21 +873,9 @@ def validate_command():
         else:
             log_warning(f"⚠ Base model missing: {model_file}")
 
-    # Check ydotool version (required for paste injection)
+    # Paste injection: ydotool is the fallback, not the only supported path.
     ydotool_ok, ydotool_version, ydotool_msg = _check_ydotool_version()
-    if ydotool_ok:
-        log_success(f"✓ {ydotool_msg}")
-    elif ydotool_version:
-        log_error(f"✗ {ydotool_msg}")
-        log_error("  Paste injection will output garbage with this version.")
-        log_error("  Ubuntu/Debian users: Run scripts/install-deps.sh to fix this,")
-        log_error("  or manually install ydotool 1.0+ from Debian backports:")
-        log_error("  wget https://deb.debian.org/debian/pool/main/y/ydotool/ydotool_1.0.4-2~bpo13+1_amd64.deb")
-        log_error("  sudo dpkg -i ydotool_1.0.4-2~bpo13+1_amd64.deb")
-        all_ok = False
-    else:
-        log_error(f"✗ {ydotool_msg}")
-        log_error("  ydotool is required for paste injection.")
+    if not _validate_paste_injection(ydotool_ok, ydotool_version, ydotool_msg):
         all_ok = False
 
     if not _validate_uinput_access(ydotool_ok):
