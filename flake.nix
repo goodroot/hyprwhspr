@@ -9,17 +9,16 @@
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
       llamaPkgs = import nixpkgs-llama { inherit system; };
+      backends = import ./nix/backends.nix { inherit pkgs llamaPkgs; };
       mkPackage = extraBackends: pkgs.callPackage ./nix/package.nix {
-        inherit extraBackends;
-        llama-cpp = llamaPkgs.llama-cpp;
-        llama-cpp-vulkan = llamaPkgs.llama-cpp-vulkan;
+        inherit backends extraBackends;
         version = "0-unstable-${self.shortRev or self.dirtyShortRev or "local"}";
       };
       package = mkPackage [ ];
       qwenPackage = mkPackage [ "qwen3-asr" ];
       nixosModule = import ./nix/module.nix {
         inherit mkPackage;
-        extraBackendNames = builtins.attrNames (import ./nix/backends.nix { inherit pkgs; });
+        extraBackendNames = builtins.attrNames backends;
       };
     in {
       packages.${system} = {

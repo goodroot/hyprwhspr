@@ -1,21 +1,20 @@
-{ lib, stdenvNoCC, pkgs, callPackage, python313, makeWrapper, wrapGAppsHook4,
+{ lib, stdenvNoCC, callPackage, python313, makeWrapper, wrapGAppsHook4,
   gobject-introspection, gtk4, gtk4-layer-shell, glib, wl-clipboard, wtype,
   ydotool, xclip, xdotool, xprop, libnotify, systemd, coreutils, procps,
   bash, gawk, gnugrep, gnused, pulseaudio, alsa-utils,
-  version ? "0-unstable-local", extraBackends ? [ ],
-  llama-cpp, llama-cpp-vulkan }:
+  version ? "0-unstable-local", backends ? { }, extraBackends ? [ ] }:
 let
-  registry = import ./backends.nix { inherit pkgs llama-cpp llama-cpp-vulkan; };
-  unknown = builtins.filter (name: !builtins.hasAttr name registry) extraBackends;
+  # Optional backends come from nix/backends.nix; nothing here names one.
+  unknown = builtins.filter (name: !builtins.hasAttr name backends) extraBackends;
   selected =
     if unknown != [ ] then
-      throw "Unknown hyprwhspr extraBackends: ${toString unknown}. Known: ${toString (builtins.attrNames registry)}."
-    else map (name: registry.${name}) extraBackends;
-  backendNames = [ "cpu" "pywhispercpp" ] ++ lib.concatMap (spec: spec.names) selected;
-  extraPython = lib.concatMap (spec: spec.pythonPackages) selected;
+      throw "Unknown hyprwhspr extraBackends: ${toString unknown}. Known: ${toString (builtins.attrNames backends)}."
+    else lib.getAttrs extraBackends backends;
+  specs = map (name: selected.${name}) extraBackends;
+  backendNames = [ "cpu" "pywhispercpp" ] ++ extraBackends;
   wrapperBackendArgs =
     [ "--set" "HYPRWHSPR_NIX_BACKENDS" (lib.concatStringsSep "," backendNames) ]
-    ++ lib.concatLists (map (spec: spec.wrapperArgs spec.runtime) selected);
+    ++ lib.concatMap (spec: spec.wrapperArgs) specs;
   manifests = map (name: ../. + "/${name}") (builtins.filter
     (name: lib.hasPrefix "requirements" name && lib.hasSuffix ".txt" name)
     (builtins.attrNames (builtins.readDir ../.)));
@@ -23,7 +22,7 @@ let
   python = python313.withPackages (ps: (with ps; [
     sounddevice numpy soxr soundfile evdev pyperclip pyudev pulsectl rich
     jsonschema dbus-python pygobject3 pycairo pywhispercpp
-  ]) ++ extraPython);
+  ]) ++ lib.concatMap (spec: spec.python ps) specs);
   # Fallbacks only: they must match the host's running systemd and audio server.
   hostTools = lib.makeBinPath [ systemd pulseaudio ];
 in stdenvNoCC.mkDerivation {
@@ -74,14 +73,12 @@ in stdenvNoCC.mkDerivation {
   passthru = {
     inherit python pywhispercpp;
     nixBackends = backendNames;
-  } // lib.optionalAttrs (lib.elem "qwen3-asr" extraBackends) {
-    qwen3AsrRuntime = registry.qwen3-asr.runtime;
+    backendRuntimes = lib.mapAttrs (_: spec: spec.runtime) selected;
   };
   meta = {
-    description = if lib.elem "qwen3-asr" extraBackends then
-      "Linux desktop speech-to-text with Whisper.cpp CPU transcription and a Qwen3-ASR sidecar (Nix beta)"
-    else
-      "Linux desktop speech-to-text with Whisper.cpp CPU transcription (Nix beta)";
+    description = "Linux desktop speech-to-text with Whisper.cpp CPU transcription"
+      + lib.concatMapStrings (spec: " and ${spec.description}") specs
+      + " (Nix beta)";
     homepage = "https://github.com/goodroot/hyprwhspr";
     license = lib.licenses.mit;
     mainProgram = "hyprwhspr";

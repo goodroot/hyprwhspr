@@ -15,9 +15,8 @@ in {
       default = [ ];
       example = [ "qwen3-asr" ];
       description = ''
-        Optional transcription backends to compile into the default package.
-        The default remains Whisper.cpp CPU. Enabling a backend does not change
-        the user config.json. Models stay in the user data directory.
+        Optional transcription backends to add to the package.
+        Whisper.cpp CPU is always included. Your config.json is not changed.
       '';
     };
     package = lib.mkOption {

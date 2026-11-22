@@ -8,6 +8,8 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$out"
     ln -s ${llama-cpp} "$out/cpu"
     ln -s ${llama-cpp-vulkan} "$out/vulkan"
+    # hyprwhspr status reports this instead of the pinned Ubuntu release.
+    echo '${llama-cpp.version}' > "$out/version"
     runHook postInstall
   '';
 }

@@ -1,15 +1,21 @@
-{ pkgs, llama-cpp ? null, llama-cpp-vulkan ? null }:
+# Optional backends. One attribute each, keyed by transcription_backend:
+#   description  appended to the package description
+#   runtime      store path for the backend's sidecar, or null
+#   python       extra Python packages, as a function of the app's package set
+#   wrapperArgs  extra makeWrapper arguments for hyprwhspr and hyprwhspr-tray
+{ pkgs, llamaPkgs }:
 {
-  qwen3-asr = {
-    names = [ "qwen3-asr" ];
-    pythonPackages = [ ];
-    wrapperArgs = runtime: [
+  qwen3-asr = rec {
+    description = "a Qwen3-ASR sidecar";
+    # nixos-26.05 ships llama.cpp older than the Qwen3-ASR support in b10516.
+    runtime = pkgs.callPackage ./qwen3-asr-runtime.nix {
+      inherit (llamaPkgs) llama-cpp llama-cpp-vulkan;
+    };
+    python = ps: [ ];
+    # vulkaninfo lets qwen3_asr_device = auto pick Vulkan only with a real GPU.
+    wrapperArgs = [
       "--set" "HYPRWHSPR_QWEN3_ASR_RUNTIME" "${runtime}"
-      "--set" "HYPRWHSPR_QWEN3_ASR_DEVICES" "cpu,vulkan"
+      "--prefix" "PATH" ":" "${pkgs.vulkan-tools}/bin"
     ];
-    runtime =
-      if llama-cpp == null || llama-cpp-vulkan == null
-      then throw "qwen3-asr runtime requires nixpkgs unstable llama-cpp and llama-cpp-vulkan"
-      else pkgs.callPackage ./qwen3-asr-runtime.nix { inherit llama-cpp llama-cpp-vulkan; };
   };
 }
