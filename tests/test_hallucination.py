@@ -23,6 +23,16 @@ class HallucinationTests(unittest.TestCase):
     def test_music_note_prefix_is_caught(self):
         self.assertTrue(is_hallucination("♪ la la la ♪"))
 
+    def test_french_subtitle_and_outro_phrases_are_caught(self):
+        for text in ("Sous-titrage Société Radio-Canada.",
+                     "Sous-titrage : Société Radio-Canada",
+                     "Merci d'avoir regardé cette vidéo !",
+                     "Merci d’avoir regardé cette vidéo !"):
+            with self.subTest(text=text):
+                self.assertTrue(is_hallucination(text))
+        self.assertFalse(is_hallucination("La Société Radio-Canada a diffusé ce reportage."))
+        self.assertFalse(is_hallucination("Merci d’avoir regardé cette vidéo avec moi."))
+
     def test_real_transcriptions_pass_through(self):
         for text in ("hello there", "thank you for the coffee", "you know what I mean"):
             self.assertFalse(is_hallucination(text), text)
