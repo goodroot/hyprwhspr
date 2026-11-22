@@ -64,7 +64,7 @@ Whisper invents stock subtitle phrases when handed audio with no speech in it. T
 ```
 
 - Setting the key replaces the built-in list; `hyprwhspr config show --all` prints the default
-- Matching ignores case, underscores, brackets and trailing punctuation, so `[Silence]` and `blank_audio` are caught
+- Matching ignores case, underscores, brackets, trailing punctuation, and whitespace differences (including nonbreaking spaces), so `[Silence]` and `blank_audio` are caught
 - Text starting with `♪` is always discarded
 - The defaults also catch complete French subtitle and outro phrases such as
   « Sous-titrage Société Radio-Canada » and « Merci d’avoir regardé cette vidéo ! ».
@@ -191,7 +191,7 @@ collide with it. A final spoken line or paragraph break gets no extra space:
 
 - `"auto"` checks the last character pasted: Han, Kana, Hangul and full-width punctuation (`。`, `，`) get no space
 - Everything else gets one, Thai included — it has no spaces between words, but does use them between phrases
-- Set `true` or `false` to fix the answer regardless of content
+- Set `true` to append a space regardless of script, or `false` to disable it. A final line or paragraph break never gets an extra space, including with `true`
 - The check runs after [`post_transcription_hook`](#post-transcription-hook), on the final text
 
 ## Non-Latin scripts
@@ -200,7 +200,7 @@ Chinese, Japanese and Korean write without spaces between words:
 
 - Trailing spaces are handled by [`append_trailing_space`](#trailing-space); the default needs no configuration
 - Realtime and long-form segments are joined without a space after a CJK character, so sentences aren't broken up
-- [Hallucination markers](#hallucination-markers) ship English entries only — add your own
+- [Hallucination markers](#hallucination-markers) include English and French entries; customize the list for other phrases or languages
 - Spoken punctuation goes in `word_overrides`, which match anywhere in CJK text:
 
 ```jsonc

@@ -25,12 +25,6 @@ Set `mic_osd_enabled: false` to turn off both. The service log records which mod
 journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status via notifications'
 ```
 
-Custom bars can still read `${XDG_RUNTIME_DIR}/hyprwhspr/visualizer_state`
-for recording and processing status in overlay and notification modes, and
-when the OSD is disabled. The file is
-removed when the recording feedback ends. The separate `audio_level` file
-contains the normalized microphone level during regular dictation.
-
 ### Overlay styles
 
 In overlay mode, `mic_osd_style` picks one of three visualizations (notification mode ignores it):
@@ -73,6 +67,19 @@ Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` pl
 | `mic_osd_pill_transcript_enabled` | `false` | Enable the pill transcript. |
 | `mic_osd_pill_transcript_word_limit` | `4` | Recent words shown (1–12). |
 | `mic_osd_pill_transcript_idle_timeout_ms` | `1400` | Hide after this much idle time; `0` disables. |
+
+## Bar integrations
+
+Add recording controls and service status to [Waybar](../integrations/WAYBAR.md),
+[Noctalia](../integrations/NOCTALIA.md), or a custom
+[Quickshell bar](../integrations/QUICKSHELL.md). The Quickshell button also shows
+a microphone level meter and transcription spinner, even with `mic_osd_enabled: false`.
+
+Custom bars can read `${XDG_RUNTIME_DIR}/hyprwhspr/visualizer_state` in overlay
+and notification modes, and when the OSD is disabled. It reports recording,
+paused, processing, success, or error and is removed when recording feedback
+ends. The separate `audio_level` file contains the normalized microphone level
+during regular dictation.
 
 ## Notifications
 

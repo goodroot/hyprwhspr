@@ -2,17 +2,22 @@
 
 Add a microphone button to a custom [Quickshell](https://quickshell.org/)
 bar with the [QML components](https://github.com/goodroot/hyprwhspr/tree/main/config/quickshell).
-The button shows whether hyprwhspr is ready, recording, stopped, unloaded, or
-reporting a problem. If hyprwhspr's recording indicator provides a processing
-signal, the button also shows when transcription is in progress. During
-dictation the microphone changes into a level meter, then into a spinner
-while the text is being transcribed.
+The button shows service status, a microphone level meter during regular
+dictation, and a spinner during transcription. It works with the floating
+OSD disabled, so recording feedback can stay in your bar.
+
+Left-click starts or stops recording. Right-click restarts the service.
+Hover over the button for status details.
 
 ## Add the button
 
-Copy the three files from `config/quickshell/` in the hyprwhspr checkout into
-a `hyprwhspr/` directory next to your Quickshell `shell.qml`. Import that
-directory and instantiate one status monitor at the shell level. Pass the
+Use an existing Quickshell installation and a configured hyprwhspr service.
+This is a manual integration; hyprwhspr setup does not add it to your shell.
+
+Copy `HyprwhsprButton.qml`, `HyprwhsprStatus.qml`, and `microphone.svg` from
+`config/quickshell/` into a `hyprwhspr/` directory next to your Quickshell
+`shell.qml`. Import that directory and create one status monitor at the shell
+level. Pass the
 same monitor to each button if you have multiple bars or outputs.
 
 ```qml
@@ -36,15 +41,31 @@ ShellRoot {
 }
 ```
 
+### Locate the tray helper
+
 The monitor uses the same tray helper as [Waybar](WAYBAR.md) and
 [Noctalia](NOCTALIA.md). It looks under `HYPRWHSPR_ROOT` or
 `/usr/lib/hyprwhspr` by default. If your installation lives elsewhere,
 set `installRoot` to the directory containing `config/hyprland/hyprwhspr-tray.sh`.
 
-Left-click starts or stops recording. Right-click restarts the service.
-Hover over the button to see details. You can set `readyColor`,
-`inactiveColor`, `recordingColor`, `processingColor`, and `errorColor` on the
+```qml
+Dictation.HyprwhsprStatus {
+    id: dictation
+    installRoot: "/absolute/path/to/hyprwhspr"
+}
+```
+
+Replace the path with your installation or checkout directory. The default
+`/usr/lib/hyprwhspr` is not the location used by managed or Nix installations.
+
+## Appearance
+
+Set `mic_osd_enabled: false` in [your hyprwhspr config](../CONFIGURATION.md)
+to use the bar without the overlay or recording-status notification.
+See [Feedback](../usage/FEEDBACK.md#bar-integrations) for the shared status signals.
+
+Set `readyColor`, `inactiveColor`, `recordingColor`, `processingColor`, and `errorColor` on the
 button to match your bar.
 
-If you already use Quickshell's system tray, you can also use the
+If you prefer a standard tray icon, Quickshell's system tray can show the
 [built-in tray icon](../usage/FEEDBACK.md#tray-icon).

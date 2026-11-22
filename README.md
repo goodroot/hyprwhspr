@@ -56,7 +56,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
     - `wl-clipboard` and `wtype` on Wayland
     - `xdotool` as a fallback for Sway XWayland apps like Steam and Wine
     - `python-pyperclip`, `xclip`, `xdotool`, and `xprop` on X11 (installed by the dependency script)
-- **Waybar or Noctalia** (optional, for status bar)
+- **[Waybar](docs/integrations/WAYBAR.md), [Noctalia](docs/integrations/NOCTALIA.md), or [Quickshell](docs/integrations/QUICKSHELL.md)** (optional, for status bar)
 - **gtk4 + PyCairo** (optional, for visualizer)
 - **NVIDIA GPU** (optional, for CUDA acceleration)
 - **AMD/Intel GPU / APU** (optional, for Vulkan acceleration)
