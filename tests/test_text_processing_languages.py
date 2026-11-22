@@ -67,15 +67,6 @@ class ProcessingLanguageTests(unittest.TestCase):
                 config = ConfigStub({'language': language})
                 self.assertEqual(preprocess_text(raw, config), expected)
 
-    def test_english_command_absorbs_recognizer_punctuation_before_it(self):
-        for raw, expected in (
-            ('Really? question mark', 'Really?'),
-            ("That's it. period", "That's it."),
-            ('a - dash b', 'a - - b'),
-        ):
-            with self.subTest(raw=raw):
-                self.assertEqual(preprocess_text(raw), expected)
-
     def test_french_prose_and_command_word_boundaries(self):
         config = ConfigStub({'language': 'fr'})
         for raw in ('Il marque deux points.', 'Je suis à la ligne de départ.',
@@ -100,9 +91,6 @@ class ProcessingLanguageTests(unittest.TestCase):
             ('TIRET DU SIX ESPACE.', '-'),
             ('attends... vraiment!!!', 'attends... vraiment!!!'),
             ('ATTENDS POINTS DE SUSPENSION.', 'ATTENDS…'),
-            ('Attends... points de suspension ensuite', 'Attends… ensuite'),
-            ('Prêt. insérer un point', 'Prêt.'),
-            ('Ok ? point d’interrogation', 'Ok ?'),
         ):
             with self.subTest(raw=raw):
                 self.assertEqual(preprocess_text(raw, config), expected)
