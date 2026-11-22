@@ -643,6 +643,11 @@
       "default": false,
       "description": "Show a live transcript above the pill OSD. Requires a realtime-ws backend that streams partial transcripts (OpenAI, ElevenLabs)."
     },
+    "live_preview_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Local backends: transcribe closed phrases while the microphone is still recording and show the growing text in the recording-status overlay or notification. Presentation only: the pasted text is still the batch transcription of the whole recording, so accuracy is unchanged."
+    },
     "mic_osd_pill_transcript_word_limit": {
       "type": "integer",
       "minimum": 1,

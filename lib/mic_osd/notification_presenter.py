@@ -49,11 +49,14 @@ class NotificationPresenter:
     # banner lingers on screen (GNOME ignores -t and uses its own duration).
     _ACTIVE_TIMEOUT_MS = 5000
     _TRANSIENT_TIMEOUT_MS = 2000
+    # Live preview rides in the same bubble; keep it to the newest words.
+    _PREVIEW_MAX_CHARS = 240
 
     def __init__(self, active_timeout_ms: int = None):
         self._nid = None  # active notification id (for in-place replace)
         self._state = 'recording'
         self._detail = None
+        self._preview = ''
         # The wake thread and the recording thread both touch the bubble
         self._lock = threading.RLock()
         # Banner duration for active states; falls back to the class default.
@@ -108,8 +111,7 @@ class NotificationPresenter:
                 return
             self._state = state
             self._detail = None
-            body = self._STATE_TEXT.get(state, self._STATE_TEXT['recording'])
-            self._send(body, self._state_timeout(state))
+            self._send(self._body(state), self._state_timeout(state))
 
     def set_detail(self, detail: str) -> bool:
         """Reword the bubble for a wait or a result. False if it cannot show it.
@@ -141,8 +143,7 @@ class NotificationPresenter:
             self._detail = None
             if self._nid is None:
                 return
-            body = self._STATE_TEXT.get(self._state, self._STATE_TEXT['recording'])
-            self._send(body, self._state_timeout(self._state))
+            self._send(self._body(self._state), self._state_timeout(self._state))
 
     def hide(self):
         # Actively close the bubble so it does not persist in the notification
@@ -150,18 +151,43 @@ class NotificationPresenter:
         with self._lock:
             nid, self._nid = self._nid, None
             self._detail = None
+            self._preview = ''
         if nid is not None:
             self._close(nid)
 
     def clear_state(self):
         pass
 
+    def _body(self, state: str) -> str:
+        """State line, plus live preview text when there is any."""
+        body = self._STATE_TEXT.get(state, self._STATE_TEXT['recording'])
+        return f'{body}\n{self._preview}' if self._preview else body
+
     def set_preview_text(self, text: str):
-        # Local backends produce no live partials; notification shows status only.
-        pass
+        """Show live preview text under the status line (local backends).
+
+        Preview never reaches the paste; it only fills the bubble while the
+        user is still speaking.
+        """
+        text = (text or '').strip()
+        if not text or not self.is_available():
+            return
+        with self._lock:
+            if self._nid is None:
+                return  # no bubble to update
+            text = text[-self._PREVIEW_MAX_CHARS:]
+            if text == self._preview:
+                return
+            self._preview = text
+            self._send(self._body(self._state), self._state_timeout(self._state))
 
     def clear_preview_text(self):
-        pass
+        with self._lock:
+            if not self._preview:
+                return
+            self._preview = ''
+            if self._nid is not None:
+                self._send(self._body(self._state), self._state_timeout(self._state))
 
     def stop(self):
         self.hide()

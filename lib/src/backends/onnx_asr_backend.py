@@ -6,6 +6,7 @@ with optional Silero VAD routing for long recordings.
 """
 
 import os
+import threading
 import time
 import types
 from typing import Optional
@@ -14,6 +15,11 @@ try:
     from ..service_log import log
 except ImportError:
     from service_log import log
+
+try:
+    from ..live_preview import LivePreview
+except ImportError:
+    from live_preview import LivePreview
 
 try:
     from ..dependencies import require_package
@@ -53,6 +59,10 @@ class OnnxAsrBackend(TranscriptionBackend):
         # ONNX-ASR model (CPU-optimized)
         self._onnx_asr_model = None
         self._onnx_asr_vad_model = None
+        # Live preview decodes on its own thread; one ONNX session is not
+        # thread-safe, so every recognize() call shares this lock.
+        self._decode_lock = threading.Lock()
+        self._preview = None
 
     def initialize(self) -> bool:
         """Configure ONNX-ASR backend (CPU or GPU-optimized)"""
@@ -132,6 +142,8 @@ class OnnxAsrBackend(TranscriptionBackend):
         Returns:
             Transcribed text string
         """
+        # The recording is over: no preview decode may race the batch decode.
+        self.finish_preview()
         if not self._onnx_asr_model:
             log('[ONNX-ASR] Model not loaded')
             return ""
@@ -152,35 +164,11 @@ class OnnxAsrBackend(TranscriptionBackend):
                 mode = 'vad' if use_vad_model else 'direct'
                 log(f'[ONNX-ASR] Mode: {mode} (vad_min_duration={vad_min_duration}s)')
             start_time = time.time()
-            result = model.recognize(audio_data, sample_rate=sample_rate)
-
-            # When VAD is enabled, recognize() returns a lazy generator of
-            # segments; the work happens as it is consumed below.
-            if isinstance(result, types.GeneratorType):
-                # Collect all segments and combine their text
-                segments = list(result)
-                if not segments:
-                    transcription = ""
-                else:
-                    # Extract text from each segment
-                    segment_texts = []
-                    for seg in segments:
-                        if hasattr(seg, 'text'):
-                            segment_texts.append(seg.text)
-                        elif isinstance(seg, str):
-                            segment_texts.append(seg)
-                        else:
-                            # Fallback: try to get text representation
-                            segment_texts.append(str(seg))
-                    transcription = join_segments(segment_texts)
-            else:
-                # No VAD - direct result (string or object with .text attribute)
-                if hasattr(result, 'text'):
-                    transcription = result.text
-                elif isinstance(result, str):
-                    transcription = result
-                else:
-                    transcription = str(result)
+            # VAD mode returns a lazy generator: its work happens during
+            # consumption, so the lock covers both halves.
+            with self._decode_lock:
+                result = model.recognize(audio_data, sample_rate=sample_rate)
+                transcription = self._extract_text(result)
 
             elapsed = time.time() - start_time
             log(f'[ONNX-ASR] Transcription completed in {elapsed:.2f}s')
@@ -193,9 +181,83 @@ class OnnxAsrBackend(TranscriptionBackend):
             traceback.print_exc()
             return ""
 
+    @staticmethod
+    def _extract_text(result) -> str:
+        """Text from a recognize() result: str, segment generator, or object."""
+        # When VAD is enabled, recognize() returns a lazy generator of segments.
+        if isinstance(result, types.GeneratorType):
+            segment_texts = []
+            for seg in result:
+                if hasattr(seg, 'text'):
+                    segment_texts.append(seg.text)
+                elif isinstance(seg, str):
+                    segment_texts.append(seg)
+                else:
+                    segment_texts.append(str(seg))
+            return join_segments(segment_texts)
+        if hasattr(result, 'text'):
+            return result.text
+        if isinstance(result, str):
+            return result
+        return str(result)
+
+    # --------------------------- live preview ---------------------------
+
+    def preview_audio_callback(self, on_text):
+        """Decode closed speech segments while recording, for the status bubble.
+
+        Returns None when this backend cannot preview (model or VAD missing).
+        The returned callback runs on the audio thread and never raises.
+        """
+        if self._onnx_asr_model is None:
+            return None
+        vad_model = self._onnx_asr_vad_model
+        segmenter = getattr(vad_model, 'vad', None) if vad_model is not None else None
+        if segmenter is None or not hasattr(segmenter, 'segment_batch'):
+            log('[PREVIEW] Live preview needs the Silero VAD model (onnx_asr_use_vad)')
+            return None
+        self.finish_preview()
+        preview = LivePreview(
+            segment=self._segment_preview_audio(segmenter),
+            decode=self._decode_preview_segment,
+            on_text=on_text,
+        )
+        self._preview = preview
+        log('[PREVIEW] Live preview on; the pasted text still comes from one batch decode')
+        return preview.feed
+
+    def finish_preview(self) -> None:
+        preview, self._preview = self._preview, None
+        if preview is not None:
+            preview.stop()
+
+    @staticmethod
+    def _segment_preview_audio(segmenter):
+        """Wrap the VAD segmenter as a function from 16 kHz audio to ranges."""
+        def segment(audio):
+            waveforms = np.asarray(audio, dtype=np.float32).reshape(1, -1)
+            lengths = np.asarray([waveforms.shape[1]], dtype=np.int64)
+            ranges = []
+            for batch in segmenter.segment_batch(waveforms, lengths, 16000):
+                ranges.extend((int(start), int(end)) for start, end in batch)
+            return ranges
+        return segment
+
+    def _decode_preview_segment(self, audio) -> str:
+        model = self._onnx_asr_model
+        if model is None:
+            return ''
+        with self._decode_lock:
+            return self._extract_text(model.recognize(audio, sample_rate=16000)).strip()
+
     def unload(self) -> None:
+        self.finish_preview()
         self._onnx_asr_model = None
         self._onnx_asr_vad_model = None
+
+    def cleanup(self) -> None:
+        self.finish_preview()
+        super().cleanup()
 
     @property
     def is_loaded(self) -> bool:

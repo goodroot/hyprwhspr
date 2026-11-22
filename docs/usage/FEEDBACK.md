@@ -25,6 +25,18 @@ Set `mic_osd_enabled: false` to turn off both. The service log records which mod
 journalctl --user -u hyprwhspr.service | grep -E 'Mic-OSD daemon started|status via notifications'
 ```
 
+### Live preview on local backends
+
+Local models (ONNX Parakeet, whisper.cpp, faster-whisper) transcribe the recording only after you stop, so the indicator normally says "Recording…" and nothing more until the paste lands. With `live_preview_enabled` (default `true`), the backend decodes each phrase as a pause closes it and shows the growing text in the indicator.
+
+```jsonc
+{
+  "live_preview_enabled": true
+}
+```
+
+The preview is presentation only: the pasted text is still one batch transcription of the complete recording, so accuracy is identical to a recording without preview. The last phrase appears only after you stop, because a phrase that is still being spoken has no result yet.
+
 ### Overlay styles
 
 In overlay mode, `mic_osd_style` picks one of three visualizations (notification mode ignores it):

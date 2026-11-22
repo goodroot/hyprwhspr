@@ -198,6 +198,10 @@ def build_default_config():
         'mic_osd_enabled': True,             # Show recording status as an overlay or notification
         'mic_osd_style': 'waveform',         # Overlay style: 'waveform', 'vu_meter' or 'pill'
         'tray_icon_enabled': False,          # Show a system tray icon (StatusNotifierItem) while running
+        # Local backends: decode closed phrases while recording so the status
+        # bubble fills in. Preview only; the pasted text is still the batch
+        # decode of the whole recording.
+        'live_preview_enabled': True,
         # Live transcript above the pill OSD (ElevenLabs Scribe v2 Realtime)
         'mic_osd_pill_transcript_enabled': False,
         'mic_osd_pill_transcript_word_limit': 4,

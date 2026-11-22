@@ -265,6 +265,13 @@ class RecordingMixin:
                 return
             if streaming_callback is not None:
                 self._open_live_typing()
+
+            # Local backends: decode closed phrases while the mic is open so the
+            # status bubble fills in. Presentation only; the paste still comes
+            # from the batch decode of the complete recording.
+            preview_callback = None
+            if streaming_callback is None and self._live_preview_eligible():
+                preview_callback = self._start_live_preview()
             
             # Helper function to verify stream is working and play sound
             def verify_and_play_sound():
@@ -309,9 +316,11 @@ class RecordingMixin:
                 if self._playback_shutdown:
                     self.audio_capture.stop_recording()
 
-            # Start audio capture (with streaming callback for realtime-ws)
+            # Start audio capture (with a streaming callback for realtime-ws,
+            # or the live-preview callback for local backends)
             try:
-                if not self.audio_capture.start_recording(streaming_callback=streaming_callback):
+                if not self.audio_capture.start_recording(
+                        streaming_callback=streaming_callback or preview_callback):
                     raise RuntimeError("start_recording() returned False")
                 
                 # Verify stream is working before playing sound
@@ -464,6 +473,39 @@ class RecordingMixin:
             return False
         return self.whisper_manager.realtime_live_typing_supported()
 
+    def _live_preview_eligible(self) -> bool:
+        """Opted in and something can show the text.
+
+        Preview costs CPU while recording, so it is only worth starting when a
+        status presenter exists to display it.
+        """
+        if not self.config.get_setting('live_preview_enabled', True):
+            return False
+        return getattr(self, '_mic_osd_runner', None) is not None
+
+    def _start_live_preview(self):
+        """Chunk callback for live preview text, or None when unsupported."""
+        manager = getattr(self, 'whisper_manager', None)
+        start = getattr(manager, 'preview_audio_callback', None)
+        if start is None:
+            return None
+        try:
+            return start(self._set_mic_osd_preview_text)
+        except Exception as exc:
+            log(f"[PREVIEW] Live preview unavailable: {exc}")
+            return None
+
+    def _finish_live_preview(self):
+        """Stop live preview before the batch transcription runs."""
+        manager = getattr(self, 'whisper_manager', None)
+        finish = getattr(manager, 'finish_live_preview', None)
+        if finish is None:
+            return
+        try:
+            finish()
+        except Exception as exc:
+            log(f"[PREVIEW] Failed to stop live preview: {exc}")
+
     def _open_live_typing(self):
         """Start this recording's live typing when eligible."""
         self._cancel_live_typing()  # a start that never finished may have left one
@@ -556,6 +598,7 @@ class RecordingMixin:
         try:
             self._wait_for_start_settled()
             self.audio_capture.stop_recording()
+            self._finish_live_preview()
             self.audio_manager.play_error_sound()
             # Note: No desktop notification - tray will detect muted state via audio level monitoring
         except Exception as e:
@@ -617,6 +660,7 @@ class RecordingMixin:
             # Stop capture and discard the audio data
             self._wait_for_start_settled()
             self.audio_capture.stop_recording()
+            self._finish_live_preview()
 
             # Discard buffered realtime audio but keep the WebSocket alive so the
             # next recording starts without paying a fresh handshake
@@ -716,6 +760,8 @@ class RecordingMixin:
             # Stop audio capture
             self._wait_for_start_settled()
             audio_data = self.audio_capture.stop_recording()
+            # The mic is closed: end the preview before the batch decode.
+            self._finish_live_preview()
             self._save_debug_recording(audio_data)
 
             # Continuous mode: a chunk still transcribing (or parked behind a

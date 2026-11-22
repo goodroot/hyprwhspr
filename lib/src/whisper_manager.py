@@ -154,6 +154,17 @@ class WhisperManager:
         backend = self._backend
         return backend.get_streaming_callback() if backend is not None else None
 
+    def preview_audio_callback(self, on_text) -> Optional[Callable]:
+        """Audio-chunk callback that yields live preview text (local backends)."""
+        backend = self._backend
+        return backend.preview_audio_callback(on_text) if backend is not None else None
+
+    def finish_live_preview(self) -> None:
+        """Stop live preview before the recording is transcribed."""
+        backend = self._backend
+        if backend is not None:
+            backend.finish_preview()
+
     def realtime_connect_failure(self) -> Optional[str]:
         """Why realtime recovery last failed ('connecting'/'cooldown'/'failed'), else None.
 

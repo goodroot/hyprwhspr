@@ -134,6 +134,21 @@ class TranscriptionBackend:
         """Close the live connection."""
 
     # ------------------------------------------------------------------
+    # Live preview (local backends; presentation only)
+    # ------------------------------------------------------------------
+
+    def preview_audio_callback(self, on_text: Callable[[str], None]) -> Optional[Callable]:
+        """Chunk callback for live preview text on a local backend, or None.
+
+        Preview text never reaches the paste: local backends still transcribe
+        the complete recording once recording stops.
+        """
+        return None
+
+    def finish_preview(self) -> None:
+        """Stop live preview before the authoritative transcription runs."""
+
+    # ------------------------------------------------------------------
     # Shared prompt resolution
     # ------------------------------------------------------------------
 
