@@ -226,9 +226,10 @@
       "description": "Timeout in seconds for post_transcription_hook. Must be positive. On timeout the original transcription is preserved. Increase for slower transforms such as local LLM cleanup."
     },
     "clipboard_behavior": {
-      "type": "boolean",
-      "default": false,
-      "description": "True = clear clipboard after delay, false = keep clipboard contents"
+      "type": "string",
+      "enum": ["restore", "keep", "clear"],
+      "default": "restore",
+      "description": "After a paste: 'restore' puts back what you had copied, 'keep' leaves the dictation, 'clear' empties the clipboard"
     },
     "clipboard_settle_delay": {
       "type": "number",
@@ -240,7 +241,7 @@
       "type": "number",
       "minimum": 0,
       "default": 5.0,
-      "description": "Seconds to wait before clearing clipboard (only used if clipboard_behavior is true)"
+      "description": "Seconds after a paste before the clipboard is restored or cleared"
     },
     "paste_mode": {
       "type": ["string", "null"],

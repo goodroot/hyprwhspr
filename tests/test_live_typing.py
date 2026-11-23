@@ -645,6 +645,37 @@ class TextInjectorStreamClipboardTests(unittest.TestCase):
         self.assertEqual(restore.call_args.kwargs["injected"], b" friend")
 
 
+    def test_stream_end_keeps_or_clears_per_clipboard_behavior(self):
+        for mode in ("keep", "clear"):
+            with self.subTest(mode=mode):
+                injector = make_injector()
+                handle = injector.begin_stream()
+                injector.config_manager = ConfigStub(
+                    {"append_trailing_space": True, "clipboard_behavior": mode})
+                with (
+                    mock.patch.object(injector, "_save_clipboard", return_value=b"old"),
+                    mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True) as copy,
+                    mock.patch.object(injector, "_is_x11_session", return_value=False),
+                    mock.patch.object(injector, "_is_hyprland_session", return_value=True),
+                    mock.patch.object(injector, "_is_gnome_wayland_session", return_value=False),
+                    mock.patch.object(injector, "_active_window_lookup_needed", return_value=False),
+                    mock.patch.object(injector, "_resolve_paste_chord", return_value=("ctrl+v", None)),
+                    mock.patch.object(injector, "_send_shortcut_hyprland", return_value=True),
+                    mock.patch.object(injector, "_restore_clipboard") as restore,
+                    mock.patch.object(injector, "_clear_clipboard") as clear,
+                    mock.patch.object(injector, "_send_enter_if_auto_submit"),
+                    mock.patch("text_injector.time.sleep"),
+                ):
+                    injector.inject_stream_chunk(handle, "hello there", final=False)
+                    injector.inject_stream_chunk(handle, "friend", final=True)
+                    injector.end_stream(handle)
+                restore.assert_not_called()
+                if mode == "keep":
+                    clear.assert_not_called()
+                    self.assertEqual(copy.call_args.args[0], "hello there friend ")
+                else:
+                    clear.assert_called_once_with(b" ", 5.0)
+
 class RecordingLifecycleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
