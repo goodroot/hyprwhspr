@@ -221,13 +221,20 @@ class CompositorBindingTests(unittest.TestCase):
                 mock.patch.object(bindings, '_is_kde_plasma_session', return_value=True):
             self.assertEqual(bindings.detect_compositor(), 'kde')
 
-    def test_detection_reports_xfce(self):
+    def detect_xfce(self, session_type):
         with mock.patch.object(bindings, '_is_niri_session', return_value=False), \
                 mock.patch('sway_focus.is_sway_session', return_value=False), \
                 mock.patch.object(bindings, '_is_gnome_or_mutter_session', return_value=False), \
                 mock.patch.object(bindings, '_is_kde_plasma_session', return_value=False), \
-                mock.patch.object(bindings, '_is_xfce_session', return_value=True):
-            self.assertEqual(bindings.detect_compositor(), 'xfce')
+                mock.patch.object(bindings, '_is_xfce_session', return_value=True), \
+                mock.patch.dict(bindings.os.environ, {'XDG_SESSION_TYPE': session_type}):
+            return bindings.detect_compositor()
+
+    def test_detection_reports_xfce_on_x11(self):
+        self.assertEqual(self.detect_xfce('x11'), 'xfce')
+
+    def test_xfce_on_wayland_is_not_offered_a_shortcut(self):
+        self.assertIsNone(self.detect_xfce('wayland'))
 
 
 if __name__ == '__main__':

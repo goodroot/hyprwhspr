@@ -63,7 +63,8 @@ def detect_compositor() -> Optional[str]:
         return 'gnome'
     if _is_kde_plasma_session():
         return 'kde'
-    if _is_xfce_session():
+    # XFCE on Wayland hands shortcuts to its compositor, not xfconf.
+    if _is_xfce_session() and os.environ.get('XDG_SESSION_TYPE', '').lower() == 'x11':
         return 'xfce'
     return None
 
