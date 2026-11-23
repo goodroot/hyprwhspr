@@ -106,6 +106,44 @@ class MaintenanceDependencyRepairTests(unittest.TestCase):
             repair.assert_called_once_with(config, 'realtime-ws')
 
 
+class MaintenancePasteInjectionTests(unittest.TestCase):
+    def test_compatible_ydotool_passes(self):
+        with mock.patch.object(maintenance, 'log_success') as success:
+            self.assertTrue(maintenance._validate_paste_injection(True, '1.0.4', 'ydotool 1.0.4'))
+        success.assert_called_once_with("✓ ydotool 1.0.4")
+
+    def test_native_x11_paste_path_replaces_ydotool(self):
+        with (
+            mock.patch.object(maintenance, '_has_non_ydotool_injection_path', return_value=True),
+            mock.patch.object(maintenance, 'log_error') as error,
+            mock.patch.object(maintenance, 'log_info') as info,
+        ):
+            self.assertTrue(maintenance._validate_paste_injection(False, '', 'ydotool not found'))
+        error.assert_not_called()
+        self.assertIn('native paste backend', info.call_args.args[0])
+
+    def test_missing_ydotool_without_another_path_fails(self):
+        with (
+            mock.patch.object(maintenance, '_has_non_ydotool_injection_path', return_value=False),
+            mock.patch.object(maintenance, 'log_error') as error,
+        ):
+            self.assertFalse(maintenance._validate_paste_injection(False, '', 'ydotool not found'))
+        self.assertTrue(error.called)
+
+    def _wayland_paths(self, desktop):
+        env = {'XDG_SESSION_TYPE': 'wayland', 'XDG_CURRENT_DESKTOP': desktop}
+        which = {'wtype': '/usr/bin/wtype'}.get
+        with mock.patch.dict(maintenance.os.environ, env, clear=True), \
+                mock.patch.object(maintenance.shutil, 'which', side_effect=which):
+            return maintenance._has_non_ydotool_injection_path()
+
+    def test_wtype_counts_on_sway(self):
+        self.assertTrue(self._wayland_paths('sway'))
+
+    def test_wtype_does_not_count_on_gnome_wayland(self):
+        self.assertFalse(self._wayland_paths('GNOME'))
+
+
 class MaintenanceUinputValidationTests(unittest.TestCase):
     def _path(self, exists):
         path = mock.Mock()

@@ -202,6 +202,20 @@ class LegacyUninstallReviewTests(ManagedFixture):
         _, command, *_ = self.run_uninstall(foreign_link=True)
         self.assertTrue(command.is_symlink())
 
+    def test_x11_autostart_resolves_under_the_patched_config_dir(self):
+        autostart = self.root / 'autostart/hyprwhspr.desktop'
+        autostart.parent.mkdir()
+        autostart.write_text('[Desktop Entry]\nX-hyprwhspr-managed=true\n')
+        self.run_uninstall(unit='generated')
+        self.assertFalse(autostart.exists())
+
+    def test_foreign_x11_autostart_is_preserved(self):
+        autostart = self.root / 'autostart/hyprwhspr.desktop'
+        autostart.parent.mkdir()
+        autostart.write_text('[Desktop Entry]\nName=mine\n')
+        self.run_uninstall(unit='generated')
+        self.assertTrue(autostart.exists())
+
     def test_legacy_flags_apply_only_to_recorded_ownership(self):
         with mock.patch.object(managed, 'group_membership_present', return_value=True):
             _, _, _, model, external, _, sudo, _ = self.run_uninstall(purge=True, permissions=True)

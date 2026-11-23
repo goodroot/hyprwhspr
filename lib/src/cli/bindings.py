@@ -26,14 +26,20 @@ except ImportError:
     from output_control import log_info, log_success, log_warning
 
 from ._shared import (HYPRWHSPR_ROOT, USER_HOME, _is_gnome_or_mutter_session,
-                      _is_kde_plasma_session, _is_niri_session)
+                      _is_kde_plasma_session, _is_niri_session,
+                      _is_xfce_session)
 
 MARKER = 'hyprwhspr (added by hyprwhspr setup)'
-LABELS = {'niri': 'niri', 'sway': 'Sway', 'gnome': 'GNOME', 'kde': 'KDE Plasma'}
+LABELS = {'niri': 'niri', 'sway': 'Sway', 'gnome': 'GNOME', 'kde': 'KDE Plasma',
+          'xfce': 'XFCE'}
 
 GNOME_SCHEMA = 'org.gnome.settings-daemon.plugins.media-keys'
 GNOME_PATH = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/hyprwhspr/'
 GNOME_BINDING = '<Super><Alt>d'
+
+XFCE_CHANNEL = 'xfce4-keyboard-shortcuts'
+XFCE_PROPERTY = '/commands/custom/<Super><Alt>d'
+XFCE_BINDING = '<Super><Alt>d'
 
 # A line that already starts or toggles recording, whoever wrote it.
 _RECORD_BINDING = re.compile(r'hyprwhspr.*\brecord\b|recording_control|--managed-tray')
@@ -57,6 +63,9 @@ def detect_compositor() -> Optional[str]:
         return 'gnome'
     if _is_kde_plasma_session():
         return 'kde'
+    # XFCE on Wayland hands shortcuts to its compositor, not xfconf.
+    if _is_xfce_session() and os.environ.get('XDG_SESSION_TYPE', '').lower() == 'x11':
+        return 'xfce'
     return None
 
 
@@ -243,6 +252,38 @@ def _setup_gnome(command: str) -> bool:
     return True
 
 
+def _xfconf(*args) -> Optional[str]:
+    try:
+        result = subprocess.run(['xfconf-query', '-c', XFCE_CHANNEL, *args],
+                                capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _setup_xfce(command: str) -> bool:
+    full = f'{command} record'
+    where = 'Settings → Keyboard → Application Shortcuts'
+    manual = f'{XFCE_BINDING}  →  {full}'
+    if not shutil.which('xfconf-query'):
+        return _manual('xfce', where, manual)
+    existing = _xfconf('-p', XFCE_PROPERTY)
+    if existing is None:
+        # A missing property is the normal first-install case; xfconf-query -n
+        # creates it. A channel that is not running fails here and stays manual.
+        if _xfconf('-n', '-t', 'string', '-s', full, '-p', XFCE_PROPERTY) is None:
+            return _manual('xfce', where, manual)
+        if _xfconf('-p', XFCE_PROPERTY) != full:
+            return _manual('xfce', where, manual)
+        log_success(f"Added {XFCE_BINDING} to XFCE application shortcuts")
+        return True
+    if _RECORD_BINDING.search(existing):
+        log_info("XFCE already has the hyprwhspr shortcut, skipping")
+        return True
+    log_warning(f"{XFCE_BINDING} is already an XFCE shortcut: {existing}")
+    return _manual('xfce', where, manual)
+
+
 def _setup_kde(command: str) -> bool:
     print("  KDE: System Settings → Keyboard → Shortcuts → Add New → Command or Script")
     print(f"  Command: {command} record")
@@ -257,5 +298,5 @@ def setup_compositor_binding(kind: str) -> bool:
     if command is None:
         return False
     writer = {'niri': _setup_niri, 'sway': _setup_sway,
-              'gnome': _setup_gnome, 'kde': _setup_kde}.get(kind)
+              'gnome': _setup_gnome, 'kde': _setup_kde, 'xfce': _setup_xfce}.get(kind)
     return writer(command) if writer else False

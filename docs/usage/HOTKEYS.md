@@ -94,7 +94,7 @@ Enable in config (`~/.config/hyprwhspr/config.json`):
 }
 ```
 
-`hyprwhspr setup` offers automatic shortcuts on Hyprland, niri, Sway and GNOME. When it cannot safely add one, it prints manual instructions. Desktop shortcuts do not need the `input` group; typing permissions are checked separately.
+`hyprwhspr setup` offers automatic shortcuts on Hyprland, niri, Sway, GNOME and XFCE. When it cannot safely add one, it prints manual instructions. Desktop shortcuts do not need the `input` group; typing permissions are checked separately.
 
 To bind by hand:
 
@@ -108,7 +108,7 @@ Mod+Alt+D { spawn "hyprwhspr" "record" "toggle"; }
 bindsym Mod4+Mod1+d exec hyprwhspr record toggle
 ```
 
-GNOME and KDE: add a custom shortcut that runs `hyprwhspr record toggle`.
+GNOME, KDE and XFCE: add a custom shortcut that runs `hyprwhspr record toggle`.
 
 The examples below use Hyprland's `~/.config/hypr/hyprland.conf`; elsewhere, bind the same commands.
 

@@ -37,7 +37,8 @@ except ImportError:
 
 from ._shared import (SERVICE_NAME, RESUME_SERVICE_NAME, YDOTOOL_UNIT,
                       USER_HOME, USER_CONFIG_DIR, USER_SYSTEMD_DIR)
-from .systemd import _is_hyprwhspr_managed_ydotool_unit
+from .systemd import (_is_hyprwhspr_managed_ydotool_unit, AUTOSTART_MARKER,
+                      AUTOSTART_NAME)
 
 
 
@@ -104,6 +105,14 @@ def uninstall_command(keep_models: bool = False, remove_permissions: bool = Fals
             log_warning(f'Preserving foreign command symlink: {command}')
     elif command.exists():
         log_warning(f'Preserving unowned command: {command}')
+    autostart = USER_CONFIG_DIR.parent / 'autostart' / AUTOSTART_NAME
+    try:
+        autostart_ours = (autostart.is_file()
+                          and AUTOSTART_MARKER in autostart.read_text(encoding='utf-8'))
+    except (OSError, UnicodeError):
+        autostart_ours = False
+    if autostart_ours and not preserved_unit:
+        targets.append((f'X11 autostart entry: {autostart}', autostart))
     if purge:
         for path in (USER_CONFIG_DIR / 'config.json', CREDENTIALS_FILE):
             if path.is_file() and not path.is_symlink():
