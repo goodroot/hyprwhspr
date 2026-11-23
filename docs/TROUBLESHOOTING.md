@@ -115,6 +115,8 @@ systemctl --user show-environment | grep -E 'DISPLAY|XAUTHORITY|XDG_SESSION_TYPE
 
 Do not set `WAYLAND_DISPLAY` in an explicit `XDG_SESSION_TYPE=x11` session.
 
+XFCE and other X11 desktops never start `graphical-session.target`. Setup adds `~/.config/autostart/hyprwhspr.desktop` so the service starts at login. `hyprwhspr systemd disable` removes it.
+
 **Niri:**
 
 hyprwhspr uses `niri msg --json focused-window` to detect the focused app and choose the correct paste shortcut. That requires `NIRI_SOCKET` to be available in the systemd user environment used by `hyprwhspr.service`.
