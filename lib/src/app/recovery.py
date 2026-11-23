@@ -197,7 +197,7 @@ class RecoveryMixin:
         back clean. Return False while busy so the next service tick retries.
         Outside systemd, log once and allow late teardown completion.
         """
-        from instance_detection import is_running_under_systemd
+        from instance_detection import running_as_service_unit
         with self._recording_lock:
             # Include the handoff before _process_audio claims is_processing.
             if (self.is_recording or self.is_processing
@@ -207,7 +207,7 @@ class RecoveryMixin:
                 return False
             if not self.audio_capture._has_pending_teardowns():
                 return True
-            if not is_running_under_systemd():
+            if not running_as_service_unit():
                 log("[RECOVERY] ERROR: wedged audio stream cannot be reclaimed - "
                     "restart hyprwhspr to stop the CPU/log churn")
                 return True

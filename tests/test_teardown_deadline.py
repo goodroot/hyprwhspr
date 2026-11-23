@@ -53,7 +53,7 @@ class TeardownDeadlineTests(unittest.TestCase):
         self.exit = mock.Mock()
 
         patches = [
-            mock.patch('instance_detection.is_running_under_systemd', return_value=True),
+            mock.patch('instance_detection.running_as_service_unit', return_value=True),
             patch_app_global(type(app), 'os', types.SimpleNamespace(_exit=self.exit)),
             patch_app_global(type(app), 'RECOVERY_REQUESTED_FILE',
                              mock.Mock(exists=lambda: False)),
@@ -119,7 +119,7 @@ class TeardownDeadlineTests(unittest.TestCase):
         self.assertTrue(self.capture._cleanup_complete.is_set())
 
     def test_non_systemd_reports_once_and_late_completion_still_unblocks(self):
-        with mock.patch('instance_detection.is_running_under_systemd', return_value=False), \
+        with mock.patch('instance_detection.running_as_service_unit', return_value=False), \
                 patch_app_global(type(self.app), 'log', mock.Mock()) as log:
             self.tick(30.0)
             self.tick(60.0)
@@ -178,7 +178,7 @@ class MidRecordingWedgeTests(unittest.TestCase):
         self.exit = mock.Mock()
 
         patches = [
-            mock.patch('instance_detection.is_running_under_systemd', return_value=True),
+            mock.patch('instance_detection.running_as_service_unit', return_value=True),
             mock.patch('subprocess.run',
                        side_effect=lambda *a, **k: capture_tests.FakeCompleted("alsa_input.test mic")),
             patch_app_global(type(app), 'os', types.SimpleNamespace(_exit=self.exit)),

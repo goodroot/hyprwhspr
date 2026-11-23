@@ -5,7 +5,6 @@ import shutil
 import subprocess
 import threading
 import time
-from pathlib import Path
 
 from backend_installer import get_state, resolve_dependency_plan
 from backend_utils import normalize_backend
@@ -474,10 +473,11 @@ class FeedbackMixin:
         if not self.config.get_setting('tray_icon_enabled', False):
             return
         try:
+            from instance_detection import running_as_service_unit
             from tray_icon import TrayIcon
             # Restart/Stop only make sense when systemd manages the service
             tray = TrayIcon(get_state=self._tray_state, on_action=self._on_tray_action,
-                            service_controls=self._running_as_service_unit(),
+                            service_controls=running_as_service_unit(),
                             long_form=lambda: self.config.get_setting('recording_mode') == 'long_form')
             if tray.start():
                 self.tray_icon = tray
@@ -486,20 +486,6 @@ class FeedbackMixin:
                 log("[WARN] Failed to start tray icon")
         except Exception as e:
             log(f"[WARN] Failed to setup tray icon: {e}")
-
-    @staticmethod
-    def _running_as_service_unit():
-        """True if this process lives in hyprwhspr.service's own cgroup.
-
-        INVOCATION_ID alone is inherited from any unit up the process tree, e.g.
-        a compositor run as a systemd user service.
-        """
-        try:
-            lines = Path('/proc/self/cgroup').read_text().splitlines()
-        except OSError:
-            return False
-        return any(Path(line.split(':', 2)[-1]).name == 'hyprwhspr.service'
-                   for line in lines)
 
     def _tray_state(self):
         """Current (state, detail) for the tray icon; see tray_icon.STATES"""

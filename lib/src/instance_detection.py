@@ -5,32 +5,18 @@ Used by both main.py and the cli package to broker between local/remote state.
 
 import os
 import subprocess
+from pathlib import Path
 from typing import Tuple, Optional
 
 
-def is_running_under_systemd() -> bool:
-    """
-    Check if the current process is running under systemd.
-    Returns True if we're in a systemd service context.
-    """
+def running_as_service_unit() -> bool:
+    """True in hyprwhspr.service's cgroup. Systemd env vars are inherited, so unreliable."""
     try:
-        # Method 1: Check if we're a child of systemd
-        ppid = os.getppid()
-        try:
-            with open(f'/proc/{ppid}/comm', 'r', encoding='utf-8') as f:
-                parent_comm = f.read().strip()
-                if 'systemd' in parent_comm:
-                    return True
-        except (FileNotFoundError, IOError):
-            pass
-        
-        # Method 2: Check environment variable (systemd sets this)
-        if os.environ.get('INVOCATION_ID') or os.environ.get('JOURNAL_STREAM'):
-            return True
-    except Exception:
-        pass
-    
-    return False
+        lines = Path('/proc/self/cgroup').read_text().splitlines()
+    except OSError:
+        return False
+    return any(Path(line.split(':', 2)[-1]).name == 'hyprwhspr.service'
+               for line in lines)
 
 
 def is_service_active_via_systemd(service_name: str = 'hyprwhspr.service') -> bool:
@@ -135,7 +121,7 @@ def is_hyprwhspr_running() -> Tuple[bool, Optional[str]]:
     # Check if we're running under systemd
     # If we are, systemd already manages single instances - skip the check entirely
     # This avoids race conditions during restarts where the old process might still be shutting down
-    if is_running_under_systemd():
+    if running_as_service_unit():
         return False, None
     
     # We're running manually - check if systemd service is active

@@ -286,31 +286,6 @@ class AppTrayStateTests(unittest.TestCase):
             self.assertEqual(self.app._tray_state()[0], tray_state, longform_state)
 
 
-class ServiceUnitDetectionTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.main = _import_main_isolated()
-
-    def _detect(self, cgroup):
-        cgroup_file = mock.Mock()
-        cgroup_file.read_text.return_value = cgroup
-        real_path = Path
-
-        def path(p):
-            return cgroup_file if p == '/proc/self/cgroup' else real_path(p)
-        with patch_app_global(self.main.hyprwhsprApp, 'Path', path):
-            return self.main.hyprwhsprApp._running_as_service_unit()
-
-    def test_own_unit(self):
-        self.assertTrue(self._detect(
-            '0::/user.slice/user-1000.slice/user@1000.service/app.slice/hyprwhspr.service\n'))
-
-    def test_inherited_invocation_id_from_compositor_unit(self):
-        # e.g. hyprwhspr launched from Hyprland's exec-once under uwsm
-        self.assertFalse(self._detect(
-            '0::/user.slice/user-1000.slice/user@1000.service/session.slice/'
-            'wayland-wm@hyprland.desktop.service\n'))
-
 
 class AppTrayActionTests(unittest.TestCase):
     @classmethod

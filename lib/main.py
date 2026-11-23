@@ -560,26 +560,8 @@ def _acquire_lock_file():
     """
     global _lock_file, _lock_file_path
     
-    # Check if we're running under systemd
-    # If we are, systemd already manages single instances - skip the lock file
-    running_under_systemd = False
-    try:
-        ppid = os.getppid()
-        try:
-            with open(f'/proc/{ppid}/comm', 'r', encoding='utf-8') as f:
-                parent_comm = f.read().strip()
-                if 'systemd' in parent_comm:
-                    running_under_systemd = True
-        except (FileNotFoundError, IOError):
-            pass
-        
-        if os.environ.get('INVOCATION_ID') or os.environ.get('JOURNAL_STREAM'):
-            running_under_systemd = True
-    except Exception:
-        pass
-    
-    if running_under_systemd:
-        # Trust systemd to manage single instances
+    from instance_detection import running_as_service_unit
+    if running_as_service_unit():
         return True, None
     
     # Set up lock file path
@@ -677,37 +659,33 @@ def _is_hyprwhspr_running():
         return False, None
 
 
+def _exit_already_running(how):
+    log("[ERROR] hyprwhspr is already running!")
+    if how:
+        log(f"[ERROR] Detected via: {how}")
+    log("\n[INFO] To check the status of the running instance:")
+    log("  • Run: hyprwhspr status")
+    log("\n[INFO] To stop the running instance:")
+    log("  • If running via systemd: systemctl --user stop hyprwhspr")
+    log("  • If running manually: kill the process or press Ctrl+C in its terminal")
+    log("\n[INFO] For more information, run: hyprwhspr --help")
+    sys.exit(1)
+
+
 def main():
     """Main entry point"""
     # First, try to acquire lock file (primary detection method)
     lock_acquired, lock_message = _acquire_lock_file()
     if not lock_acquired:
-        log("[ERROR] hyprwhspr is already running!")
-        if lock_message:
-            log(f"[ERROR] Detected via: {lock_message}")
-        log("\n[INFO] To check the status of the running instance:")
-        log("  • Run: hyprwhspr status")
-        log("\n[INFO] To stop the running instance:")
-        log("  • If running via systemd: systemctl --user stop hyprwhspr")
-        log("  • If running manually: kill the process or press Ctrl+C in its terminal")
-        log("\n[INFO] For more information, run: hyprwhspr --help")
-        sys.exit(1)
-    
+        _exit_already_running(lock_message)
+
     # Fallback: also check via process detection
     is_running, how = _is_hyprwhspr_running()
     if is_running:
         # Release lock since we detected another instance
         _release_lock_file()
-        log("[ERROR] hyprwhspr is already running!")
-        log(f"[ERROR] Detected via: {how}")
-        log("\n[INFO] To check the status of the running instance:")
-        log("  • Run: hyprwhspr status")
-        log("\n[INFO] To stop the running instance:")
-        log("  • If running via systemd: systemctl --user stop hyprwhspr")
-        log("  • If running manually: kill the process or press Ctrl+C in its terminal")
-        log("\n[INFO] For more information, run: hyprwhspr --help")
-        sys.exit(1)
-    
+        _exit_already_running(how)
+
     try:
         app = hyprwhsprApp()
         app.run()
