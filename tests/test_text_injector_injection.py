@@ -71,6 +71,31 @@ class TextInjectorInjectionTests(unittest.TestCase):
     def _injector(self):
         return make_injector()
 
+    def test_keep_dictation_skips_the_clipboard_restore(self):
+        for keep in (False, True):
+            with self.subTest(keep=keep):
+                injector = self._injector()
+                injector.config_manager = ConfigStub({'clipboard_keep_dictation': keep})
+                injector.xdotool_available = True
+                with (
+                    mock.patch.object(injector, '_save_clipboard', return_value=b'old'),
+                    mock.patch.object(injector, '_copy_text_to_clipboard', return_value=True),
+                    mock.patch.object(injector, '_is_x11_session', return_value=True),
+                    mock.patch.object(injector, '_send_paste_keys_xdotool', return_value=True),
+                    mock.patch.object(injector, '_restore_clipboard') as restore,
+                    mock.patch('text_injector.time.sleep'),
+                ):
+                    self.assertTrue(injector._paste_via_clipboard('hello', 'ctrl+v', False, False))
+                self.assertEqual(restore.called, not keep)
+
+    def test_keep_dictation_reads_the_setting_defensively(self):
+        injector = self._injector()
+        injector.config_manager = types.SimpleNamespace(
+            get_setting=mock.Mock(side_effect=RuntimeError('bad config')))
+        self.assertFalse(injector._keep_dictation_on_clipboard())
+        injector.config_manager = None
+        self.assertFalse(injector._keep_dictation_on_clipboard())
+
     def test_wayland_clipboard_success_does_not_use_fallback(self):
         injector = self._injector()
         completed = types.SimpleNamespace(returncode=0)

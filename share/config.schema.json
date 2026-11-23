@@ -230,6 +230,11 @@
       "default": false,
       "description": "True = clear clipboard after delay, false = keep clipboard contents"
     },
+    "clipboard_keep_dictation": {
+      "type": "boolean",
+      "default": false,
+      "description": "Leave the dictated text on the clipboard after it is pasted, instead of restoring what was copied before. Useful when the same text has to go into several places."
+    },
     "clipboard_settle_delay": {
       "type": "number",
       "minimum": 0,

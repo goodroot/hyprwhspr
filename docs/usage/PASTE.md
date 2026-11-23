@@ -141,6 +141,16 @@ hyprwhspr saves your clipboard before injection and restores it afterward — di
 }
 ```
 
+To keep the dictation itself on the clipboard, so it can be pasted somewhere else after the automatic paste:
+
+```jsonc
+{
+    "clipboard_keep_dictation": true    // default: false = restore what you had copied before
+}
+```
+
+The previous clipboard contents are then not restored, and `clipboard_behavior` has no effect while this is on.
+
 ## Recover the last dictation
 
 The daemon keeps the last prepared dictation in memory — text only, no audio or

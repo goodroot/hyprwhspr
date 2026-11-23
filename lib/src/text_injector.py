@@ -1357,6 +1357,20 @@ except Exception:
                 log(f"ERROR: Clipboard copy failed{detail}: {e}")
                 return False
 
+    def _keep_dictation_on_clipboard(self) -> bool:
+        """Whether the dictated text stays on the clipboard after injection.
+
+        Default is to restore whatever the user had copied before, so dictation
+        never overwrites it. With `clipboard_keep_dictation`, the transcript is
+        left in place so it can be pasted somewhere else.
+        """
+        if not self.config_manager:
+            return False
+        try:
+            return bool(self.config_manager.get_setting('clipboard_keep_dictation', False))
+        except Exception:
+            return False
+
     def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 5.0):
         """Restore clipboard to saved contents after a delay (background thread).
 
@@ -1664,6 +1678,7 @@ except Exception:
                 session.saved_clipboard is not _CLIPBOARD_UNSAVED
                 and not session.not_pasted
                 and session.last_pasted is not None
+                and not self._keep_dictation_on_clipboard()
             ):
                 restore_delay = 5.0
                 if self.config_manager:
@@ -2171,15 +2186,17 @@ except Exception:
                 if pasted:
                     stream.last_pasted = text
             elif pasted:
-                restore_delay = 5.0
-                if self.config_manager:
-                    restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
-                self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
+                if not self._keep_dictation_on_clipboard():
+                    restore_delay = 5.0
+                    if self.config_manager:
+                        restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
+                    self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
                 if auto_submit:
                     self._send_enter_if_auto_submit(expected_window=expected_window)
             elif (
                 gnome_wayland_session
                 and not getattr(self, '_last_ydotool_failure_explicit', False)
+                and not self._keep_dictation_on_clipboard()
             ):
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=0)
 
