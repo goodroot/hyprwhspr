@@ -20,7 +20,7 @@ except ImportError:
 
 from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, RESUME_SERVICE_NAME,
                       YDOTOOL_UNIT, _YDOTOOL_MARKERS, USER_SYSTEMD_DIR,
-                      _validate_hyprwhspr_root)
+                      USER_CONFIG_DIR, _validate_hyprwhspr_root)
 
 AUTOSTART_NAME = 'hyprwhspr.desktop'
 AUTOSTART_MARKER = 'X-hyprwhspr-managed=true'
@@ -105,12 +105,9 @@ def _nix_service_content(template: str):
     return ''.join(lines)
 
 
-def _xdg_config_home() -> Path:
-    return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
-
-
 def x11_autostart_path() -> Path:
-    return _xdg_config_home() / 'autostart' / AUTOSTART_NAME
+    # USER_CONFIG_DIR is $XDG_CONFIG_HOME/hyprwhspr; tests patch it.
+    return USER_CONFIG_DIR.parent / 'autostart' / AUTOSTART_NAME
 
 
 def _graphical_session_active() -> bool:

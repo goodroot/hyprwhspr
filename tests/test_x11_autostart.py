@@ -22,11 +22,11 @@ class X11AutostartTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.home = Path(temp.name)
-        env = {'XDG_CONFIG_HOME': str(self.home / 'config'),
-               'XDG_SESSION_TYPE': 'x11'}
-        patch = mock.patch.dict(os.environ, env)
-        patch.start()
-        self.addCleanup(patch.stop)
+        for patch in (mock.patch.dict(os.environ, {'XDG_SESSION_TYPE': 'x11'}),
+                      mock.patch.object(systemd, 'USER_CONFIG_DIR',
+                                        self.home / 'config' / 'hyprwhspr')):
+            patch.start()
+            self.addCleanup(patch.stop)
         self.session = mock.patch.object(systemd, '_graphical_session_active',
                                          return_value=False)
         self.session.start()
