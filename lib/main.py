@@ -67,7 +67,6 @@ sys.path.insert(0, str(src_path))
 
 # Lock file for preventing multiple instances
 _lock_file = None
-_lock_file_path = None
 
 from config_manager import ConfigManager
 from audio_capture import AudioCapture
@@ -554,99 +553,37 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
 
 
 def _acquire_lock_file():
-    """
-    Acquire a lock file to prevent multiple instances from running.
-    Returns (success: bool, message: str or None)
-    """
-    global _lock_file, _lock_file_path
-    
-    from instance_detection import running_as_service_unit
-    if running_as_service_unit():
-        return True, None
-    
-    # Set up lock file path
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _lock_file_path = LOCK_FILE
-    
+    """Hold an flock on LOCK_FILE until exit. Returns (acquired, detail)."""
+    global _lock_file
     try:
-        # Try to open/create the lock file
-        _lock_file = open(_lock_file_path, 'w')
-        
-        # Try to acquire an exclusive non-blocking lock
-        try:
-            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            
-            # Lock acquired successfully - write our PID
-            _lock_file.write(str(os.getpid()))
-            _lock_file.flush()
-            
-            # Register cleanup handler
-            atexit.register(_release_lock_file)
-            
-            return True, None
-            
-        except (IOError, OSError):
-            # Lock is held by another process
-            _lock_file.close()
-            _lock_file = None
-            
-            # Check if the PID in the lock file is still valid
-            try:
-                with open(_lock_file_path, 'r') as f:
-                    lock_pid_str = f.read().strip()
-                    if lock_pid_str:
-                        try:
-                            lock_pid = int(lock_pid_str)
-                            # Check if process is still running
-                            os.kill(lock_pid, 0)
-                            # Process exists - another instance is running
-                            return False, f"lock file (PID: {lock_pid})"
-                        except (ValueError, ProcessLookupError, PermissionError):
-                            # Stale lock file - remove it and try again
-                            try:
-                                _lock_file_path.unlink()
-                                # Retry acquiring lock
-                                _lock_file = open(_lock_file_path, 'w')
-                                fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                                _lock_file.write(str(os.getpid()))
-                                _lock_file.flush()
-                                atexit.register(_release_lock_file)
-                                return True, None
-                            except (IOError, OSError):
-                                # Still can't acquire - another process got it
-                                if _lock_file:
-                                    _lock_file.close()
-                                    _lock_file = None
-                                return False, "lock file (another instance starting)"
-            except (FileNotFoundError, IOError):
-                # Can't read lock file - assume another instance is running
-                return False, "lock file"
-                
-    except (IOError, OSError, PermissionError) as e:
-        # Can't create or access lock file
-        if _lock_file:
-            _lock_file.close()
-            _lock_file = None
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        lock = open(LOCK_FILE, 'a+')
+    except OSError as e:
         return False, f"lock file (error: {e})"
+    try:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.seek(0)
+        holder = lock.read().strip()
+        lock.close()
+        return False, f"lock file (PID: {holder})" if holder else "lock file"
+    lock.truncate(0)
+    lock.write(str(os.getpid()))
+    lock.flush()
+    _lock_file = lock
+    atexit.register(_release_lock_file)
+    return True, None
 
 
 def _release_lock_file():
-    """Release the lock file"""
-    global _lock_file, _lock_file_path
-    
+    """Release the lock; the file stays so the flock never splits across inodes."""
+    global _lock_file
     if _lock_file:
         try:
-            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)
             _lock_file.close()
         except Exception:
             pass
         _lock_file = None
-    
-    if _lock_file_path and _lock_file_path.exists():
-        try:
-            _lock_file_path.unlink()
-        except Exception:
-            pass
 
 
 def _is_hyprwhspr_running():
