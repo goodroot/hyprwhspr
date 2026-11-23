@@ -104,9 +104,8 @@ def build_default_config():
         # Null disables the hook.
         'post_transcription_hook': None,
         'post_transcription_hook_timeout': 5.0,  # Positive timeout in seconds
-        'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
-        'clipboard_keep_dictation': False,  # true = leave the dictated text in the clipboard instead of restoring the previous contents
-        'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
+        'clipboard_behavior': 'restore',  # After a paste: "restore" | "keep" | "clear"
+        'clipboard_clear_delay': 5.0,  # Seconds after a paste before restoring or clearing the clipboard
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut
         # Values: "super" | "ctrl_shift" | "ctrl" | null (auto-detect)
         # null = auto-detect: terminals get Ctrl+Shift+V, other apps get Ctrl+V
@@ -273,6 +272,12 @@ def normalize_legacy_config(config):
             migrations.append(f"'{LEGACY_BINDINGS_KEY}' dropped; 'external_bindings' wins")
         else:
             migrations.append(f"'{LEGACY_BINDINGS_KEY}' dropped")
+
+    # The boolean predates 'keep'; false always meant restore.
+    if isinstance(loaded_config.get('clipboard_behavior'), bool):
+        mode = 'clear' if loaded_config['clipboard_behavior'] else 'restore'
+        loaded_config['clipboard_behavior'] = mode
+        migrations.append(f"'clipboard_behavior' -> '{mode}'")
 
     # Drop an inherited copy of the old English default so it stops
     # being read as a deliberate all-languages prompt

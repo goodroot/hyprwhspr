@@ -132,24 +132,16 @@ the paste shortcut (default `0.15` seconds). It accepts finite nonnegative numbe
 `0` skips the wait. Lower values are an advanced compatibility tradeoff: some
 applications may paste stale clipboard contents. Direct typing is unaffected.
 
-hyprwhspr saves your clipboard before injection and restores it afterward — dictated text never permanently overwrites it. To instead clear the clipboard a few seconds after pasting:
+By default, hyprwhspr saves your clipboard before a paste and puts it back after.
+
+To keep the dictation for another paste, or to clear it:
 
 ```jsonc
 {
-    "clipboard_behavior": true,         // true = clear clipboard after a delay (default: false = restore previous contents)
-    "clipboard_clear_delay": 5.0        // seconds to wait before clearing (only when clipboard_behavior is true)
+    "clipboard_behavior": "keep",    // "restore" (default) | "keep" | "clear"
+    "clipboard_clear_delay": 5.0     // seconds before restore or clear
 }
 ```
-
-To keep the dictation itself on the clipboard, so it can be pasted somewhere else after the automatic paste:
-
-```jsonc
-{
-    "clipboard_keep_dictation": true    // default: false = restore what you had copied before
-}
-```
-
-The previous clipboard contents are then not restored, and `clipboard_behavior` has no effect while this is on.
 
 ## Recover the last dictation
 

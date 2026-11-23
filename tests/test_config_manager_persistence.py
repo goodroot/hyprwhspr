@@ -37,6 +37,17 @@ class ConfigManagerPersistenceTests(unittest.TestCase):
                     self.assertEqual(manager.get_setting("external_bindings"), expected)
                     self.assertNotIn("use_hypr_bindings", json.loads(path.read_text(encoding="utf-8")))
 
+    def test_boolean_clipboard_behavior_migrates_to_a_mode(self):
+        import managed_install
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(managed_install, 'record_ownership'):
+            root = Path(tmp)
+            path = root / "config.json"
+            for legacy, mode in ((True, "clear"), (False, "restore"), ("keep", "keep")):
+                with self.subTest(legacy=legacy):
+                    path.write_text(json.dumps({"clipboard_behavior": legacy}))
+                    self.assertEqual(self._manager(root).get_setting("clipboard_behavior"), mode)
+
     def test_save_atomically_replaces_config_with_sparse_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

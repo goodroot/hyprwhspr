@@ -71,11 +71,17 @@ class TextInjectorInjectionTests(unittest.TestCase):
     def _injector(self):
         return make_injector()
 
-    def test_keep_dictation_skips_the_clipboard_restore(self):
-        for keep in (False, True):
-            with self.subTest(keep=keep):
+    def test_clipboard_behavior_after_a_one_shot_paste(self):
+        for mode, restored, cleared in (
+            (None, True, False), ('restore', True, False), ('keep', False, False),
+            ('clear', False, True), ('bogus', True, False),
+        ):
+            with self.subTest(mode=mode):
                 injector = self._injector()
-                injector.config_manager = ConfigStub({'clipboard_keep_dictation': keep})
+                settings = {'clipboard_clear_delay': 2.0}
+                if mode is not None:
+                    settings['clipboard_behavior'] = mode
+                injector.config_manager = ConfigStub(settings)
                 injector.xdotool_available = True
                 with (
                     mock.patch.object(injector, '_save_clipboard', return_value=b'old'),
@@ -83,18 +89,73 @@ class TextInjectorInjectionTests(unittest.TestCase):
                     mock.patch.object(injector, '_is_x11_session', return_value=True),
                     mock.patch.object(injector, '_send_paste_keys_xdotool', return_value=True),
                     mock.patch.object(injector, '_restore_clipboard') as restore,
+                    mock.patch.object(injector, '_clear_clipboard') as clear,
                     mock.patch('text_injector.time.sleep'),
                 ):
                     self.assertTrue(injector._paste_via_clipboard('hello', 'ctrl+v', False, False))
-                self.assertEqual(restore.called, not keep)
+                self.assertEqual(restore.called, restored)
+                self.assertEqual(clear.called, cleared)
+                if restored:
+                    restore.assert_called_once_with(b'old', injected=b'hello', delay=2.0)
+                if cleared:
+                    clear.assert_called_once_with(b'hello', 2.0)
 
-    def test_keep_dictation_reads_the_setting_defensively(self):
+    def test_clipboard_mode_reads_the_setting_defensively(self):
         injector = self._injector()
         injector.config_manager = types.SimpleNamespace(
             get_setting=mock.Mock(side_effect=RuntimeError('bad config')))
-        self.assertFalse(injector._keep_dictation_on_clipboard())
+        self.assertEqual(injector._clipboard_mode(), 'restore')
         injector.config_manager = None
-        self.assertFalse(injector._keep_dictation_on_clipboard())
+        self.assertEqual(injector._clipboard_mode(), 'restore')
+
+    def test_invalid_clipboard_settings_fall_back_and_say_so(self):
+        injector = self._injector()
+        injector.config_manager = ConfigStub({'clipboard_behavior': 'Keep'})
+        with mock.patch('text_injector.log') as log:
+            self.assertEqual(injector._clipboard_mode(), 'restore')
+            self.assertEqual(injector._clipboard_mode(), 'restore')
+        log.assert_called_once()
+        for delay in ('5s', -1, True, float('nan')):
+            with self.subTest(delay=delay):
+                injector.config_manager = ConfigStub({'clipboard_clear_delay': delay})
+                with mock.patch('text_injector.log') as log:
+                    self.assertEqual(injector._clipboard_clear_delay(), 5.0)
+                log.assert_called_once()
+
+    def test_clear_empties_the_clipboard_only_while_it_holds_the_dictation(self):
+        for current, expect_clear in ((b'hello', True), (b'copied since', False)):
+            with self.subTest(current=current):
+                injector = self._injector()
+                done = []
+                with (
+                    mock.patch.object(injector, '_save_clipboard', return_value=current),
+                    mock.patch('text_injector.subprocess.run',
+                               return_value=types.SimpleNamespace(returncode=0)) as run,
+                    mock.patch('text_injector.threading.Thread') as thread,
+                    mock.patch('text_injector.time.sleep'),
+                ):
+                    thread.side_effect = lambda target, daemon: types.SimpleNamespace(
+                        start=lambda: done.append(target()))
+                    injector._clear_clipboard(b'hello', 0)
+                self.assertEqual(len(done), 1)
+                self.assertEqual(run.called, expect_clear)
+                if expect_clear:
+                    self.assertEqual(run.call_args.args[0], ['wl-copy', '--clear'])
+
+    def test_clear_skips_when_a_newer_copy_superseded_it(self):
+        injector = self._injector()
+        targets = []
+        with mock.patch('text_injector.threading.Thread') as thread:
+            thread.side_effect = lambda target, daemon: types.SimpleNamespace(
+                start=lambda: targets.append(target))
+            injector._clear_clipboard(b'hello', 0)
+        injector._clipboard_generation += 1
+        with (
+            mock.patch.object(injector, '_clear_if_holding') as clear,
+            mock.patch('text_injector.time.sleep'),
+        ):
+            targets[0]()
+        clear.assert_not_called()
 
     def test_wayland_clipboard_success_does_not_use_fallback(self):
         injector = self._injector()
@@ -348,6 +409,26 @@ class TextInjectorInjectionTests(unittest.TestCase):
         save_clipboard.assert_not_called()
         copy.assert_not_called()
         restore_clipboard.assert_not_called()
+
+    def test_gnome_direct_typing_keeps_the_dictation_when_asked(self):
+        for mode, kept in (("restore", False), ("keep", True)):
+            with self.subTest(mode=mode):
+                injector = self._injector()
+                injector.config_manager = ConfigStub({"clipboard_behavior": mode})
+                with (
+                    mock.patch.object(injector, "_get_active_window_info", return_value=None),
+                    mock.patch.object(injector, "_is_gnome_wayland_session", return_value=True),
+                    mock.patch.object(injector, "_type_text_ydotool", return_value=True),
+                    mock.patch.object(injector, "_layout_is_type_safe", return_value=True),
+                    mock.patch.object(injector, "_copy_text_to_clipboard", return_value=True) as copy,
+                    mock.patch.object(injector, "_send_enter_if_auto_submit"),
+                    mock.patch("text_injector.time.sleep"),
+                ):
+                    self.assertTrue(injector._inject_via_clipboard_and_hotkey("hello"))
+                if kept:
+                    copy.assert_called_once_with("hello")
+                else:
+                    copy.assert_not_called()
 
     def test_application_rule_uses_custom_chord_for_emacs(self):
         injector = self._injector()

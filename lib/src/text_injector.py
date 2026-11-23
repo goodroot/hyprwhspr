@@ -1357,19 +1357,65 @@ except Exception:
                 log(f"ERROR: Clipboard copy failed{detail}: {e}")
                 return False
 
-    def _keep_dictation_on_clipboard(self) -> bool:
-        """Whether the dictated text stays on the clipboard after injection.
-
-        Default is to restore whatever the user had copied before, so dictation
-        never overwrites it. With `clipboard_keep_dictation`, the transcript is
-        left in place so it can be pasted somewhere else.
-        """
+    def _clipboard_mode(self) -> str:
+        """`clipboard_behavior`: 'restore' (default), 'keep' or 'clear'."""
         if not self.config_manager:
-            return False
+            return 'restore'
         try:
-            return bool(self.config_manager.get_setting('clipboard_keep_dictation', False))
+            mode = self.config_manager.get_setting('clipboard_behavior', 'restore')
         except Exception:
-            return False
+            return 'restore'
+        if mode in ('restore', 'keep', 'clear'):
+            return mode
+        if not getattr(self, '_warned_invalid_clipboard_behavior', False):
+            log(f"Invalid clipboard_behavior {mode!r}; using 'restore'")
+            self._warned_invalid_clipboard_behavior = True
+        return 'restore'
+
+    def _clipboard_clear_delay(self) -> float:
+        delay = self.config_manager.get_setting('clipboard_clear_delay', 5.0) if self.config_manager else 5.0
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not math.isfinite(delay) or delay < 0:
+            log(f"Invalid clipboard_clear_delay {delay!r}; using 5 seconds")
+            return 5.0
+        return float(delay)
+
+    def _settle_clipboard(self, saved, text: str) -> None:
+        """After a paste, restore, keep or clear the clipboard per `clipboard_behavior`."""
+        mode = self._clipboard_mode()
+        if mode == 'keep':
+            return
+        delay = self._clipboard_clear_delay()
+        if mode == 'clear':
+            self._clear_clipboard(text.encode("utf-8"), delay)
+        else:
+            self._restore_clipboard(saved, injected=text.encode("utf-8"), delay=delay)
+
+    def _clear_clipboard(self, injected: bytes, delay: float) -> None:
+        """Clear the clipboard after a delay if it still holds `injected`."""
+        generation = self._clipboard_generation
+
+        def _clear():
+            time.sleep(delay)
+            with self._clipboard_lock:
+                if generation == self._clipboard_generation:
+                    self._clear_if_holding(injected)
+
+        threading.Thread(target=_clear, daemon=True).start()
+
+    def _clear_if_holding(self, injected: bytes) -> None:
+        """Empty the clipboard unless the user copied something since. Caller holds the lock."""
+        try:
+            if self._save_clipboard() != injected:
+                return
+            cleared = subprocess.run(["wl-copy", "--clear"], capture_output=True, timeout=2)
+            if cleared.returncode != 0:
+                raise OSError(f"wl-copy exited with status {cleared.returncode}")
+        except Exception:
+            # Mirrors _copy_text_to_clipboard's fallback writer.
+            try:
+                pyperclip.copy('')
+            except Exception as e:
+                log(f"Warning: Could not clear dictation from clipboard: {e}")
 
     def _restore_clipboard(self, saved: Optional[bytes], injected: Optional[bytes] = None, delay: float = 5.0):
         """Restore clipboard to saved contents after a delay (background thread).
@@ -1444,18 +1490,7 @@ except Exception:
             self._restore_clipboard(saved, injected=text.encode("utf-8"), delay=0)
             return
         with self._clipboard_lock:
-            try:
-                if self._save_clipboard() != text.encode("utf-8"):
-                    return
-                cleared = subprocess.run(["wl-copy", "--clear"], capture_output=True, timeout=2)
-                if cleared.returncode != 0:
-                    raise OSError(f"wl-copy exited with status {cleared.returncode}")
-            except Exception:
-                # Mirrors _copy_text_to_clipboard's fallback writer.
-                try:
-                    pyperclip.copy('')
-                except Exception as e:
-                    log(f"Warning: Could not clear undelivered text from clipboard: {e}")
+            self._clear_if_holding(text.encode("utf-8"))
 
     def _use_hyprland_ydotool(self) -> bool:
         if not self._is_hyprland_session():
@@ -1674,20 +1709,16 @@ except Exception:
                 with self._last_text_lock:
                     self._last_text = full_text
 
-            if (
+            if session.not_pasted:
+                pass
+            elif self._clipboard_mode() == 'keep':
+                # Chunks paste one at a time: put the whole dictation back.
+                self._copy_text_to_clipboard(full_text)
+            elif (
                 session.saved_clipboard is not _CLIPBOARD_UNSAVED
-                and not session.not_pasted
                 and session.last_pasted is not None
-                and not self._keep_dictation_on_clipboard()
             ):
-                restore_delay = 5.0
-                if self.config_manager:
-                    restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
-                self._restore_clipboard(
-                    session.saved_clipboard,
-                    injected=session.last_pasted.encode("utf-8"),
-                    delay=restore_delay,
-                )
+                self._settle_clipboard(session.saved_clipboard, session.last_pasted)
             if submit and not session.cancelled.is_set() and not session.failed and not session.not_pasted:
                 self._send_enter_if_auto_submit(cancel_event=session.cancelled, expected_window=session.target)
             if session.failed:
@@ -2015,6 +2046,8 @@ except Exception:
                     return False
                 typed = self._type_text_ydotool(text)
                 if typed:
+                    if stream is None and self._clipboard_mode() == 'keep':
+                        self._copy_text_to_clipboard(text)
                     if auto_submit:
                         self._send_enter_if_auto_submit()
                     return True
@@ -2186,17 +2219,13 @@ except Exception:
                 if pasted:
                     stream.last_pasted = text
             elif pasted:
-                if not self._keep_dictation_on_clipboard():
-                    restore_delay = 5.0
-                    if self.config_manager:
-                        restore_delay = float(self.config_manager.get_setting('clipboard_clear_delay', 5.0))
-                    self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=restore_delay)
+                self._settle_clipboard(saved_clipboard, text)
                 if auto_submit:
                     self._send_enter_if_auto_submit(expected_window=expected_window)
             elif (
                 gnome_wayland_session
                 and not getattr(self, '_last_ydotool_failure_explicit', False)
-                and not self._keep_dictation_on_clipboard()
+                and self._clipboard_mode() != 'keep'
             ):
                 self._restore_clipboard(saved_clipboard, injected=text.encode("utf-8"), delay=0)
 
