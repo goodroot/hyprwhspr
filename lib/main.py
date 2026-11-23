@@ -651,6 +651,9 @@ def _release_lock_file():
 
 def _is_hyprwhspr_running():
     """Check if hyprwhspr is already running"""
+    # Isolated dev instances; the lock file still guards their own runtime dir.
+    if os.environ.get('HYPRWHSPR_ALLOW_SECOND_INSTANCE') == '1':
+        return False, None
     try:
         from instance_detection import is_hyprwhspr_running
         return is_hyprwhspr_running()

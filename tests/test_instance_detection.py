@@ -97,6 +97,13 @@ class LockFileTests(unittest.TestCase):
         self.assertTrue(acquired)
         self.assertEqual(lock.read_text(), str(os.getpid()))
 
+    def test_allow_second_instance_skips_process_detection(self):
+        with mock.patch.dict(os.environ, {'HYPRWHSPR_ALLOW_SECOND_INSTANCE': '1'}), \
+                mock.patch.dict(sys.modules, {'instance_detection': instance_detection}), \
+                mock.patch.object(instance_detection, 'is_hyprwhspr_running') as check:
+            self.assertEqual(self.main._is_hyprwhspr_running(), (False, None))
+        check.assert_not_called()
+
     def test_service_unit_leaves_locking_to_systemd(self):
         (acquired, _), lock = self._acquire(OWN_UNIT)
         self.assertTrue(acquired)
