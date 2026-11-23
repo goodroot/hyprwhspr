@@ -130,6 +130,19 @@ class MaintenancePasteInjectionTests(unittest.TestCase):
             self.assertFalse(maintenance._validate_paste_injection(False, '', 'ydotool not found'))
         self.assertTrue(error.called)
 
+    def _wayland_paths(self, desktop):
+        env = {'XDG_SESSION_TYPE': 'wayland', 'XDG_CURRENT_DESKTOP': desktop}
+        which = {'wtype': '/usr/bin/wtype'}.get
+        with mock.patch.dict(maintenance.os.environ, env, clear=True), \
+                mock.patch.object(maintenance.shutil, 'which', side_effect=which):
+            return maintenance._has_non_ydotool_injection_path()
+
+    def test_wtype_counts_on_sway(self):
+        self.assertTrue(self._wayland_paths('sway'))
+
+    def test_wtype_does_not_count_on_gnome_wayland(self):
+        self.assertFalse(self._wayland_paths('GNOME'))
+
 
 class MaintenanceUinputValidationTests(unittest.TestCase):
     def _path(self, exists):

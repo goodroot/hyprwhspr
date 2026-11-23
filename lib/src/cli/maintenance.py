@@ -52,7 +52,8 @@ except ImportError:
     from installation import input_group_hint, is_nix_install, repair_hint
 
 from ._shared import (HYPRWHSPR_ROOT, SERVICE_NAME, _check_ydotool_version,
-                      _is_niri_session, _validate_hyprwhspr_root)
+                      _is_gnome_or_mutter_session, _is_niri_session,
+                      _validate_hyprwhspr_root)
 
 try:
     from ..sway_focus import is_sway_session
@@ -65,7 +66,8 @@ def _has_non_ydotool_injection_path() -> bool:
     session_type = os.environ.get('XDG_SESSION_TYPE', '').lower()
     if session_type == 'x11':
         return shutil.which('xdotool') is not None
-    if shutil.which('wtype') is not None:
+    # Mutter blocks wtype, so GNOME Wayland still needs ydotool.
+    if shutil.which('wtype') is not None and not _is_gnome_or_mutter_session():
         return True
     if shutil.which('hyprctl') is None:
         return False
