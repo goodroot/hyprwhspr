@@ -63,23 +63,17 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ### Install
 
----
-
 #### Arch Linux
 
-On the AUR:
+Install from the AUR, then run setup:
 
 ```bash
-# Install for stable
+# Stable
 yay -S hyprwhspr
 
-# Or install for bleeding edge
+# Or bleeding edge
 yay -S hyprwhspr-git
-```
 
-Then run the interactive setup:
-
-```bash
 hyprwhspr setup
 ```
 
@@ -113,21 +107,23 @@ cd hyprwhspr
 Use the [Nix flake and NixOS module](docs/integrations/NIX.md) for x86_64 Linux
 with Whisper.cpp CPU transcription. 
 
-We'd appreciate [issue reports and requests](https://github.com/goodroot/hyprwhspr/issues)!
+### Setup
 
----
+Setup walks you through your backend, preferences and desktop integrations. It
+asks before changing your bar or desktop shortcuts. Want to choose everything?
+Answer no to recommended settings.
 
-**Setup:** pick a backend, review your preferences and choose desktop integrations. Setup asks before changing your bar or desktop shortcuts. Backend and model downloads can take several minutes. Follow the final checks and any remaining steps before trying dictation.
+Backend and model downloads can take several minutes. Follow setup's final checks
+before trying dictation.
 
-Want to choose everything? Answer no to recommended settings.
-
-For automatic backend selection and default settings:
+Prefer automatic backend selection and default settings? Run:
 
 ```bash
 hyprwhspr setup auto
 ```
 
-Authentication may still ask for your password.
+Authentication may still ask for your password. You can safely re-run
+`hyprwhspr setup` later to change your choices.
 
 ### First use
 
@@ -151,15 +147,16 @@ yay -Syu hyprwhspr
 
 # Installed with install.sh
 hyprwhspr update
-
-# Old git-clone installs: re-run the installer once to move to releases
-curl -fsSL https://hyprwhspr.com/install.sh | bash
-
-# Either way, setup is idempotent if you need to re-run it
-hyprwhspr setup
 ```
 
-Managed release rollout and recovery: [installation guide](docs/MANAGED_INSTALLATION.md).
+For an old git-clone install, re-run the installer once to move to managed releases:
+
+```bash
+curl -fsSL https://hyprwhspr.com/install.sh | bash
+```
+
+See the [installation guide](docs/MANAGED_INSTALLATION.md) for managed release
+updates and recovery, or the [Nix guide](docs/integrations/NIX.md) for Nix updates.
 
 ### CLI commands
 
