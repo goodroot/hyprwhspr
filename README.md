@@ -41,7 +41,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
-**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for performance and stability: your hardware will auto-optimize to the **best possible accuracy and speed**. Actively maintained, at the leading edge, fully featured, strictly offline unless you use an API, and works on both Wayland and X11.
+**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for performance and stability: your hardware will auto-optimize to the **best possible accuracy and speed**. Actively maintained, at the leading edge, fully featured, strictly offline unless you use an API, and works on both Wayland and X11. Excellent in many languages.
 
 ---
 
@@ -111,7 +111,11 @@ Choose your backend and desktop integrations. If the installer hasn't already
 walked you through setup, run:
 
 ```bash
+# choose your options
 hyprwhspr setup
+
+# installer chooses best defaults
+hyprwhspr setup auto
 ```
 
 ### First use
