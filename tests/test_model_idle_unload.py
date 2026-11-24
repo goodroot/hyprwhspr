@@ -26,8 +26,9 @@ class ModelIdleUnloadTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _app(self, minutes=10, local=True):
-        settings = {'model_idle_unload_minutes': minutes}
+    def _app(self, minutes=10, local=True, load_on_startup=True):
+        settings = {'model_idle_unload_minutes': minutes,
+                    'model_load_on_startup': load_on_startup}
         app = self.app_cls.__new__(self.app_cls)
         app.config = types.SimpleNamespace(get_setting=lambda key, default=None: settings.get(key, default))
         app._recording_lock = threading.Lock()
@@ -95,6 +96,31 @@ class ModelIdleUnloadTests(unittest.TestCase):
         for thread in threading.enumerate():
             if thread.name == 'ModelWake':
                 thread.join(timeout=5)
+
+    def test_deferred_load_waits_for_the_first_press(self):
+        app = self._app(minutes=0, load_on_startup=False)
+        self.assertTrue(app._defer_model_load())
+        self.assertTrue(app._model_idle_unloaded)
+        app.whisper_manager.reload_model.assert_not_called()
+
+        self.assertTrue(self._press(app))            # records at once
+        self._join_wake()
+        app.whisper_manager.reload_model.assert_called_once()
+        self.assertFalse(app._model_idle_unloaded)
+
+    def test_load_is_not_deferred_by_default_for_remote_or_by_hand(self):
+        cases = {
+            'default': dict(load_on_startup=True),
+            'remote': dict(load_on_startup=False, local=False),
+            'by hand': dict(load_on_startup=False),
+        }
+        for name, kwargs in cases.items():
+            with self.subTest(name):
+                if name == 'by hand':
+                    self.marker.touch()
+                app = self._app(**kwargs)
+                self.assertFalse(app._defer_model_load())
+                self.assertFalse(app._model_idle_unloaded)
 
     def test_unloads_only_after_the_idle_time(self):
         app = self._app(minutes=10)
