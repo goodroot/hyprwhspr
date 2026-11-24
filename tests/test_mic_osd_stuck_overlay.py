@@ -50,6 +50,7 @@ class MicOSDStuckOverlayTests(unittest.TestCase):
             "gi": types.SimpleNamespace(require_version=lambda *args: None),
             "gi.repository": types.SimpleNamespace(Gtk=types.SimpleNamespace(), GLib=glib),
             "mic_osd.window": types.SimpleNamespace(OSDWindow=mock.Mock(), load_css=mock.Mock()),
+            "mic_osd.window_x11": types.SimpleNamespace(OSDWindow=mock.Mock(), load_css=mock.Mock()),
             "mic_osd.audio": audio_module,
             "mic_osd.visualizations": types.SimpleNamespace(VISUALIZATIONS={"waveform": object}),
             "mic_osd.theme": types.SimpleNamespace(ThemeWatcher=mock.Mock()),

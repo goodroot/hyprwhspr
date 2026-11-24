@@ -12,12 +12,12 @@ The recording-status indicator — the **mic OSD** — gives visual feedback whi
 }
 ```
 
-### Display mode depends on your compositor
+### Display mode depends on your session
 
 `mic_osd_enabled` turns the mic OSD on; *how* it's shown is chosen automatically at startup:
 
-- **Overlay mode** — compositors with layer-shell support (Hyprland, Sway, niri, KDE Plasma Wayland) get the animated always-on-top overlay. Requires GTK4, PyCairo, and `gtk4-layer-shell`.
-- **Notification mode** — GNOME/Mutter and X11 sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. The layer-shell overlay is Wayland-only. Requires a desktop notification service and either `notify-send` (libnotify) or `gdbus`. Processing is replaced by the result; banner timing depends on the desktop.
+- **Overlay mode** — the animated always-on-top overlay. On Wayland it needs a compositor with layer-shell support (Hyprland, Sway, niri, KDE Plasma) plus GTK4, PyCairo and `gtk4-layer-shell`. On X11 the same overlay runs as a GTK3 window with no decorations that never takes focus, always floats above other windows and ignores clicks, so it needs only GTK3 and PyCairo.
+- **Notification mode** — GNOME/Mutter has neither layer-shell nor the X11 hints the overlay relies on, so its Wayland sessions use desktop notifications (recording / transcribing / inserted), which never steal the focus the paste needs. Requires a desktop notification service and either `notify-send` (libnotify) or `gdbus`. Processing is replaced by the result; banner timing depends on the desktop.
 
 Set `mic_osd_enabled: false` to turn off both. The service log records which mode was selected:
 

@@ -313,7 +313,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                     else:
                         log("[WARN] No layer-shell overlay and no desktop notifications; recording has no status indicator")
 
-                if MicOSDRunner.is_available() and MicOSDRunner.layer_shell_active():
+                layer_shell = (MicOSDRunner.is_available()
+                               and MicOSDRunner.layer_shell_active())
+                if layer_shell or MicOSDRunner.x11_available():
                     # Feed the OSD meter from the capture stream (issue #205).
                     # get_viz_frame's default num_buckets must match the
                     # waveform visualization's num_bars (32).
@@ -323,14 +325,15 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                     )
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
-                        log("[INIT] Mic-OSD daemon started")
+                        log("[INIT] Mic-OSD daemon started" if layer_shell
+                            else "[INIT] Mic-OSD daemon started (X11 overlay)")
                     else:
                         log("[WARN] Failed to start mic-osd daemon")
                         _use_notification_status("mic-osd daemon failed to start")
                 else:
-                    # No layer-shell (e.g. GNOME/Mutter): the overlay would steal
-                    # keyboard focus and swallow the paste keystroke. Show recording
-                    # status via desktop notifications instead.
+                    # No layer-shell and no X11 display (e.g. GNOME/Mutter): the
+                    # overlay would steal keyboard focus and swallow the paste
+                    # keystroke. Show recording status via notifications instead.
                     _use_notification_status("layer-shell not supported")
             except Exception as e:
                 log(f"[WARN] Failed to initialize recording status indicator: {e}")

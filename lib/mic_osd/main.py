@@ -13,7 +13,15 @@ import os
 from pathlib import Path
 
 import gi
-gi.require_version('Gtk', '4.0')
+
+from .backend import select_backend
+
+
+_BACKEND = select_backend()
+if _BACKEND == 'gtk3':
+    gi.require_version('Gtk', '3.0')
+else:
+    gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GLib
 
 
@@ -23,7 +31,10 @@ def is_gnome():
 
 _MIC_OSD_IMPORT_ERROR = None
 try:
-    from .window import OSDWindow, load_css
+    if _BACKEND == 'gtk3':
+        from .window_x11 import OSDWindow, load_css
+    else:
+        from .window import OSDWindow, load_css
     from .audio import AudioMonitor, FeedLevelSource
     from .visualizations import VISUALIZATIONS
     from .theme import ThemeWatcher
@@ -89,7 +100,11 @@ class MicOSD:
 
     def run(self):
         """Start the OSD and run until killed."""
-        if is_gnome():
+        # GTK3 has no Gtk.Application path here: the X11 overlay is a plain
+        # window on a GLib main loop, like the non-GNOME Wayland path.
+        if _BACKEND == 'gtk3':
+            self._run_with_main_loop()
+        elif is_gnome():
             self._run_with_gtk_application()
         else:
             self._run_with_main_loop()

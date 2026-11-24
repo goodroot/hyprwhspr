@@ -49,6 +49,7 @@ class MicOSDRunner:
     OSD_STYLES = ('waveform', 'vu_meter', 'pill')
     _bundled_availability = None
     _bundled_availability_lock = threading.Lock()
+    _x11_availability = None
     _layer_shell_preload = None  # probe-confirmed path; fallbacks aren't cached
 
     def __init__(self, level_source=None, style='waveform'):
@@ -84,7 +85,10 @@ class MicOSDRunner:
         """Check if mic-osd can run."""
         if MicOSDRunner._system_dependencies_available():
             return True
-        return MicOSDRunner._bundled_dependencies_available()
+        if MicOSDRunner._bundled_dependencies_available():
+            return True
+        # X11 draws the overlay with GTK3 instead of layer-shell.
+        return MicOSDRunner.x11_available()
 
     @staticmethod
     def _system_dependencies_available() -> bool:
@@ -214,6 +218,43 @@ class MicOSDRunner:
         return env
 
     @staticmethod
+    def x11_session() -> bool:
+        """True when this session is X11: a display, no Wayland socket."""
+        if os.environ.get('WAYLAND_DISPLAY'):
+            return False
+        return bool(os.environ.get('DISPLAY'))
+
+    @staticmethod
+    def x11_available() -> bool:
+        """True when the X11 overlay can run (GTK3 + PyCairo importable).
+
+        Probed in a subprocess: requiring GTK3 here must never clash with the
+        GTK4 requirement the layer-shell probe makes in the same process.
+        """
+        with MicOSDRunner._bundled_availability_lock:
+            cached = MicOSDRunner._x11_availability
+            if cached is not None:
+                return cached
+            available = False
+            if MicOSDRunner.x11_session():
+                probe = (
+                    "import cairo, gi;"
+                    "gi.require_version('Gtk', '3.0');"
+                    "from gi.repository import Gtk, Gdk;"
+                    "print('1')"
+                )
+                try:
+                    result = subprocess.run(
+                        [sys.executable or 'python3', '-c', probe],
+                        env=os.environ.copy(), capture_output=True, timeout=5,
+                    )
+                    available = result.stdout.decode('utf-8', 'ignore').strip() == '1'
+                except Exception:
+                    available = False
+            MicOSDRunner._x11_availability = available
+            return available
+
+    @staticmethod
     def layer_shell_active() -> bool:
         """Return True only if the running compositor supports the layer-shell
         protocol (Hyprland, Niri, Sway, ...). False on GNOME/Mutter and on any
@@ -274,6 +315,8 @@ class MicOSDRunner:
             import cairo  # noqa: F401
         except ImportError:
             return f"PyCairo bindings not installed. Install: {gtk_pkg}"
+        if MicOSDRunner.x11_available():
+            return ""
         try:
             import gi
             gi.require_version('Gtk', '4.0')
@@ -287,11 +330,56 @@ class MicOSDRunner:
             return f"gtk4-layer-shell not installed. Install: {layer_pkg}"
         return ""
     
+    def _daemon_backend(self):
+        """Backend to start the daemon with, or None when it cannot run.
+
+        Follows the same probe that picks the overlay: layer-shell support
+        means the GTK4 window, a bare X11 display means the GTK3 one.
+        """
+        if MicOSDRunner.layer_shell_active():
+            return 'gtk4'
+        if MicOSDRunner.x11_available():
+            return 'gtk3'
+        return None
+
+    @staticmethod
+    def _daemon_environment_backend(pid: int):
+        """The backend recorded in a running daemon's environment, if any."""
+        try:
+            environ = (Path('/proc') / str(pid) / 'environ').read_bytes().split(b'\x00')
+        except OSError:
+            return None
+        for entry in environ:
+            if entry.startswith(b'HYPRWHSPR_MIC_OSD_BACKEND='):
+                return entry.split(b'=', 1)[1].decode('utf-8', 'ignore') or None
+        return None
+
+    @staticmethod
+    def _terminate_daemon(pid: int):
+        """Ask a verified mic-osd daemon to exit, killing it if it won't."""
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            return
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except (ProcessLookupError, OSError):
+                return
+            time.sleep(0.05)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+
     def _ensure_daemon(self) -> bool:
         """Ensure the daemon process is running."""
         # Check in-memory reference first
         if self._process is not None and self._process.poll() is None:
             return True  # Already running
+
+        backend = self._daemon_backend()
 
         # Check PID file for orphaned daemon (from previous crash)
         if MIC_OSD_PID_FILE.exists():
@@ -299,17 +387,26 @@ class MicOSDRunner:
                 pid = int(MIC_OSD_PID_FILE.read_text().strip())
                 if not self._is_mic_osd_daemon_pid(pid):
                     raise ProcessLookupError(f"PID {pid} is not a mic-osd daemon")
-                print(f"[MIC-OSD] Found orphaned daemon (PID {pid}), reusing it")
-                # Create dummy process reference (we can't use wait() on it)
-                # The actual daemon PID is tracked in _orphaned_daemon_pid
-                self._process = subprocess.Popen(
-                    ['true'],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                # Note: Cannot override self._process.pid (read-only), so we track it separately
-                self._orphaned_daemon_pid = pid  # Track that we're using an orphaned daemon
-                return True
+                # A daemon from another session type draws the wrong overlay
+                # (GTK4 on X11 steals focus), so replace it rather than reuse.
+                running_backend = MicOSDRunner._daemon_environment_backend(pid)
+                if backend is not None and running_backend not in (None, backend):
+                    print(f"[MIC-OSD] Replacing the {running_backend} daemon "
+                          f"(PID {pid}) with the {backend} overlay", flush=True)
+                    MicOSDRunner._terminate_daemon(pid)
+                    self._unlink_pid_file()
+                else:
+                    print(f"[MIC-OSD] Found orphaned daemon (PID {pid}), reusing it")
+                    # Create dummy process reference (we can't use wait() on it)
+                    # The actual daemon PID is tracked in _orphaned_daemon_pid
+                    self._process = subprocess.Popen(
+                        ['true'],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    # Note: Cannot override self._process.pid (read-only), so we track it separately
+                    self._orphaned_daemon_pid = pid  # Track that we're using an orphaned daemon
+                    return True
             except (ValueError, ProcessLookupError, PermissionError):
                 # Stale PID file, clean it up
                 print("[MIC-OSD] Cleaning up stale PID file")
@@ -335,11 +432,20 @@ sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
-        try:
-            env = self._layer_shell_environment()
-        except LayerShellResolutionError as e:
-            print(f"[MIC-OSD] Not starting daemon: {e}", flush=True)
+        if backend is None:
+            print("[MIC-OSD] Not starting daemon: no layer-shell and no X11 display",
+                  flush=True)
             return False
+        if backend == 'gtk3':
+            # X11 has no layer-shell: the same overlay runs as a GTK3 window.
+            env = os.environ.copy()
+        else:
+            try:
+                env = self._layer_shell_environment()
+            except LayerShellResolutionError as e:
+                print(f"[MIC-OSD] Not starting daemon: {e}", flush=True)
+                return False
+        env['HYPRWHSPR_MIC_OSD_BACKEND'] = backend
         env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
 
         try:
