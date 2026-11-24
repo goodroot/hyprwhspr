@@ -67,21 +67,20 @@ After ten idle minutes the local model leaves memory. Recording, processing and 
 
 The next recording brings it back: speak as usual, the model loads while you talk. Text lands once it is ready. File transcription wakes it too. In long-form mode, the first start requests a reload; try again once the model is ready.
 
-## Load on first use
-
-To keep the model off memory until it is actually needed, skip the startup load:
-
-```jsonc
-{
-    "model_load_on_startup": false,  // true (default) = load when the service starts
-    "model_idle_unload_minutes": 10
-}
-```
-
-Nothing loads at boot. The first recording loads the model while you speak, and text lands when it is ready — the same path the idle timer uses. Combine it with `model_idle_unload_minutes` so the model also leaves memory after the last dictation.
-
 By default, an alert marks the unload and recording status explains the wait. [`notification_level`](../usage/FEEDBACK.md#notifications) controls alerts; `mic_osd_enabled` controls recording status.
 
 If the model cannot load, the audio is kept. The notification gives the command to transcribe it. Cancelled audio is discarded. If saving fails too, the notification says the dictation was lost.
 
 Unloading by hand still holds until `hyprwhspr model reload`, including across suspend and resume. Reload also wakes a model unloaded by the idle timer; if it is already loaded, nothing changes.
+
+## Load on first use
+
+Skip the load at start:
+
+```jsonc
+{
+    "model_load_on_startup": false   // true (default) = load at start
+}
+```
+
+The service starts without the model. The first recording loads it while you speak. In long-form mode, the first start loads it; start again once it is ready. Cloud backends load at start. Pair it with `model_idle_unload_minutes` to let the model go again.

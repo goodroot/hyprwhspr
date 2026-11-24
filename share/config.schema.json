@@ -511,7 +511,7 @@
     "model_load_on_startup": {
       "type": "boolean",
       "default": true,
-      "description": "Load a local model when the service starts. false keeps it off memory until the first recording, which loads it while you speak."
+      "description": "Load a local model when the service starts. false waits for the first recording, which loads it while you speak."
     },
     "onnx_asr_model": {
       "type": "string",

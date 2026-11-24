@@ -168,7 +168,7 @@ def build_default_config():
         'realtime_transcription_languages': None,  # Expected input languages for GPT Transcribe/Live; explicit language wins
         'realtime_conversation_history': 'turn',  # OpenAI converse mode: session|turn
         'model_idle_unload_minutes': 0,  # Unload a local model after this many idle minutes; 0 = never. Loads again as the next recording starts
-        'model_load_on_startup': True,   # Load a local model when the service starts; false = load on the first recording instead
+        'model_load_on_startup': True,   # false = load a local model on the first recording
         # whisper.cpp (pywhispercpp) backend settings
         'pywhispercpp_use_vad': False,               # Native Silero VAD (strips silence, reduces hallucinations); auto-downloads ~1MB ggml-silero model when enabled
         # ONNX-ASR backend settings (CPU-optimized)
