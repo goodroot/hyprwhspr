@@ -204,6 +204,21 @@ MIT License - see [LICENSE](LICENSE) file.
 
 Start with an issue - happy to help! Pull requests best begin there too.
 
+To run your fork in an activated development environment:
+
+```bash
+git clone <your-fork>
+cd hyprwhspr
+python -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -r requirements-onnx-asr.txt
+./bin/hyprwhspr
+```
+
+An activated venv inside the checkout runs the app and CLI. You still need system
+dependencies (see the manual install above) and [a configured backend and models](docs/backends/PARAKEET.md).
+Stop the service first: `systemctl --user stop hyprwhspr.service`.
+
 Upvotes on the AUR and/or GitHub stars are also a nice way to show appreciation.
 
 ---
