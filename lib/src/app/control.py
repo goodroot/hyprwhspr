@@ -356,6 +356,18 @@ class ControlMixin:
                 self._report_model_load_failed(
                     "Model failed to load — check logs, then run: hyprwhspr model reload")
 
+    def _start_lazy_model(self):
+        """Leave the model on disk until the first recording asks for it.
+
+        Marking it idle-unloaded is what makes the first press record at once
+        and load alongside, the same path the idle timer uses. A model
+        unloaded by hand is never woken this way.
+        """
+        with self._recording_lock:
+            self._model_idle_unloaded = True
+        self._model_idle_since = time.monotonic()
+        log("[INIT] Model loads on first recording (model_load_on_startup=false)")
+
     def _start_backend_init_background(self):
         """Initialize the transcription backend in a background thread.
 

@@ -32,6 +32,14 @@ try:
 except ImportError:
     from src import visualizer_runtime
 
+try:
+    from ..src.desktop_notify import STATUS_DETAIL_TEXT
+except ImportError:
+    try:
+        from src.desktop_notify import STATUS_DETAIL_TEXT
+    except ImportError:
+        STATUS_DETAIL_TEXT = {}
+
 
 class LayerShellResolutionError(RuntimeError):
     pass
@@ -68,6 +76,7 @@ class MicOSDRunner:
         self._preview_lock = threading.Lock()
         self._last_preview_write_at = None
         self._pending_preview_text = None
+        self._status_detail = None
         self._preview_flush_timer = None
         self._preview_generation = 0
         self._level_source = level_source
@@ -624,11 +633,40 @@ sys.exit(main())
         except Exception as e:
             print(f"[MIC-OSD] Failed to clear visualizer state: {e}", flush=True)
 
+    def set_detail(self, detail: str) -> bool:
+        """Word a status detail in the overlay's text line.
+
+        The overlay has no separate detail line, so the live-transcript line
+        carries it. Details are only set when no transcript is streaming: a
+        model load before the first decode, or a result after the last one.
+        """
+        text = STATUS_DETAIL_TEXT.get(detail)
+        if not text:
+            return False
+        with self._preview_lock:
+            self._status_detail = detail
+        self.set_preview_text(text)
+        return True
+
+    def clear_detail(self):
+        """Remove a detail set by set_detail().
+
+        A detail a transcript has since replaced is left alone, so clearing
+        the notice cannot blank the live preview.
+        """
+        with self._preview_lock:
+            detail, self._status_detail = self._status_detail, None
+        if detail is not None:
+            self.set_preview_text("")
+
     def set_preview_text(self, text: str):
         """Set live transcript preview text."""
         text = (text or "").rstrip('\r\n')
 
         with self._preview_lock:
+            if (self._status_detail is not None
+                    and text != STATUS_DETAIL_TEXT.get(self._status_detail)):
+                self._status_detail = None
             if not text:
                 self._cancel_pending_preview_flush()
                 self._preview_generation += 1

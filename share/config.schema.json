@@ -508,6 +508,11 @@
       "default": 0,
       "description": "Unload a local model after this many idle minutes to free VRAM or RAM. 0 (default) = never. The next recording loads it again while it records."
     },
+    "model_load_on_startup": {
+      "type": "boolean",
+      "default": true,
+      "description": "Load a local model when the service starts. false keeps it off memory until the first recording, which loads it while you speak."
+    },
     "onnx_asr_model": {
       "type": "string",
       "default": "nemo-parakeet-tdt-0.6b-v3",

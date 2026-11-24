@@ -76,7 +76,7 @@ from session_environment import ensure_wayland_display
 from text_injector import TextInjector
 from audio_manager import AudioManager
 from playback_suppressor import PlaybackSuppressor
-from paths import RECORDING_CONTROL_FILE, LOCK_FILE, SOCKET_FILE
+from paths import RECORDING_CONTROL_FILE, LOCK_FILE, SOCKET_FILE, MODEL_UNLOADED_FILE
 from longform_controller import LongFormController
 from recording_control_server import RecordingControlServer
 from app.recording import RecordingMixin
@@ -404,7 +404,13 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         # Initialize whisper backend. Slow backends (e.g. cohere-transcribe loading a
         # 4 GB model onto the GPU) run in a background thread so shortcuts and the FIFO
         # listener are active immediately. Recording is blocked until ready.
-        if self.whisper_manager.configured_backend_loads_in_background():
+        if (not self.config.get_setting('model_load_on_startup', True)
+                and not MODEL_UNLOADED_FILE.exists()):
+            # Nothing loads until the first recording, which then loads the
+            # model while the user speaks — the same path an idle unload uses.
+            # A model unloaded by hand stays unloaded.
+            self._start_lazy_model()
+        elif self.whisper_manager.configured_backend_loads_in_background():
             log(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...")
             self._start_backend_init_background()
         else:

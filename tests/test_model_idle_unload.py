@@ -96,6 +96,16 @@ class ModelIdleUnloadTests(unittest.TestCase):
             if thread.name == 'ModelWake':
                 thread.join(timeout=5)
 
+    def test_lazy_start_waits_for_the_first_press(self):
+        app = self._app(minutes=0)
+        app._start_lazy_model()
+
+        self.assertTrue(app._model_idle_unloaded)
+        self.assertIsNotNone(app._model_idle_since)
+        self.assertFalse(self.marker.exists())        # not an unload by hand
+        app.whisper_manager.reload_model.assert_not_called()   # nothing loaded yet
+        self.assertTrue(app._claim_model_wake_locked())        # the first press claims the load
+
     def test_unloads_only_after_the_idle_time(self):
         app = self._app(minutes=10)
         self.assertFalse(app._unload_model_if_idle(now=1000))        # first sighting starts the clock
