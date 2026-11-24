@@ -65,7 +65,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 #### Arch Linux
 
-Install from the AUR, then run setup:
+Install from the AUR:
 
 ```bash
 # Stable
@@ -73,8 +73,6 @@ yay -S hyprwhspr
 
 # Or bleeding edge
 yay -S hyprwhspr-git
-
-hyprwhspr setup
 ```
 
 #### Ubuntu, Debian, Fedora, openSUSE
@@ -109,21 +107,12 @@ with Whisper.cpp CPU transcription.
 
 ### Setup
 
-Setup walks you through your backend, preferences and desktop integrations. It
-asks before changing your bar or desktop shortcuts. Want to choose everything?
-Answer no to recommended settings.
-
-Backend and model downloads can take several minutes. Follow setup's final checks
-before trying dictation.
-
-Prefer automatic backend selection and default settings? Run:
+Choose your backend and desktop integrations. If the installer hasn't already
+walked you through setup, run:
 
 ```bash
-hyprwhspr setup auto
+hyprwhspr setup
 ```
-
-Authentication may still ask for your password. You can safely re-run
-`hyprwhspr setup` later to change your choices.
 
 ### First use
 
