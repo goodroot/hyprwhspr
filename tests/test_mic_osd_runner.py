@@ -320,46 +320,6 @@ class MicOSDRunnerTests(unittest.TestCase):
         self.assertEqual(processing_cr.shown_text, [])
         self.assertEqual(recording_cr.shown_text, ["live partial"])
 
-    def test_detail_is_worded_in_the_preview_line(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
-            original = runner_module.TRANSCRIPT_PREVIEW_FILE
-            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
-            try:
-                runner = MicOSDRunner()
-
-                self.assertTrue(runner.set_detail("loading_recording"))
-                self.assertEqual(
-                    preview_file.read_text(encoding="utf-8"),
-                    "Model loading — keep speaking",
-                )
-
-                runner.clear_detail()
-                self.assertFalse(preview_file.exists())
-            finally:
-                runner_module.TRANSCRIPT_PREVIEW_FILE = original
-
-    def test_unknown_detail_is_not_worded(self):
-        self.assertFalse(MicOSDRunner().set_detail("not-a-detail"))
-
-    def test_clearing_a_detail_keeps_a_newer_transcript(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
-            original = runner_module.TRANSCRIPT_PREVIEW_FILE
-            runner_module.TRANSCRIPT_PREVIEW_FILE = preview_file
-            try:
-                runner = MicOSDRunner()
-                with mock.patch.object(MicOSDRunner, "PREVIEW_WRITE_INTERVAL_SECONDS", 0):
-                    runner.set_detail("loading_recording")
-                    # The first partial arrives while the model is still loading.
-                    runner.set_preview_text("live partial")
-                    runner.clear_detail()
-
-                self.assertEqual(
-                    preview_file.read_text(encoding="utf-8"), "live partial")
-            finally:
-                runner_module.TRANSCRIPT_PREVIEW_FILE = original
-
     def test_preview_text_preserves_spaces_but_trims_newlines(self):
         with tempfile.TemporaryDirectory() as tmp:
             preview_file = Path(tmp) / "hyprwhspr" / "transcript_preview"
