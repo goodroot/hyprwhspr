@@ -39,7 +39,7 @@ export HYPRWHSPR_ROOT="$PACKAGE_ROOT"
 export PYTHONPATH="$LIB_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
 # Find system Python, avoiding mise/pyenv/asdf/homebrew managed versions
-# CLI commands use system Python since deps are installed via package manager
+# By default, CLI commands use system Python for package-manager dependencies
 SYSTEM_PYTHON_CANDIDATES=(
     /usr/bin/python3
     /usr/bin/python
@@ -79,12 +79,24 @@ get_system_python() {
     return 1
 }
 
-# Always use system Python for CLI commands
+# Source checkouts may use an activated development environment inside the checkout.
+CHECKOUT_PYTHON=""
+if [[ -e "$PACKAGE_ROOT/.git" && -f "$PACKAGE_ROOT/lib/cli.py" \
+    && ! -f "$PACKAGE_ROOT/release.json" && -n "${VIRTUAL_ENV:-}" \
+    && -x "$VIRTUAL_ENV/bin/python" \
+    && "$(readlink -f "$VIRTUAL_ENV")" == "$(readlink -f "$PACKAGE_ROOT")"/* ]] \
+    && supported_python "$VIRTUAL_ENV/bin/python"; then
+    CHECKOUT_PYTHON="$VIRTUAL_ENV/bin/python"
+fi
+
+# Otherwise use system Python for CLI commands
 # Dependencies (python-rich, etc.) are installed via package manager to system site-packages
 # This avoids issues with mise/pyenv/asdf hijacking python3 to a version without those deps
 if [[ "${HYPRWHSPR_INSTALL_METHOD:-}" == nix ]]; then
     CLI_PYTHON="${HYPRWHSPR_BACKEND_ENV:?Nix Python environment is missing}/bin/python"
     export PYTHONNOUSERSITE=1
+elif [[ -n "$CHECKOUT_PYTHON" ]]; then
+    CLI_PYTHON="$CHECKOUT_PYTHON"
 else
     CLI_PYTHON="$(get_system_python)"
 fi
@@ -100,6 +112,8 @@ fi
 VENV_PYTHON="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr/venv/bin/python"
 if [[ "${HYPRWHSPR_INSTALL_METHOD:-}" == nix ]]; then
     VENV_PYTHON="$CLI_PYTHON"
+elif [[ -n "$CHECKOUT_PYTHON" ]]; then
+    VENV_PYTHON="$CHECKOUT_PYTHON"
 fi
 PYTHON_CMD="$VENV_PYTHON"
 
@@ -138,7 +152,7 @@ if [[ "$1" =~ ^(update|setup|install|config|waybar|noctalia|systemd|status|model
   exec "$CLI_PYTHON" -B "$LIB_DIR/cli.py" "$@"
 fi
 
-# The service always runs in the environment created by setup. Falling back to
+# Run in the selected app environment. Falling back to
 # system Python turns an incomplete installation into misleading import errors.
 require_app_venv
 
