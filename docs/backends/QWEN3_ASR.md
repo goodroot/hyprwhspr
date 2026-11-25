@@ -28,6 +28,9 @@ Long audio splits at pauses, then joins again. Set `language` when you can; with
 |-------|------|-------|
 | `1.7b-q8_0` | ~2.4 GB | **Recommended** · best quality |
 | `0.6b-q8_0` | ~1.0 GB | Smaller · faster · less accurate |
+| `oruk-fourier-2b` | ~2.2 GB | English only · non-commercial |
+
+[Oruk Fourier 2B](https://huggingface.co/oruk/oruk-fourier-2b) is an English fine-tune of the 1.7B. [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/): non-commercial only.
 
 Models stored in: `~/.local/share/hyprwhspr/qwen3-asr/models/`
 

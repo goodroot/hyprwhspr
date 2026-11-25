@@ -334,7 +334,7 @@
     },
     "qwen3_asr_model": {
       "type": "string",
-      "enum": ["1.7b-q8_0", "0.6b-q8_0"],
+      "enum": ["1.7b-q8_0", "0.6b-q8_0", "oruk-fourier-2b"],
       "default": "1.7b-q8_0",
       "description": "Qwen3-ASR GGUF decoder/projector pair"
     },

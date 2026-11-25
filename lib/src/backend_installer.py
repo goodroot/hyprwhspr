@@ -2600,22 +2600,23 @@ def download_qwen3_asr_model(model_name: str = '1.7b-q8_0') -> bool:
     partials = []
     try:
         for role in ('decoder', 'projector'):
-            filename, size, digest = metadata[role]
-            destination = QWEN3_ASR_MODELS_DIR / filename
+            remote_path, size, digest = metadata[role]
+            local_name = Path(remote_path).name
+            destination = QWEN3_ASR_MODELS_DIR / local_name
             if _qwen3_model_present(destination, size, digest):
-                log_success(f"Qwen3-ASR {role} present: {filename}")
+                log_success(f"Qwen3-ASR {role} present: {local_name}")
                 installed.append(destination)
                 continue
             partial = destination.with_name(destination.name + '.partial')
             partials.append(partial)
             partial.unlink(missing_ok=True)
             url = (f"https://huggingface.co/{metadata['repo']}/resolve/"
-                   f"{metadata['revision']}/{filename}")
-            log_info(f"Downloading Qwen3-ASR {role}: {filename}")
+                   f"{metadata['revision']}/{remote_path}")
+            log_info(f"Downloading Qwen3-ASR {role}: {local_name}")
             urllib.request.urlretrieve(url, partial,
                                        reporthook=_qwen3_progress(role))
             if not _file_matches(partial, size, digest):
-                raise RuntimeError(f"{filename} failed pinned size/SHA-256 validation")
+                raise RuntimeError(f"{local_name} failed pinned size/SHA-256 validation")
             partial.replace(destination)
             set_state(f'model_hash_{destination.name}', digest)
             installed.append(destination)

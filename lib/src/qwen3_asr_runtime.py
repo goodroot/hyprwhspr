@@ -75,6 +75,15 @@ QWEN3_ASR_MODELS = {
         "projector": ("mmproj-Qwen3-ASR-0.6B-Q8_0.gguf", 214392480,
                       "41a342b5e4c514e968cb756de6cd1b7be39eff43c44c57a2ef5fc6522e36603d"),
     },
+    "oruk-fourier-2b": {
+        "repo": "oruk/oruk-fourier-2b",
+        # Optional English-only model under CC BY-NC 4.0 (non-commercial).
+        "revision": "e8735ccc1c92d36d747cfcd5722950474fb9238f",
+        "decoder": ("gguf/llama-cpp/Qwen3-ASR-Oruk-Fourier-2B-Q8_0.gguf", 1834423584,
+                    "4a3a4761871be3a012c9473afc5ffa14ae301074e8c30cb244d7ccb51d122d89"),
+        "projector": ("gguf/llama-cpp/mmproj-Qwen3-ASR-Oruk-Fourier-2B-Q8_0.gguf", 355710400,
+                      "9e0652ccf07db1eafa841cceb1b0903636c1f8e91aba4a8c92408871dec99156"),
+    },
 }
 
 DEFAULT_MODEL = "1.7b-q8_0"
@@ -82,8 +91,8 @@ DEFAULT_MODEL = "1.7b-q8_0"
 
 def model_paths(model_name: str) -> tuple[Path, Path]:
     metadata = QWEN3_ASR_MODELS[model_name]
-    return (QWEN3_ASR_MODELS_DIR / metadata["decoder"][0],
-            QWEN3_ASR_MODELS_DIR / metadata["projector"][0])
+    return (QWEN3_ASR_MODELS_DIR / Path(metadata["decoder"][0]).name,
+            QWEN3_ASR_MODELS_DIR / Path(metadata["projector"][0]).name)
 
 
 def nix_runtime_root() -> Optional[Path]:
