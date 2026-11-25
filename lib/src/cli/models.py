@@ -179,9 +179,14 @@ def model_command(action: str, model_name: str = None) -> bool:
         if action == 'download':
             return _download_qwen(selected)
         if action == 'list':
+            notes = {
+                '1.7b-q8_0': 'recommended',
+                'oruk-fourier-2b': 'English only, non-commercial',
+            }
             print("Available Qwen3-ASR models (decoder + projector):")
             for name in QWEN3_ASR_MODELS:
-                marker = " (recommended)" if name == '1.7b-q8_0' else ""
+                note = notes.get(name)
+                marker = f" ({note})" if note else ""
                 print(f"  - {name}{marker}")
             return True
         if action == 'status':

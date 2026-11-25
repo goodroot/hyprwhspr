@@ -72,3 +72,15 @@ By default, an alert marks the unload and recording status explains the wait. [`
 If the model cannot load, the audio is kept. The notification gives the command to transcribe it. Cancelled audio is discarded. If saving fails too, the notification says the dictation was lost.
 
 Unloading by hand still holds until `hyprwhspr model reload`, including across suspend and resume. Reload also wakes a model unloaded by the idle timer; if it is already loaded, nothing changes.
+
+## Load on first use
+
+Skip the load at start:
+
+```jsonc
+{
+    "model_load_on_startup": false   // true (default) = load at start
+}
+```
+
+The service starts without the model. The first recording loads it while you speak. In long-form mode, the first start loads it; start again once it is ready. Cloud backends load at start. Pair it with `model_idle_unload_minutes` to let the model go again.

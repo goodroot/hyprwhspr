@@ -334,7 +334,7 @@
     },
     "qwen3_asr_model": {
       "type": "string",
-      "enum": ["1.7b-q8_0", "0.6b-q8_0"],
+      "enum": ["1.7b-q8_0", "0.6b-q8_0", "oruk-fourier-2b"],
       "default": "1.7b-q8_0",
       "description": "Qwen3-ASR GGUF decoder/projector pair"
     },
@@ -507,6 +507,11 @@
       "minimum": 0,
       "default": 0,
       "description": "Unload a local model after this many idle minutes to free VRAM or RAM. 0 (default) = never. The next recording loads it again while it records."
+    },
+    "model_load_on_startup": {
+      "type": "boolean",
+      "default": true,
+      "description": "Load a local model when the service starts. false waits for the first recording, which loads it while you speak."
     },
     "onnx_asr_model": {
       "type": "string",

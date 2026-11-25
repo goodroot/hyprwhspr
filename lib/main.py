@@ -407,7 +407,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         # Initialize whisper backend. Slow backends (e.g. cohere-transcribe loading a
         # 4 GB model onto the GPU) run in a background thread so shortcuts and the FIFO
         # listener are active immediately. Recording is blocked until ready.
-        if self.whisper_manager.configured_backend_loads_in_background():
+        if self._defer_model_load():
+            pass
+        elif self.whisper_manager.configured_backend_loads_in_background():
             log(f"\n[INIT] Loading model in background (shortcuts active, recording will unblock when ready)...")
             self._start_backend_init_background()
         else:

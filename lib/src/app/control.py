@@ -356,6 +356,17 @@ class ControlMixin:
                 self._report_model_load_failed(
                     "Model failed to load — check logs, then run: hyprwhspr model reload")
 
+    def _defer_model_load(self):
+        """Leave a local model unloaded until the first recording wakes it."""
+        if (self.config.get_setting('model_load_on_startup', True)
+                or not self.whisper_manager.active_backend_is_local()
+                or MODEL_UNLOADED_FILE.exists()):
+            return False
+        with self._recording_lock:
+            self._model_idle_unloaded = True
+        log("[INIT] Model loads on first recording (model_load_on_startup=false)")
+        return True
+
     def _start_backend_init_background(self):
         """Initialize the transcription backend in a background thread.
 

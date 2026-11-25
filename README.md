@@ -41,7 +41,7 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ---
 
-**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for performance and stability: your hardware will auto-optimize to the **best possible accuracy and speed**. Actively maintained, at the leading edge, fully featured, strictly offline unless you use an API, and works on both Wayland and X11.
+**Why hyprwhspr?** There are a lotta dictation apps. This one is built ground-up for performance and stability: your hardware will auto-optimize to the **best possible accuracy and speed**. Actively maintained, at the leading edge, fully featured, strictly offline unless you use an API, and works on both Wayland and X11. Excellent in many languages.
 
 ---
 
@@ -63,24 +63,16 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 
 ### Install
 
----
-
 #### Arch Linux
 
-On the AUR:
+Install from the AUR:
 
 ```bash
-# Install for stable
+# Stable
 yay -S hyprwhspr
 
-# Or install for bleeding edge
+# Or bleeding edge
 yay -S hyprwhspr-git
-```
-
-Then run the interactive setup:
-
-```bash
-hyprwhspr setup
 ```
 
 #### Ubuntu, Debian, Fedora, openSUSE
@@ -113,21 +105,18 @@ cd hyprwhspr
 Use the [Nix flake and NixOS module](docs/integrations/NIX.md) for x86_64 Linux
 with Whisper.cpp CPU transcription. 
 
-We'd appreciate [issue reports and requests](https://github.com/goodroot/hyprwhspr/issues)!
+### Setup
 
----
-
-**Setup:** pick a backend, review your preferences and choose desktop integrations. Setup asks before changing your bar or desktop shortcuts. Backend and model downloads can take several minutes. Follow the final checks and any remaining steps before trying dictation.
-
-Want to choose everything? Answer no to recommended settings.
-
-For automatic backend selection and default settings:
+Choose your backend and desktop integrations. If the installer hasn't already
+walked you through setup, run:
 
 ```bash
+# choose your options
+hyprwhspr setup
+
+# installer chooses best defaults
 hyprwhspr setup auto
 ```
-
-Authentication may still ask for your password.
 
 ### First use
 
@@ -151,15 +140,16 @@ yay -Syu hyprwhspr
 
 # Installed with install.sh
 hyprwhspr update
-
-# Old git-clone installs: re-run the installer once to move to releases
-curl -fsSL https://hyprwhspr.com/install.sh | bash
-
-# Either way, setup is idempotent if you need to re-run it
-hyprwhspr setup
 ```
 
-Managed release rollout and recovery: [installation guide](docs/MANAGED_INSTALLATION.md).
+For an old git-clone install, re-run the installer once to move to managed releases:
+
+```bash
+curl -fsSL https://hyprwhspr.com/install.sh | bash
+```
+
+See the [installation guide](docs/MANAGED_INSTALLATION.md) for managed release
+updates and recovery, or the [Nix guide](docs/integrations/NIX.md) for Nix updates.
 
 ### CLI commands
 
@@ -203,6 +193,21 @@ MIT License - see [LICENSE](LICENSE) file.
 ## Contributing
 
 Start with an issue - happy to help! Pull requests best begin there too.
+
+To run your fork in an activated development environment:
+
+```bash
+git clone <your-fork>
+cd hyprwhspr
+python -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -r requirements-onnx-asr.txt
+./bin/hyprwhspr
+```
+
+An activated venv inside the checkout runs the app and CLI. You still need system
+dependencies (see the manual install above) and [a configured backend and models](docs/backends/PARAKEET.md).
+Stop the service first: `systemctl --user stop hyprwhspr.service`.
 
 Upvotes on the AUR and/or GitHub stars are also a nice way to show appreciation.
 
