@@ -109,17 +109,9 @@ class OSDWindow(OSDRenderer, Gtk.Window):
 
     def _make_click_through(self):
         gdk_window = self.get_window()
-        if gdk_window is None:
-            return
-        try:
-            gdk_window.set_pass_through(True)
-            return
-        except (AttributeError, TypeError):
-            pass
-        try:
-            gdk_window.input_shape_combine_region(cairo.Region())
-        except Exception:
-            pass
+        if gdk_window is not None:
+            # An empty X input shape; set_pass_through only steers GDK's own routing.
+            gdk_window.input_shape_combine_region(cairo.Region(), 0, 0)
 
     def _reposition(self):
         screen = self.get_screen()

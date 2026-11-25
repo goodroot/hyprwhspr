@@ -1,5 +1,6 @@
 """X11 mic-OSD overlay."""
 
+import importlib
 import os
 import sys
 import tempfile
@@ -105,6 +106,26 @@ class AvailabilityTests(unittest.TestCase):
                                   return_value=False), \
                 mock.patch.object(MicOSDRunner, "x11_available", return_value=False):
             self.assertFalse(MicOSDRunner.is_available())
+
+
+class ClickThroughTests(unittest.TestCase):
+    def test_window_gets_an_empty_x_input_shape(self):
+        region = object()
+        stubs = {
+            "gi": types.SimpleNamespace(require_version=lambda *args: None),
+            "gi.repository": types.SimpleNamespace(
+                Gtk=types.SimpleNamespace(Window=object),
+                Gdk=types.SimpleNamespace(), GLib=types.SimpleNamespace()),
+            "cairo": types.SimpleNamespace(Region=lambda: region),
+        }
+        with mock.patch.dict(sys.modules, stubs):
+            sys.modules.pop("mic_osd.window_x11", None)
+            sys.modules.pop("mic_osd.render", None)
+            window_x11 = importlib.import_module("mic_osd.window_x11")
+            gdk_window = mock.Mock()
+            fake = types.SimpleNamespace(get_window=lambda: gdk_window)
+            window_x11.OSDWindow._make_click_through(fake)
+        gdk_window.input_shape_combine_region.assert_called_once_with(region, 0, 0)
 
 
 class DaemonBackendTests(unittest.TestCase):
