@@ -1,11 +1,4 @@
-"""
-Toolkit-independent rendering for the mic-osd overlay.
-
-The overlay is drawn with Cairo only: the visualizations, the theme and the
-pill transcript preview are shared by every window backend. A backend
-supplies a Cairo context and a size; everything else lives here, so the
-Wayland (GTK4 layer-shell) window and the X11 (GTK3) window stay identical.
-"""
+"""Cairo drawing shared by the GTK4 and GTK3 overlay windows."""
 
 from __future__ import annotations
 
@@ -18,24 +11,14 @@ from .transcript_preview import PillTranscriptAnimator, PillTranscriptConfig
 
 
 class OSDRenderer:
-    """Draw the OSD into any Cairo context.
-
-    Subclasses provide the widget plumbing and implement `_queue_redraw`.
-    """
+    """Draws the OSD. Windows implement `_queue_redraw`."""
 
     PREVIEW_WORD_LIMIT = 14
     PREVIEW_TIMER_RESERVE = 58
 
     def _setup_renderer(self, visualization, width=300, height=60,
                         transcript_config=None):
-        """Bind a visualization and size the surface.
-
-        Args:
-            visualization: A BaseVisualization instance
-            width: Window width in pixels
-            height: Window height in pixels
-            transcript_config: Validated PillTranscriptConfig for pill previews.
-        """
+        """Bind the visualization and size the surface."""
         self.visualization = visualization
         self._is_pill_preview = getattr(visualization, 'preview_mode', None) == 'pill'
         self._pill_transcript_config = (

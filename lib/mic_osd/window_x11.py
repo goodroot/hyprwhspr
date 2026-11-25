@@ -1,14 +1,4 @@
-"""
-GTK3 X11 overlay window for mic-osd.
-
-Wayland compositors get the layer-shell overlay in `window.py`. X11 has no
-layer-shell, but GTK3 exposes the X11 hints that make the same overlay
-non-intrusive there: no decorations, never focused, always on top, skipped by
-the taskbar and pager, and click-through so the window underneath keeps its
-pointer input.
-
-The drawing itself is shared with the Wayland window through `render.py`.
-"""
+"""X11 overlay: a GTK3 window that never takes focus or clicks."""
 
 from __future__ import annotations
 
@@ -35,12 +25,7 @@ _provider = None
 
 
 def load_css(css_path=None):
-    """Install the transparent window surface (and optional cosmetic CSS).
-
-    The OSD paints only the pill; everything around it must stay clear. As on
-    the GTK4 path, the transparency rule outranks the user stylesheet so a
-    desktop theme that paints window backgrounds cannot fill the surface.
-    """
+    """Keep the window clear around the pill, above any user stylesheet."""
     global _provider
 
     screen = Gdk.Screen.get_default()
@@ -67,10 +52,7 @@ def load_css(css_path=None):
 
 
 class OSDWindow(OSDRenderer, Gtk.Window):
-    """Bottom-center X11 overlay that never takes focus or pointer input."""
-
-    # Same distance from the bottom edge as the layer-shell overlay.
-    BOTTOM_MARGIN = 130
+    BOTTOM_MARGIN = 130  # matches the layer-shell overlay
 
     def __init__(self, visualization, width=300, height=60, transcript_config=None):
         Gtk.Window.__init__(self, type=Gtk.WindowType.TOPLEVEL)
@@ -78,22 +60,17 @@ class OSDWindow(OSDRenderer, Gtk.Window):
         self._setup_window()
         self._setup_drawing_area()
 
-    # ---- window plumbing ----
-
     def _setup_window(self):
         self.set_decorated(False)
         self.set_resizable(False)
         self.set_default_size(self._width, self._height)
-        # Never take keyboard focus: the paste keystroke must reach the app
-        # the user is dictating into.
+        # The paste keystroke must reach the focused app.
         self.set_accept_focus(False)
         self.set_focus_on_map(False)
-        # Float above normal windows without joining the taskbar or pager.
         self.set_keep_above(True)
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
         self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
-        # Transparent surface: the theme paints a window background otherwise.
         self.set_app_paintable(True)
         self.get_style_context().add_class('mic-osd-x11')
         self._apply_rgba_visual()
@@ -125,7 +102,7 @@ class OSDWindow(OSDRenderer, Gtk.Window):
         self._reposition()
 
     def _on_map_event(self, widget, event):
-        # The WM may place a mapped window itself; put it back.
+        # The WM may have placed it elsewhere.
         self._reposition()
         self._make_click_through()
         return False
@@ -161,8 +138,6 @@ class OSDWindow(OSDRenderer, Gtk.Window):
 
     def _on_draw(self, widget, cr):
         allocation = widget.get_allocation()
-        # Clear to transparent first: the window is shaped, so the area around
-        # the pill must not inherit an opaque theme background.
         cr.save()
         cr.set_operator(cairo.OPERATOR_SOURCE)
         cr.set_source_rgba(0.0, 0.0, 0.0, 0.0)

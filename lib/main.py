@@ -326,14 +326,12 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
                         log("[INIT] Mic-OSD daemon started" if layer_shell
-                            else "[INIT] Mic-OSD daemon started (X11 overlay)")
+                            else "[INIT] Mic-OSD daemon started on X11")
                     else:
                         log("[WARN] Failed to start mic-osd daemon")
                         _use_notification_status("mic-osd daemon failed to start")
                 else:
-                    # No layer-shell and no X11 display (e.g. GNOME/Mutter): the
-                    # overlay would steal keyboard focus and swallow the paste
-                    # keystroke. Show recording status via notifications instead.
+                    # Elsewhere, e.g. GNOME Wayland, an overlay steals the paste's focus.
                     _use_notification_status("layer-shell not supported")
             except Exception as e:
                 log(f"[WARN] Failed to initialize recording status indicator: {e}")
