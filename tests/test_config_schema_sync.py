@@ -100,6 +100,13 @@ class ConfigSchemaSyncTests(unittest.TestCase):
     def test_every_default_has_a_schema_entry(self):
         self.assertEqual(sorted(self.defaults - self.schema_keys), [])
 
+    def test_qwen3_asr_model_accepts_known_models_and_rejects_unknown(self):
+        self.assertEqual(self.schema_properties["qwen3_asr_model"]["default"], "1.7b-q8_0")
+        for value in ("1.7b-q8_0", "0.6b-q8_0", "oruk-fourier-2b"):
+            with self.subTest(value=value):
+                self.assertEqual(self._errors({"qwen3_asr_model": value}), [])
+        self.assertTrue(self._errors({"qwen3_asr_model": "unknown-model"}))
+
     def test_realtime_transcription_languages_accepts_auto_or_language_list(self):
         for value in (None, ["pl", "en"], ["en"], ["pl", "PL"]):
             with self.subTest(value=value):

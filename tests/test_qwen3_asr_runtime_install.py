@@ -1,5 +1,6 @@
 """Safety and path contracts for the pinned llama.cpp sidecar runtime."""
 
+import hashlib
 import io
 import os
 import sys
@@ -296,6 +297,98 @@ class NixRuntimeTests(unittest.TestCase):
                 self.assertEqual(qwen3_asr_runtime.runtime_release(), "1.0.0")
                 (root / "version").unlink()
                 self.assertEqual(qwen3_asr_runtime.runtime_release(), "nixpkgs")
+
+
+class ModelContractTests(unittest.TestCase):
+    def test_default_model_remains_stock_multilingual(self):
+        self.assertEqual(qwen3_asr_runtime.DEFAULT_MODEL, "1.7b-q8_0")
+
+    def test_every_model_has_pinned_metadata_and_flat_local_paths(self):
+        self.assertIn("oruk-fourier-2b", qwen3_asr_runtime.QWEN3_ASR_MODELS)
+        for name, meta in qwen3_asr_runtime.QWEN3_ASR_MODELS.items():
+            with self.subTest(model=name):
+                self.assertIn("/", meta["repo"])
+                self.assertRegex(meta["revision"], r"^[0-9a-f]{40}$")
+                decoder, projector = qwen3_asr_runtime.model_paths(name)
+                for role, path in (("decoder", decoder), ("projector", projector)):
+                    remote_path, size, digest = meta[role]
+                    self.assertGreater(size, 0)
+                    self.assertRegex(digest, r"^[0-9a-f]{64}$")
+                    self.assertEqual(path.parent, qwen3_asr_runtime.QWEN3_ASR_MODELS_DIR)
+                    self.assertEqual(path.name, Path(remote_path).name)
+
+    def test_oruk_fourier_download_fetches_nested_remote_and_stores_flat(self):
+        meta = qwen3_asr_runtime.QWEN3_ASR_MODELS["oruk-fourier-2b"]
+        dec_remote = meta["decoder"][0]
+        proj_remote = meta["projector"][0]
+        self.assertIn("/", dec_remote)
+        self.assertIn("/", proj_remote)
+
+        dec_bytes = b"fourier-decoder-gguf"
+        proj_bytes = b"fourier-mmproj-gguf"
+        dec_sha = hashlib.sha256(dec_bytes).hexdigest()
+        proj_sha = hashlib.sha256(proj_bytes).hexdigest()
+        patched_models = {
+            **qwen3_asr_runtime.QWEN3_ASR_MODELS,
+            "oruk-fourier-2b": {
+                "repo": meta["repo"],
+                "revision": meta["revision"],
+                "decoder": (dec_remote, len(dec_bytes), dec_sha),
+                "projector": (proj_remote, len(proj_bytes), proj_sha),
+            },
+        }
+        state = {}
+        urls = []
+
+        def fake_retrieve(url, dest, reporthook=None):
+            urls.append(url)
+            payload = dec_bytes if url.endswith(dec_remote) else proj_bytes
+            Path(dest).write_bytes(payload)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            models_dir = Path(tmp) / "models"
+            with mock.patch.object(qwen3_asr_runtime, "QWEN3_ASR_MODELS", patched_models), \
+                    mock.patch.object(qwen3_asr_runtime, "QWEN3_ASR_MODELS_DIR", models_dir), \
+                    mock.patch.object(backend_installer, "QWEN3_ASR_MODELS", patched_models), \
+                    mock.patch.object(backend_installer, "QWEN3_ASR_MODELS_DIR", models_dir), \
+                    mock.patch.object(backend_installer.urllib.request, "urlretrieve",
+                                      side_effect=fake_retrieve) as retrieve, \
+                    mock.patch.object(backend_installer, "get_state",
+                                      side_effect=lambda k, default=None: state.get(k, default)), \
+                    mock.patch.object(backend_installer, "set_state",
+                                      side_effect=lambda k, v: state.__setitem__(k, v)), \
+                    mock.patch("managed_install.record_ownership", return_value=True):
+                self.assertFalse(qwen3_asr_runtime.model_installed("oruk-fourier-2b"))
+                self.assertTrue(backend_installer.download_qwen3_asr_model("oruk-fourier-2b"))
+                self.assertTrue(qwen3_asr_runtime.model_installed("oruk-fourier-2b"))
+
+                expected_prefix = (
+                    f"https://huggingface.co/{meta['repo']}/resolve/{meta['revision']}/"
+                )
+                self.assertEqual(urls, [expected_prefix + dec_remote, expected_prefix + proj_remote])
+
+                decoder_path, projector_path = qwen3_asr_runtime.model_paths("oruk-fourier-2b")
+                self.assertEqual(decoder_path, models_dir / Path(dec_remote).name)
+                self.assertEqual(projector_path, models_dir / Path(proj_remote).name)
+                self.assertTrue(decoder_path.is_file())
+                self.assertTrue(projector_path.is_file())
+                self.assertFalse((models_dir / "gguf").exists())
+                self.assertEqual(list(models_dir.glob("*.partial")), [])
+
+                # Second call reuses the verified cache without downloading again.
+                retrieve.reset_mock()
+                self.assertTrue(backend_installer.download_qwen3_asr_model("oruk-fourier-2b"))
+                retrieve.assert_not_called()
+
+    def test_oruk_fourier_download_rejects_checksum_mismatch_and_cleans_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            models_dir = Path(tmp) / "models"
+            with mock.patch.object(backend_installer, "QWEN3_ASR_MODELS_DIR", models_dir), \
+                    mock.patch.object(backend_installer.urllib.request, "urlretrieve",
+                                      side_effect=lambda url, dest, reporthook=None: Path(dest).write_bytes(b"bad")), \
+                    mock.patch.object(backend_installer, "get_state", return_value=None):
+                self.assertFalse(backend_installer.download_qwen3_asr_model("oruk-fourier-2b"))
+            self.assertEqual(list(models_dir.glob("*")), [])
 
 
 if __name__ == "__main__":
