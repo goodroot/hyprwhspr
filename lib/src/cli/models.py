@@ -181,7 +181,7 @@ def model_command(action: str, model_name: str = None) -> bool:
         if action == 'list':
             notes = {
                 '1.7b-q8_0': 'recommended',
-                'oruk-fourier-2b': 'optional, English only, CC BY-NC 4.0 non-commercial',
+                'oruk-fourier-2b': 'English only, non-commercial',
             }
             print("Available Qwen3-ASR models (decoder + projector):")
             for name in QWEN3_ASR_MODELS:

@@ -9,7 +9,7 @@ On Nix, see [Nix and NixOS](../integrations/NIX.md#optional-qwen3-asr).
 ```jsonc
 {
     "transcription_backend": "qwen3-asr",
-    "qwen3_asr_model": "1.7b-q8_0",   // 1.7b-q8_0 (quality), 0.6b-q8_0 (smaller), or oruk-fourier-2b (English only)
+    "qwen3_asr_model": "1.7b-q8_0",   // 1.7b-q8_0 (quality) or 0.6b-q8_0 (smaller)
     "qwen3_asr_device": "auto",       // auto | cpu | vulkan
     "qwen3_asr_timeout": 180,         // sidecar request timeout, seconds (1-600)
     "qwen3_asr_ctx_size": 8192        // llama-server context, tokens (512-65536); null = llama.cpp default
@@ -28,9 +28,9 @@ Long audio splits at pauses, then joins again. Set `language` when you can; with
 |-------|------|-------|
 | `1.7b-q8_0` | ~2.4 GB | **Recommended** · best quality |
 | `0.6b-q8_0` | ~1.0 GB | Smaller · faster · less accurate |
-| `oruk-fourier-2b` | ~2.2 GB | Optional · English only · [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) (non-commercial) |
+| `oruk-fourier-2b` | ~2.2 GB | English only · non-commercial |
 
-[Oruk Fourier 2B](https://huggingface.co/oruk/oruk-fourier-2b) is an optional English-only Qwen3-ASR model under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) (non-commercial). Install it with `hyprwhspr setup auto --backend qwen3-asr --model oruk-fourier-2b`, or set `"qwen3_asr_model": "oruk-fourier-2b"` and run `hyprwhspr model download oruk-fourier-2b`.
+[Oruk Fourier 2B](https://huggingface.co/oruk/oruk-fourier-2b) is an English fine-tune of the 1.7B. [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/): non-commercial only.
 
 Models stored in: `~/.local/share/hyprwhspr/qwen3-asr/models/`
 

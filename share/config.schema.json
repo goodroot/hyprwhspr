@@ -336,7 +336,7 @@
       "type": "string",
       "enum": ["1.7b-q8_0", "0.6b-q8_0", "oruk-fourier-2b"],
       "default": "1.7b-q8_0",
-      "description": "Qwen3-ASR GGUF decoder/projector pair (1.7b-q8_0 default, 0.6b-q8_0 smaller, or oruk-fourier-2b optional English-only under CC BY-NC 4.0)"
+      "description": "Qwen3-ASR GGUF decoder/projector pair"
     },
     "qwen3_asr_device": {
       "type": "string",

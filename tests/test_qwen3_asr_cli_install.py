@@ -59,7 +59,7 @@ class QwenModelListTests(unittest.TestCase):
         self.assertIn("0.6b-q8_0", text)
         self.assertIn("oruk-fourier-2b", text)
         self.assertIn("English only", text)
-        self.assertIn("CC BY-NC 4.0", text)
+        self.assertIn("non-commercial", text)
 
 
 if __name__ == "__main__":

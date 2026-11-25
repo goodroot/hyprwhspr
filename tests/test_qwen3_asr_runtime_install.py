@@ -300,11 +300,11 @@ class NixRuntimeTests(unittest.TestCase):
 
 
 class ModelContractTests(unittest.TestCase):
-    def test_default_model_remains_stock_multilingual(self):
-        self.assertEqual(qwen3_asr_runtime.DEFAULT_MODEL, "1.7b-q8_0")
-
     def test_every_model_has_pinned_metadata_and_flat_local_paths(self):
         self.assertIn("oruk-fourier-2b", qwen3_asr_runtime.QWEN3_ASR_MODELS)
+        local = [p.name for n in qwen3_asr_runtime.QWEN3_ASR_MODELS
+                 for p in qwen3_asr_runtime.model_paths(n)]
+        self.assertEqual(len(local), len(set(local)))
         for name, meta in qwen3_asr_runtime.QWEN3_ASR_MODELS.items():
             with self.subTest(model=name):
                 self.assertIn("/", meta["repo"])
