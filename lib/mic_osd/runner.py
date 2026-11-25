@@ -129,7 +129,9 @@ class MicOSDRunner:
 
     @staticmethod
     def runtime_source() -> str:
-        """Return the selected layer-shell runtime source for status output."""
+        """Return the selected overlay runtime for status output."""
+        if MicOSDRunner.x11_available():
+            return "X11 GTK3"
         if MicOSDRunner._system_dependencies_available():
             return "system"
         if MicOSDRunner._bundled_dependencies_available():

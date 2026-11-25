@@ -67,6 +67,7 @@ class VisualizerRuntimeTests(unittest.TestCase):
         with (
             mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
             mock.patch.object(MicOSDRunner, "_bundled_dependencies_available") as bundled,
+            mock.patch.object(MicOSDRunner, "x11_available", return_value=False),
         ):
             self.assertTrue(MicOSDRunner.is_available())
             self.assertEqual(MicOSDRunner.runtime_source(), "system")
@@ -361,7 +362,7 @@ class VisualizerRuntimeTests(unittest.TestCase):
             mock.patch("sys.stdout", output),
         ):
             self.assertTrue(mic_osd_cli.mic_osd_status())
-        self.assertIn("Layer-shell runtime: bundled 1.3.0", output.getvalue())
+        self.assertIn("Overlay runtime: bundled 1.3.0", output.getvalue())
 
     def test_cli_child_computes_runtime_source_once(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,6 +1,7 @@
 """X11 mic-OSD overlay."""
 
 import importlib
+import io
 import os
 import sys
 import tempfile
@@ -15,6 +16,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from mic_osd.backend import GTK3, GTK4, bottom_center, select_backend
 from mic_osd.runner import MicOSDRunner
 import mic_osd.runner as runner_module
+from src.cli import mic_osd as mic_osd_cli
 
 
 class BackendSelectionTests(unittest.TestCase):
@@ -106,6 +108,31 @@ class AvailabilityTests(unittest.TestCase):
                                   return_value=False), \
                 mock.patch.object(MicOSDRunner, "x11_available", return_value=False):
             self.assertFalse(MicOSDRunner.is_available())
+
+
+    def test_x11_reports_its_runtime(self):
+        with mock.patch.object(MicOSDRunner, "x11_available", return_value=True), \
+                mock.patch.object(MicOSDRunner, "_system_dependencies_available",
+                                  return_value=False), \
+                mock.patch.object(MicOSDRunner, "_bundled_dependencies_available",
+                                  return_value=False):
+            self.assertEqual(MicOSDRunner.runtime_source(), "X11 GTK3")
+
+    def test_cli_accepts_a_gtk3_only_setup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            python = Path(tmp) / "bin" / "python"
+            python.parent.mkdir()
+            python.touch()
+            run = mock.Mock(return_value=types.SimpleNamespace(returncode=0, stdout=""))
+            with mock.patch.object(mic_osd_cli, "VENV_DIR", Path(tmp)), \
+                    mock.patch.object(mic_osd_cli.subprocess, "run", run):
+                mic_osd_cli._query_mic_osd_availability()
+        code = run.call_args.args[0][2]
+        output = io.StringIO()
+        with mock.patch.object(MicOSDRunner, "x11_available", return_value=True), \
+                mock.patch("sys.stdout", output):
+            exec(code, {})
+        self.assertEqual(output.getvalue().strip(), "AVAILABLE: X11 GTK3")
 
 
 class ClickThroughTests(unittest.TestCase):
