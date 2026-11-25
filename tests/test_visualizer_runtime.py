@@ -212,12 +212,12 @@ class VisualizerRuntimeTests(unittest.TestCase):
                     "_layer_shell_environment",
                     side_effect=runner_module.LayerShellResolutionError("two copies"),
                 ),
-                mock.patch.object(MicOSDRunner, "layer_shell_active", return_value=False),
                 mock.patch.object(MicOSDRunner, "x11_available", return_value=False),
                 mock.patch.object(runner_module.subprocess, "Popen") as popen,
                 mock.patch("builtins.print"),
             ):
                 self.assertFalse(MicOSDRunner()._ensure_daemon())
+                self.assertFalse(MicOSDRunner.layer_shell_active())
             popen.assert_not_called()
 
     def test_download_requires_matching_pinned_checksum(self):
