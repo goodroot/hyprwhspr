@@ -117,8 +117,7 @@ class DaemonBackendTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _start(self, x11_available=False, layer_shell_active=False,
-               layer_shell_error=None):
+    def _start(self, x11_available=False, layer_shell_error=None):
         runner = MicOSDRunner()
         if layer_shell_error is None:
             layer_env = mock.Mock(return_value={"KEEP": "1"})
@@ -128,7 +127,7 @@ class DaemonBackendTests(unittest.TestCase):
                 mock.patch.object(MicOSDRunner, "x11_available",
                                   return_value=x11_available), \
                 mock.patch.object(MicOSDRunner, "layer_shell_active",
-                                  return_value=layer_shell_active), \
+                                  side_effect=AssertionError("probed layer-shell")), \
                 mock.patch("mic_osd.runner.time.sleep"), \
                 mock.patch("mic_osd.runner.subprocess.Popen") as popen:
             popen.return_value.poll.return_value = None
@@ -136,17 +135,14 @@ class DaemonBackendTests(unittest.TestCase):
         return started, popen
 
     def test_layer_shell_daemon_keeps_the_gtk4_backend(self):
-        started, popen = self._start(layer_shell_active=True)
+        started, popen = self._start()
         self.assertTrue(started)
         env = popen.call_args.kwargs["env"]
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_BACKEND"], "gtk4")
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_DAEMON"], "1")
 
     def test_x11_without_layer_shell_uses_the_gtk3_backend(self):
-        # The layer-shell library can resolve on X11 while the protocol is
-        # unsupported; the backend must follow the protocol probe, not the
-        # environment lookup.
-        started, popen = self._start(x11_available=True, layer_shell_active=False)
+        started, popen = self._start(x11_available=True)
         self.assertTrue(started)
         env = popen.call_args.kwargs["env"]
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_BACKEND"], "gtk3")
@@ -159,7 +155,7 @@ class DaemonBackendTests(unittest.TestCase):
                 mock.patch.object(MicOSDRunner, "_daemon_environment_backend",
                                   return_value="gtk4"), \
                 mock.patch.object(MicOSDRunner, "_terminate_daemon") as terminate:
-            started, popen = self._start(x11_available=True, layer_shell_active=False)
+            started, popen = self._start(x11_available=True)
         self.assertTrue(started)
         terminate.assert_called_once_with(4242)
         env = popen.call_args.kwargs["env"]
@@ -171,9 +167,21 @@ class DaemonBackendTests(unittest.TestCase):
                 mock.patch.object(MicOSDRunner, "_daemon_environment_backend",
                                   return_value="gtk3"), \
                 mock.patch.object(MicOSDRunner, "_terminate_daemon") as terminate:
-            started, _ = self._start(x11_available=True, layer_shell_active=False)
+            started, _ = self._start(x11_available=True)
         self.assertTrue(started)
         terminate.assert_not_called()
+
+    def test_wayland_orphan_is_reused_without_a_probe(self):
+        # show() lands here on every recording while an orphan serves.
+        self.pid_file.write_text("4244")
+        with mock.patch.object(MicOSDRunner, "_is_mic_osd_daemon_pid", return_value=True), \
+                mock.patch.object(MicOSDRunner, "_daemon_environment_backend",
+                                  return_value="gtk4"), \
+                mock.patch.object(MicOSDRunner, "_terminate_daemon") as terminate:
+            started, popen = self._start()
+        self.assertTrue(started)
+        terminate.assert_not_called()
+        self.assertEqual(popen.call_args.args[0], ['true'])
 
     def test_terminate_escalates_to_sigkill(self):
         with mock.patch("mic_osd.runner.os.kill") as kill, \

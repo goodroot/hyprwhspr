@@ -331,16 +331,10 @@ class MicOSDRunner:
         return ""
     
     def _daemon_backend(self):
-        """Backend to start the daemon with, or None when it cannot run.
-
-        Follows the same probe that picks the overlay: layer-shell support
-        means the GTK4 window, a bare X11 display means the GTK3 one.
-        """
-        if MicOSDRunner.layer_shell_active():
-            return 'gtk4'
+        """'gtk3' on X11 with GTK3, else 'gtk4'. Cached: show() runs this."""
         if MicOSDRunner.x11_available():
             return 'gtk3'
-        return None
+        return 'gtk4'
 
     @staticmethod
     def _daemon_environment_backend(pid: int):
@@ -390,7 +384,7 @@ class MicOSDRunner:
                 # A daemon from another session type draws the wrong overlay
                 # (GTK4 on X11 steals focus), so replace it rather than reuse.
                 running_backend = MicOSDRunner._daemon_environment_backend(pid)
-                if backend is not None and running_backend not in (None, backend):
+                if running_backend not in (None, backend):
                     print(f"[MIC-OSD] Replacing the {running_backend} daemon "
                           f"(PID {pid}) with the {backend} overlay", flush=True)
                     MicOSDRunner._terminate_daemon(pid)
@@ -432,10 +426,6 @@ sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
-        if backend is None:
-            print("[MIC-OSD] Not starting daemon: no layer-shell and no X11 display",
-                  flush=True)
-            return False
         if backend == 'gtk3':
             # X11 has no layer-shell: the same overlay runs as a GTK3 window.
             env = os.environ.copy()
