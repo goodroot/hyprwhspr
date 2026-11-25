@@ -168,8 +168,6 @@ class MicOSDRunnerTests(unittest.TestCase):
     def test_window_module_imports_with_cairo_available(self):
         window_module, _ = self._import_window_with_stubs()
 
-        # The drawing moved to mic_osd.render, but the window must still
-        # import cleanly with cairo available and the GTK4 stubs in place.
         self.assertIsNotNone(window_module.OSDWindow)
 
     def test_is_available_returns_false_when_cairo_missing(self):
@@ -210,10 +208,7 @@ class MicOSDRunnerTests(unittest.TestCase):
             cmdline = b"python3\0-c\0from mic_osd.main import main\nsys.argv = ['mic-osd', '--daemon']\0"
             try:
                 with mock.patch.object(runner_module.os, "kill", return_value=None), \
-                        mock.patch.object(MicOSDRunner, "_daemon_backend", return_value="gtk4"), \
-                        mock.patch.object(
-                            runner_module.Path, "read_bytes",
-                            side_effect=[b"", cmdline, b"HYPRWHSPR_MIC_OSD_BACKEND=gtk4\0"]), \
+                        mock.patch.object(runner_module.Path, "read_bytes", side_effect=[b"", cmdline]), \
                         mock.patch.object(runner_module.subprocess, "Popen", return_value=types.SimpleNamespace()) as popen:
                     runner = MicOSDRunner()
 

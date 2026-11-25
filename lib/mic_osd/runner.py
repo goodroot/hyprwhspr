@@ -14,6 +14,8 @@ import threading
 import time
 from pathlib import Path
 
+from .backend import x11_session as _x11_session
+
 # Import paths
 try:
     from ..src.paths import (
@@ -87,7 +89,6 @@ class MicOSDRunner:
             return True
         if MicOSDRunner._bundled_dependencies_available():
             return True
-        # X11 draws the overlay with GTK3 instead of layer-shell.
         return MicOSDRunner.x11_available()
 
     @staticmethod
@@ -219,18 +220,11 @@ class MicOSDRunner:
 
     @staticmethod
     def x11_session() -> bool:
-        """True when this session is X11: a display, no Wayland socket."""
-        if os.environ.get('WAYLAND_DISPLAY'):
-            return False
-        return bool(os.environ.get('DISPLAY'))
+        return _x11_session()
 
     @staticmethod
     def x11_available() -> bool:
-        """True when the X11 overlay can run (GTK3 + PyCairo importable).
-
-        Probed in a subprocess: requiring GTK3 here must never clash with the
-        GTK4 requirement the layer-shell probe makes in the same process.
-        """
+        """GTK3 and PyCairo import on X11. A subprocess keeps GTK3 out of here."""
         with MicOSDRunner._bundled_availability_lock:
             cached = MicOSDRunner._x11_availability
             if cached is not None:
@@ -331,41 +325,10 @@ class MicOSDRunner:
         return ""
     
     def _daemon_backend(self):
-        """'gtk3' on X11 with GTK3, else 'gtk4'. Cached: show() runs this."""
+        """'gtk3' on X11, else 'gtk4'. Cached, so show() never probes."""
         if MicOSDRunner.x11_available():
             return 'gtk3'
         return 'gtk4'
-
-    @staticmethod
-    def _daemon_environment_backend(pid: int):
-        """The backend recorded in a running daemon's environment, if any."""
-        try:
-            environ = (Path('/proc') / str(pid) / 'environ').read_bytes().split(b'\x00')
-        except OSError:
-            return None
-        for entry in environ:
-            if entry.startswith(b'HYPRWHSPR_MIC_OSD_BACKEND='):
-                return entry.split(b'=', 1)[1].decode('utf-8', 'ignore') or None
-        return None
-
-    @staticmethod
-    def _terminate_daemon(pid: int):
-        """Ask a verified mic-osd daemon to exit, killing it if it won't."""
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            return
-        deadline = time.monotonic() + 1.0
-        while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, OSError):
-                return
-            time.sleep(0.05)
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
 
     def _ensure_daemon(self) -> bool:
         """Ensure the daemon process is running."""
@@ -373,34 +336,23 @@ class MicOSDRunner:
         if self._process is not None and self._process.poll() is None:
             return True  # Already running
 
-        backend = self._daemon_backend()
-
         # Check PID file for orphaned daemon (from previous crash)
         if MIC_OSD_PID_FILE.exists():
             try:
                 pid = int(MIC_OSD_PID_FILE.read_text().strip())
                 if not self._is_mic_osd_daemon_pid(pid):
                     raise ProcessLookupError(f"PID {pid} is not a mic-osd daemon")
-                # A daemon from another session type draws the wrong overlay
-                # (GTK4 on X11 steals focus), so replace it rather than reuse.
-                running_backend = MicOSDRunner._daemon_environment_backend(pid)
-                if running_backend not in (None, backend):
-                    print(f"[MIC-OSD] Replacing the {running_backend} daemon "
-                          f"(PID {pid}) with the {backend} overlay", flush=True)
-                    MicOSDRunner._terminate_daemon(pid)
-                    self._unlink_pid_file()
-                else:
-                    print(f"[MIC-OSD] Found orphaned daemon (PID {pid}), reusing it")
-                    # Create dummy process reference (we can't use wait() on it)
-                    # The actual daemon PID is tracked in _orphaned_daemon_pid
-                    self._process = subprocess.Popen(
-                        ['true'],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL
-                    )
-                    # Note: Cannot override self._process.pid (read-only), so we track it separately
-                    self._orphaned_daemon_pid = pid  # Track that we're using an orphaned daemon
-                    return True
+                print(f"[MIC-OSD] Found orphaned daemon (PID {pid}), reusing it")
+                # Create dummy process reference (we can't use wait() on it)
+                # The actual daemon PID is tracked in _orphaned_daemon_pid
+                self._process = subprocess.Popen(
+                    ['true'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                # Note: Cannot override self._process.pid (read-only), so we track it separately
+                self._orphaned_daemon_pid = pid  # Track that we're using an orphaned daemon
+                return True
             except (ValueError, ProcessLookupError, PermissionError):
                 # Stale PID file, clean it up
                 print("[MIC-OSD] Cleaning up stale PID file")
@@ -426,8 +378,8 @@ sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
+        backend = self._daemon_backend()
         if backend == 'gtk3':
-            # X11 has no layer-shell: the same overlay runs as a GTK3 window.
             env = os.environ.copy()
         else:
             try:

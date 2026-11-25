@@ -1,7 +1,6 @@
-"""X11 overlay: backend selection, daemon start, and overlay placement."""
+"""X11 mic-OSD overlay."""
 
 import os
-import signal
 import sys
 import tempfile
 import types
@@ -34,7 +33,7 @@ class BackendSelectionTests(unittest.TestCase):
         )
         self.assertEqual(
             select_backend({'WAYLAND_DISPLAY': 'wayland-1',
-                            'HYPRWHSPR_MIC_OSD_BACKEND': 'x11'}),
+                            'HYPRWHSPR_MIC_OSD_BACKEND': 'gtk3'}),
             GTK3,
         )
 
@@ -148,54 +147,12 @@ class DaemonBackendTests(unittest.TestCase):
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_BACKEND"], "gtk3")
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_DAEMON"], "1")
 
-    def test_orphaned_daemon_with_another_backend_is_replaced(self):
-        # A daemon left over from a Wayland session must not serve X11.
-        self.pid_file.write_text("4242")
-        with mock.patch.object(MicOSDRunner, "_is_mic_osd_daemon_pid", return_value=True), \
-                mock.patch.object(MicOSDRunner, "_daemon_environment_backend",
-                                  return_value="gtk4"), \
-                mock.patch.object(MicOSDRunner, "_terminate_daemon") as terminate:
-            started, popen = self._start(x11_available=True)
-        self.assertTrue(started)
-        terminate.assert_called_once_with(4242)
-        env = popen.call_args.kwargs["env"]
-        self.assertEqual(env["HYPRWHSPR_MIC_OSD_BACKEND"], "gtk3")
-
-    def test_orphaned_daemon_with_the_same_backend_is_reused(self):
-        self.pid_file.write_text("4243")
-        with mock.patch.object(MicOSDRunner, "_is_mic_osd_daemon_pid", return_value=True), \
-                mock.patch.object(MicOSDRunner, "_daemon_environment_backend",
-                                  return_value="gtk3"), \
-                mock.patch.object(MicOSDRunner, "_terminate_daemon") as terminate:
-            started, _ = self._start(x11_available=True)
-        self.assertTrue(started)
-        terminate.assert_not_called()
-
-    def test_wayland_orphan_is_reused_without_a_probe(self):
-        # show() lands here on every recording while an orphan serves.
+    def test_orphan_is_reused_without_a_probe(self):
         self.pid_file.write_text("4244")
-        with mock.patch.object(MicOSDRunner, "_is_mic_osd_daemon_pid", return_value=True), \
-                mock.patch.object(MicOSDRunner, "_daemon_environment_backend",
-                                  return_value="gtk4"), \
-                mock.patch.object(MicOSDRunner, "_terminate_daemon") as terminate:
+        with mock.patch.object(MicOSDRunner, "_is_mic_osd_daemon_pid", return_value=True):
             started, popen = self._start()
         self.assertTrue(started)
-        terminate.assert_not_called()
         self.assertEqual(popen.call_args.args[0], ['true'])
-
-    def test_terminate_escalates_to_sigkill(self):
-        with mock.patch("mic_osd.runner.os.kill") as kill, \
-                mock.patch("mic_osd.runner.time.monotonic", side_effect=[0, 0, 2]), \
-                mock.patch("mic_osd.runner.time.sleep"):
-            MicOSDRunner._terminate_daemon(4242)
-        self.assertEqual(
-            [call.args[1] for call in kill.call_args_list],
-            [signal.SIGTERM, 0, signal.SIGKILL],
-        )
-
-    def test_terminate_ignores_an_already_gone_daemon(self):
-        with mock.patch("mic_osd.runner.os.kill", side_effect=ProcessLookupError):
-            MicOSDRunner._terminate_daemon(4242)  # must not raise
 
     def test_without_layer_shell_or_x11_no_daemon_starts(self):
         started, popen = self._start(
