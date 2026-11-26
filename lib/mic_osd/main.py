@@ -13,7 +13,11 @@ import os
 from pathlib import Path
 
 import gi
-gi.require_version('Gtk', '4.0')
+
+from .backend import GTK3, GTK4, select_backend
+
+_BACKEND = select_backend()
+gi.require_version('Gtk', '3.0' if _BACKEND == GTK3 else '4.0')
 from gi.repository import Gtk, GLib
 
 
@@ -23,7 +27,10 @@ def is_gnome():
 
 _MIC_OSD_IMPORT_ERROR = None
 try:
-    from .window import OSDWindow, load_css
+    if _BACKEND == GTK3:
+        from .window_x11 import OSDWindow, load_css
+    else:
+        from .window import OSDWindow, load_css
     from .audio import AudioMonitor, FeedLevelSource
     from .visualizations import VISUALIZATIONS
     from .theme import ThemeWatcher
@@ -89,7 +96,7 @@ class MicOSD:
 
     def run(self):
         """Start the OSD and run until killed."""
-        if is_gnome():
+        if _BACKEND == GTK4 and is_gnome():
             self._run_with_gtk_application()
         else:
             self._run_with_main_loop()

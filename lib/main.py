@@ -298,6 +298,23 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._recording_control_server.prepare_fifo()
 
         # Pre-initialize mic-osd daemon (eliminates latency on recording)
+        self._init_mic_osd()
+
+        if hasattr(self.whisper_manager, 'set_realtime_partial_callback'):
+            self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
+        if hasattr(self.whisper_manager, 'set_realtime_live_listener'):
+            self.whisper_manager.set_realtime_live_listener(self._on_live_text)
+        if hasattr(self.whisper_manager, 'set_realtime_connection_listener'):
+            self.whisper_manager.set_realtime_connection_listener(self._on_realtime_connection)
+
+        # Set up global shortcuts (needed for headless operation)
+        self._setup_global_shortcuts()
+
+        # Publish the system tray icon
+        self._setup_tray_icon()
+
+    def _init_mic_osd(self):
+        """Choose and start the recording-status presenter."""
         self._mic_osd_runner = None
         if self.config.get_setting('mic_osd_enabled', True):
             try:
@@ -313,7 +330,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                     else:
                         log("[WARN] No layer-shell overlay and no desktop notifications; recording has no status indicator")
 
-                if MicOSDRunner.is_available() and MicOSDRunner.layer_shell_active():
+                layer_shell = (MicOSDRunner.is_available()
+                               and MicOSDRunner.layer_shell_active())
+                if layer_shell or MicOSDRunner.x11_available():
                     # Feed the OSD meter from the capture stream (issue #205).
                     # get_viz_frame's default num_buckets must match the
                     # waveform visualization's num_bars (32).
@@ -323,32 +342,18 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                     )
                     if runner._ensure_daemon():  # Start daemon now
                         self._mic_osd_runner = runner
-                        log("[INIT] Mic-OSD daemon started")
+                        log("[INIT] Mic-OSD daemon started" if layer_shell
+                            else "[INIT] Mic-OSD daemon started on X11")
                     else:
                         log("[WARN] Failed to start mic-osd daemon")
                         _use_notification_status("mic-osd daemon failed to start")
                 else:
-                    # No layer-shell (e.g. GNOME/Mutter): the overlay would steal
-                    # keyboard focus and swallow the paste keystroke. Show recording
-                    # status via desktop notifications instead.
+                    # Elsewhere, e.g. GNOME Wayland, an overlay steals the paste's focus.
                     _use_notification_status("layer-shell not supported")
             except Exception as e:
                 log(f"[WARN] Failed to initialize recording status indicator: {e}")
                 import traceback
                 traceback.print_exc()
-
-        if hasattr(self.whisper_manager, 'set_realtime_partial_callback'):
-            self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
-        if hasattr(self.whisper_manager, 'set_realtime_live_listener'):
-            self.whisper_manager.set_realtime_live_listener(self._on_live_text)
-        if hasattr(self.whisper_manager, 'set_realtime_connection_listener'):
-            self.whisper_manager.set_realtime_connection_listener(self._on_realtime_connection)
-
-        # Set up global shortcuts (needed for headless operation)
-        self._setup_global_shortcuts()
-
-        # Publish the system tray icon
-        self._setup_tray_icon()
 
     def _get_float_setting(self, key, default=0.0):
         """Coerce a config value to float; falls back to `default` if missing, invalid, or non-finite (NaN/Infinity)."""

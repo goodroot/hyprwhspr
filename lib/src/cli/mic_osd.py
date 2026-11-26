@@ -133,7 +133,7 @@ def mic_osd_status():
     print("\nMic-OSD Status:")
     print(f"  Enabled in config: {'Yes' if enabled else 'No'}")
     print(f"  Dependencies available: {'Yes' if deps_available else 'No'}")
-    print(f"  Layer-shell runtime: {runtime_source}")
+    print(f"  Overlay runtime: {runtime_source}")
     
     if deps_available:
         if enabled:

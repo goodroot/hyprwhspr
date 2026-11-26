@@ -14,6 +14,8 @@ import threading
 import time
 from pathlib import Path
 
+from .backend import x11_session as _x11_session
+
 # Import paths
 try:
     from ..src.paths import (
@@ -49,6 +51,7 @@ class MicOSDRunner:
     OSD_STYLES = ('waveform', 'vu_meter', 'pill')
     _bundled_availability = None
     _bundled_availability_lock = threading.Lock()
+    _x11_availability = None
     _layer_shell_preload = None  # probe-confirmed path; fallbacks aren't cached
 
     def __init__(self, level_source=None, style='waveform'):
@@ -84,7 +87,9 @@ class MicOSDRunner:
         """Check if mic-osd can run."""
         if MicOSDRunner._system_dependencies_available():
             return True
-        return MicOSDRunner._bundled_dependencies_available()
+        if MicOSDRunner._bundled_dependencies_available():
+            return True
+        return MicOSDRunner.x11_available()
 
     @staticmethod
     def _system_dependencies_available() -> bool:
@@ -124,7 +129,9 @@ class MicOSDRunner:
 
     @staticmethod
     def runtime_source() -> str:
-        """Return the selected layer-shell runtime source for status output."""
+        """Return the selected overlay runtime for status output."""
+        if MicOSDRunner.x11_available():
+            return "X11 GTK3"
         if MicOSDRunner._system_dependencies_available():
             return "system"
         if MicOSDRunner._bundled_dependencies_available():
@@ -214,6 +221,36 @@ class MicOSDRunner:
         return env
 
     @staticmethod
+    def x11_session() -> bool:
+        return _x11_session()
+
+    @staticmethod
+    def x11_available() -> bool:
+        """GTK3 and PyCairo import on X11. A subprocess keeps GTK3 out of here."""
+        with MicOSDRunner._bundled_availability_lock:
+            cached = MicOSDRunner._x11_availability
+            if cached is not None:
+                return cached
+            available = False
+            if MicOSDRunner.x11_session():
+                probe = (
+                    "import cairo, gi;"
+                    "gi.require_version('Gtk', '3.0');"
+                    "from gi.repository import Gtk, Gdk;"
+                    "print('1')"
+                )
+                try:
+                    result = subprocess.run(
+                        [sys.executable or 'python3', '-c', probe],
+                        env=os.environ.copy(), capture_output=True, timeout=5,
+                    )
+                    available = result.stdout.decode('utf-8', 'ignore').strip() == '1'
+                except Exception:
+                    available = False
+            MicOSDRunner._x11_availability = available
+            return available
+
+    @staticmethod
     def layer_shell_active() -> bool:
         """Return True only if the running compositor supports the layer-shell
         protocol (Hyprland, Niri, Sway, ...). False on GNOME/Mutter and on any
@@ -269,11 +306,17 @@ class MicOSDRunner:
     @staticmethod
     def get_unavailable_reason() -> str:
         """Get reason why mic-osd is unavailable."""
+        if MicOSDRunner.x11_session():
+            if MicOSDRunner.x11_available():
+                return ""
+            return "X11 overlay requires GTK3 introspection bindings and PyCairo available to the service Python."
         gtk_pkg, layer_pkg = MicOSDRunner._get_distro_packages()
         try:
             import cairo  # noqa: F401
         except ImportError:
             return f"PyCairo bindings not installed. Install: {gtk_pkg}"
+        if MicOSDRunner.x11_available():
+            return ""
         try:
             import gi
             gi.require_version('Gtk', '4.0')
@@ -287,6 +330,12 @@ class MicOSDRunner:
             return f"gtk4-layer-shell not installed. Install: {layer_pkg}"
         return ""
     
+    def _daemon_backend(self):
+        """'gtk3' on X11, else 'gtk4'. Cached, so show() never probes."""
+        if MicOSDRunner.x11_available():
+            return 'gtk3'
+        return 'gtk4'
+
     def _ensure_daemon(self) -> bool:
         """Ensure the daemon process is running."""
         # Check in-memory reference first
@@ -335,11 +384,16 @@ sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
-        try:
-            env = self._layer_shell_environment()
-        except LayerShellResolutionError as e:
-            print(f"[MIC-OSD] Not starting daemon: {e}", flush=True)
-            return False
+        backend = self._daemon_backend()
+        if backend == 'gtk3':
+            env = os.environ.copy()
+        else:
+            try:
+                env = self._layer_shell_environment()
+            except LayerShellResolutionError as e:
+                print(f"[MIC-OSD] Not starting daemon: {e}", flush=True)
+                return False
+        env['HYPRWHSPR_MIC_OSD_BACKEND'] = backend
         env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
 
         try:

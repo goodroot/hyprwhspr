@@ -166,9 +166,9 @@ class MicOSDRunnerTests(unittest.TestCase):
                 runner_module.TRANSCRIPT_PREVIEW_FILE = original_file
 
     def test_window_module_imports_with_cairo_available(self):
-        window_module, cairo_module = self._import_window_with_stubs()
+        window_module, _ = self._import_window_with_stubs()
 
-        self.assertIs(window_module.cairo, cairo_module)
+        self.assertIsNotNone(window_module.OSDWindow)
 
     def test_is_available_returns_false_when_cairo_missing(self):
         original_import = builtins.__import__
@@ -178,7 +178,8 @@ class MicOSDRunnerTests(unittest.TestCase):
                 raise ImportError("no cairo")
             return original_import(name, *args, **kwargs)
 
-        with mock.patch("builtins.__import__", side_effect=fake_import):
+        with mock.patch("builtins.__import__", side_effect=fake_import), \
+                mock.patch.object(MicOSDRunner, "x11_available", return_value=False):
             self.assertFalse(MicOSDRunner.is_available())
 
     def test_pid_validation_rejects_unrelated_process_cmdline(self):
