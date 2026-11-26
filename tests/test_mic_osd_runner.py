@@ -3,7 +3,6 @@ import tempfile
 import threading
 import types
 import unittest
-import builtins
 import signal
 from pathlib import Path
 from unittest import mock
@@ -14,6 +13,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from mic_osd.runner import MicOSDRunner
 import mic_osd.runner as runner_module
+import mic_osd.runtime as runtime_module
 
 
 class FakeTimer:
@@ -171,10 +171,10 @@ class MicOSDRunnerTests(unittest.TestCase):
         self.assertIsNotNone(window_module.OSDWindow)
 
     def test_is_available_returns_false_when_cairo_missing(self):
-        with mock.patch.object(MicOSDRunner, "_system_status", return_value=("cairo", "")), \
-                mock.patch.object(MicOSDRunner, "_bundled_dependencies_available", return_value=False), \
-                mock.patch.object(MicOSDRunner, "x11_available", return_value=False):
-            self.assertFalse(MicOSDRunner.is_available())
+        with mock.patch.object(runtime_module, "system_status", return_value=("cairo", "")), \
+                mock.patch.object(runtime_module, "bundled_available", return_value=False), \
+                mock.patch.object(runtime_module, "x11_session", return_value=False):
+            self.assertFalse(MicOSDRunner().is_available())
 
     def test_pid_validation_rejects_unrelated_process_cmdline(self):
         with mock.patch.object(runner_module.os, "kill", return_value=None), \

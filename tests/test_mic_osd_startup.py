@@ -7,7 +7,8 @@ import unittest
 from unittest import mock
 
 from tests.test_suspend_resume_recovery import _import_main_isolated, patch_app_global
-from mic_osd.runner import MicOSDRunner
+from mic_osd.backend import GTK3
+from mic_osd.runtime import DependencyFacts, derive_dependencies, select_overlay
 
 
 class MicOSDStartupTests(unittest.TestCase):
@@ -24,25 +25,30 @@ class MicOSDStartupTests(unittest.TestCase):
         app.config.get_setting.side_effect = lambda key, default=None: settings.get(key, default)
         app.audio_capture = types.SimpleNamespace(get_viz_frame=mock.Mock())
         env = {'DISPLAY': ':0', 'WAYLAND_DISPLAY': 'wayland-1' if wayland else ''}
+        facts = DependencyFacts(x11_session=not wayland, gtk3=gtk3 and not wayland,
+                                system='ok' if dependencies else 'layer-shell')
+        deps = derive_dependencies(facts, packages=('gtk', 'layer-shell'))
+        assessment = select_overlay(deps, not wayland if deps.backend == GTK3 else layer_shell)
+        assess = mock.Mock(return_value=assessment)
         runner = mock.Mock()
-        runner.is_available.return_value = dependencies
-        runner.layer_shell_active.return_value = layer_shell
-        runner.x11_available.side_effect = lambda: MicOSDRunner.x11_session() and gtk3
         runner.return_value._ensure_daemon.return_value = started
         presenter = mock.Mock()
         presenter.return_value.is_available.return_value = notifications
         with mock.patch.dict(os.environ, env), \
                 mock.patch.dict(sys.modules, {'mic_osd': types.SimpleNamespace(
-                    MicOSDRunner=runner, NotificationPresenter=presenter)}), \
+                    MicOSDRunner=runner, NotificationPresenter=presenter,
+                    assess_overlay=assess)}), \
                 patch_app_global(self.app_class, 'log', mock.Mock()), \
                 patch_app_global(self.app_class, '_looks_like_wlroots_session', lambda: False):
             app._init_mic_osd()
+        self.assess = assess
         return app, runner, presenter
 
     def test_supported_wayland_starts_overlay_with_configured_style_and_feed(self):
         app, runner, presenter = self._initialize(wayland=True, layer_shell=True)
         self.assertIs(app._mic_osd_runner, runner.return_value)
-        runner.assert_called_once_with(level_source=app.audio_capture.get_viz_frame, style='pill')
+        runner.assert_called_once_with(level_source=app.audio_capture.get_viz_frame, style='pill',
+                                       assessment=self.assess.return_value)
         runner.return_value._ensure_daemon.assert_called_once_with()
         presenter.assert_not_called()
 
@@ -79,3 +85,4 @@ class MicOSDStartupTests(unittest.TestCase):
         self.assertIsNone(app._mic_osd_runner)
         self.assertEqual(runner.mock_calls, [])
         self.assertEqual(presenter.mock_calls, [])
+        self.assess.assert_not_called()

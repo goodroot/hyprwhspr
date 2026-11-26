@@ -13,8 +13,6 @@ import threading
 import time
 from pathlib import Path
 
-from .backend import x11_session as _x11_session
-
 # Import paths
 try:
     from ..src.paths import (
@@ -27,11 +25,6 @@ except ImportError:
         MIC_OSD_PID_FILE, VISUALIZER_STATE_FILE, TRANSCRIPT_PREVIEW_FILE,
         MIC_OSD_LEVEL_FEED_FILE,
     )
-
-try:
-    from ..src import visualizer_runtime
-except ImportError:
-    from src import visualizer_runtime
 
 from . import runtime
 from .runtime import LayerShellResolutionError
@@ -47,13 +40,8 @@ class MicOSDRunner:
     PREVIEW_WRITE_INTERVAL_SECONDS = 0.05
     LEVEL_FEED_INTERVAL_SECONDS = 1.0 / 30
     OSD_STYLES = ('waveform', 'vu_meter', 'pill')
-    _bundled_availability = None
-    _bundled_availability_lock = threading.Lock()
-    _x11_availability = None
-    _system_availability = None
-    _layer_shell_preload = None  # probe-confirmed path; fallbacks aren't cached
 
-    def __init__(self, level_source=None, style='waveform'):
+    def __init__(self, level_source=None, style='waveform', assessment=None):
         """
         Args:
             level_source: Optional callable returning (level, bucket_rms_list)
@@ -62,6 +50,7 @@ class MicOSDRunner:
                 of opening its own audio stream.
             style: Visualization style for the daemon; unknown values fall
                 back to 'waveform'.
+            assessment: The caller's OverlayAssessment; assessed on first use if omitted.
         """
         self._style = style if style in self.OSD_STYLES else 'waveform'
         self._process = None
@@ -80,112 +69,20 @@ class MicOSDRunner:
         self._visibility_condition = threading.Condition()
         self._hide_generation = 0
         self._hide_teardowns = 0
+        self._assessment = assessment
+        self._assessment_lock = threading.Lock()
     
-    @staticmethod
-    def is_available() -> bool:
-        """Check if mic-osd can run."""
-        if MicOSDRunner._system_dependencies_available():
-            return True
-        if MicOSDRunner._bundled_dependencies_available():
-            return True
-        return MicOSDRunner.x11_available()
+    @property
+    def assessment(self):
+        """The overlay assessment this runner starts daemons from; assessed once."""
+        with self._assessment_lock:
+            if self._assessment is None:
+                self._assessment = runtime.assess_overlay()
+            return self._assessment
 
-    @staticmethod
-    def _system_status() -> tuple:
-        with MicOSDRunner._bundled_availability_lock:
-            if MicOSDRunner._system_availability is None:
-                MicOSDRunner._system_availability = runtime.system_status()
-            return MicOSDRunner._system_availability
-
-    @staticmethod
-    def _system_dependencies_available() -> bool:
-        return MicOSDRunner._system_status()[0] == 'ok'
-
-    @staticmethod
-    def _bundled_dependencies_available() -> bool:
-        with MicOSDRunner._bundled_availability_lock:
-            if MicOSDRunner._bundled_availability is None:
-                MicOSDRunner._bundled_availability = runtime.bundled_available()
-            return MicOSDRunner._bundled_availability
-
-    @staticmethod
-    def runtime_source() -> str:
-        """Return the selected overlay runtime for status output."""
-        if MicOSDRunner.x11_available():
-            return runtime.RUNTIME_X11
-        if MicOSDRunner._system_dependencies_available():
-            return runtime.RUNTIME_SYSTEM
-        if MicOSDRunner._bundled_dependencies_available():
-            return runtime.RUNTIME_BUNDLED
-        return runtime.RUNTIME_NONE
-
-    @staticmethod
-    def _layer_shell_ld_preload() -> str:
-        """The typelib's gtk4-layer-shell library; probe-confirmed paths are cached."""
-        cached = MicOSDRunner._layer_shell_preload
-        if cached and os.path.isfile(cached):
-            return cached
-        library = runtime.mapped_layer_shell_library()
-        if not library:
-            return runtime.layer_shell_path_search()
-        MicOSDRunner._layer_shell_preload = library
-        return library
-
-    @staticmethod
-    def _layer_shell_environment() -> dict:
-        """Build the child-only environment for the selected runtime."""
-        if MicOSDRunner._system_dependencies_available():
-            return runtime.gtk4_environment(
-                runtime.RUNTIME_SYSTEM, MicOSDRunner._layer_shell_ld_preload())
-        if visualizer_runtime.is_complete():
-            return runtime.gtk4_environment(runtime.RUNTIME_BUNDLED)
-        return runtime.gtk4_environment(runtime.RUNTIME_NONE)
-
-    @staticmethod
-    def x11_session() -> bool:
-        return _x11_session()
-
-    @staticmethod
-    def x11_available() -> bool:
-        """GTK3 and PyCairo import on X11. A subprocess keeps GTK3 out of here."""
-        with MicOSDRunner._bundled_availability_lock:
-            if MicOSDRunner._x11_availability is None:
-                MicOSDRunner._x11_availability = (
-                    MicOSDRunner.x11_session() and runtime.gtk3_available())
-            return MicOSDRunner._x11_availability
-
-    @staticmethod
-    def layer_shell_active() -> bool:
-        """Return True only if the running compositor supports the layer-shell
-        protocol (Hyprland, Niri, Sway, ...). False on GNOME/Mutter and on any
-        uncertainty, so callers safely fall back to a non-overlay status display.
-        """
-        try:
-            env = MicOSDRunner._layer_shell_environment()
-        except LayerShellResolutionError as e:
-            print(f"[MIC-OSD] Layer shell unusable: {e}", flush=True)
-            return False
-        return runtime.layer_shell_supported(env)
-
-    @staticmethod
-    def _get_distro_packages() -> tuple:
-        """Return (gtk_pkg, layer_shell_pkg) package names for current distro."""
-        return runtime.distro_packages()
-
-    @staticmethod
-    def get_unavailable_reason() -> str:
-        """Get reason why mic-osd is unavailable."""
-        if MicOSDRunner.x11_session():
-            return "" if MicOSDRunner.x11_available() else runtime.X11_REASON
-        status, detail = MicOSDRunner._system_status()
-        bundled = status == 'layer-shell' and MicOSDRunner._bundled_dependencies_available()
-        return runtime.gtk4_reason(status, bundled, detail, MicOSDRunner._get_distro_packages())
-    
-    def _daemon_backend(self):
-        """'gtk3' on X11, else 'gtk4'. Cached, so show() never probes."""
-        if MicOSDRunner.x11_available():
-            return 'gtk3'
-        return 'gtk4'
+    def is_available(self) -> bool:
+        """An overlay backend was selected for this session."""
+        return self.assessment.backend is not None
 
     def _ensure_daemon(self) -> bool:
         """Ensure the daemon process is running."""
@@ -235,16 +132,15 @@ sys.argv = ['mic-osd', '--daemon', '--viz', '{self._style}']
 sys.exit(main())
 """
 
-        backend = self._daemon_backend()
-        if backend == 'gtk3':
-            env = os.environ.copy()
-        else:
-            try:
-                env = self._layer_shell_environment()
-            except LayerShellResolutionError as e:
-                print(f"[MIC-OSD] Not starting daemon: {e}", flush=True)
-                return False
-        env['HYPRWHSPR_MIC_OSD_BACKEND'] = backend
+        assessment = self.assessment
+        if assessment.backend is None:
+            print(f"[MIC-OSD] Not starting daemon: {assessment.reason}", flush=True)
+            return False
+        try:
+            env = runtime.child_environment(assessment)
+        except LayerShellResolutionError as e:
+            print(f"[MIC-OSD] Not starting daemon: {e}", flush=True)
+            return False
         env['HYPRWHSPR_MIC_OSD_DAEMON'] = '1'
 
         try:

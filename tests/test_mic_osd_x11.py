@@ -1,9 +1,9 @@
 """X11 mic-OSD overlay."""
 
+import contextlib
 import importlib
 from contextlib import contextmanager
 import io
-import os
 import sys
 import tempfile
 import types
@@ -14,9 +14,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from mic_osd.backend import GTK3, GTK4, bottom_center, select_backend
+from mic_osd.backend import GTK3, GTK4, bottom_center, select_backend, x11_session
 from mic_osd.runner import MicOSDRunner
 import mic_osd.runner as runner_module
+import mic_osd.runtime as runtime
 from src.cli import mic_osd as mic_osd_cli
 
 
@@ -59,65 +60,56 @@ class OverlayPlacementTests(unittest.TestCase):
         self.assertEqual(bottom_center(geometry, 400, 68, 130), (0, 0))
 
 
-class X11AvailabilityTests(unittest.TestCase):
-    def setUp(self):
-        patcher = mock.patch.object(MicOSDRunner, "_x11_availability", None)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+def _facts_from(*, x11=False, gtk3=False, system=None, bundled=False):
+    """Patch the runtime probes; returns the patchers' context."""
+    return [
+        mock.patch.object(runtime, "x11_session", return_value=x11),
+        mock.patch.object(runtime, "gtk3_available", return_value=gtk3),
+        mock.patch.object(runtime, "system_status", return_value=(system, "")),
+        mock.patch.object(runtime, "bundled_available", return_value=bundled),
+        mock.patch.object(runtime, "distro_packages", return_value=("gtk-package", "layer-package")),
+    ]
 
+
+def _assess(**facts):
+    with contextlib.ExitStack() as stack:
+        for patcher in _facts_from(**facts):
+            stack.enter_context(patcher)
+        return runtime.assess_dependencies({})
+
+
+class X11AvailabilityTests(unittest.TestCase):
     def test_session_needs_a_display_and_no_wayland(self):
-        with mock.patch.dict(os.environ, {'DISPLAY': ':0'}, clear=True):
-            self.assertTrue(MicOSDRunner.x11_session())
-        with mock.patch.dict(
-                os.environ, {'DISPLAY': ':0', 'WAYLAND_DISPLAY': 'wayland-1'}, clear=True):
-            self.assertFalse(MicOSDRunner.x11_session())
-        with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertFalse(MicOSDRunner.x11_session())
+        self.assertTrue(x11_session({'DISPLAY': ':0'}))
+        self.assertFalse(x11_session({'DISPLAY': ':0', 'WAYLAND_DISPLAY': 'wayland-1'}))
+        self.assertFalse(x11_session({}))
 
     def test_no_probe_without_an_x11_session(self):
-        with mock.patch.object(MicOSDRunner, "x11_session", return_value=False), \
-                mock.patch("mic_osd.runner.subprocess.run") as run:
-            self.assertFalse(MicOSDRunner.x11_available())
-        run.assert_not_called()
+        with mock.patch.object(runtime, "gtk3_available") as gtk3, \
+                mock.patch.object(runtime, "system_status", return_value=("ok", "")):
+            runtime.dependency_facts({'WAYLAND_DISPLAY': 'wayland-1', 'DISPLAY': ':0'})
+        gtk3.assert_not_called()
 
     def test_probe_accepts_a_gtk3_environment(self):
         result = types.SimpleNamespace(stdout=b"1\n", returncode=0)
-        with mock.patch.object(MicOSDRunner, "x11_session", return_value=True), \
-                mock.patch("mic_osd.runner.subprocess.run", return_value=result):
-            self.assertTrue(MicOSDRunner.x11_available())
+        with mock.patch("mic_osd.runtime.subprocess.run", return_value=result):
+            self.assertTrue(runtime.gtk3_available({'DISPLAY': ':0'}))
 
     def test_probe_rejects_a_missing_gtk3(self):
         result = types.SimpleNamespace(stdout=b"", returncode=1)
-        with mock.patch.object(MicOSDRunner, "x11_session", return_value=True), \
-                mock.patch("mic_osd.runner.subprocess.run", return_value=result):
-            self.assertFalse(MicOSDRunner.x11_available())
+        with mock.patch("mic_osd.runtime.subprocess.run", return_value=result):
+            self.assertFalse(runtime.gtk3_available({'DISPLAY': ':0'}))
 
 
 class AvailabilityTests(unittest.TestCase):
     def test_x11_alone_makes_the_overlay_available(self):
-        with mock.patch.object(MicOSDRunner, "_system_dependencies_available",
-                               return_value=False), \
-                mock.patch.object(MicOSDRunner, "_bundled_dependencies_available",
-                                  return_value=False), \
-                mock.patch.object(MicOSDRunner, "x11_available", return_value=True):
-            self.assertTrue(MicOSDRunner.is_available())
+        self.assertTrue(_assess(x11=True, gtk3=True, system="gtk4").available)
 
     def test_unavailable_without_layer_shell_and_x11(self):
-        with mock.patch.object(MicOSDRunner, "_system_dependencies_available",
-                               return_value=False), \
-                mock.patch.object(MicOSDRunner, "_bundled_dependencies_available",
-                                  return_value=False), \
-                mock.patch.object(MicOSDRunner, "x11_available", return_value=False):
-            self.assertFalse(MicOSDRunner.is_available())
-
+        self.assertFalse(_assess(x11=False, gtk3=False, system="layer-shell").available)
 
     def test_x11_reports_its_runtime(self):
-        with mock.patch.object(MicOSDRunner, "x11_available", return_value=True), \
-                mock.patch.object(MicOSDRunner, "_system_dependencies_available",
-                                  return_value=False), \
-                mock.patch.object(MicOSDRunner, "_bundled_dependencies_available",
-                                  return_value=False):
-            self.assertEqual(MicOSDRunner.runtime_source(), "X11 GTK3")
+        self.assertEqual(_assess(x11=True, gtk3=True, system="gtk4").runtime, "X11 GTK3")
 
     def test_cli_accepts_a_gtk3_only_setup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,33 +122,26 @@ class AvailabilityTests(unittest.TestCase):
                 mic_osd_cli._query_mic_osd_availability()
         code = run.call_args.args[0][2]
         output = io.StringIO()
-        with mock.patch.object(MicOSDRunner, "x11_available", return_value=True), \
-                mock.patch("sys.stdout", output):
+        with contextlib.ExitStack() as stack:
+            for patcher in _facts_from(x11=True, gtk3=True, system="gtk4"):
+                stack.enter_context(patcher)
+            stack.enter_context(mock.patch("sys.stdout", output))
             exec(code, {})
         self.assertEqual(output.getvalue().strip(), "AVAILABLE: X11 GTK3")
 
     def test_missing_x11_dependencies_name_gtk3_without_layer_shell_advice(self):
-        with mock.patch.object(MicOSDRunner, "x11_session", return_value=True), \
-                mock.patch.object(MicOSDRunner, "x11_available", return_value=False):
-            reason = MicOSDRunner.get_unavailable_reason()
+        reason = _assess(x11=True, gtk3=False, system="layer-shell").reason
         self.assertIn("GTK3", reason)
         self.assertIn("PyCairo", reason)
         self.assertNotIn("GTK4", reason)
         self.assertNotIn("layer-shell", reason)
 
     def test_available_x11_has_no_dependency_error(self):
-        with mock.patch.object(MicOSDRunner, "x11_session", return_value=True), \
-                mock.patch.object(MicOSDRunner, "x11_available", return_value=True):
-            self.assertEqual(MicOSDRunner.get_unavailable_reason(), "")
+        self.assertEqual(_assess(x11=True, gtk3=True).reason, "")
 
     def test_wayland_keeps_layer_shell_dependency_advice(self):
-        with mock.patch.object(MicOSDRunner, '_system_status', return_value=('layer-shell', '')), \
-                mock.patch.object(MicOSDRunner, 'x11_session', return_value=False), \
-                mock.patch.object(MicOSDRunner, 'x11_available', return_value=False), \
-                mock.patch.object(MicOSDRunner, '_bundled_dependencies_available', return_value=False), \
-                mock.patch.object(MicOSDRunner, '_get_distro_packages', return_value=('gtk-package', 'layer-package')):
-            self.assertEqual(MicOSDRunner.get_unavailable_reason(),
-                             'gtk4-layer-shell not installed. Install: layer-package')
+        self.assertEqual(_assess(x11=False, system="layer-shell").reason,
+                         'gtk4-layer-shell not installed. Install: layer-package')
 
 
 class ClickThroughTests(unittest.TestCase):
@@ -216,16 +201,16 @@ class DaemonBackendTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _start(self, x11_available=False, layer_shell_error=None):
-        runner = MicOSDRunner()
-        if layer_shell_error is None:
-            layer_env = mock.Mock(return_value={"KEEP": "1"})
-        else:
-            layer_env = mock.Mock(side_effect=layer_shell_error)
-        with mock.patch.object(runner, "_layer_shell_environment", layer_env), \
-                mock.patch.object(MicOSDRunner, "x11_available",
-                                  return_value=x11_available), \
-                mock.patch.object(MicOSDRunner, "layer_shell_active",
+        deps = runtime.DependencyAssessment(
+            GTK3 if x11_available else GTK4, True,
+            runtime.RUNTIME_X11 if x11_available else runtime.RUNTIME_SYSTEM)
+        assessment = runtime.select_overlay(deps, layer_shell_error is None)
+        runner = MicOSDRunner(assessment=assessment)
+        with mock.patch.object(runtime, "assess_overlay",
+                               side_effect=AssertionError("reassessed")), \
+                mock.patch.object(runtime, "layer_shell_supported",
                                   side_effect=AssertionError("probed layer-shell")), \
+                mock.patch.object(runtime, "gtk4_environment", return_value={"KEEP": "1"}), \
                 mock.patch("mic_osd.runner.time.sleep"), \
                 mock.patch("mic_osd.runner.subprocess.Popen") as popen:
             popen.return_value.poll.return_value = None
@@ -238,6 +223,7 @@ class DaemonBackendTests(unittest.TestCase):
         env = popen.call_args.kwargs["env"]
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_BACKEND"], "gtk4")
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_DAEMON"], "1")
+        self.assertEqual(env["KEEP"], "1")
 
     def test_x11_without_layer_shell_uses_the_gtk3_backend(self):
         started, popen = self._start(x11_available=True)
@@ -245,6 +231,7 @@ class DaemonBackendTests(unittest.TestCase):
         env = popen.call_args.kwargs["env"]
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_BACKEND"], "gtk3")
         self.assertEqual(env["HYPRWHSPR_MIC_OSD_DAEMON"], "1")
+        self.assertNotIn("KEEP", env)
 
     def test_orphan_is_reused_without_a_probe(self):
         self.pid_file.write_text("4244")
@@ -254,9 +241,7 @@ class DaemonBackendTests(unittest.TestCase):
         self.assertEqual(popen.call_args.args[0], ['true'])
 
     def test_without_layer_shell_or_x11_no_daemon_starts(self):
-        started, popen = self._start(
-            layer_shell_error=runner_module.LayerShellResolutionError("no layer shell"),
-            x11_available=False,
-        )
+        with mock.patch("builtins.print"):
+            started, popen = self._start(layer_shell_error="no layer shell")
         self.assertFalse(started)
         popen.assert_not_called()

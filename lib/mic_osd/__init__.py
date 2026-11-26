@@ -9,5 +9,6 @@ __version__ = "0.1.0"
 
 from .runner import MicOSDRunner
 from .notification_presenter import NotificationPresenter
+from .runtime import assess_overlay
 
-__all__ = ["MicOSDRunner", "NotificationPresenter"]
+__all__ = ["MicOSDRunner", "NotificationPresenter", "assess_overlay"]

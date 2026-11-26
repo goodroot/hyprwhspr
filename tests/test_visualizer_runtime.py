@@ -64,50 +64,54 @@ class VisualizerRuntimeTests(unittest.TestCase):
             self.assertIn(str(root / "lib" / "libgtk4-layer-shell.so.0"), env["LD_PRELOAD"])
             self.assertIn("/old.so", env["LD_PRELOAD"])
 
+    def _overlay(self, environ, **run):
+        """Assess a supported Wayland session whose library probe answers `run`."""
+        with (
+            mock.patch.object(runtime_module, "system_status", return_value=("ok", "")),
+            mock.patch.object(runtime_module, "layer_shell_supported", return_value=True),
+            mock.patch.object(runtime_module.subprocess, "run", **run) as probe,
+            mock.patch("builtins.print"),
+        ):
+            return runtime_module.assess_overlay(environ), probe
+
     def test_system_runtime_takes_precedence_over_bundle(self):
         with (
-            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
-            mock.patch.object(MicOSDRunner, "_bundled_dependencies_available") as bundled,
-            mock.patch.object(MicOSDRunner, "x11_available", return_value=False),
+            mock.patch.object(runtime_module, "system_status", return_value=("ok", "")),
+            mock.patch.object(runtime_module, "bundled_available") as bundled,
         ):
-            self.assertTrue(MicOSDRunner.is_available())
-            self.assertEqual(MicOSDRunner.runtime_source(), "system")
+            deps = runtime_module.assess_dependencies({"WAYLAND_DISPLAY": "wayland-1"})
+        self.assertTrue(deps.available)
+        self.assertEqual(deps.runtime, "system")
         bundled.assert_not_called()
 
     def test_private_runtime_environment_is_used_for_layer_shell_child(self):
-        with (
-            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=False),
-            mock.patch.object(MicOSDRunner, "_layer_shell_ld_preload", return_value=""),
-            mock.patch.object(runner_module.visualizer_runtime, "is_complete", return_value=True),
-            mock.patch.object(
-                runner_module.visualizer_runtime,
-                "bundled_environment",
-                return_value={"PRIVATE_RUNTIME": "1"},
-            ),
+        with mock.patch.object(
+            runtime_module.visualizer_runtime,
+            "bundled_environment",
+            return_value={"PRIVATE_RUNTIME": "1"},
         ):
-            self.assertEqual(MicOSDRunner._layer_shell_environment(), {"PRIVATE_RUNTIME": "1"})
+            self.assertEqual(
+                runtime_module.gtk4_environment(runtime_module.RUNTIME_BUNDLED, "", {}),
+                {"PRIVATE_RUNTIME": "1"},
+            )
 
-    def test_bundled_availability_probe_is_memoized(self):
+    def test_bundled_availability_probe_runs_once_per_assessment(self):
         completed = mock.Mock(returncode=0)
         with (
-            mock.patch.object(MicOSDRunner, "_bundled_availability", None),
-            mock.patch.object(runner_module.visualizer_runtime, "is_complete", return_value=True),
-            mock.patch.object(runner_module.subprocess, "run", return_value=completed) as run,
+            mock.patch.object(runtime_module, "system_status", return_value=("layer-shell", "")),
+            mock.patch.object(runtime_module, "layer_shell_supported", return_value=True),
+            mock.patch.object(runtime_module.visualizer_runtime, "is_complete", return_value=True),
+            mock.patch.object(runtime_module.subprocess, "run", return_value=completed) as run,
         ):
-            self.assertTrue(MicOSDRunner._bundled_dependencies_available())
-            self.assertTrue(MicOSDRunner._bundled_dependencies_available())
+            assessment = runtime_module.assess_overlay({"WAYLAND_DISPLAY": "wayland-1"})
+        self.assertEqual(assessment.dependencies.runtime, runtime_module.RUNTIME_BUNDLED)
         run.assert_called_once()
 
     def test_system_runtime_does_not_mix_in_bundle(self):
-        with (
-            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
-            mock.patch.object(MicOSDRunner, "_layer_shell_ld_preload", return_value="/system/libgtk4-layer-shell.so.0"),
-            mock.patch.object(runner_module.visualizer_runtime, "is_complete", return_value=True),
-            mock.patch.object(runner_module.visualizer_runtime, "bundled_environment") as bundled,
-            mock.patch.object(runner_module.os, "environ", {"SYSTEM": "1"}),
-        ):
+        with mock.patch.object(runtime_module.visualizer_runtime, "bundled_environment") as bundled:
             self.assertEqual(
-                MicOSDRunner._layer_shell_environment(),
+                runtime_module.gtk4_environment(
+                    runtime_module.RUNTIME_SYSTEM, "/system/libgtk4-layer-shell.so.0", {"SYSTEM": "1"}),
                 {"SYSTEM": "1", "LD_PRELOAD": "/system/libgtk4-layer-shell.so.0"},
             )
         bundled.assert_not_called()
@@ -118,108 +122,107 @@ class VisualizerRuntimeTests(unittest.TestCase):
             stdout="/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0\n",
             stderr="",
         )
-        with (
-            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
-            mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
-            mock.patch.object(runner_module.subprocess, "run", return_value=probe),
-            mock.patch.object(runner_module.os, "environ", {"LD_PRELOAD": "/old.so"}),
-        ):
-            env = MicOSDRunner._layer_shell_environment()
+        environ = {"LD_PRELOAD": "/old.so"}
+        assessment, _ = self._overlay(environ, return_value=probe)
+        with mock.patch.object(runtime_module.os.path, "isfile", return_value=True):
+            env = runtime_module.child_environment(assessment, environ)
         self.assertEqual(
             env["LD_PRELOAD"],
             "/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0 /old.so",
         )
 
-    def test_confirmed_layer_shell_library_is_memoized(self):
+    def test_assessed_layer_shell_library_is_reused_by_daemon_restarts(self):
         probe = mock.Mock(returncode=0, stdout="/usr/lib/libgtk4-layer-shell.so.1.3.0\n", stderr="")
+        assessment, run = self._overlay({}, return_value=probe)
         with (
-            mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
-            mock.patch.object(runner_module.os.path, "isfile", return_value=True),
-            mock.patch.object(runner_module.subprocess, "run", return_value=probe) as run,
+            mock.patch.object(runtime_module.os.path, "isfile", return_value=True),
+            mock.patch.object(runtime_module.subprocess, "run") as rerun,
         ):
             for _ in range(2):
-                self.assertEqual(MicOSDRunner._layer_shell_ld_preload(), "/usr/lib/libgtk4-layer-shell.so.1.3.0")
+                env = runtime_module.child_environment(assessment, {})
+                self.assertEqual(env["LD_PRELOAD"], "/usr/lib/libgtk4-layer-shell.so.1.3.0")
         run.assert_called_once()
+        rerun.assert_not_called()
 
-    def test_cached_layer_shell_library_is_reprobed_once_removed(self):
+    def test_assessed_layer_shell_library_is_reprobed_once_removed(self):
+        assessment = runtime_module.select_overlay(
+            runtime_module.DependencyAssessment("gtk4", True, runtime_module.RUNTIME_SYSTEM),
+            True, layer_shell_library="/usr/lib/libgtk4-layer-shell.so.1.3.0")
         probe = mock.Mock(returncode=0, stdout="/usr/lib/libgtk4-layer-shell.so.1.4.0\n", stderr="")
         with (
-            mock.patch.object(MicOSDRunner, "_layer_shell_preload", "/usr/lib/libgtk4-layer-shell.so.1.3.0"),
-            mock.patch.object(runner_module.os.path, "isfile", return_value=False),
-            mock.patch.object(runner_module.subprocess, "run", return_value=probe),
+            mock.patch.object(runtime_module.os.path, "isfile", return_value=False),
+            mock.patch.object(runtime_module.subprocess, "run", return_value=probe),
         ):
-            self.assertEqual(MicOSDRunner._layer_shell_ld_preload(), "/usr/lib/libgtk4-layer-shell.so.1.4.0")
+            env = runtime_module.child_environment(assessment, {})
+        self.assertEqual(env["LD_PRELOAD"], "/usr/lib/libgtk4-layer-shell.so.1.4.0")
 
     def test_inherited_layer_shell_preload_is_replaced(self):
         probe = mock.Mock(returncode=0, stdout="/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0\n", stderr="")
         inherited = {"LD_PRELOAD": "/usr/lib/libgtk4-layer-shell.so:/old.so"}
-        with (
-            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
-            mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
-            mock.patch.object(runner_module.subprocess, "run", return_value=probe) as run,
-            mock.patch.object(runner_module.os, "environ", inherited),
-        ):
-            env = MicOSDRunner._layer_shell_environment()
+        assessment, run = self._overlay(inherited, return_value=probe)
+        with mock.patch.object(runtime_module.os.path, "isfile", return_value=True):
+            env = runtime_module.child_environment(assessment, inherited)
         self.assertEqual(run.call_args.kwargs["env"]["LD_PRELOAD"], "/old.so")
         self.assertEqual(
             env["LD_PRELOAD"],
             "/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so.1.3.0 /old.so",
         )
+        self.assertEqual(inherited["LD_PRELOAD"], "/usr/lib/libgtk4-layer-shell.so:/old.so")
 
     def test_ambiguous_layer_shell_library_raises(self):
         probe = mock.Mock(returncode=0, stdout="/a/libgtk4-layer-shell.so\n/b/libgtk4-layer-shell.so.0\n", stderr="")
-        with (
-            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
-            mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
-            mock.patch.object(runner_module.subprocess, "run", return_value=probe),
-        ):
-            with self.assertRaises(runner_module.LayerShellResolutionError):
-                MicOSDRunner._layer_shell_environment()
+        with mock.patch.object(runtime_module.subprocess, "run", return_value=probe):
+            with self.assertRaises(runtime_module.LayerShellResolutionError):
+                runtime_module.resolve_layer_shell_library({})
+        assessment, _ = self._overlay({}, return_value=probe)
+        self.assertIsNone(assessment.backend)
+        self.assertIn("expected one mapped gtk4-layer-shell library", assessment.reason)
 
     def test_failed_layer_shell_probe_falls_back_to_path_search(self):
         cases = {
             "probe failed": {"return_value": mock.Mock(returncode=1, stdout="", stderr="ValueError: Namespace not available")},
             "nothing mapped": {"return_value": mock.Mock(returncode=0, stdout="\n", stderr="")},
-            "probe timed out": {"side_effect": runner_module.subprocess.TimeoutExpired("python3", 5)},
+            "probe timed out": {"side_effect": runtime_module.subprocess.TimeoutExpired("python3", 5)},
         }
         for name, run in cases.items():
             with (
                 self.subTest(name),
-                mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
-                mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
-                mock.patch.object(runner_module.subprocess, "run", **run),
                 mock.patch.object(runtime_module, "layer_shell_path_search", return_value="/usr/lib/libgtk4-layer-shell.so.1.3.0"),
-                mock.patch.object(runner_module.os, "environ", {}),
-                mock.patch("builtins.print"),
             ):
-                self.assertEqual(
-                    MicOSDRunner._layer_shell_environment(),
-                    {"LD_PRELOAD": "/usr/lib/libgtk4-layer-shell.so.1.3.0"},
-                )
+                assessment, _ = self._overlay({}, **run)
+                with mock.patch.object(runtime_module.os.path, "isfile", return_value=True):
+                    self.assertEqual(
+                        runtime_module.child_environment(assessment, {}),
+                        {"LD_PRELOAD": "/usr/lib/libgtk4-layer-shell.so.1.3.0",
+                         "HYPRWHSPR_MIC_OSD_BACKEND": "gtk4"},
+                    )
 
     def test_no_layer_shell_library_found_leaves_ld_preload_alone(self):
-        with (
-            mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
-            mock.patch.object(MicOSDRunner, "_layer_shell_ld_preload", return_value=""),
-            mock.patch.object(runner_module.os, "environ", {"SYSTEM": "1"}),
-        ):
-            self.assertEqual(MicOSDRunner._layer_shell_environment(), {"SYSTEM": "1"})
+        self.assertEqual(
+            runtime_module.gtk4_environment(runtime_module.RUNTIME_SYSTEM, "", {"SYSTEM": "1"}),
+            {"SYSTEM": "1"},
+        )
 
     def test_daemon_is_not_launched_with_an_unresolved_layer_shell_library(self):
+        unresolved = runtime_module.select_overlay(
+            runtime_module.DependencyAssessment("gtk4", True, runtime_module.RUNTIME_SYSTEM),
+            False, "layer shell unusable: two copies")
+        vanished = runtime_module.select_overlay(
+            runtime_module.DependencyAssessment("gtk4", True, runtime_module.RUNTIME_SYSTEM),
+            True, layer_shell_library="/gone/libgtk4-layer-shell.so")
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 mock.patch.object(runner_module, "MIC_OSD_PID_FILE", Path(tmp) / "mic_osd.pid"),
                 mock.patch.object(
-                    MicOSDRunner,
-                    "_layer_shell_environment",
-                    side_effect=runner_module.LayerShellResolutionError("two copies"),
+                    runtime_module,
+                    "resolve_layer_shell_library",
+                    side_effect=runtime_module.LayerShellResolutionError("two copies"),
                 ),
-                mock.patch.object(MicOSDRunner, "x11_available", return_value=False),
                 mock.patch.object(runner_module.subprocess, "Popen") as popen,
                 mock.patch("builtins.print"),
             ):
-                self.assertFalse(MicOSDRunner()._ensure_daemon())
-                self.assertFalse(MicOSDRunner.layer_shell_active())
+                self.assertFalse(MicOSDRunner(assessment=unresolved)._ensure_daemon())
+                self.assertFalse(MicOSDRunner(assessment=vanished)._ensure_daemon())
             popen.assert_not_called()
 
     def test_download_requires_matching_pinned_checksum(self):
@@ -381,8 +384,8 @@ class VisualizerRuntimeTests(unittest.TestCase):
                     (True, "", "bundled 1.3.0"),
                 )
             code = run.call_args.args[0][2]
-            self.assertEqual(code.count("runtime_source()"), 1)
-            self.assertNotIn("is_available()", code)
+            self.assertEqual(code.count("assess_dependencies()"), 1)
+            self.assertNotIn("assess_overlay", code)
             self.assertEqual(run.call_args.kwargs["timeout"], 10)
 
     def test_missing_visualizer_requirements_keeps_nothing_to_do_contract(self):

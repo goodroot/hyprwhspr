@@ -31,8 +31,8 @@ let
     from gi.repository import Gtk, Gtk4LayerShell
     assert Gtk.get_major_version() == 4
     Gtk4LayerShell.get_major_version()
-    from mic_osd.runner import MicOSDRunner
-    assert MicOSDRunner._layer_shell_ld_preload().startswith('/nix/store/')
+    from mic_osd.runtime import resolve_layer_shell_library
+    assert resolve_layer_shell_library().startswith('/nix/store/')
     Path(os.environ['XDG_RUNTIME_DIR'], 'probe-ok').touch()
   '';
   probeEditor = pkgs.writeShellScript "hyprwhspr-runtime-probe" ''

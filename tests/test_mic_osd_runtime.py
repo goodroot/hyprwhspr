@@ -40,21 +40,17 @@ class SystemProbeTests(unittest.TestCase):
         self.assertIn("timed out", detail)
 
     def test_probe_failure_reason_carries_the_detail(self):
-        reason = runtime.gtk4_reason(None, False, "Segmentation fault", ("g", "l"))
+        reason = runtime.gtk4_reason(None, "Segmentation fault", ("g", "l"))
         self.assertEqual(reason, "GTK4 dependency check failed: Segmentation fault")
 
     def test_reasons_name_packages(self):
         packages = ("gtk-pkg", "layer-pkg")
-        self.assertEqual(runtime.gtk4_reason("cairo", False, packages=packages),
+        self.assertEqual(runtime.gtk4_reason("cairo", packages=packages),
                          "PyCairo bindings not installed. Install: gtk-pkg")
-        self.assertEqual(runtime.gtk4_reason("gtk4", False, packages=packages),
+        self.assertEqual(runtime.gtk4_reason("gtk4", packages=packages),
                          "GTK4 bindings not installed. Install: gtk-pkg")
-        self.assertEqual(runtime.gtk4_reason("layer-shell", False, packages=packages),
+        self.assertEqual(runtime.gtk4_reason("layer-shell", packages=packages),
                          "gtk4-layer-shell not installed. Install: layer-pkg")
-
-    def test_bundle_covers_only_a_missing_layer_shell(self):
-        self.assertEqual(runtime.gtk4_reason("layer-shell", True), "")
-        self.assertNotEqual(runtime.gtk4_reason("gtk4", True, packages=("g", "l")), "")
 
 
 class EnvironmentTests(unittest.TestCase):

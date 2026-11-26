@@ -4,12 +4,16 @@ import glob
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 try:
     from ..src import visualizer_runtime
 except ImportError:
     from src import visualizer_runtime
+
+from .backend import GTK3, GTK4, x11_session
 
 PROBE_TIMEOUT = 5
 
@@ -232,9 +236,9 @@ def distro_packages() -> tuple:
     return ('python-gobject python-cairo gtk4', 'gtk4-layer-shell')
 
 
-def gtk4_reason(status, bundled: bool, detail: str = "", packages=None) -> str:
-    """Why the GTK4 overlay can't run, or '' if it can."""
-    if status == 'ok' or (status == 'layer-shell' and bundled):
+def gtk4_reason(status, detail: str = "", packages=None) -> str:
+    """Why the system GTK4 overlay can't run, or '' if it can."""
+    if status == 'ok':
         return ""
     gtk_pkg, layer_pkg = packages or distro_packages()
     if status == 'cairo':
@@ -244,3 +248,108 @@ def gtk4_reason(status, bundled: bool, detail: str = "", packages=None) -> str:
     if status == 'layer-shell':
         return f"gtk4-layer-shell not installed. Install: {layer_pkg}"
     return f"GTK4 dependency check failed: {detail or 'unknown error'}"
+
+
+@dataclass(frozen=True)
+class DependencyFacts:
+    """What the dependency probes observed. Unprobed facts keep their defaults."""
+    x11_session: bool
+    gtk3: bool = False
+    system: Optional[str] = None
+    system_detail: str = ""
+    bundled: bool = False
+
+
+@dataclass(frozen=True)
+class DependencyAssessment:
+    """Whether an overlay runtime is installed. Says nothing about the compositor."""
+    backend: str
+    available: bool
+    runtime: str
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class OverlayAssessment:
+    """Whether this session gets an overlay, and on which backend."""
+    dependencies: DependencyAssessment
+    session_supported: bool
+    backend: Optional[str]
+    reason: str = ""
+    layer_shell_library: str = ""
+
+
+def dependency_facts(environ=None) -> DependencyFacts:
+    """Probe only what can change the result: GTK3 first on X11, then system, then bundle."""
+    env = _base(environ)
+    x11 = x11_session(env)
+    if x11 and gtk3_available(env):
+        return DependencyFacts(x11_session=True, gtk3=True)
+    status, detail = system_status(env)
+    bundled = status != 'ok' and bundled_available(env)
+    return DependencyFacts(x11_session=x11, system=status, system_detail=detail, bundled=bundled)
+
+
+def derive_dependencies(facts: DependencyFacts, packages=None) -> DependencyAssessment:
+    """System GTK4 outranks the bundle; X11 prefers GTK3."""
+    if facts.x11_session and facts.gtk3:
+        return DependencyAssessment(GTK3, True, RUNTIME_X11)
+    if facts.system == 'ok':
+        return DependencyAssessment(GTK4, True, RUNTIME_SYSTEM)
+    if facts.bundled:
+        return DependencyAssessment(GTK4, True, RUNTIME_BUNDLED)
+    if facts.x11_session:
+        return DependencyAssessment(GTK3, False, RUNTIME_NONE, X11_REASON)
+    reason = gtk4_reason(facts.system, facts.system_detail, packages)
+    return DependencyAssessment(GTK4, False, RUNTIME_NONE, reason)
+
+
+def select_overlay(dependencies: DependencyAssessment, session_supported: bool,
+                   reason: str = "", layer_shell_library: str = "") -> OverlayAssessment:
+    """An overlay needs both its dependencies and a session that can host it."""
+    if not dependencies.available:
+        return OverlayAssessment(dependencies, session_supported, None, dependencies.reason)
+    if not session_supported:
+        return OverlayAssessment(dependencies, False, None, reason or "layer-shell not supported")
+    return OverlayAssessment(dependencies, True, dependencies.backend, "", layer_shell_library)
+
+
+def assess_dependencies(environ=None) -> DependencyAssessment:
+    """Fresh dependency probes; never asks the compositor."""
+    return derive_dependencies(dependency_facts(environ))
+
+
+def assess_overlay(environ=None) -> OverlayAssessment:
+    """Fresh dependency and session probes, settled into one backend or none."""
+    env = _base(environ)
+    dependencies = assess_dependencies(env)
+    if not dependencies.available:
+        return select_overlay(dependencies, False)
+    if dependencies.backend == GTK3:
+        return select_overlay(dependencies, x11_session(env))
+    library = ""
+    if dependencies.runtime == RUNTIME_SYSTEM:
+        try:
+            library = resolve_layer_shell_library(env)
+        except LayerShellResolutionError as e:
+            return select_overlay(dependencies, False, f"layer shell unusable: {e}")
+    supported = layer_shell_supported(gtk4_environment(dependencies.runtime, library, env))
+    return select_overlay(dependencies, supported, layer_shell_library=library)
+
+
+def child_environment(assessment: OverlayAssessment, environ=None) -> dict:
+    """A fresh daemon environment for the selected backend.
+
+    Raises LayerShellResolutionError if the assessed library vanished and its
+    replacement is ambiguous.
+    """
+    if assessment.backend is None:
+        raise ValueError(f"no overlay backend selected: {assessment.reason}")
+    env = _base(environ)
+    if assessment.backend == GTK4:
+        library = assessment.layer_shell_library
+        if library and not os.path.isfile(library):
+            library = resolve_layer_shell_library(env)
+        env = gtk4_environment(assessment.dependencies.runtime, library, env)
+    env['HYPRWHSPR_MIC_OSD_BACKEND'] = assessment.backend
+    return env

@@ -37,12 +37,12 @@ def _query_mic_osd_availability():
             check_code = f"""
 import sys
 sys.path.insert(0, {lib_path_str})
-from mic_osd import MicOSDRunner
-source = MicOSDRunner.runtime_source()
-if source != 'unavailable':
-    print('AVAILABLE:', source)
+from mic_osd.runtime import assess_dependencies
+dependencies = assess_dependencies()
+if dependencies.available:
+    print('AVAILABLE:', dependencies.runtime)
 else:
-    print('UNAVAILABLE:', MicOSDRunner.get_unavailable_reason())
+    print('UNAVAILABLE:', dependencies.reason)
 """
             result = subprocess.run(
                 [str(venv_python), '-c', check_code],
@@ -67,14 +67,13 @@ else:
     try:
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-        from mic_osd import MicOSDRunner
-        
-        if MicOSDRunner.is_available():
-            return True, "", MicOSDRunner.runtime_source()
-        else:
-            return False, MicOSDRunner.get_unavailable_reason(), "unavailable"
+        from mic_osd.runtime import assess_dependencies
     except ImportError:
         return False, "mic-osd module not found", "unavailable"
+    dependencies = assess_dependencies()
+    if dependencies.available:
+        return True, "", dependencies.runtime
+    return False, dependencies.reason, "unavailable"
 
 
 def _check_mic_osd_availability():

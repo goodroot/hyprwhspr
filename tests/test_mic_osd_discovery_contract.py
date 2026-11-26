@@ -114,10 +114,6 @@ class FakeHost:
                                           "FAKE_BUNDLED": "1"}))
         stack.enter_context(mock.patch.object(
             mic_osd_cli, "VENV_DIR", Path(tmp) / "no-venv"))
-        for cache in ("_bundled_availability", "_x11_availability", "_layer_shell_preload",
-                      "_system_availability"):
-            if hasattr(MicOSDRunner, cache):
-                stack.enter_context(mock.patch.object(MicOSDRunner, cache, None))
         return self
 
     @property
