@@ -5,7 +5,6 @@ Spawns mic-osd once in daemon mode, then uses SIGUSR1/SIGUSR2 to show/hide.
 This eliminates subprocess spawn latency on each recording.
 """
 
-import glob
 import subprocess
 import signal
 import sys
@@ -34,9 +33,8 @@ try:
 except ImportError:
     from src import visualizer_runtime
 
-
-class LayerShellResolutionError(RuntimeError):
-    pass
+from . import runtime
+from .runtime import LayerShellResolutionError
 
 
 class MicOSDRunner:
@@ -52,6 +50,7 @@ class MicOSDRunner:
     _bundled_availability = None
     _bundled_availability_lock = threading.Lock()
     _x11_availability = None
+    _system_availability = None
     _layer_shell_preload = None  # probe-confirmed path; fallbacks aren't cached
 
     def __init__(self, level_source=None, style='waveform'):
@@ -92,133 +91,55 @@ class MicOSDRunner:
         return MicOSDRunner.x11_available()
 
     @staticmethod
+    def _system_status() -> tuple:
+        with MicOSDRunner._bundled_availability_lock:
+            if MicOSDRunner._system_availability is None:
+                MicOSDRunner._system_availability = runtime.system_status()
+            return MicOSDRunner._system_availability
+
+    @staticmethod
     def _system_dependencies_available() -> bool:
-        try:
-            import cairo  # noqa: F401
-            import gi
-            gi.require_version('Gtk', '4.0')
-            gi.require_version('Gtk4LayerShell', '1.0')
-            return True
-        except (ImportError, ValueError):
-            return False
+        return MicOSDRunner._system_status()[0] == 'ok'
 
     @staticmethod
     def _bundled_dependencies_available() -> bool:
         with MicOSDRunner._bundled_availability_lock:
-            if MicOSDRunner._bundled_availability is not None:
-                return MicOSDRunner._bundled_availability
-            available = False
-            if visualizer_runtime.is_complete():
-                probe = (
-                    "import cairo, gi;"
-                    "gi.require_version('Gtk', '4.0');"
-                    "gi.require_version('Gtk4LayerShell', '1.0');"
-                    "from gi.repository import Gtk, Gtk4LayerShell"
-                )
-                try:
-                    result = subprocess.run(
-                        [sys.executable or 'python3', '-c', probe],
-                        env=visualizer_runtime.bundled_environment(),
-                        capture_output=True, timeout=5,
-                    )
-                    available = result.returncode == 0
-                except Exception:
-                    pass
-            MicOSDRunner._bundled_availability = available
-            return available
+            if MicOSDRunner._bundled_availability is None:
+                MicOSDRunner._bundled_availability = runtime.bundled_available()
+            return MicOSDRunner._bundled_availability
 
     @staticmethod
     def runtime_source() -> str:
         """Return the selected overlay runtime for status output."""
         if MicOSDRunner.x11_available():
-            return "X11 GTK3"
+            return runtime.RUNTIME_X11
         if MicOSDRunner._system_dependencies_available():
-            return "system"
+            return runtime.RUNTIME_SYSTEM
         if MicOSDRunner._bundled_dependencies_available():
-            return f"bundled {visualizer_runtime.GTK4_LAYER_SHELL_VERSION}"
-        return "unavailable"
-    
+            return runtime.RUNTIME_BUNDLED
+        return runtime.RUNTIME_NONE
+
     @staticmethod
     def _layer_shell_ld_preload() -> str:
-        """Resolve the gtk4-layer-shell library that the Gtk4LayerShell typelib loads.
-
-        The preload must be that exact file. A second copy elsewhere on the
-        system (Ghostty's package, for one, installs /usr/lib/libgtk4-layer-shell.so)
-        keeps its own state, so the typelib's copy never hooks libwayland,
-        init_for_window() fails, and the OSD becomes an ordinary toplevel that
-        takes keyboard focus from the window dictation should paste into.
-
-        The library is loaded lazily, so the probe calls into it before reading
-        its own mappings. Inherited layer-shell preloads are dropped so the probe
-        sees only the typelib's copy. A failed probe falls back to the path
-        search rather than disabling the overlay.
-        """
+        """The typelib's gtk4-layer-shell library; probe-confirmed paths are cached."""
         cached = MicOSDRunner._layer_shell_preload
         if cached and os.path.isfile(cached):
             return cached
-        probe = (
-            "import gi; gi.require_version('Gtk4LayerShell', '1.0');"
-            "from gi.repository import Gtk4LayerShell;"
-            "Gtk4LayerShell.get_major_version();"
-            "print(*{line.split(None, 5)[5].strip() for line in open('/proc/self/maps')"
-            " if 'libgtk4-layer-shell' in line}, sep='\\n')"
-        )
-        env = os.environ.copy()
-        env['LD_PRELOAD'] = MicOSDRunner._without_layer_shell_preload(env.get('LD_PRELOAD', ''))
-        try:
-            result = subprocess.run(
-                [sys.executable or 'python3', '-c', probe],
-                env=env, capture_output=True, text=True, errors='replace', timeout=5,
-            )
-        except (OSError, subprocess.SubprocessError) as e:
-            print(f"[MIC-OSD] layer-shell library probe failed: {e}", flush=True)
-            return MicOSDRunner._layer_shell_path_search()
-        libraries = [line for line in result.stdout.splitlines() if line.strip()]
-        if result.returncode != 0 or not libraries:
-            detail = (result.stderr.strip().splitlines() or ['no library mapped'])[-1]
-            print(f"[MIC-OSD] layer-shell library probe failed: {detail}", flush=True)
-            return MicOSDRunner._layer_shell_path_search()
-        if len(libraries) > 1:
-            raise LayerShellResolutionError(
-                f"expected one mapped gtk4-layer-shell library, found {libraries}"
-            )
-        MicOSDRunner._layer_shell_preload = libraries[0]
-        return libraries[0]
-
-    @staticmethod
-    def _without_layer_shell_preload(value: str) -> str:
-        """Drop gtk4-layer-shell entries from an LD_PRELOAD value."""
-        entries = value.replace(':', ' ').split()
-        return ' '.join(e for e in entries if 'libgtk4-layer-shell' not in os.path.basename(e))
-
-    @staticmethod
-    def _layer_shell_path_search() -> str:
-        """Fallback: first gtk4-layer-shell .so in common library paths."""
-        for pattern in [
-            '/usr/lib64/libgtk4-layer-shell.so*',
-            '/usr/lib/libgtk4-layer-shell.so*',
-            '/usr/lib/*/libgtk4-layer-shell.so*',
-            '/usr/local/lib64/libgtk4-layer-shell.so*',
-            '/usr/local/lib/libgtk4-layer-shell.so*',
-        ]:
-            for candidate in sorted(glob.glob(pattern)):
-                resolved = os.path.realpath(candidate)
-                if os.path.isfile(resolved):
-                    return resolved
-        return ""
+        library = runtime.mapped_layer_shell_library()
+        if not library:
+            return runtime.layer_shell_path_search()
+        MicOSDRunner._layer_shell_preload = library
+        return library
 
     @staticmethod
     def _layer_shell_environment() -> dict:
         """Build the child-only environment for the selected runtime."""
-        env = os.environ.copy()
         if MicOSDRunner._system_dependencies_available():
-            preload = MicOSDRunner._layer_shell_ld_preload()
-            if preload:
-                current = MicOSDRunner._without_layer_shell_preload(env.get('LD_PRELOAD', ''))
-                env['LD_PRELOAD'] = f"{preload} {current}".strip()
-        elif visualizer_runtime.is_complete():
-            env = visualizer_runtime.bundled_environment(env)
-        return env
+            return runtime.gtk4_environment(
+                runtime.RUNTIME_SYSTEM, MicOSDRunner._layer_shell_ld_preload())
+        if visualizer_runtime.is_complete():
+            return runtime.gtk4_environment(runtime.RUNTIME_BUNDLED)
+        return runtime.gtk4_environment(runtime.RUNTIME_NONE)
 
     @staticmethod
     def x11_session() -> bool:
@@ -228,107 +149,37 @@ class MicOSDRunner:
     def x11_available() -> bool:
         """GTK3 and PyCairo import on X11. A subprocess keeps GTK3 out of here."""
         with MicOSDRunner._bundled_availability_lock:
-            cached = MicOSDRunner._x11_availability
-            if cached is not None:
-                return cached
-            available = False
-            if MicOSDRunner.x11_session():
-                probe = (
-                    "import cairo, gi;"
-                    "gi.require_version('Gtk', '3.0');"
-                    "from gi.repository import Gtk, Gdk;"
-                    "print('1')"
-                )
-                try:
-                    result = subprocess.run(
-                        [sys.executable or 'python3', '-c', probe],
-                        env=os.environ.copy(), capture_output=True, timeout=5,
-                    )
-                    available = result.stdout.decode('utf-8', 'ignore').strip() == '1'
-                except Exception:
-                    available = False
-            MicOSDRunner._x11_availability = available
-            return available
+            if MicOSDRunner._x11_availability is None:
+                MicOSDRunner._x11_availability = (
+                    MicOSDRunner.x11_session() and runtime.gtk3_available())
+            return MicOSDRunner._x11_availability
 
     @staticmethod
     def layer_shell_active() -> bool:
         """Return True only if the running compositor supports the layer-shell
         protocol (Hyprland, Niri, Sway, ...). False on GNOME/Mutter and on any
         uncertainty, so callers safely fall back to a non-overlay status display.
-
-        Probed in a subprocess to keep GTK out of the main process.
         """
-        probe = (
-            "import gi; gi.require_version('Gtk', '4.0');"
-            "gi.require_version('Gtk4LayerShell', '1.0');"
-            "from gi.repository import Gtk, Gtk4LayerShell;"
-            "Gtk.init();"
-            "print('1' if Gtk4LayerShell.is_supported() else '0')"
-        )
         try:
             env = MicOSDRunner._layer_shell_environment()
         except LayerShellResolutionError as e:
             print(f"[MIC-OSD] Layer shell unusable: {e}", flush=True)
             return False
-        try:
-            result = subprocess.run(
-                [sys.executable or 'python3', '-c', probe],
-                env=env, capture_output=True, timeout=5,
-            )
-            return result.stdout.decode('utf-8', 'ignore').strip() == '1'
-        except Exception:
-            return False
+        return runtime.layer_shell_supported(env)
 
     @staticmethod
     def _get_distro_packages() -> tuple:
         """Return (gtk_pkg, layer_shell_pkg) package names for current distro."""
-        # Check for common distro indicators
-        try:
-            if Path('/etc/debian_version').exists():
-                return ('python3-gi python3-cairo gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
-            elif Path('/etc/arch-release').exists():
-                return ('python-gobject python-cairo gtk4', 'gtk4-layer-shell')
-            elif Path('/etc/fedora-release').exists():
-                return ('python3-gobject python3-cairo gtk4', 'gtk4-layer-shell')
-            elif Path('/etc/os-release').exists():
-                content = Path('/etc/os-release').read_text(encoding='utf-8').lower()
-                if 'debian' in content or 'ubuntu' in content:
-                    return ('python3-gi python3-cairo gir1.2-gtk-4.0', 'gir1.2-gtk4layershell-1.0')
-                elif 'fedora' in content or 'rhel' in content:
-                    return ('python3-gobject python3-cairo gtk4', 'gtk4-layer-shell')
-                elif 'suse' in content:
-                    return ('python3-gobject python3-pycairo typelib-1_0-Gtk-4_0', 'gtk4-layer-shell')
-        except Exception:
-            pass
-        # Default to Arch-style names
-        return ('python-gobject python-cairo gtk4', 'gtk4-layer-shell')
+        return runtime.distro_packages()
 
     @staticmethod
     def get_unavailable_reason() -> str:
         """Get reason why mic-osd is unavailable."""
         if MicOSDRunner.x11_session():
-            if MicOSDRunner.x11_available():
-                return ""
-            return "X11 overlay requires GTK3 introspection bindings and PyCairo available to the service Python."
-        gtk_pkg, layer_pkg = MicOSDRunner._get_distro_packages()
-        try:
-            import cairo  # noqa: F401
-        except ImportError:
-            return f"PyCairo bindings not installed. Install: {gtk_pkg}"
-        if MicOSDRunner.x11_available():
-            return ""
-        try:
-            import gi
-            gi.require_version('Gtk', '4.0')
-        except (ImportError, ValueError):
-            return f"GTK4 bindings not installed. Install: {gtk_pkg}"
-        try:
-            gi.require_version('Gtk4LayerShell', '1.0')
-        except (ImportError, ValueError):
-            if MicOSDRunner._bundled_dependencies_available():
-                return ""
-            return f"gtk4-layer-shell not installed. Install: {layer_pkg}"
-        return ""
+            return "" if MicOSDRunner.x11_available() else runtime.X11_REASON
+        status, detail = MicOSDRunner._system_status()
+        bundled = status == 'layer-shell' and MicOSDRunner._bundled_dependencies_available()
+        return runtime.gtk4_reason(status, bundled, detail, MicOSDRunner._get_distro_packages())
     
     def _daemon_backend(self):
         """'gtk3' on X11, else 'gtk4'. Cached, so show() never probes."""

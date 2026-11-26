@@ -171,14 +171,8 @@ class MicOSDRunnerTests(unittest.TestCase):
         self.assertIsNotNone(window_module.OSDWindow)
 
     def test_is_available_returns_false_when_cairo_missing(self):
-        original_import = builtins.__import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "cairo":
-                raise ImportError("no cairo")
-            return original_import(name, *args, **kwargs)
-
-        with mock.patch("builtins.__import__", side_effect=fake_import), \
+        with mock.patch.object(MicOSDRunner, "_system_status", return_value=("cairo", "")), \
+                mock.patch.object(MicOSDRunner, "_bundled_dependencies_available", return_value=False), \
                 mock.patch.object(MicOSDRunner, "x11_available", return_value=False):
             self.assertFalse(MicOSDRunner.is_available())
 

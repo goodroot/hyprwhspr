@@ -18,6 +18,7 @@ from mic_osd.runner import MicOSDRunner
 from src import visualizer_runtime
 from src.cli import mic_osd as mic_osd_cli
 import mic_osd.runner as runner_module
+import mic_osd.runtime as runtime_module
 
 
 class VisualizerRuntimeTests(unittest.TestCase):
@@ -187,7 +188,7 @@ class VisualizerRuntimeTests(unittest.TestCase):
                 mock.patch.object(MicOSDRunner, "_system_dependencies_available", return_value=True),
                 mock.patch.object(MicOSDRunner, "_layer_shell_preload", None),
                 mock.patch.object(runner_module.subprocess, "run", **run),
-                mock.patch.object(MicOSDRunner, "_layer_shell_path_search", return_value="/usr/lib/libgtk4-layer-shell.so.1.3.0"),
+                mock.patch.object(runtime_module, "layer_shell_path_search", return_value="/usr/lib/libgtk4-layer-shell.so.1.3.0"),
                 mock.patch.object(runner_module.os, "environ", {}),
                 mock.patch("builtins.print"),
             ):

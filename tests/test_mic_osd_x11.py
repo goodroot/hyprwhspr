@@ -124,7 +124,7 @@ class AvailabilityTests(unittest.TestCase):
             python = Path(tmp) / "bin" / "python"
             python.parent.mkdir()
             python.touch()
-            run = mock.Mock(return_value=types.SimpleNamespace(returncode=0, stdout=""))
+            run = mock.Mock(return_value=types.SimpleNamespace(returncode=0, stdout="AVAILABLE: X11 GTK3"))
             with mock.patch.object(mic_osd_cli, "VENV_DIR", Path(tmp)), \
                     mock.patch.object(mic_osd_cli.subprocess, "run", run):
                 mic_osd_cli._query_mic_osd_availability()
@@ -150,12 +150,7 @@ class AvailabilityTests(unittest.TestCase):
             self.assertEqual(MicOSDRunner.get_unavailable_reason(), "")
 
     def test_wayland_keeps_layer_shell_dependency_advice(self):
-        def require_version(namespace, version):
-            if namespace == 'Gtk4LayerShell':
-                raise ValueError('missing typelib')
-        stubs = {'cairo': types.SimpleNamespace(),
-                 'gi': types.SimpleNamespace(require_version=require_version)}
-        with mock.patch.dict(sys.modules, stubs), \
+        with mock.patch.object(MicOSDRunner, '_system_status', return_value=('layer-shell', '')), \
                 mock.patch.object(MicOSDRunner, 'x11_session', return_value=False), \
                 mock.patch.object(MicOSDRunner, 'x11_available', return_value=False), \
                 mock.patch.object(MicOSDRunner, '_bundled_dependencies_available', return_value=False), \
