@@ -306,6 +306,10 @@ class MicOSDRunner:
     @staticmethod
     def get_unavailable_reason() -> str:
         """Get reason why mic-osd is unavailable."""
+        if MicOSDRunner.x11_session():
+            if MicOSDRunner.x11_available():
+                return ""
+            return "X11 overlay requires GTK3 introspection bindings and PyCairo available to the service Python."
         gtk_pkg, layer_pkg = MicOSDRunner._get_distro_packages()
         try:
             import cairo  # noqa: F401

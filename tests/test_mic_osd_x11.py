@@ -1,6 +1,7 @@
 """X11 mic-OSD overlay."""
 
 import importlib
+from contextlib import contextmanager
 import io
 import os
 import sys
@@ -134,25 +135,80 @@ class AvailabilityTests(unittest.TestCase):
             exec(code, {})
         self.assertEqual(output.getvalue().strip(), "AVAILABLE: X11 GTK3")
 
+    def test_missing_x11_dependencies_name_gtk3_without_layer_shell_advice(self):
+        with mock.patch.object(MicOSDRunner, "x11_session", return_value=True), \
+                mock.patch.object(MicOSDRunner, "x11_available", return_value=False):
+            reason = MicOSDRunner.get_unavailable_reason()
+        self.assertIn("GTK3", reason)
+        self.assertIn("PyCairo", reason)
+        self.assertNotIn("GTK4", reason)
+        self.assertNotIn("layer-shell", reason)
+
+    def test_available_x11_has_no_dependency_error(self):
+        with mock.patch.object(MicOSDRunner, "x11_session", return_value=True), \
+                mock.patch.object(MicOSDRunner, "x11_available", return_value=True):
+            self.assertEqual(MicOSDRunner.get_unavailable_reason(), "")
+
+    def test_wayland_keeps_layer_shell_dependency_advice(self):
+        def require_version(namespace, version):
+            if namespace == 'Gtk4LayerShell':
+                raise ValueError('missing typelib')
+        stubs = {'cairo': types.SimpleNamespace(),
+                 'gi': types.SimpleNamespace(require_version=require_version)}
+        with mock.patch.dict(sys.modules, stubs), \
+                mock.patch.object(MicOSDRunner, 'x11_session', return_value=False), \
+                mock.patch.object(MicOSDRunner, 'x11_available', return_value=False), \
+                mock.patch.object(MicOSDRunner, '_bundled_dependencies_available', return_value=False), \
+                mock.patch.object(MicOSDRunner, '_get_distro_packages', return_value=('gtk-package', 'layer-package')):
+            self.assertEqual(MicOSDRunner.get_unavailable_reason(),
+                             'gtk4-layer-shell not installed. Install: layer-package')
+
 
 class ClickThroughTests(unittest.TestCase):
-    def test_window_gets_an_empty_x_input_shape(self):
-        region = object()
+    @contextmanager
+    def _window_module(self):
         stubs = {
             "gi": types.SimpleNamespace(require_version=lambda *args: None),
             "gi.repository": types.SimpleNamespace(
                 Gtk=types.SimpleNamespace(Window=object),
-                Gdk=types.SimpleNamespace(), GLib=types.SimpleNamespace()),
-            "cairo": types.SimpleNamespace(Region=lambda: region),
+                Gdk=types.SimpleNamespace(WindowTypeHint=types.SimpleNamespace(NOTIFICATION=1)),
+                GLib=types.SimpleNamespace()),
+            "cairo": types.SimpleNamespace(Region=lambda: self.region),
         }
+        self.region = object()
         with mock.patch.dict(sys.modules, stubs):
             sys.modules.pop("mic_osd.window_x11", None)
             sys.modules.pop("mic_osd.render", None)
-            window_x11 = importlib.import_module("mic_osd.window_x11")
+            yield importlib.import_module("mic_osd.window_x11")
+
+    def test_window_gets_an_empty_x_input_shape(self):
+        with self._window_module() as window_x11:
             gdk_window = mock.Mock()
             fake = types.SimpleNamespace(get_window=lambda: gdk_window)
             window_x11.OSDWindow._make_click_through(fake)
-        gdk_window.input_shape_combine_region.assert_called_once_with(region, 0, 0)
+        gdk_window.input_shape_combine_region.assert_called_once_with(self.region, 0, 0)
+
+    def test_window_never_requests_focus_or_taskbar_entries(self):
+        with self._window_module() as window_x11:
+            window = mock.Mock(_width=400, _height=68)
+            window_x11.OSDWindow._setup_window(window)
+        window.set_accept_focus.assert_called_once_with(False)
+        window.set_focus_on_map.assert_called_once_with(False)
+        window.set_skip_taskbar_hint.assert_called_once_with(True)
+        window.set_skip_pager_hint.assert_called_once_with(True)
+        window.set_keep_above.assert_called_once_with(True)
+        window.connect.assert_any_call('realize', window._on_realize)
+        window.connect.assert_any_call('map-event', window._on_map_event)
+
+    def test_realize_and_mapping_apply_empty_input_shape(self):
+        with self._window_module() as window_x11:
+            window = mock.Mock()
+            window._make_click_through.side_effect = lambda: window_x11.OSDWindow._make_click_through(window)
+            window_x11.OSDWindow._on_realize(window, window)
+            self.assertFalse(window_x11.OSDWindow._on_map_event(window, window, object()))
+        self.assertEqual(window.get_window.return_value.input_shape_combine_region.call_args_list,
+                         [mock.call(self.region, 0, 0), mock.call(self.region, 0, 0)])
+        self.assertEqual(window._reposition.call_count, 2)
 
 
 class DaemonBackendTests(unittest.TestCase):
