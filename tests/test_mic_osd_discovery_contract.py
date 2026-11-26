@@ -5,7 +5,9 @@ answered by what they ask for, so these tests outlive refactors of where the
 probes live.
 """
 
+import io
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -21,9 +23,11 @@ from tests.test_suspend_resume_recovery import _import_main_isolated, patch_app_
 import mic_osd.runner as runner_module
 from mic_osd.notification_presenter import NotificationPresenter
 from mic_osd.runner import MicOSDRunner
+import mic_osd.runtime as runtime
 from src import visualizer_runtime
 from src.cli import mic_osd as mic_osd_cli
 
+_print = print
 SYSTEM_LIBRARY = "/usr/lib/libgtk4-layer-shell.so.1.3.0"
 WAYLAND = {"WAYLAND_DISPLAY": "wayland-1"}
 XWAYLAND = {"WAYLAND_DISPLAY": "wayland-1", "DISPLAY": ":0"}
@@ -35,7 +39,7 @@ class FakeHost:
 
     def __init__(self, env, *, cairo=True, gtk4=True, layer_shell=True, gtk3=False,
                  bundled=False, compositor=False, libraries=(SYSTEM_LIBRARY,),
-                 daemon_survives=True):
+                 daemon_survives=True, failures=None):
         self.env = env
         self.cairo = cairo
         self.gtk4 = gtk4
@@ -45,6 +49,7 @@ class FakeHost:
         self.compositor = compositor
         self.libraries = libraries
         self.daemon_survives = daemon_survives
+        self.failures = failures or {}
         self.probes = []
         self.popen = mock.Mock(side_effect=self._popen)
 
@@ -68,17 +73,20 @@ class FakeHost:
             kind, ok = "system", True
             out = ("cairo" if not self.cairo else "gtk4" if not self.gtk4
                    else "layer-shell" if not self.layer_shell else "ok")
-        elif "Gtk4LayerShell" in code:
-            kind = "bundled" if (env or {}).get("FAKE_BUNDLED") == "1" else "system"
-            ok = self._gtk4(env)
-            out = ""
+        elif "Gtk4LayerShell" in code and (env or {}).get("FAKE_BUNDLED") == "1":
+            kind, ok, out = "bundled", self._gtk4(env), ""
         else:
             raise AssertionError(f"unexpected subprocess: {argv!r}")
         self.probes.append(kind)
-        returncode = 0 if ok else 1
+        returncode, err = (0 if ok else 1), ""
+        failure = self.failures.get(kind)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        if failure == "crash":
+            returncode, out, err = -11, "", "Traceback\nSegmentation fault"
         if not kwargs.get("text"):
-            return types.SimpleNamespace(returncode=returncode, stdout=out.encode(), stderr=b"")
-        return types.SimpleNamespace(returncode=returncode, stdout=out, stderr="")
+            return types.SimpleNamespace(returncode=returncode, stdout=out.encode(), stderr=err.encode())
+        return types.SimpleNamespace(returncode=returncode, stdout=out, stderr=err)
 
     def _popen(self, argv, **kwargs):
         process = mock.Mock(pid=4242, returncode=1)
@@ -86,26 +94,21 @@ class FakeHost:
         process.stderr.read.return_value = b"boom"
         return process
 
-    def _gi(self):
-        def require_version(namespace, version):
-            missing = {"Gtk": not self.gtk4, "Gtk4LayerShell": not self.layer_shell}
-            if missing.get(namespace) or version == "3.0":
-                raise ValueError(f"Namespace {namespace} not available")
-        return types.SimpleNamespace(require_version=require_version)
-
     def install(self, stack):
         """Patch the process so discovery sees this host."""
         tmp = stack.enter_context(tempfile.TemporaryDirectory())
         base = {"PATH": os.environ.get("PATH", ""), "HOME": tmp}
         stack.enter_context(mock.patch.dict(os.environ, {**base, **self.env}, clear=True))
-        stack.enter_context(mock.patch.dict(sys.modules, {
-            "gi": self._gi(), "cairo": types.SimpleNamespace() if self.cairo else None}))
+        # GTK binds once per process: discovery must never import it here.
+        stack.enter_context(mock.patch.dict(sys.modules, {"gi": None, "cairo": None}))
         stack.enter_context(mock.patch("subprocess.run", side_effect=self.run))
         stack.enter_context(mock.patch("subprocess.Popen", self.popen))
         stack.enter_context(mock.patch("time.sleep"))
         stack.enter_context(mock.patch("builtins.print"))
-        stack.enter_context(mock.patch.object(
-            runner_module, "MIC_OSD_PID_FILE", Path(tmp) / "mic_osd.pid"))
+        for name in ("MIC_OSD_PID_FILE", "VISUALIZER_STATE_FILE",
+                     "TRANSCRIPT_PREVIEW_FILE", "MIC_OSD_LEVEL_FEED_FILE"):
+            stack.enter_context(mock.patch.object(runner_module, name, Path(tmp) / name.lower()))
+        self.kill = stack.enter_context(mock.patch.object(runner_module.os, "kill"))
         stack.enter_context(mock.patch.object(
             visualizer_runtime, "is_complete", return_value=self.bundled))
         stack.enter_context(mock.patch.object(
@@ -148,6 +151,7 @@ class ServiceSelectionTests(unittest.TestCase):
 
     def assertOverlay(self, selected, host, backend):
         self.assertIsInstance(selected, MicOSDRunner)
+        self.assertEqual(selected.assessment.backend, backend)
         self.assertEqual(host.daemon_env["HYPRWHSPR_MIC_OSD_BACKEND"], backend)
 
     def assertNotifications(self, selected, host):
@@ -278,6 +282,190 @@ class CliDependencyTests(unittest.TestCase):
         available, reason, _source = self._query(host)
         self.assertFalse(available)
         self.assertIn("PyCairo", reason)
+
+
+
+class AssessmentTests(unittest.TestCase):
+    def _assess(self, host):
+        with ExitStack() as stack:
+            host.install(stack)
+            return runtime.assess_overlay()
+
+    def test_dependencies_and_session_support_stay_separate(self):
+        assessment = self._assess(FakeHost(WAYLAND, compositor=False))
+        self.assertTrue(assessment.dependencies.available)
+        self.assertEqual(assessment.dependencies.runtime, "system")
+        self.assertFalse(assessment.session_supported)
+        self.assertIsNone(assessment.backend)
+        self.assertEqual(assessment.reason, "layer-shell not supported")
+
+    def test_assessment_is_immutable(self):
+        assessment = self._assess(FakeHost(WAYLAND, compositor=True))
+        with self.assertRaises(AttributeError):
+            assessment.backend = "gtk3"
+        with self.assertRaises(AttributeError):
+            assessment.dependencies.available = False
+
+    def test_each_probe_runs_at_most_once_per_assessment(self):
+        host = FakeHost(WAYLAND, layer_shell=False, bundled=True, compositor=True)
+        self._assess(host)
+        self.assertEqual(sorted(host.probes), ["bundled", "support", "system"])
+
+    def test_child_environment_leaves_os_environ_alone(self):
+        host = FakeHost({**WAYLAND, "LD_PRELOAD": "/old.so"}, compositor=True)
+        with ExitStack() as stack:
+            host.install(stack)
+            before = dict(os.environ)
+            assessment = runtime.assess_overlay()
+            stack.enter_context(mock.patch.object(runtime.os.path, "isfile", return_value=True))
+            first = runtime.child_environment(assessment)
+            second = runtime.child_environment(assessment)
+            self.assertEqual(dict(os.environ), before)
+        self.assertIsNot(first, second)
+        self.assertEqual(first["LD_PRELOAD"], f"{SYSTEM_LIBRARY} /old.so")
+
+
+class ProbeFailureTests(unittest.TestCase):
+    def setUp(self):
+        self.service = ServiceSelectionTests()
+        self.service.setUpClass()
+
+    def test_crashed_dependency_probe_is_explained_and_falls_back(self):
+        host = FakeHost(WAYLAND, compositor=True, failures={"system": "crash"})
+        selected = self.service._start(host)
+        self.assertIsInstance(selected, NotificationPresenter)
+        self.assertIsNone(host.daemon_env)
+        available, reason, _source = CliDependencyTests()._query(
+            FakeHost(WAYLAND, failures={"system": "crash"}))
+        self.assertFalse(available)
+        self.assertEqual(reason, "GTK4 dependency check failed: Segmentation fault")
+
+    def test_timed_out_dependency_probe_is_explained(self):
+        available, reason, _source = CliDependencyTests()._query(
+            FakeHost(WAYLAND, failures={"system": "timeout"}))
+        self.assertFalse(available)
+        self.assertIn("timed out", reason)
+
+    def test_failed_session_probe_falls_back_to_notifications(self):
+        for failure in ("crash", "timeout"):
+            with self.subTest(failure):
+                host = FakeHost(WAYLAND, compositor=True, failures={"support": failure})
+                self.assertIsInstance(self.service._start(host), NotificationPresenter)
+                self.assertIsNone(host.daemon_env)
+
+    def test_failed_gtk3_probe_falls_back_to_notifications(self):
+        host = FakeHost(X11, gtk3=True, gtk4=False, failures={"gtk3": "timeout"})
+        self.assertIsInstance(self.service._start(host), NotificationPresenter)
+        self.assertIsNone(host.daemon_env)
+
+    def test_failed_library_probe_still_uses_the_path_search(self):
+        host = FakeHost(WAYLAND, compositor=True, failures={"library": "crash"})
+        with mock.patch.object(runtime, "layer_shell_path_search", return_value="/found/libgtk4-layer-shell.so"):
+            selected = self.service._start(host)
+        self.assertIsInstance(selected, MicOSDRunner)
+        self.assertEqual(host.daemon_env["LD_PRELOAD"], "/found/libgtk4-layer-shell.so")
+
+
+class AgreementTests(unittest.TestCase):
+    HOSTS = {
+        "supported wayland": FakeHost(WAYLAND, compositor=True),
+        "gnome wayland": FakeHost(WAYLAND),
+        "bundle": FakeHost(WAYLAND, layer_shell=False, bundled=True, compositor=True),
+        "x11 gtk3": FakeHost(X11, gtk3=True),
+        "x11 gtk4 only": FakeHost(X11),
+        "xwayland": FakeHost(XWAYLAND, gtk3=True, layer_shell=False),
+        "nothing": FakeHost(WAYLAND, cairo=False),
+    }
+
+    def _child_query(self, host):
+        """The CLI's service-Python child, run in-process against the host."""
+        with ExitStack() as stack:
+            host.install(stack)
+            venv = Path(os.environ["HOME"]) / "venv"
+            (venv / "bin").mkdir(parents=True)
+            (venv / "bin" / "python").touch()
+            stack.enter_context(mock.patch.object(mic_osd_cli, "VENV_DIR", venv))
+            captured = mock.Mock(return_value=types.SimpleNamespace(returncode=0, stdout="AVAILABLE: stub"))
+            with mock.patch.object(mic_osd_cli.subprocess, "run", captured):
+                mic_osd_cli._query_mic_osd_availability()
+            output = io.StringIO()
+            with mock.patch("sys.stdout", output):
+                exec(captured.call_args.args[0][2], {"print": _print})
+            line = output.getvalue().strip()
+        if line.startswith("AVAILABLE:"):
+            return True, "", line.split(":", 1)[1].strip()
+        return False, line.split(":", 1)[1].strip(), "unavailable"
+
+    def test_cli_and_service_agree_on_dependencies_and_runtime(self):
+        service = ServiceSelectionTests()
+        service.setUpClass()
+        for name, host in self.HOSTS.items():
+            with self.subTest(name):
+                cli = CliDependencyTests()._query(host)
+                child = self._child_query(host)
+                with ExitStack() as stack:
+                    host.install(stack)
+                    deps = runtime.assess_overlay().dependencies
+                self.assertEqual(cli, child)
+                self.assertEqual(cli, (deps.available, deps.reason,
+                                       deps.runtime if deps.available else "unavailable"))
+
+
+class RecordingReuseTests(unittest.TestCase):
+    def test_service_runner_reuses_its_assessment(self):
+        service = ServiceSelectionTests()
+        service.setUpClass()
+        host = FakeHost(WAYLAND, compositor=True)
+        app = object.__new__(service.app_class)
+        settings = {"mic_osd_enabled": True}
+        app.config = mock.Mock()
+        app.config.get_setting.side_effect = lambda key, default=None: settings.get(key, default)
+        app.audio_capture = types.SimpleNamespace(get_viz_frame=lambda: (0.0, []))
+        with ExitStack() as stack:
+            host.install(stack)
+            stack.enter_context(patch_app_global(service.app_class, "log", mock.Mock()))
+            app._init_mic_osd()
+            runner = app._mic_osd_runner
+            self.assertIsInstance(runner, MicOSDRunner)
+            startup_probes = list(host.probes)
+            for _ in range(3):
+                self.assertTrue(runner.is_available())
+                self.assertTrue(runner.show())
+                runner.hide()
+            runner._process.poll.return_value = 1
+            self.assertTrue(runner.show())
+            runner.hide()
+            daemons = [c for c in host.popen.call_args_list if c.args[0] != ["true"]]
+        self.assertEqual(host.probes, startup_probes)
+        self.assertEqual(len(daemons), 2)
+        self.assertEqual(daemons[0].kwargs["env"], daemons[1].kwargs["env"])
+
+    def test_direct_runner_assesses_once(self):
+        host = FakeHost(WAYLAND, compositor=True)
+        with ExitStack() as stack:
+            host.install(stack)
+            runner = MicOSDRunner(level_source=lambda: (0.0, []))
+            self.assertEqual(host.probes, [])
+            self.assertTrue(runner.show())
+            first = list(host.probes)
+            for _ in range(3):
+                runner.hide()
+                self.assertTrue(runner.show())
+            runner._process.poll.return_value = 1
+            self.assertTrue(runner.show())
+            runner.hide()
+        self.assertEqual(sorted(first), ["library", "support", "system"])
+        self.assertEqual(host.probes, first)
+
+    def test_direct_runner_on_an_unsupported_session_never_starts_a_daemon(self):
+        host = FakeHost(WAYLAND, compositor=False)
+        with ExitStack() as stack:
+            host.install(stack)
+            runner = MicOSDRunner()
+            self.assertFalse(runner.show())
+            self.assertFalse(runner.show())
+        self.assertIsNone(host.daemon_env)
+        self.assertEqual(host.probes.count("support"), 1)
 
 
 if __name__ == "__main__":
