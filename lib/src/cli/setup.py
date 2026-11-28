@@ -1612,6 +1612,20 @@ def setup_command(python_path: Optional[str] = None):
         else:
             log_info("Skipping compositor bindings setup")
         
+        # Download the selected model before starting or restarting the service.
+        if backend not in ['rest-api', 'remote'] and selected_model:
+            # If we got here and backend != 'remote', backend installation succeeded
+            # (or was skipped, but user selected a model, so they want to use it)
+            # Just download the model - we don't need to check if pywhispercpp is importable
+            # (it's in the venv, and the service will use venv Python)
+            print(f"\nDownloading model: {selected_model}")
+            if download_model(selected_model):
+                log_success(f"Model {selected_model} downloaded successfully")
+            else:
+                log_warning(f"Model download failed. You can download it later with:")
+                log_warning(f"  hyprwhspr model download {selected_model}")
+                remaining_steps.append(f'Download the model: hyprwhspr model download {selected_model}')
+
         # Step 3: Systemd
         if setup_systemd_choice:
             if setup_systemd('install') is False:
@@ -1660,20 +1674,6 @@ def setup_command(python_path: Optional[str] = None):
                 issues=remaining_steps)
         else:
             log_info("Skipping permissions setup")
-        
-        # Step 5: Model download (if local backend)
-        if backend not in ['rest-api', 'remote'] and selected_model:
-            # If we got here and backend != 'remote', backend installation succeeded
-            # (or was skipped, but user selected a model, so they want to use it)
-            # Just download the model - we don't need to check if pywhispercpp is importable
-            # (it's in the venv, and the service will use venv Python)
-            print(f"\nDownloading model: {selected_model}")
-            if download_model(selected_model):
-                log_success(f"Model {selected_model} downloaded successfully")
-            else:
-                log_warning(f"Model download failed. You can download it later with:")
-                log_warning(f"  hyprwhspr model download {selected_model}")
-                remaining_steps.append(f'Download the model: hyprwhspr model download {selected_model}')
         
         # Step 6: Validation
         print("\n" + "="*60)

@@ -1,6 +1,7 @@
 """Second-review lifecycle regressions; host operations and downloads are mocked."""
 from contextlib import ExitStack, redirect_stdout
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from unittest import mock
 from tests.test_managed_install import ManagedFixture
 from tests.test_setup_command_scope import install as cli_install, uninstall, systemd
 from tests.test_noctalia_integration import noctalia
+import whisper_models
 import backend_installer as backend
 import managed_install as managed
 import managed_integrations as integrations
@@ -167,10 +169,65 @@ class SecondReviewTests(ManagedFixture):
         models = self.root / 'models'
         def download(url, path, **kwargs):
             path.write_bytes(b'model')
-        with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}'}), mock.patch.object(backend, 'PYWHISPERCPP_MODELS_DIR', models), mock.patch.object(backend, 'check_model_validity', return_value=False), mock.patch.object(backend.urllib.request, 'urlretrieve', side_effect=download), mock.patch.object(backend, 'set_state'), mock.patch.object(managed, 'record_file', side_effect=ValueError('corrupt receipt')), mock.patch.object(backend, 'log_warning') as warning:
+        with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}'}), mock.patch.object(backend, 'PYWHISPERCPP_MODELS_DIR', models), mock.patch.object(backend, 'check_model_validity', return_value=False), mock.patch.dict(whisper_models.WHISPER_MODELS, {'base': (5, hashlib.sha256(b'model').hexdigest())}), mock.patch.object(backend.urllib.request, 'urlretrieve', side_effect=download), mock.patch.object(backend, 'set_state'), mock.patch.object(managed, 'record_file', side_effect=ValueError('corrupt receipt')), mock.patch.object(backend, 'log_warning') as warning:
             self.assertTrue(backend.download_pywhispercpp_model('base'))
         self.assertEqual((models / 'ggml-base.bin').read_bytes(), b'model')
         self.assertIn('ownership could not be recorded', warning.call_args.args[0])
+
+    def check_model_download(self, download):
+        models = self.root / 'models'
+        with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}'}), mock.patch.object(backend, 'PYWHISPERCPP_MODELS_DIR', models), mock.patch.object(backend, 'check_model_validity', return_value=False), mock.patch.dict(whisper_models.WHISPER_MODELS, {'base': (5, hashlib.sha256(b'model').hexdigest())}), mock.patch.object(backend.urllib.request, 'urlretrieve', side_effect=download), mock.patch.object(backend, 'set_state'), mock.patch.object(managed, 'record_file'), mock.patch.object(backend, 'log_error'), mock.patch.object(backend, 'log_warning'):
+            return models, backend.download_pywhispercpp_model('base')
+
+    def test_model_never_visible_at_final_path_mid_download(self):
+        final_seen = []
+        def download(url, path, **kwargs):
+            path.write_bytes(b'half')
+            final_seen.append((self.root / 'models' / 'ggml-base.bin').exists())
+            path.write_bytes(b'model')
+        models, ok = self.check_model_download(download)
+        self.assertTrue(ok)
+        self.assertEqual(final_seen, [False], 'a service starting mid-download would load a truncated model')
+        self.assertEqual([path.name for path in models.iterdir()], ['ggml-base.bin'])
+        self.assertEqual((models / 'ggml-base.bin').read_bytes(), b'model')
+
+    def test_failed_model_download_leaves_no_file(self):
+        def download(url, path, **kwargs):
+            path.write_bytes(b'half')
+            raise OSError('connection reset')
+        models, ok = self.check_model_download(download)
+        self.assertFalse(ok)
+        self.assertEqual(list(models.iterdir()), [])
+
+    def test_overlapping_model_downloads_use_separate_staging_files(self):
+        staging_paths, results = [], []
+        def download(url, path, **kwargs):
+            staging_paths.append(path)
+            path.write_bytes(b'half')
+            if len(staging_paths) == 1:
+                # A second download (setup plus `hyprwhspr model download`) starts mid-write
+                results.append(backend.download_pywhispercpp_model('base'))
+            path.write_bytes(b'model')
+        models, ok = self.check_model_download(download)
+        self.assertEqual([ok] + results, [True, True])
+        self.assertNotEqual(staging_paths[0], staging_paths[1])
+        self.assertEqual([path.name for path in models.iterdir()], ['ggml-base.bin'])
+        self.assertEqual((models / 'ggml-base.bin').read_bytes(), b'model')
+
+    def test_cancelled_model_download_removes_staging_file(self):
+        def download(url, path, **kwargs):
+            path.write_bytes(b'half')
+            raise KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.check_model_download(download)
+        self.assertEqual(list((self.root / 'models').iterdir()), [])
+
+    def test_failed_partial_cleanup_still_reports_failure(self):
+        def download(url, path, **kwargs):
+            path.mkdir()
+            raise OSError('cannot write download')
+        models, ok = self.check_model_download(download)
+        self.assertFalse(ok)
 
     def test_noctalia_disable_precedes_managed_file_removal(self):
         self.check_noctalia(True)

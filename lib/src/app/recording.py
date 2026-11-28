@@ -189,8 +189,12 @@ class RecordingMixin:
         # Backend init failed (e.g. deps missing at boot): retry it instead
         # of recording audio that can never be transcribed
         if blocked == 'init-failed':
-            self._notify_user("hyprwhspr", "Model failed to load — retrying, try again when ready",
-                              urgency="normal", kind="result", slot="model")
+            repair = getattr(self.whisper_manager, 'model_load_error', None)
+            if isinstance(repair, str) and repair and not self._start_check_explains_failure():
+                self._report_backend_load_failed()
+            else:
+                self._notify_user("hyprwhspr", "Model failed to load — retrying, try again when ready",
+                                  urgency="normal", kind="result", slot="model")
             log("[CONTROL] Recording blocked: backend init failed - retrying")
             self._start_backend_init_background()
             return

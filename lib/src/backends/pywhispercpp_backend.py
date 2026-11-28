@@ -9,6 +9,7 @@ resolve to this class; the build variant decides the compute device.
 import os
 import re
 import shutil
+import shlex
 import sys
 import time
 from contextlib import contextmanager
@@ -32,10 +33,14 @@ np = require_package('numpy')
 
 try:
     from ..backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
-    from ..backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
+    from ..backend_installer import (PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME,
+                                     download_vad_model, check_model_validity,
+                                     check_vad_model_validity)
 except ImportError:
     from backend_utils import normalize_backend, vulkaninfo_has_hardware_gpu
-    from backend_installer import PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME, download_vad_model
+    from backend_installer import (PYWHISPERCPP_MODELS_DIR, VAD_MODEL_FILENAME,
+                                   download_vad_model, check_model_validity,
+                                   check_vad_model_validity)
 
 from .base import TranscriptionBackend
 
@@ -51,6 +56,7 @@ class PywhispercppBackend(TranscriptionBackend):
         super().__init__(manager)
         # Backend-specific attributes (pywhispercpp only)
         self._pywhisper_model = None
+        self.model_load_error = None
 
     def initialize(self) -> bool:
         """Initialize local pywhispercpp backend"""
@@ -61,9 +67,9 @@ class PywhispercppBackend(TranscriptionBackend):
 
         try:
             # Validate model file exists before attempting to load
-            if not self._model_files(self.current_model):
+            if not self._validate_model_file(self.current_model):
                 model_file = PYWHISPERCPP_MODELS_DIR / f"ggml-{self.current_model}.bin"
-                log(f"[ERROR] Model file not found: {model_file}")
+                log(f"[ERROR] Model file missing or invalid: {model_file}")
                 log(f"[ERROR] Download with: hyprwhspr model download {self.current_model}")
                 return False
 
@@ -128,7 +134,7 @@ class PywhispercppBackend(TranscriptionBackend):
     def _resolve_vad_model(self):
         """Path to the Silero VAD model, auto-downloading if missing; None on failure"""
         vad_file = PYWHISPERCPP_MODELS_DIR / VAD_MODEL_FILENAME
-        if not vad_file.exists():
+        if not check_vad_model_validity(vad_file):
             log("[BACKEND] Downloading Silero VAD model (~1MB)")
             if not download_vad_model():
                 log("[BACKEND] WARNING: VAD model download failed - continuing without VAD")
@@ -426,27 +432,30 @@ class PywhispercppBackend(TranscriptionBackend):
         return [PYWHISPERCPP_MODELS_DIR / n for n in names if (PYWHISPERCPP_MODELS_DIR / n).is_file()]
 
     def _model_arg(self, model_name: str) -> str:
-        """What to hand pywhispercpp's Model(): a file path whenever one fits.
-
-        pywhispercpp downloads any bare name it can't find. With only the .en
-        file installed that meant fetching the multilingual model at every
-        service start. English dictation can use the .en file; any other
-        language still needs the multilingual download.
-        """
+        """Use a verified local file; never let pywhispercpp download in-place."""
+        self.model_load_error = None
         exact = PYWHISPERCPP_MODELS_DIR / f"ggml-{model_name}.bin"
-        if exact.is_file():
+        if check_model_validity(exact):
             return str(exact)
         english = PYWHISPERCPP_MODELS_DIR / f"ggml-{model_name}.en.bin"
         language = (self.config.get_setting('language', None) or '').lower()
-        if english.is_file() and language.startswith('en'):
+        if language.startswith('en') and check_model_validity(english):
             log(f"[BACKEND] Using English-only {english.name} for model '{model_name}'")
             return str(english)
-        return model_name
+        reason = "is damaged or incomplete" if exact.exists() else "is not downloaded yet"
+        self.model_load_error = (
+            f"Speech model '{model_name}' {reason}. "
+            f"Let any download finish, or run: hyprwhspr model download {shlex.quote(model_name)}\n"
+            "Then record to retry.")
+        raise FileNotFoundError(self.model_load_error)
 
     def _validate_model_file(self, model_name: str) -> bool:
-        """Validate that model file exists and is not corrupted"""
-        # Basic size check (>10MB for any valid model)
-        return any(f.stat().st_size > 10000000 for f in self._model_files(model_name))
+        """Validate the actual file selected for this language."""
+        try:
+            self._model_arg(model_name)
+            return True
+        except (OSError, ValueError):
+            return False
 
     def _cleanup_model(self) -> None:
         """Safely cleanup existing model instance - GPU-safe approach"""

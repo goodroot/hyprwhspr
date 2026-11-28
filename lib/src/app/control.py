@@ -394,9 +394,8 @@ class ControlMixin:
                     self._model_load_confirmed()
             else:
                 log("[ERROR] Failed to initialize backend in background")
-                if self._notify_when_ready:
-                    # Someone was told to wait: tell them it did not come back
-                    self._notify_when_ready = False
-                    self._report_backend_load_failed()
+                # Startup failures need an actionable alert even before a keypress.
+                self._notify_when_ready = False
+                self._report_backend_load_failed()
 
         threading.Thread(target=_bg_init, daemon=True, name="BackendInit").start()

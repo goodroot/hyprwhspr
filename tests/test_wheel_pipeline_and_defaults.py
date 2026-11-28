@@ -327,20 +327,20 @@ class ModelValidityTests(unittest.TestCase):
 
     def test_hash_key_is_per_model(self):
         with tempfile.TemporaryDirectory() as tmp:
-            f = Path(tmp) / "ggml-tiny.bin"
+            f = Path(tmp) / "ggml-custom.bin"
             f.write_bytes(b"tiny model bytes")
             h = backend_installer.compute_file_hash(f)
             own = {f"model_hash_{f.name}": h}
             with mock.patch.object(backend_installer, "get_state", side_effect=own.get):
                 self.assertTrue(backend_installer.check_model_validity(f))
             # another model's stored hash must not validate this file
-            other = {"model_hash_ggml-base.bin": h}
+            other = {"model_hash_ggml-other.bin": h}
             with mock.patch.object(backend_installer, "get_state", side_effect=other.get):
                 self.assertFalse(backend_installer.check_model_validity(f))
 
     def test_size_floor_without_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
-            f = Path(tmp) / "ggml-tiny.bin"
+            f = Path(tmp) / "ggml-custom.bin"
             f.write_bytes(b"x")
             with mock.patch.object(backend_installer, "get_state", return_value=None):
                 self.assertFalse(backend_installer.check_model_validity(f))
@@ -362,6 +362,14 @@ class PywhisperVadKwargsTests(unittest.TestCase):
     def setUp(self):
         self._FakeModel.last_kwargs = None
         self._FakeModel.raise_on_vad = False
+        import hashlib
+        patcher = mock.patch.object(backend_installer, 'VAD_MODEL_METADATA',
+                                    (1, hashlib.sha256(b'x').hexdigest()))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(PywhispercppBackend, '_model_arg', return_value='/mock/model.bin')
+        patcher.start()
+        self.addCleanup(patcher.stop)
         fake_mod = types.ModuleType("pywhispercpp.model")
         fake_mod.Model = self._FakeModel
         fake_pkg = types.ModuleType("pywhispercpp")
