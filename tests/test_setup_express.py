@@ -20,13 +20,14 @@ PREFERENCE_PROMPTS = ('audio ducking', 'Mode', 'Reduction percentage', 'mic-osd'
 class ExpressSetupTests(unittest.TestCase):
     def _run(self, express, existing=None, complete=False, validation=True,
              service_ok=True, relogin=False, permission_error=False, indicator=True,
-             compositor=None, binding_ok=True, service_choice=True):
+             compositor=None, binding_ok=True, service_choice=True,
+             backend='onnx-asr', events=None, download_ok=True):
         """Run setup to the summary; save_selection raises before any host change.
 
         Every prompt answers with its own default, as pressing Enter would.
         """
         asked = []
-        existing = {'transcription_backend': 'onnx-asr', **(existing or {})}
+        existing = {'transcription_backend': backend, **(existing or {})}
 
         def confirm(prompt, default=True, **_):
             asked.append(prompt)
@@ -46,8 +47,10 @@ class ExpressSetupTests(unittest.TestCase):
             os.environ.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
             for name, value in (('_check_mise_active', (False, '')), ('_setup_command_symlink', None),
                                 ('_run_keyboard_selection', None), ('_load_existing_setup_config', existing),
-                                ('_prompt_backend_selection', ('onnx-asr', False, False, None)),
-                                ('_detect_current_backend', 'onnx-asr'), ('_noctalia_detected', False),
+                                ('_prompt_backend_selection', (backend, False, False, None)),
+                                ('_prompt_model_selection', 'small.en'),
+                                ('setup_config', None),
+                                ('_detect_current_backend', backend), ('_noctalia_detected', False),
                                 ('detect_compositor', compositor), ('_is_gnome_or_mutter_session', False),
                                 ('_is_kde_plasma_session', False), ('_hypr_config_dir', Path(home.name) / 'hypr'),
                                 ('_check_mic_osd_availability', (indicator, 'GTK missing'))):
@@ -57,6 +60,10 @@ class ExpressSetupTests(unittest.TestCase):
             stack.enter_context(patch.object(setup, 'Confirm', types.SimpleNamespace(ask=confirm)))
             stack.enter_context(patch.object(setup, 'save_selection', side_effect=None if complete else RuntimeError('stop')))
             service = stack.enter_context(patch.object(setup, 'setup_systemd', return_value=service_ok))
+            if events is not None:
+                service.side_effect = lambda *a, **kw: events.append('service') or service_ok
+            stack.enter_context(patch.object(setup, 'download_model',
+                                side_effect=lambda *a: (events.append('download') if events is not None else None) or download_ok))
             def permissions_result(*args, issues=None, **kwargs):
                 if permission_error and issues is not None:
                     issues.append('Resolve the permission errors above, then rerun: hyprwhspr setup')
@@ -71,7 +78,11 @@ class ExpressSetupTests(unittest.TestCase):
                                      ('validate_command', validation), ('setup_compositor_binding', binding_ok),
                                      ('systemd_restart', service_ok)):
                     stack.enter_context(patch.object(setup, name, return_value=result))
-                stack.enter_context(patch.object(setup.subprocess, 'run', return_value=Mock(returncode=1)))
+                if events is not None:
+                    stack.enter_context(patch.object(setup, 'systemd_restart',
+                                        side_effect=lambda: events.append('restart') or service_ok))
+                stack.enter_context(patch.object(setup.subprocess, 'run',
+                                    return_value=Mock(returncode=0 if events is not None else 1)))
                 stack.enter_context(patch.object(setup, '_is_running_manually', return_value=False))
             stack.enter_context(contextlib.redirect_stdout(output))
             if complete:
@@ -83,6 +94,17 @@ class ExpressSetupTests(unittest.TestCase):
             service.assert_not_called()
             permissions.assert_not_called()
         return asked, output.getvalue()
+
+    def test_whisper_download_finishes_before_service_install_and_restart(self):
+        events = []
+        self._run(True, complete=True, backend='cpu', events=events)
+        self.assertEqual(events, ['download', 'service', 'restart'])
+
+    def test_failed_whisper_download_reports_required_repair(self):
+        _, text = self._run(True, complete=True, backend='cpu', download_ok=False)
+        self.assertIn('hyprwhspr model download small.en', text)
+        self.assertIn('Setup finished with steps remaining.', text)
+        self.assertNotIn('to try recording.', text)
 
     @staticmethod
     def _summary(text):

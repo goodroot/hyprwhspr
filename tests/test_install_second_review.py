@@ -1,6 +1,7 @@
 """Second-review lifecycle regressions; host operations and downloads are mocked."""
 from contextlib import ExitStack, redirect_stdout
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from unittest import mock
 from tests.test_managed_install import ManagedFixture
 from tests.test_setup_command_scope import install as cli_install, uninstall, systemd
 from tests.test_noctalia_integration import noctalia
+import whisper_models
 import backend_installer as backend
 import managed_install as managed
 import managed_integrations as integrations
@@ -167,14 +169,14 @@ class SecondReviewTests(ManagedFixture):
         models = self.root / 'models'
         def download(url, path, **kwargs):
             path.write_bytes(b'model')
-        with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}'}), mock.patch.object(backend, 'PYWHISPERCPP_MODELS_DIR', models), mock.patch.object(backend, 'check_model_validity', return_value=False), mock.patch.object(backend.urllib.request, 'urlretrieve', side_effect=download), mock.patch.object(backend, 'set_state'), mock.patch.object(managed, 'record_file', side_effect=ValueError('corrupt receipt')), mock.patch.object(backend, 'log_warning') as warning:
+        with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}'}), mock.patch.object(backend, 'PYWHISPERCPP_MODELS_DIR', models), mock.patch.object(backend, 'check_model_validity', return_value=False), mock.patch.dict(whisper_models.WHISPER_MODELS, {'base': (5, hashlib.sha256(b'model').hexdigest())}), mock.patch.object(backend.urllib.request, 'urlretrieve', side_effect=download), mock.patch.object(backend, 'set_state'), mock.patch.object(managed, 'record_file', side_effect=ValueError('corrupt receipt')), mock.patch.object(backend, 'log_warning') as warning:
             self.assertTrue(backend.download_pywhispercpp_model('base'))
         self.assertEqual((models / 'ggml-base.bin').read_bytes(), b'model')
         self.assertIn('ownership could not be recorded', warning.call_args.args[0])
 
     def check_model_download(self, download):
         models = self.root / 'models'
-        with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}'}), mock.patch.object(backend, 'PYWHISPERCPP_MODELS_DIR', models), mock.patch.object(backend, 'check_model_validity', return_value=False), mock.patch.object(backend.urllib.request, 'urlretrieve', side_effect=download), mock.patch.object(backend, 'set_state'), mock.patch.object(managed, 'record_file'), mock.patch.object(backend, 'log_error'), mock.patch.object(backend, 'log_warning'):
+        with mock.patch.dict(os.environ, {'HYPRWHSPR_GENERATION': '{}'}), mock.patch.object(backend, 'PYWHISPERCPP_MODELS_DIR', models), mock.patch.object(backend, 'check_model_validity', return_value=False), mock.patch.dict(whisper_models.WHISPER_MODELS, {'base': (5, hashlib.sha256(b'model').hexdigest())}), mock.patch.object(backend.urllib.request, 'urlretrieve', side_effect=download), mock.patch.object(backend, 'set_state'), mock.patch.object(managed, 'record_file'), mock.patch.object(backend, 'log_error'), mock.patch.object(backend, 'log_warning'):
             return models, backend.download_pywhispercpp_model('base')
 
     def test_model_never_visible_at_final_path_mid_download(self):

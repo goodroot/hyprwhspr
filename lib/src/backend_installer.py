@@ -763,16 +763,20 @@ def compute_file_hash(file_path: Path) -> str:
 
 
 def check_model_validity(model_file: Path) -> bool:
-    """Check if model file is valid"""
-    if not model_file.exists():
+    """Reject partial/corrupt official models, including files from older installs."""
+    try:
+        from .whisper_models import WHISPER_MODELS
+    except ImportError:
+        from whisper_models import WHISPER_MODELS
+    if not model_file.is_file():
         return False
-
+    name = model_file.name.removeprefix('ggml-').removesuffix('.bin')
+    metadata = WHISPER_MODELS.get(name)
+    if metadata:
+        return _file_matches(model_file, *metadata)
     stored_hash = get_state(f"model_hash_{model_file.name}")
-    if stored_hash and compute_file_hash(model_file) == stored_hash:
-        return True
-
-    # No stored hash: size floor catches truncated downloads and HF error
-    # pages (smallest real model, quantized tiny, is ~31MB)
+    if stored_hash:
+        return compute_file_hash(model_file) == stored_hash
     return model_file.stat().st_size > 20_000_000
 
 
@@ -2607,9 +2611,8 @@ def download_qwen3_asr_model(model_name: str = '1.7b-q8_0') -> bool:
                 log_success(f"Qwen3-ASR {role} present: {local_name}")
                 installed.append(destination)
                 continue
-            partial = destination.with_name(destination.name + '.partial')
+            partial = destination.with_name(f'.{destination.name}.{uuid.uuid4().hex}.partial')
             partials.append(partial)
-            partial.unlink(missing_ok=True)
             url = (f"https://huggingface.co/{metadata['repo']}/resolve/"
                    f"{metadata['revision']}/{remote_path}")
             log_info(f"Downloading Qwen3-ASR {role}: {local_name}")
@@ -2635,51 +2638,80 @@ def download_qwen3_asr_model(model_name: str = '1.7b-q8_0') -> bool:
         return True
     except Exception as exc:
         log_error(f"Failed to download Qwen3-ASR model {model_name}: {exc}")
-        for partial in partials:
-            partial.unlink(missing_ok=True)
         return False
+    finally:
+        for partial in partials:
+            _cleanup_model_partial(partial)
+
+
+def _cleanup_model_partial(partial: Path) -> None:
+    try:
+        partial.unlink(missing_ok=True)
+    except OSError as exc:
+        log_warning(f"Could not remove partial download {partial}: {exc}")
+
 
 VAD_MODEL_FILENAME = 'ggml-silero-v5.1.2.bin'
-VAD_MODEL_URL = f"https://huggingface.co/ggml-org/whisper-vad/resolve/main/{VAD_MODEL_FILENAME}"
+# Upstream LFS metadata from ggml-org/whisper-vad at this revision.
+VAD_MODEL_REVISION = '9ffd54a1e1ee413ddf265af9913beaf518d1639b'
+VAD_MODEL_METADATA = (885098, '29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf')
+VAD_MODEL_URL = (f"https://huggingface.co/ggml-org/whisper-vad/resolve/"
+                 f"{VAD_MODEL_REVISION}/{VAD_MODEL_FILENAME}")
+
+
+def check_vad_model_validity(path: Path) -> bool:
+    return _file_matches(path, *VAD_MODEL_METADATA)
 
 
 def download_vad_model() -> bool:
     """Download the Silero VAD model for whisper.cpp native VAD. Never raises."""
+    partial = None
     try:
         PYWHISPERCPP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
         vad_file = PYWHISPERCPP_MODELS_DIR / VAD_MODEL_FILENAME
 
-        # ~2MB model; anything tiny is a failed/partial download
+        if check_vad_model_validity(vad_file):
+            return True
         if vad_file.exists():
-            if vad_file.stat().st_size > 500_000:
-                return True
             log_warning("Existing VAD model appears invalid; re-downloading")
-            vad_file.unlink()
 
+        partial = vad_file.with_name(f'.{vad_file.name}.{uuid.uuid4().hex}.partial')
         log_info(f"Fetching {VAD_MODEL_URL}")
-        urllib.request.urlretrieve(VAD_MODEL_URL, vad_file)
+        urllib.request.urlretrieve(VAD_MODEL_URL, partial)
 
-        if vad_file.stat().st_size <= 500_000:
+        if not check_vad_model_validity(partial):
             log_error("Downloaded VAD model appears invalid")
-            vad_file.unlink()
             return False
 
+        partial.replace(vad_file)
         log_success("Silero VAD model downloaded")
         return True
     except Exception as e:
         log_error(f"Failed to download Silero VAD model: {e}")
         return False
+    finally:
+        if partial is not None:
+            _cleanup_model_partial(partial)
 
 
 def download_pywhispercpp_model(model_name: str = 'base') -> bool:
     """Download pywhispercpp model with progress feedback"""
+    try:
+        from .whisper_models import WHISPER_MODELS, WHISPER_MODEL_REVISION
+    except ImportError:
+        from whisper_models import WHISPER_MODELS, WHISPER_MODEL_REVISION
+    if model_name not in WHISPER_MODELS:
+        log_error(f"Unsupported whisper.cpp model: {model_name}")
+        return False
     log_info(f"Downloading pywhispercpp model: {model_name}…")
     
     PYWHISPERCPP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
     model_file = PYWHISPERCPP_MODELS_DIR / f'ggml-{model_name}.bin'
     # Unique per attempt so overlapping downloads never share or delete each other's file
     partial = model_file.with_name(f'.{model_file.name}.{uuid.uuid4().hex}.partial')
-    model_url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{model_name}.bin"
+    remote_name = 'large-v3' if model_name == 'large' else model_name
+    model_url = (f"https://huggingface.co/ggerganov/whisper.cpp/resolve/"
+                 f"{WHISPER_MODEL_REVISION}/ggml-{remote_name}.bin")
     
     if check_model_validity(model_file):
         log_success(f"pywhispercpp model present: {model_name}")
@@ -2687,8 +2719,7 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
 
     if model_file.exists():
         log_warning(f"Existing {model_name} model appears invalid; re-downloading")
-        model_file.unlink()
-    
+
     log_info(f"Fetching {model_url}")
     try:
         def show_progress(block_num, block_size, total_size):
@@ -2711,11 +2742,12 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
         # Download beside the model and rename into place, so a service starting
         # mid-download never loads a half-written file (whisper.cpp would segfault).
         urllib.request.urlretrieve(model_url, partial, reporthook=show_progress)
+        if not _file_matches(partial, *WHISPER_MODELS[model_name]):
+            raise RuntimeError("Model failed pinned size/SHA-256 validation")
         partial.replace(model_file)
         
         # Store hash for future validation
-        model_hash = compute_file_hash(model_file)
-        set_state(f"model_hash_{model_file.name}", model_hash)
+        set_state(f"model_hash_{model_file.name}", WHISPER_MODELS[model_name][1])
 
         # Recorded for every install flavour: cli/uninstall.py --purge selects
         # models purely by receipt kind, so an unrecorded model is never removed.
@@ -2737,10 +2769,7 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
         return False
     finally:
         # Also runs on Ctrl+C; each attempt's staging name is unique, so nothing else reclaims it
-        try:
-            partial.unlink(missing_ok=True)
-        except OSError as cleanup_error:
-            log_warning(f"Could not remove partial download {partial}: {cleanup_error}")
+        _cleanup_model_partial(partial)
 
 
 _COHERE_DOWNLOAD_SCRIPT = r'''
