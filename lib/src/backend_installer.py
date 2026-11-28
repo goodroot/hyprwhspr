@@ -773,7 +773,7 @@ def check_model_validity(model_file: Path) -> bool:
     name = model_file.name.removeprefix('ggml-').removesuffix('.bin')
     metadata = WHISPER_MODELS.get(name)
     if metadata:
-        return _file_matches(model_file, *metadata)
+        return _pinned_model_present(model_file, *metadata)
     stored_hash = get_state(f"model_hash_{model_file.name}")
     if stored_hash:
         return compute_file_hash(model_file) == stored_hash
@@ -2557,6 +2557,28 @@ def install_pywhispercpp_vulkan(pip_bin: Path) -> bool:
 def _file_matches(path: Path, size: int, digest: str) -> bool:
     return (path.is_file() and path.stat().st_size == size
             and compute_file_hash(path) == digest)
+
+
+_verified_models = set()
+
+
+def _pinned_model_present(path: Path, size: int, digest: str) -> bool:
+    """Size check, then a recorded or once-per-process hash: loads run this repeatedly."""
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    if not path.is_file() or st.st_size != size:
+        return False
+    if get_state(f'model_hash_{path.name}') == digest:
+        return True
+    key = (str(path), st.st_ino, st.st_size, st.st_mtime_ns, digest)
+    if key in _verified_models:
+        return True
+    if compute_file_hash(path) != digest:
+        return False
+    _verified_models.add(key)
+    return True
 
 
 def _qwen3_model_present(path: Path, size: int, digest: str) -> bool:

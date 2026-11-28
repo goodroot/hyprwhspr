@@ -28,6 +28,7 @@ class ModelDownloadSafetyTests(unittest.TestCase):
         self.state = self.stack.enter_context(mock.patch.object(installer, 'set_state'))
         self.stack.enter_context(mock.patch('managed_install.record_ownership', return_value=True))
         self.retrieve = self.stack.enter_context(mock.patch.object(installer.urllib.request, 'urlretrieve'))
+        self.stack.enter_context(mock.patch.object(installer, '_verified_models', set()))
 
     def test_old_partial_above_previous_size_floor_is_invalid(self):
         path = self.root / 'ggml-small.en.bin'
@@ -41,6 +42,30 @@ class ModelDownloadSafetyTests(unittest.TestCase):
         path.write_bytes(bad)
         with mock.patch.object(installer, 'get_state', return_value=hashlib.sha256(bad).hexdigest()):
             self.assertFalse(installer.check_model_validity(path))
+
+    def test_repeated_loads_hash_a_pinned_model_once(self):
+        path = self.root / 'ggml-base.bin'
+        path.write_bytes(self.payload)
+        with mock.patch.object(installer, 'compute_file_hash', wraps=installer.compute_file_hash) as digest:
+            for _ in range(3):
+                self.assertTrue(installer.check_model_validity(path))
+        self.assertEqual(digest.call_count, 1)
+
+    def test_recorded_digest_skips_hashing(self):
+        path = self.root / 'ggml-base.bin'
+        path.write_bytes(self.payload)
+        with mock.patch.object(installer, 'get_state', return_value=self.metadata[1]), \
+             mock.patch.object(installer, 'compute_file_hash') as digest:
+            self.assertTrue(installer.check_model_validity(path))
+        digest.assert_not_called()
+
+    def test_replaced_file_is_hashed_again(self):
+        path = self.root / 'ggml-base.bin'
+        path.write_bytes(self.payload)
+        self.assertTrue(installer.check_model_validity(path))
+        path.unlink()
+        path.write_bytes(b'x' * len(self.payload))
+        self.assertFalse(installer.check_model_validity(path))
 
     def test_custom_hash_mismatch_does_not_fall_back_to_size(self):
         path = self.root / 'ggml-custom.bin'
