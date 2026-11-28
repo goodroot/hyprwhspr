@@ -406,6 +406,30 @@ class ModelLifecycleTests(AppCase):
         self.assertIsNone(app._model_failure_message)
         self.assertEqual(self.messages(app)[-1], 'Model ready')
 
+    def _missing_modules(self, *names):
+        patcher = patch_app_global(self.app_cls, 'missing_imports', mock.Mock(return_value=names))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_missing_modules_are_the_only_startup_banner(self):
+        app = self._app()
+        app.whisper_manager.model_load_error = "Speech model 'base' is not downloaded yet."
+        self._missing_modules('pywhispercpp')
+        app._report_missing_dependencies()
+        app._report_backend_load_failed()
+        self.assertEqual(len(self.alerts(app)), 1)
+        self.assertIn('Missing Python modules: pywhispercpp', self.messages(app)[0])
+
+    def test_model_alerts_resume_once_modules_are_installed(self):
+        app = self._app()
+        repair = "Speech model 'base' is not downloaded yet."
+        app.whisper_manager.model_load_error = repair
+        self._missing_modules('pywhispercpp')
+        app._report_missing_dependencies()
+        self._missing_modules()
+        app._report_backend_load_failed()
+        self.assertEqual(self.alerts(app)[-1], (repair, 'action', 'model', True))
+
     def test_manual_reload_failure_uses_the_same_repair_detail(self):
         app = self._app()
         repair = "Speech model is missing. Run: hyprwhspr model download small.en"

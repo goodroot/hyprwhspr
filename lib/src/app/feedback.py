@@ -131,6 +131,8 @@ class FeedbackMixin:
 
     def _report_backend_load_failed(self):
         """A load someone was told to wait for failed. The next record press retries."""
+        if self._start_check_explains_failure():
+            return
         if self._recovery_announced('link') is not None:
             self._recovery_exhausted('service', track='link')
         else:
@@ -318,6 +320,7 @@ class FeedbackMixin:
         except ValueError as e:
             # Its modules were never packaged; the backend, not a rebuild, needs changing.
             self._notify_user('hyprwhspr', str(e), urgency='critical')
+            self._dependency_alerted = 'unsupported'
             return []
         backend = normalize_backend(configured)
         provider = self.config.get_setting('websocket_provider', None) if backend == 'realtime-ws' else None
@@ -330,11 +333,20 @@ class FeedbackMixin:
                 "hyprwhspr", f"Missing Python modules: {names}\n"
                 + repair_hint("Run: hyprwhspr setup and reinstall the backend"),
                 urgency="critical")
+            self._dependency_alerted = (backend, provider)
         elif self._dependencies_changed_since_setup(backend, provider):
             # Everything imports, but an update changed the requirements (a new
             # pin or minimum) since setup last synced the venv.
             log("[WARN] Python dependencies changed since setup - run: hyprwhspr setup (Reinstall backend: yes)")
         return missing
+
+    def _start_check_explains_failure(self) -> bool:
+        """The start check already alerted on why loads fail, and still does."""
+        reported = getattr(self, '_dependency_alerted', None)
+        if reported == 'unsupported' or (reported and missing_imports(*reported)):
+            return True
+        self._dependency_alerted = None
+        return False
 
     @staticmethod
     def _dependencies_changed_since_setup(backend: str, provider) -> bool:

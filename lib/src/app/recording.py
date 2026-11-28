@@ -190,7 +190,7 @@ class RecordingMixin:
         # of recording audio that can never be transcribed
         if blocked == 'init-failed':
             repair = getattr(self.whisper_manager, 'model_load_error', None)
-            if isinstance(repair, str) and repair:
+            if isinstance(repair, str) and repair and not self._start_check_explains_failure():
                 self._report_backend_load_failed()
             else:
                 self._notify_user("hyprwhspr", "Model failed to load — retrying, try again when ready",
