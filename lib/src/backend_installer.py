@@ -2677,6 +2677,8 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
     
     PYWHISPERCPP_MODELS_DIR.mkdir(parents=True, exist_ok=True)
     model_file = PYWHISPERCPP_MODELS_DIR / f'ggml-{model_name}.bin'
+    # Unique per attempt so overlapping downloads never share or delete each other's file
+    partial = model_file.with_name(f'.{model_file.name}.{uuid.uuid4().hex}.partial')
     model_url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{model_name}.bin"
     
     if check_model_validity(model_file):
@@ -2706,7 +2708,10 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
             if downloaded >= total_size and total_size > 0:
                 OutputController.write("\n", VerbosityLevel.NORMAL, flush=True)  # New line when complete
         
-        urllib.request.urlretrieve(model_url, model_file, reporthook=show_progress)
+        # Download beside the model and rename into place, so a service starting
+        # mid-download never loads a half-written file (whisper.cpp would segfault).
+        urllib.request.urlretrieve(model_url, partial, reporthook=show_progress)
+        partial.replace(model_file)
         
         # Store hash for future validation
         model_hash = compute_file_hash(model_file)
@@ -2730,6 +2735,12 @@ def download_pywhispercpp_model(model_name: str = 'base') -> bool:
     except Exception as e:
         log_error(f"Failed to download pywhispercpp model {model_name}: {e}")
         return False
+    finally:
+        # Also runs on Ctrl+C; each attempt's staging name is unique, so nothing else reclaims it
+        try:
+            partial.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            log_warning(f"Could not remove partial download {partial}: {cleanup_error}")
 
 
 _COHERE_DOWNLOAD_SCRIPT = r'''
