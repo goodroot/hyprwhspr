@@ -21,6 +21,14 @@ class FakeConfig:
 
 
 class BackendProxyTests(unittest.TestCase):
+    def test_model_repair_detail_follows_the_active_backend(self):
+        manager = WhisperManager(config_manager=FakeConfig())
+        self.assertIsNone(manager.model_load_error)
+        manager._backend = SimpleNamespace(model_load_error='Download the model')
+        self.assertEqual(manager.model_load_error, 'Download the model')
+        manager._backend = SimpleNamespace()
+        self.assertIsNone(manager.model_load_error)
+
     def test_shared_state_writes_through_to_manager(self):
         manager = WhisperManager(config_manager=FakeConfig())
         backend = TranscriptionBackend(manager)

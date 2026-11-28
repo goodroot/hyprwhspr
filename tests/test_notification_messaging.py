@@ -394,6 +394,26 @@ class NotifyUserTests(AppCase, LevelCase):
 
 
 class ModelLifecycleTests(AppCase):
+    def test_model_repair_detail_is_retained_until_loading_succeeds(self):
+        app = self._app()
+        repair = "Speech model 'base' is damaged. Run: hyprwhspr model download base"
+        app.whisper_manager.model_load_error = repair
+        app._report_backend_load_failed()
+        self.assertEqual(self.alerts(app), [(repair, 'action', 'model', True)])
+        app.whisper_manager.model_load_error = None
+        app._announce_backend_ready(True)
+        app._clear_alert.assert_called_once_with('model')
+        self.assertIsNone(app._model_failure_message)
+        self.assertEqual(self.messages(app)[-1], 'Model ready')
+
+    def test_manual_reload_failure_uses_the_same_repair_detail(self):
+        app = self._app()
+        repair = "Speech model is missing. Run: hyprwhspr model download small.en"
+        app.whisper_manager.model_load_error = repair
+        app.whisper_manager.reload_model.return_value = False
+        app._run_model_operation('reload')
+        self.assertEqual(self.alerts(app)[-1], (repair, 'action', 'model', True))
+
     def test_automatic_and_manual_unload_say_what_happens_next(self):
         app = self._app()
         app._handle_model_operation('unload', automatic=True)

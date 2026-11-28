@@ -91,6 +91,11 @@ class WhisperManager:
         # Active TranscriptionBackend instance, created by initialize()
         self._backend = None
 
+    @property
+    def model_load_error(self):
+        """Actionable model-file failure, cleared when the backend loads again."""
+        return getattr(self._backend, 'model_load_error', None)
+
     def initialize(self) -> bool:
         """Initialize the configured transcription backend (single-flight)."""
         with self._init_cond:

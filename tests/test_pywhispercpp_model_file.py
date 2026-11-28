@@ -1,5 +1,6 @@
 """pywhispercpp loads the installed model file, never a name it would download."""
 import sys
+import hashlib
 import tempfile
 import types
 import unittest
@@ -9,6 +10,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
+import whisper_models
 from backends import pywhispercpp_backend  # noqa: E402
 from backends.pywhispercpp_backend import PywhispercppBackend  # noqa: E402
 from tests.text_injector_helpers import ConfigStub  # noqa: E402
@@ -24,6 +26,11 @@ class PywhispercppModelFileTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.models = Path(tmp.name)
         patcher = mock.patch.object(pywhispercpp_backend, 'PYWHISPERCPP_MODELS_DIR', self.models)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        metadata = (1, hashlib.sha256(b'x').hexdigest())
+        patcher = mock.patch.dict(whisper_models.WHISPER_MODELS,
+                                  {'base': metadata, 'base.en': metadata})
         patcher.start()
         self.addCleanup(patcher.stop)
         self.settings = {'language': 'en'}
@@ -56,19 +63,34 @@ class PywhispercppModelFileTests(unittest.TestCase):
         for language in ('de', None):
             with self.subTest(language=language):
                 self.settings['language'] = language
-                self.assertEqual(self._model_arg('base'), 'base')
+                with self.assertRaises(FileNotFoundError):
+                    self._model_arg('base')
 
     def test_truncated_multilingual_file_does_not_hide_a_valid_english_one(self):
-        (self.models / 'ggml-base.bin').write_bytes(b'x')
-        with open(self.models / 'ggml-base.en.bin', 'wb') as f:
-            f.truncate(10000001)
+        (self.models / 'ggml-base.bin').write_bytes(b'bad')
+        (self.models / 'ggml-base.en.bin').write_bytes(b'x')
         self.assertTrue(self.backend._validate_model_file('base'))
+        self.assertEqual(self._model_arg('base'), str(self.models / 'ggml-base.en.bin'))
 
     def test_multilingual_file_wins_when_both_exist(self):
         (self.models / 'ggml-base.en.bin').write_bytes(b'x')
         multilingual = self.models / 'ggml-base.bin'
         multilingual.write_bytes(b'x')
         self.assertEqual(self._model_arg('base'), str(multilingual))
+
+    def test_missing_and_corrupt_models_explain_the_repair_and_clear_after_fix(self):
+        with self.assertRaises(FileNotFoundError):
+            self.backend._model_arg('base')
+        self.assertIn('not downloaded yet', self.backend.model_load_error)
+        self.assertIn('hyprwhspr model download base', self.backend.model_load_error)
+        path = self.models / 'ggml-base.bin'
+        path.write_bytes(b'bad')
+        with self.assertRaises(FileNotFoundError):
+            self.backend._model_arg('base')
+        self.assertIn('damaged or incomplete', self.backend.model_load_error)
+        path.write_bytes(b'x')
+        self.assertEqual(self.backend._model_arg('base'), str(path))
+        self.assertIsNone(self.backend.model_load_error)
 
     def test_missing_model_is_refused_before_loading(self):
         with mock.patch.object(pywhispercpp_backend, 'log'), \

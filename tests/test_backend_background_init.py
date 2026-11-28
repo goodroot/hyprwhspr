@@ -65,11 +65,12 @@ class BackgroundInitTests(unittest.TestCase):
         self.assertTrue(app._claim_longform_recording())
         self.assertTrue(app._longform_active)
 
-    def test_failed_init_marks_failure_without_notifying(self):
+    def test_failed_init_reports_failure_without_waiting_for_a_keypress(self):
         app = self._init(30, ok=False)
         self.assertTrue(app._backend_init_failed)
         self.assertFalse(app._model_initializing)
-        self.assertFalse(app._notify_user.called)
+        self.assertTrue(app._notify_user.called)
+        self.assertTrue(app._notify_user.call_args.kwargs['retained'])
 
 
 if __name__ == '__main__':

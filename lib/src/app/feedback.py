@@ -87,6 +87,9 @@ class FeedbackMixin:
 
     def _report_model_load_failed(self, message: str):
         """A load failed: retire any wait notice and keep the failure up."""
+        repair = getattr(self.whisper_manager, 'model_load_error', None)
+        if isinstance(repair, str) and repair:
+            message = repair
         self._clear_status_detail()
         self._model_loading_alerted = False
         self._model_failure_message = message
@@ -120,7 +123,7 @@ class FeedbackMixin:
     def _announce_backend_ready(self, requested: bool):
         """The backend finished loading. requested: someone was told to wait."""
         kind = "result" if requested else "lifecycle"
-        self._model_failure_message = None
+        self._model_load_confirmed()
         if self._recovery_announced('link') is not None:
             self._recovery_confirmed(kind=kind, track='link')
         else:

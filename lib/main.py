@@ -425,6 +425,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                 # Stay alive with recording blocked; the record gate retries init
                 log("[ERROR] Failed to initialize backend - will retry on next record attempt")
                 self._backend_init_failed = True
+                self._report_backend_load_failed()
             elif self._notify_when_ready:
                 # A record attempt was refused during the load
                 self._notify_when_ready = False
